@@ -1,0 +1,91 @@
+# Golden tests for search/retrieval validation.
+# The runner should execute each query across the retrieval_variants below and compare
+# top-1 exact hit, top-5 expected statute, top-10 expected provision, source-backed
+# coverage, rerank lift, and latency.
+
+retrieval_variants:
+  - keyword
+  - semantic
+  - keyword_semantic
+  - keyword_semantic_graph
+  - keyword_semantic_graph_rerank
+
+metrics:
+  - top_1_exact_hit
+  - top_5_contains_expected_statute
+  - top_10_contains_expected_provision
+  - definition_scope_correctness
+  - deadline_correctness
+  - source_backed_coverage
+  - rerank_lift
+  - latency_ms
+
+tests:
+  - name: exact_security_deposit
+    query: "ORS 90.300"
+    intent: citation
+    expected_top_result:
+      citation: "ORS 90.300"
+
+  - name: security_deposit_deadline
+    query: "security deposit deadline"
+    intent: deadline
+    expected_any:
+      citations:
+        - "ORS 90.300"
+      semantic_types:
+        - Deadline
+        - Obligation
+
+  - name: landlord_notice
+    query: "landlord notice"
+    intent: notice
+    expected_any:
+      semantic_types:
+        - RequiredNotice
+        - Obligation
+
+  - name: civil_penalty
+    query: "civil penalty"
+    intent: penalty
+    expected_any:
+      semantic_types:
+        - Penalty
+
+  - name: dwelling_unit_definition
+    query: "definition of dwelling unit"
+    intent: definition
+    expected_any:
+      semantic_types:
+        - Definition
+        - DefinedTerm
+
+  - name: operative_2027
+    query: "operative January 1 2027"
+    intent: history
+    expected_any:
+      semantic_types:
+        - TemporalEffect
+        - SourceNote
+
+  - name: airport_district_bond_authority
+    query: "airport district bond authority"
+    intent: general
+    expected_any:
+      source_backed: true
+
+  - name: department_of_revenue_tax
+    query: "Department of Revenue tax"
+    intent: actor
+    expected_any:
+      semantic_types:
+        - TaxRule
+        - Obligation
+
+  - name: landlord_obligations
+    query: "what must a landlord do"
+    intent: actor
+    expected_any:
+      semantic_types:
+        - LegalActor
+        - Obligation

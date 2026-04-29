@@ -1,0 +1,282 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - link "ORSGraph v0 / internal" [ref=e5] [cursor=pointer]:
+          - /url: /
+          - img [ref=e7]
+          - generic [ref=e9]: ORSGraph
+          - generic [ref=e10]: v0 / internal
+        - navigation [ref=e11]:
+          - link "Search" [ref=e12] [cursor=pointer]:
+            - /url: /search
+            - img [ref=e13]
+            - text: Search
+          - link "Ask" [ref=e16] [cursor=pointer]:
+            - /url: /ask
+            - img [ref=e17]
+            - text: Ask
+          - link "Statutes" [ref=e19] [cursor=pointer]:
+            - /url: /statutes
+            - img [ref=e20]
+            - text: Statutes
+          - link "Graph" [ref=e22] [cursor=pointer]:
+            - /url: /graph
+            - img [ref=e23]
+            - text: Graph
+          - link "QC" [ref=e28] [cursor=pointer]:
+            - /url: /qc
+            - img [ref=e29]
+            - text: QC
+      - generic [ref=e32]:
+        - generic [ref=e33]:
+          - text: neo4j ok
+          - generic [ref=e35]: "|"
+          - text: qc warn
+          - generic [ref=e37]: "|"
+          - generic [ref=e38]: edition 2025
+        - button "Toggle theme" [ref=e39]:
+          - img
+          - generic [ref=e40]: Toggle theme
+    - generic [ref=e41]:
+      - complementary [ref=e42]:
+        - generic [ref=e43]:
+          - generic [ref=e44]:
+            - button "Corpus 10" [ref=e45]:
+              - generic [ref=e46]:
+                - img [ref=e47]
+                - img [ref=e49]
+                - text: Corpus
+              - generic [ref=e51]: "10"
+            - generic [ref=e52]:
+              - generic [ref=e53]: Oregon Revised Statutes / 2025
+              - generic [ref=e54]:
+                - button "Chapter 3 8" [ref=e55]:
+                  - img [ref=e56]
+                  - img [ref=e58]
+                  - generic [ref=e60]: Chapter 3
+                  - generic [ref=e61]: "8"
+                - generic [ref=e62]:
+                  - link "ORS 3.010 Circuit courts; jurisdiction generally" [ref=e63] [cursor=pointer]:
+                    - /url: /statutes/or:ors:3.010
+                    - generic [ref=e64]: ORS 3.010
+                    - generic [ref=e65]: Circuit courts; jurisdiction generally
+                  - link "ORS 3.012 Judicial districts" [ref=e66] [cursor=pointer]:
+                    - /url: /statutes/or:ors:3.012
+                    - generic [ref=e67]: ORS 3.012
+                    - generic [ref=e68]: Judicial districts
+                  - link "ORS 3.050 Number of circuit court judges" [ref=e69] [cursor=pointer]:
+                    - /url: /statutes/or:ors:3.050
+                    - generic [ref=e70]: ORS 3.050
+                    - generic [ref=e71]: Number of circuit court judges
+                  - link "ORS 3.130 District attorney duties" [ref=e72] [cursor=pointer]:
+                    - /url: /statutes/or:ors:3.130
+                    - generic [ref=e73]: ORS 3.130
+                    - generic [ref=e74]: District attorney duties
+                  - link "ORS 3.220 Court reporters; appointment" [ref=e75] [cursor=pointer]:
+                    - /url: /statutes/or:ors:3.220
+                    - generic [ref=e76]: ORS 3.220
+                    - generic [ref=e77]: Court reporters; appointment
+                  - link "ORS 3.275 Family court department; duties" [ref=e78] [cursor=pointer]:
+                    - /url: /statutes/or:ors:3.275
+                    - generic [ref=e79]: ORS 3.275
+                    - generic [ref=e80]: Family court department; duties
+                  - link "ORS 3.405 Juvenile court; jurisdiction" [ref=e81] [cursor=pointer]:
+                    - /url: /statutes/or:ors:3.405
+                    - generic [ref=e82]: ORS 3.405
+                    - generic [ref=e83]: Juvenile court; jurisdiction
+                  - link "ORS 3.501 Mental health court; establishment" [ref=e84] [cursor=pointer]:
+                    - /url: /statutes/or:ors:3.501
+                    - generic [ref=e85]: ORS 3.501
+                    - generic [ref=e86]: Mental health court; establishment
+              - button "Chapter 8 2" [ref=e88]:
+                - img [ref=e89]
+                - img [ref=e91]
+                - generic [ref=e93]: Chapter 8
+                - generic [ref=e94]: "2"
+          - generic [ref=e95]:
+            - button "Saved searches 3" [ref=e96]:
+              - generic [ref=e97]:
+                - img [ref=e98]
+                - img [ref=e100]
+                - text: Saved searches
+              - generic [ref=e103]: "3"
+            - generic [ref=e105]:
+              - link "district attorney duties 7" [ref=e106] [cursor=pointer]:
+                - /url: /search?q=district%20attorney%20duties
+                - generic [ref=e107]: district attorney duties
+                - generic [ref=e108]: "7"
+              - link "30 day notice deadline 23" [ref=e109] [cursor=pointer]:
+                - /url: /search?q=30%20day%20notice%20deadline
+                - generic [ref=e110]: 30 day notice deadline
+                - generic [ref=e111]: "23"
+              - link "circuit court jurisdiction 41" [ref=e112] [cursor=pointer]:
+                - /url: /search?q=circuit%20court%20jurisdiction
+                - generic [ref=e113]: circuit court jurisdiction
+                - generic [ref=e114]: "41"
+          - generic [ref=e115]:
+            - button "Saved statutes 3" [ref=e116]:
+              - generic [ref=e117]:
+                - img [ref=e118]
+                - img [ref=e120]
+                - text: Saved statutes
+              - generic [ref=e122]: "3"
+            - generic [ref=e124]:
+              - link "ORS 3.130 District attorney duties" [ref=e125] [cursor=pointer]:
+                - /url: /statutes/or:ors:3.130
+                - generic [ref=e126]: ORS 3.130
+                - generic [ref=e127]: District attorney duties
+              - link "ORS 8.610 Office of district attorney" [ref=e128] [cursor=pointer]:
+                - /url: /statutes/or:ors:8.610
+                - generic [ref=e129]: ORS 8.610
+                - generic [ref=e130]: Office of district attorney
+              - link "ORS 419C.005 Juvenile court jurisdiction" [ref=e131] [cursor=pointer]:
+                - /url: /statutes/or:ors:419C.005
+                - generic [ref=e132]: ORS 419C.005
+                - generic [ref=e133]: Juvenile court jurisdiction
+          - generic [ref=e134]:
+            - button "Recent 4" [ref=e135]:
+              - generic [ref=e136]:
+                - img [ref=e137]
+                - img [ref=e139]
+                - text: Recent
+              - generic [ref=e142]: "4"
+            - generic [ref=e144]:
+              - link "ORS 3.130 District attorney duties" [ref=e145] [cursor=pointer]:
+                - /url: /statutes/or:ors:3.130
+                - generic [ref=e146]: ORS 3.130
+                - generic [ref=e147]: District attorney duties
+              - link "ORS 8.610 Office of district attorney" [ref=e148] [cursor=pointer]:
+                - /url: /statutes/or:ors:8.610
+                - generic [ref=e149]: ORS 8.610
+                - generic [ref=e150]: Office of district attorney
+              - link "ORS 419C.005 Juvenile court jurisdiction" [ref=e151] [cursor=pointer]:
+                - /url: /statutes/or:ors:419C.005
+                - generic [ref=e152]: ORS 419C.005
+                - generic [ref=e153]: Juvenile court jurisdiction
+              - link "ORS 162.405 Official misconduct" [ref=e154] [cursor=pointer]:
+                - /url: /statutes/or:ors:162.405
+                - generic [ref=e155]: ORS 162.405
+                - generic [ref=e156]: Official misconduct
+        - generic [ref=e158]:
+          - generic [ref=e159]:
+            - generic [ref=e160]: jurisdiction
+            - generic [ref=e161]: Oregon
+          - generic [ref=e162]:
+            - generic [ref=e163]: edition
+            - generic [ref=e164]: "2025"
+          - generic [ref=e165]:
+            - generic [ref=e166]: matter
+            - generic [ref=e167]: none
+      - main [ref=e168]:
+        - generic [ref=e169]:
+          - generic [ref=e170]:
+            - generic [ref=e171]:
+              - img [ref=e172]
+              - textbox "Search statutes, provisions, definitions, deadlines, penalties..." [ref=e175]
+            - generic [ref=e176]:
+              - button "Hybrid" [ref=e177]
+              - button "Keyword" [ref=e178]
+              - button "Semantic" [ref=e179]
+              - button "Citation" [ref=e180]
+              - button "Definition" [ref=e181]
+              - button "Deadline" [ref=e182]
+              - button "Exception" [ref=e183]
+              - button "Penalty" [ref=e184]
+          - generic [ref=e185]:
+            - complementary:
+              - generic: result types
+              - generic:
+                - button "All 0":
+                  - generic: All
+                  - generic: "0"
+                - button "Statutes 0":
+                  - generic: Statutes
+                  - generic: "0"
+                - button "Provisions 0":
+                  - generic: Provisions
+                  - generic: "0"
+                - button "Definitions 0":
+                  - generic: Definitions
+                  - generic: "0"
+                - button "Obligations 0":
+                  - generic: Obligations
+                  - generic: "0"
+                - button "Deadlines 0":
+                  - generic: Deadlines
+                  - generic: "0"
+                - button "Penalties 0":
+                  - generic: Penalties
+                  - generic: "0"
+                - button "Remedies 0":
+                  - generic: Remedies
+                  - generic: "0"
+                - button "Notices 0":
+                  - generic: Notices
+                  - generic: "0"
+                - button "Session Laws 0":
+                  - generic: Session Laws
+                  - generic: "0"
+                - button "Source Notes 0":
+                  - generic: Source Notes
+                  - generic: "0"
+                - button "Chunks 0":
+                  - generic: Chunks
+                  - generic: "0"
+              - generic:
+                - generic:
+                  - img
+                  - text: refine search
+                - list:
+                  - listitem:
+                    - generic:
+                      - checkbox "Current edition only" [checked]
+                      - generic: Current edition only
+                  - listitem:
+                    - generic:
+                      - checkbox "Has citations"
+                      - generic: Has citations
+                  - listitem:
+                    - generic:
+                      - checkbox "Has deadlines"
+                      - generic: Has deadlines
+                  - listitem:
+                    - generic:
+                      - checkbox "Has penalties"
+                      - generic: Has penalties
+                  - listitem:
+                    - generic:
+                      - checkbox "Source-backed only"
+                      - generic: Source-backed only
+                  - listitem:
+                    - generic:
+                      - checkbox "Needs review"
+                      - generic: Needs review
+            - generic [ref=e187]:
+              - img [ref=e189]
+              - heading "Search the ORS Graph" [level=2] [ref=e192]
+              - paragraph [ref=e193]: Start with a citation, legal concept, actor, deadline, or penalty to explore the Oregon Revised Statutes.
+              - generic [ref=e194]:
+                - generic [ref=e195]: Suggested searches
+                - generic [ref=e196]:
+                  - button "ORS 90.300" [ref=e197]:
+                    - generic [ref=e198]: ORS 90.300
+                    - img [ref=e199]
+                  - button "landlord notice" [ref=e201]:
+                    - generic [ref=e202]: landlord notice
+                    - img [ref=e203]
+                  - button "security deposit deadline" [ref=e205]:
+                    - generic [ref=e206]: security deposit deadline
+                    - img [ref=e207]
+                  - button "civil penalty" [ref=e209]:
+                    - generic [ref=e210]: civil penalty
+                    - img [ref=e211]
+                  - button "operative date" [ref=e213]:
+                    - generic [ref=e214]: operative date
+                    - img [ref=e215]
+                  - button "Department of Revenue tax" [ref=e217]:
+                    - generic [ref=e218]: Department of Revenue tax
+                    - img [ref=e219]
+  - button "Open Next.js Dev Tools" [ref=e226] [cursor=pointer]:
+    - img [ref=e227]
+  - alert [ref=e230]

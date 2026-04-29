@@ -1,0 +1,10 @@
+# Golden tests for provision path validation
+# Placeholder - golden test runner not yet implemented
+# See: https://github.com/your-org/ors-crawler/issues/XXX
+
+tests: []
+  # Example:
+  # - name: nested_subsections
+  #   section: "ORS 1.002"
+  #   text: "(3)(c) Any data made confidential..."
+  #   expected_path: ["3", "c"]

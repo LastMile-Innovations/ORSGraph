@@ -1,0 +1,12 @@
+# Golden tests for citation extraction validation
+# Placeholder - golden test runner not yet implemented
+# See: https://github.com/your-org/ors-crawler/issues/XXX
+
+tests: []
+  # Example:
+  # - name: public_records_range
+  #   source_text: "not subject to disclosure under ORS 192.311 to 192.478"
+  #   expected:
+  #     citation_type: "statute_range"
+  #     target_start: "or:ors:192.311"
+  #     target_end: "or:ors:192.478"

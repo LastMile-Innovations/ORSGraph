@@ -1,0 +1,13 @@
+# Golden tests for section parsing validation
+# Placeholder - golden test runner not yet implemented
+# See: https://github.com/your-org/ors-crawler/issues/XXX
+
+tests: []
+  # Example:
+  # - name: court_facilities_section
+  #   chapter: "1"
+  #   expected:
+  #     canonical_id: "or:ors:1.002"
+  #     citation: "ORS 1.002"
+  #     status: "active"
+  #     title: "Supreme Court"

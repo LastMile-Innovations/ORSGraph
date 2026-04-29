@@ -1,0 +1,76 @@
+import { Shell } from "@/components/orsg/shell"
+import { SearchClient } from "@/components/orsg/search/search-client"
+import { searchWithParams } from "@/lib/api"
+
+type SearchPageParams = {
+  q?: string
+  type?: string
+  mode?: string
+  limit?: string
+  offset?: string
+  chapter?: string
+  status?: string
+  semantic_type?: string
+  current_only?: string
+  source_backed?: string
+  has_citations?: string
+  has_deadlines?: string
+  has_penalties?: string
+  needs_review?: string
+}
+
+function boolParam(value?: string) {
+  return value === "true"
+}
+
+function numberParam(value: string | undefined, fallback: number) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+export default async function SearchPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchPageParams>
+}) {
+  const params = await searchParams
+  const q = params.q || ""
+  const initialMode = params.mode || "hybrid"
+  const initialType = params.type || "all"
+  const initialLimit = numberParam(params.limit, 20)
+  const initialOffset = Math.max(0, Number(params.offset || 0) || 0)
+  const initialFilters = {
+    chapter: params.chapter || "",
+    status: params.status || "all",
+    semantic_type: params.semantic_type || "all",
+    current_only: boolParam(params.current_only),
+    source_backed: boolParam(params.source_backed),
+    has_citations: boolParam(params.has_citations),
+    has_deadlines: boolParam(params.has_deadlines),
+    has_penalties: boolParam(params.has_penalties),
+    needs_review: boolParam(params.needs_review),
+  }
+
+  const response = q
+    ? await searchWithParams({
+        q,
+        type: initialType,
+        mode: initialMode,
+        limit: initialLimit,
+        offset: initialOffset,
+        ...initialFilters,
+      }).catch(() => undefined)
+    : undefined
+
+  return (
+    <Shell>
+      <SearchClient 
+        initialQuery={q}
+        initialMode={initialMode}
+        initialType={initialType}
+        initialFilters={initialFilters}
+        response={response}
+      />
+    </Shell>
+  )
+}

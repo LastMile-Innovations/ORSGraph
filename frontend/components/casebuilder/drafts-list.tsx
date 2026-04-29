@@ -1,0 +1,203 @@
+"use client"
+
+import Link from "next/link"
+import { useState } from "react"
+import { Plus, Sparkles, FileText, Search, Clock, CheckCircle2 } from "lucide-react"
+import type { Matter } from "@/lib/casebuilder/types"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Card } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { cn } from "@/lib/utils"
+
+interface DraftsListProps {
+  matter: Matter
+}
+
+const DRAFT_TEMPLATES = [
+  {
+    id: "tpl-complaint",
+    label: "Complaint",
+    description: "Civil complaint with claims, parties, jurisdiction, prayer for relief.",
+  },
+  {
+    id: "tpl-motion-summary",
+    label: "Motion for Summary Judgment",
+    description: "MSJ with statement of undisputed facts and legal argument.",
+  },
+  {
+    id: "tpl-discovery",
+    label: "Discovery Requests",
+    description: "Interrogatories, RFPs, and RFAs tailored to your claims.",
+  },
+  {
+    id: "tpl-demand",
+    label: "Demand Letter",
+    description: "Pre-litigation demand citing supporting facts and damages.",
+  },
+  {
+    id: "tpl-deposition",
+    label: "Deposition Outline",
+    description: "Topic-by-topic deposition outline with exhibits and goals.",
+  },
+  {
+    id: "tpl-brief",
+    label: "Trial Brief",
+    description: "Pre-trial brief with statement of case, evidentiary issues, jury instructions.",
+  },
+]
+
+export function DraftsList({ matter }: DraftsListProps) {
+  const [query, setQuery] = useState("")
+
+  const filtered = matter.drafts.filter((d) =>
+    !query || d.title.toLowerCase().includes(query.toLowerCase()),
+  )
+
+  return (
+    <div className="flex flex-col">
+      <div className="border-b border-border bg-background px-6 py-4">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">
+              Drafting Studio
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              AI-assisted drafting with citation grounding. Every claim, fact, and authority is
+              one click away.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
+              <Sparkles className="h-3.5 w-3.5" />
+              Generate from claims
+            </Button>
+            <Button size="sm" className="gap-1.5">
+              <Plus className="h-3.5 w-3.5" />
+              New draft
+            </Button>
+          </div>
+        </div>
+
+        <div className="relative mt-4 max-w-sm">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search drafts..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
+      </div>
+
+      <ScrollArea className="h-[calc(100vh-220px)]">
+        <div className="px-6 py-6">
+          {/* Existing drafts */}
+          {filtered.length > 0 && (
+            <section>
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Your drafts ({filtered.length})
+              </h2>
+              <ul className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+                {filtered.map((draft) => (
+                  <li key={draft.id}>
+                    <Link
+                      href={`/matters/${matter.id}/drafts/${draft.id}`}
+                      className="group block"
+                    >
+                      <Card className="h-full p-4 transition-colors group-hover:border-foreground/30 group-hover:bg-muted/30">
+                        <div className="flex items-start justify-between gap-2">
+                          <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                          <DraftStatus status={draft.status} />
+                        </div>
+                        <h3 className="mt-3 text-sm font-semibold leading-tight text-foreground text-pretty">
+                          {draft.title}
+                        </h3>
+                        <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                          {draft.description}
+                        </p>
+                        <div className="mt-3 flex items-center justify-between text-[10px] text-muted-foreground">
+                          <span className="flex items-center gap-1 font-mono">
+                            <Clock className="h-2.5 w-2.5" />
+                            {draft.lastEdited}
+                          </span>
+                          <span className="font-mono">
+                            {draft.sections.length} sections · {draft.wordCount.toLocaleString()} words
+                          </span>
+                        </div>
+                      </Card>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {/* Templates */}
+          <section className={cn(filtered.length > 0 && "mt-10")}>
+            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Start from a template
+            </h2>
+            <ul className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {DRAFT_TEMPLATES.map((tpl) => (
+                <li key={tpl.id}>
+                  <button className="group w-full text-left">
+                    <Card className="h-full border-dashed bg-transparent p-4 transition-colors group-hover:border-foreground/30 group-hover:bg-muted/30">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted">
+                          <FileText className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                        <Badge variant="outline" className="gap-1 text-[10px]">
+                          <Sparkles className="h-2.5 w-2.5" />
+                          AI
+                        </Badge>
+                      </div>
+                      <h3 className="mt-3 text-sm font-semibold text-foreground">{tpl.label}</h3>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        {tpl.description}
+                      </p>
+                    </Card>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </div>
+      </ScrollArea>
+    </div>
+  )
+}
+
+function DraftStatus({ status }: { status: string }) {
+  const variants: Record<string, { label: string; className: string; icon: typeof CheckCircle2 }> = {
+    draft: {
+      label: "Draft",
+      className: "bg-muted text-muted-foreground",
+      icon: FileText,
+    },
+    review: {
+      label: "In review",
+      className: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+      icon: Clock,
+    },
+    final: {
+      label: "Final",
+      className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+      icon: CheckCircle2,
+    },
+    filed: {
+      label: "Filed",
+      className: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
+      icon: CheckCircle2,
+    },
+  }
+  const v = variants[status] ?? variants.draft
+  const Icon = v.icon
+  return (
+    <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium", v.className)}>
+      <Icon className="h-2.5 w-2.5" />
+      {v.label}
+    </span>
+  )
+}

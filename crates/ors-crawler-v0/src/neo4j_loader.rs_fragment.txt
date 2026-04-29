@@ -1,0 +1,5 @@
+        let enriched = parse_enriched_definition(&map);
+        assert_eq!(enriched.term, "term");
+        assert_eq!(enriched.definition, "definition text");
+    }
+}

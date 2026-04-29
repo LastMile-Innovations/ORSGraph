@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "crates/ors-crawler-v0",
+    "crates/orsgraph-api",
+]
+resolver = "2"

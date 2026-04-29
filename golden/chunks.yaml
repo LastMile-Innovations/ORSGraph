@@ -1,0 +1,12 @@
+# Golden tests for chunk validation
+# Placeholder - golden test runner not yet implemented
+# See: https://github.com/your-org/ors-crawler/issues/XXX
+
+tests: []
+  # Example:
+  # - name: full_statute_chunk
+  #   section: "ORS 1.002"
+  #   expected:
+  #     chunk_type: "full_statute"
+  #     answer_policy: "authoritative_support"
+  #     embedding_policy: "embed_primary"

@@ -1,0 +1,10 @@
+# Golden tests for graph integrity validation
+# Placeholder - golden test runner not yet implemented
+# See: https://github.com/your-org/ors-crawler/issues/XXX
+
+tests: []
+  # Example:
+  # - name: citation_edge_exists
+  #   from_section: "ORS 192.311"
+  #   to_section: "ORS 192.478"
+  #   expected_edge_type: "CITES"

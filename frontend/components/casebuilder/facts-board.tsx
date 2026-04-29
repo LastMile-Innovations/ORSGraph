@@ -1,0 +1,344 @@
+"use client"
+
+import { useMemo, useState } from "react"
+import Link from "next/link"
+import {
+  Search,
+  Filter,
+  Plus,
+  FileText,
+  Sparkles,
+  CheckCircle2,
+  Circle,
+  AlertTriangle,
+  Tag,
+} from "lucide-react"
+import type { Matter, ExtractedFact } from "@/lib/casebuilder/types"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
+import { Card } from "@/components/ui/card"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { ConfidenceBadge } from "./badges"
+import { cn } from "@/lib/utils"
+
+interface FactsBoardProps {
+  matter: Matter
+}
+
+type FilterMode = "all" | "disputed" | "supported" | "needs-review"
+
+export function FactsBoard({ matter }: FactsBoardProps) {
+  const [query, setQuery] = useState("")
+  const [filter, setFilter] = useState<FilterMode>("all")
+  const [selected, setSelected] = useState<string | null>(matter.facts[0]?.id ?? null)
+
+  const filtered = useMemo(() => {
+    return matter.facts.filter((f) => {
+      const matchesQuery =
+        !query ||
+        f.statement.toLowerCase().includes(query.toLowerCase()) ||
+        f.tags.some((t) => t.toLowerCase().includes(query.toLowerCase()))
+      const matchesFilter =
+        filter === "all" ||
+        (filter === "disputed" && f.disputed) ||
+        (filter === "supported" && !f.disputed && f.confidence >= 0.8) ||
+        (filter === "needs-review" && f.confidence < 0.7)
+      return matchesQuery && matchesFilter
+    })
+  }, [matter.facts, query, filter])
+
+  const selectedFact = matter.facts.find((f) => f.id === selected) ?? filtered[0]
+
+  return (
+    <div className="flex flex-col">
+      {/* Header */}
+      <div className="border-b border-border bg-background px-6 py-4">
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">Facts</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {matter.facts.length} facts extracted from {matter.documents.length} documents
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
+              <Sparkles className="h-3.5 w-3.5" />
+              Auto-extract
+            </Button>
+            <Button size="sm" className="gap-1.5">
+              <Plus className="h-3.5 w-3.5" />
+              Add fact
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <div className="relative max-w-sm flex-1">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search facts, tags, dates..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="h-8 pl-8 text-xs"
+            />
+          </div>
+          <FilterPill active={filter === "all"} onClick={() => setFilter("all")}>
+            All ({matter.facts.length})
+          </FilterPill>
+          <FilterPill active={filter === "supported"} onClick={() => setFilter("supported")}>
+            Supported ({matter.facts.filter((f) => !f.disputed && f.confidence >= 0.8).length})
+          </FilterPill>
+          <FilterPill active={filter === "disputed"} onClick={() => setFilter("disputed")}>
+            Disputed ({matter.facts.filter((f) => f.disputed).length})
+          </FilterPill>
+          <FilterPill
+            active={filter === "needs-review"}
+            onClick={() => setFilter("needs-review")}
+          >
+            Needs review ({matter.facts.filter((f) => f.confidence < 0.7).length})
+          </FilterPill>
+        </div>
+      </div>
+
+      {/* Two-pane: list + detail */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="border-r border-border">
+          <ScrollArea className="h-[calc(100vh-200px)]">
+            <ul className="divide-y divide-border">
+              {filtered.map((fact) => (
+                <FactRow
+                  key={fact.id}
+                  fact={fact}
+                  active={selectedFact?.id === fact.id}
+                  onClick={() => setSelected(fact.id)}
+                />
+              ))}
+              {filtered.length === 0 && (
+                <li className="flex flex-col items-center gap-2 px-6 py-16 text-center">
+                  <Filter className="h-8 w-8 text-muted-foreground" />
+                  <p className="text-sm font-medium text-foreground">No facts match</p>
+                  <p className="text-xs text-muted-foreground">
+                    Try a different filter or search term.
+                  </p>
+                </li>
+              )}
+            </ul>
+          </ScrollArea>
+        </div>
+
+        <aside className="bg-card">
+          {selectedFact ? (
+            <FactDetail fact={selectedFact} matter={matter} />
+          ) : (
+            <div className="flex h-full items-center justify-center p-8 text-center">
+              <p className="text-sm text-muted-foreground">Select a fact to inspect</p>
+            </div>
+          )}
+        </aside>
+      </div>
+    </div>
+  )
+}
+
+function FilterPill({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+        active
+          ? "border-foreground bg-foreground text-background"
+          : "border-border bg-background text-muted-foreground hover:bg-muted",
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+function FactRow({
+  fact,
+  active,
+  onClick,
+}: {
+  fact: ExtractedFact
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <li
+      id={fact.id}
+      onClick={onClick}
+      className={cn(
+        "cursor-pointer px-6 py-3 transition-colors",
+        active ? "bg-muted/60" : "hover:bg-muted/30",
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <FactStatusIcon fact={fact} />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium leading-snug text-foreground text-pretty">
+            {fact.statement}
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+            {fact.date && <span className="font-mono">{fact.date}</span>}
+            {fact.date && <span>·</span>}
+            <span>
+              {fact.sourceDocumentIds.length} source
+              {fact.sourceDocumentIds.length === 1 ? "" : "s"}
+            </span>
+            {fact.tags.slice(0, 3).map((t) => (
+              <Badge key={t} variant="secondary" className="text-[9px] font-normal">
+                {t}
+              </Badge>
+            ))}
+          </div>
+        </div>
+        <ConfidenceBadge value={fact.confidence} size="sm" />
+      </div>
+    </li>
+  )
+}
+
+function FactStatusIcon({ fact }: { fact: ExtractedFact }) {
+  if (fact.disputed) {
+    return <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+  }
+  if (fact.confidence >= 0.85) {
+    return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+  }
+  return <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+}
+
+function FactDetail({ fact, matter }: { fact: ExtractedFact; matter: Matter }) {
+  const sources = matter.documents.filter((d) => fact.sourceDocumentIds.includes(d.id))
+  const linkedClaims = matter.claims.filter((c) => c.supportingFactIds.includes(fact.id))
+
+  return (
+    <ScrollArea className="h-[calc(100vh-200px)]">
+      <div className="space-y-5 p-5">
+        <div>
+          <div className="flex items-center gap-2">
+            <FactStatusIcon fact={fact} />
+            <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+              {fact.id}
+            </p>
+          </div>
+          <p className="mt-2 text-base font-semibold leading-snug text-foreground text-pretty">
+            {fact.statement}
+          </p>
+          <div className="mt-3 flex items-center gap-2">
+            <ConfidenceBadge value={fact.confidence} />
+            {fact.disputed && (
+              <Badge variant="outline" className="gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="h-3 w-3" />
+                Disputed
+              </Badge>
+            )}
+          </div>
+        </div>
+
+        <DetailRow label="Date">
+          {fact.date ? <span className="font-mono">{fact.date}</span> : "—"}
+        </DetailRow>
+        <DetailRow label="Tags">
+          <div className="flex flex-wrap gap-1">
+            {fact.tags.map((t) => (
+              <Badge key={t} variant="secondary" className="text-[10px]">
+                <Tag className="mr-1 h-2.5 w-2.5" />
+                {t}
+              </Badge>
+            ))}
+          </div>
+        </DetailRow>
+
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Sources
+          </h3>
+          <ul className="mt-2 space-y-1.5">
+            {sources.map((doc) => {
+              const citation = fact.citations.find((c) => c.documentId === doc.id)
+              return (
+                <li key={doc.id}>
+                  <Link
+                    href={`/matters/${matter.id}/documents/${doc.id}${citation?.chunkId ? `#${citation.chunkId}` : ""}`}
+                    className="flex items-start gap-2 rounded-md border border-border bg-background p-2.5 text-xs transition-colors hover:border-foreground/20 hover:bg-muted/40"
+                  >
+                    <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-foreground">{doc.title}</p>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        {citation?.snippet ?? doc.summary}
+                      </p>
+                      {citation && (
+                        <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+                          {citation.chunkId} · p.{citation.page}
+                        </p>
+                      )}
+                    </div>
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+
+        {linkedClaims.length > 0 && (
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Used in claims
+            </h3>
+            <ul className="mt-2 space-y-1">
+              {linkedClaims.map((claim) => (
+                <li key={claim.id}>
+                  <Link
+                    href={`/matters/${matter.id}/claims#${claim.id}`}
+                    className="block rounded-md border border-border bg-background p-2 text-xs hover:border-foreground/20 hover:bg-muted/40"
+                  >
+                    <Badge variant="outline" className="text-[9px] capitalize">
+                      {claim.kind}
+                    </Badge>
+                    <p className="mt-1 font-medium text-foreground">{claim.title}</p>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <Card className="border-border/60 bg-muted/20 p-3">
+          <div className="flex items-start gap-2">
+            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground" />
+            <div className="text-xs">
+              <p className="font-medium text-foreground">AI suggestion</p>
+              <p className="mt-1 leading-relaxed text-muted-foreground">
+                Cross-reference with{" "}
+                <span className="font-mono">{fact.sourceDocumentIds[0] ?? "DOC-001"}</span> to
+                confirm timing. Consider adding a deposition transcript to strengthen.
+              </p>
+            </div>
+          </div>
+        </Card>
+      </div>
+    </ScrollArea>
+  )
+}
+
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-3 border-b border-border pb-2 text-xs">
+      <span className="font-medium text-muted-foreground">{label}</span>
+      <div className="text-right text-foreground">{children}</div>
+    </div>
+  )
+}

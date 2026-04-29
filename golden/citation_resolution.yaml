@@ -1,0 +1,10 @@
+# Golden tests for citation resolution validation
+# Placeholder - golden test runner not yet implemented
+# See: https://github.com/your-org/ors-crawler/issues/XXX
+
+tests: []
+  # Example:
+  # - name: resolve_ors_section
+  #   citation: "ORS 1.002"
+  #   expected_status: "resolved_section"
+  #   expected_target: "or:ors:1.002"

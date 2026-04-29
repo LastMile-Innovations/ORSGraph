@@ -1,0 +1,23 @@
+    #[test]
+    fn test_compare_count() {
+        let mut mismatches = Vec::new();
+        compare_count(&mut mismatches, "test", 10, 5);
+        assert_eq!(mismatches.len(), 1);
+        assert!(mismatches[0].contains("expected 10, actual 5"));
+    }
+
+    #[test]
+    fn test_count_retrieval_chunks() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("orsgraph-qc-neo4j-chunks-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).unwrap();
+        let sub_dir = temp_dir.join("sub");
+        fs::create_dir_all(&sub_dir).unwrap();
+
+        fs::write(temp_dir.join("retrieval_chunks.jsonl"), "{\"a\":1}\n").unwrap();
+        fs::write(sub_dir.join("retrieval_chunks.jsonl"), "{\"b\":2}\n").unwrap();
+
+        assert_eq!(count_retrieval_chunks(&temp_dir).unwrap(), 2);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+}

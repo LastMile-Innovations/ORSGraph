@@ -1,0 +1,72 @@
+import type { GraphMode } from "./types"
+
+export const GRAPH_MODES: Array<{ value: GraphMode; label: string }> = [
+  { value: "legal", label: "Legal" },
+  { value: "citation", label: "Citations" },
+  { value: "semantic", label: "Meaning" },
+  { value: "history", label: "History" },
+  { value: "hybrid", label: "Hybrid" },
+  { value: "embedding_similarity", label: "Similarity" },
+]
+
+export const RELATIONSHIP_FAMILIES = {
+  hierarchy: ["HAS_VERSION", "VERSION_OF", "CONTAINS", "PART_OF_VERSION", "HAS_PARENT", "NEXT", "PREVIOUS"],
+  citations: ["CITES", "MENTIONS_CITATION", "RESOLVES_TO", "RESOLVES_TO_VERSION", "RESOLVES_TO_PROVISION", "CITES_EXTERNAL"],
+  semantics: ["EXPRESSES", "SUPPORTED_BY", "IMPOSED_ON", "REQUIRES_ACTION", "SUBJECT_TO"],
+  definitions: ["DEFINES", "HAS_SCOPE"],
+  deadlines: ["HAS_DEADLINE"],
+  penalties: ["VIOLATION_PENALIZED_BY"],
+  notices: ["REQUIRES_NOTICE"],
+  history: ["HAS_STATUS_EVENT", "HAS_TEMPORAL_EFFECT", "HAS_LINEAGE_EVENT", "FORMERLY", "RENUMBERED_TO", "REPEALED_BY", "MENTIONS_SESSION_LAW", "ENACTS", "AFFECTS", "AFFECTS_VERSION"],
+  provenance: ["HAS_SOURCE_NOTE", "DERIVED_FROM"],
+  retrieval: ["HAS_CHUNK", "CHUNK_OF", "PART_OF_CHUNK"],
+  similarity: ["SIMILAR_TO"],
+} as const
+
+export const NODE_FAMILIES = {
+  statutes: ["LegalTextIdentity"],
+  versions: ["LegalTextVersion", "ChapterVersion"],
+  provisions: ["Provision"],
+  chunks: ["RetrievalChunk"],
+  definitions: ["Definition", "DefinedTerm", "DefinitionScope"],
+  duties: ["LegalSemanticNode", "Obligation", "Power", "Permission", "Prohibition"],
+  deadlines: ["Deadline"],
+  penalties: ["Penalty"],
+  remedies: ["Remedy"],
+  notices: ["RequiredNotice", "FormText"],
+  actors: ["LegalActor", "LegalAction"],
+  history: ["SourceNote", "StatusEvent", "TemporalEffect", "LineageEvent", "SessionLaw", "Amendment"],
+  diagnostics: ["ParserDiagnostic"],
+} as const
+
+export const NODE_COLORS: Record<string, string> = {
+  LegalTextIdentity: "#60a5fa",
+  LegalTextVersion: "#2563eb",
+  ChapterVersion: "#38bdf8",
+  Provision: "#34d399",
+  RetrievalChunk: "#94a3b8",
+  CitationMention: "#64748b",
+  ExternalLegalCitation: "#475569",
+  Definition: "#a78bfa",
+  DefinedTerm: "#c084fc",
+  DefinitionScope: "#d8b4fe",
+  Obligation: "#10b981",
+  Power: "#14b8a6",
+  Permission: "#22d3ee",
+  Prohibition: "#ef4444",
+  Deadline: "#f59e0b",
+  Penalty: "#f97316",
+  Exception: "#eab308",
+  Remedy: "#f472b6",
+  RequiredNotice: "#facc15",
+  FormText: "#a16207",
+  LegalActor: "#f8fafc",
+  LegalAction: "#86efac",
+  SourceNote: "#d6d3d1",
+  StatusEvent: "#fb923c",
+  TemporalEffect: "#fbbf24",
+  LineageEvent: "#fb7185",
+  SessionLaw: "#818cf8",
+  Amendment: "#c084fc",
+  ParserDiagnostic: "#ef4444",
+}
