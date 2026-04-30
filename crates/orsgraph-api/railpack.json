@@ -1,0 +1,6 @@
+{
+  "providers": ["rust"],
+  "rust": {
+    "version": "1.95.0"
+  }
+}
