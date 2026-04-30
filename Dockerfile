@@ -22,11 +22,20 @@ RUN cargo build --release
 # Stage 2: Runtime
 FROM debian:trixie-slim AS runtime
 
-# Install runtime dependencies
+# Install runtime dependencies + rclone for S3 sync
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+    curl \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install rclone for S3 data sync
+RUN curl -sSL https://downloads.rclone.org/rclone-current-linux-amd64.zip -o /tmp/rclone.zip \
+    && unzip /tmp/rclone.zip -d /tmp \
+    && mv /tmp/rclone-*-linux-amd64/rclone /usr/local/bin/rclone \
+    && chmod +x /usr/local/bin/rclone \
+    && rm -rf /tmp/rclone.zip /tmp/rclone-*-linux-amd64
 
 WORKDIR /app
 
@@ -43,5 +52,9 @@ RUN mkdir -p /app/data
 ENV RUST_LOG=info
 ENV NEO4J_USER=neo4j
 
+# Copy startup script
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
 # Command to run
-ENTRYPOINT ["/app/ors-crawler-v0"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
