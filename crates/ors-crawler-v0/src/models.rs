@@ -134,7 +134,7 @@ pub struct CitationMention {
     pub qc_severity: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RetrievalChunk {
     pub chunk_id: String,
     pub chunk_type: String,
@@ -195,7 +195,7 @@ pub struct RetrievalChunk {
     pub embedding_source_dimension: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EnrichedChunk {
     pub chunk_id: String,
     pub text: String,
@@ -459,7 +459,7 @@ pub struct LineageEvent {
     pub confidence: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CitesEdge {
     pub edge_id: String,
     pub edge_type: String,
@@ -472,7 +472,7 @@ pub struct CitesEdge {
     pub citation_mention_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StatusEvent {
     pub status_event_id: String,
     pub status_type: String,
@@ -498,7 +498,7 @@ pub struct StatusEvent {
     pub extraction_method: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Amendment {
     pub amendment_id: String,
     pub amendment_type: String,
@@ -520,7 +520,7 @@ pub struct Amendment {
     pub source_note_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionLaw {
     pub session_law_id: String,
     #[serde(default)]
@@ -542,7 +542,7 @@ pub struct SessionLaw {
     pub confidence: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TimeInterval {
     pub time_interval_id: String,
     pub start_date: Option<String>,
@@ -551,7 +551,7 @@ pub struct TimeInterval {
     pub certainty: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DefinedTerm {
     pub defined_term_id: String,
     pub term: String,
@@ -560,7 +560,7 @@ pub struct DefinedTerm {
     pub authority_family: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Definition {
     pub definition_id: String,
     pub term: String,
@@ -576,7 +576,7 @@ pub struct Definition {
     pub definition_scope_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DefinitionScope {
     pub definition_scope_id: String,
     pub scope_type: String,
@@ -587,7 +587,7 @@ pub struct DefinitionScope {
     pub target_range_end: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LegalSemanticNode {
     pub semantic_id: String,
     pub semantic_type: String,
@@ -599,7 +599,7 @@ pub struct LegalSemanticNode {
     pub extraction_method: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Obligation {
     pub obligation_id: String,
     pub text: String,
@@ -616,7 +616,7 @@ pub struct Obligation {
     pub penalty_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Exception {
     pub exception_id: String,
     pub text: String,
@@ -629,7 +629,7 @@ pub struct Exception {
     pub target_obligation_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Deadline {
     pub deadline_id: String,
     pub text: String,
@@ -643,7 +643,7 @@ pub struct Deadline {
     pub obligation_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Penalty {
     pub penalty_id: String,
     pub text: String,
@@ -675,7 +675,7 @@ pub struct Penalty {
     pub target_citation: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Remedy {
     pub remedy_id: String,
     pub text: String,
@@ -686,7 +686,7 @@ pub struct Remedy {
     pub confidence: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LegalActor {
     pub actor_id: String,
     pub name: String,
@@ -695,7 +695,7 @@ pub struct LegalActor {
     pub jurisdiction_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LegalAction {
     pub action_id: String,
     pub verb: String,

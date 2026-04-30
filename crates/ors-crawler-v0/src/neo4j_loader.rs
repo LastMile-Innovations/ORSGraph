@@ -17,8 +17,10 @@ use std::sync::Arc;
 use tracing::info;
 
 const DEFAULT_EMBEDDING_UPDATE_BATCH_SIZE: usize = 1000;
-const DEFAULT_NODE_BATCH_SIZE: usize = 5000;
-const DEFAULT_RELATIONSHIP_BATCH_SIZE: usize = 5000;
+
+static CONCURRENT_TX_PATTERN: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| {
+    Regex::new(r"IN \d+ CONCURRENT TRANSACTIONS OF \d+ ROWS").unwrap()
+});
 
 #[cfg(test)]
 fn needs_embedding_for_metadata(
@@ -82,34 +84,42 @@ impl Neo4jLoader {
     /// Enterprise Edition supports `IN N CONCURRENT TRANSACTIONS OF X ROWS` syntax,
     /// but Community Edition only supports `IN TRANSACTIONS OF X ROWS`.
     /// This function normalizes all patterns to the Community Edition compatible format.
+    /// It also replaces the :transaction placeholder with the appropriate batch syntax.
     fn with_transaction_batch(query_str: String, batch_size: usize) -> String {
-        let batch_size = batch_size.max(1).to_string();
+        let batch_size_str = batch_size.max(1).to_string();
 
-        // First, use regex to replace all "IN N CONCURRENT TRANSACTIONS OF M ROWS" patterns
-        let concurrent_pattern = Regex::new(r"IN \d+ CONCURRENT TRANSACTIONS OF \d+ ROWS").unwrap();
-        let result = concurrent_pattern
-            .replace_all(&query_str, &format!("IN TRANSACTIONS OF {batch_size} ROWS"));
+        // 1. Handle :transaction placeholder if present
+        let mut result = query_str.replace(
+            ":transaction",
+            &format!("CALL {{ WITH row }} IN TRANSACTIONS OF {batch_size_str} ROWS"),
+        );
 
-        // Then handle standard transaction patterns - update to requested batch size
-        let result = result
+        // 2. Normalize any existing concurrent transaction patterns
+        result = CONCURRENT_TX_PATTERN
+            .replace_all(
+                &result,
+                &format!("IN TRANSACTIONS OF {batch_size_str} ROWS"),
+            )
+            .to_string();
+
+        // 3. Update any hardcoded batch sizes to the requested batch_size
+        result
             .replace(
                 "IN TRANSACTIONS OF 1000 ROWS",
-                &format!("IN TRANSACTIONS OF {batch_size} ROWS"),
+                &format!("IN TRANSACTIONS OF {batch_size_str} ROWS"),
             )
             .replace(
                 "IN TRANSACTIONS OF 5000 ROWS",
-                &format!("IN TRANSACTIONS OF {batch_size} ROWS"),
+                &format!("IN TRANSACTIONS OF {batch_size_str} ROWS"),
             )
             .replace(
                 "IN TRANSACTIONS OF 250 ROWS",
-                &format!("IN TRANSACTIONS OF {batch_size} ROWS"),
+                &format!("IN TRANSACTIONS OF {batch_size_str} ROWS"),
             )
             .replace(
                 "IN TRANSACTIONS OF 100 ROWS",
-                &format!("IN TRANSACTIONS OF {batch_size} ROWS"),
-            );
-
-        result.to_string()
+                &format!("IN TRANSACTIONS OF {batch_size_str} ROWS"),
+            )
     }
 
     /// Deduplicates a vector of items by a key extractor function.
@@ -913,7 +923,7 @@ impl Neo4jLoader {
     pub async fn materialize_chunk_edges(&self, relationship_batch_size: usize) -> Result<()> {
         // Use smaller batch size for chunk relationships to avoid memory pool errors
         let chunk_batch_size = relationship_batch_size.min(500);
-        
+
         let provision_q = Self::with_transaction_batch(
             "
             CALL {
@@ -1999,7 +2009,7 @@ fn neo4j_value_to_bolt(val: serde_json::Value) -> neo4rs::BoltType {
 
 #[cfg(test)]
 mod tests {
-    use super::needs_embedding_for_metadata;
+    use super::*;
 
     #[test]
     fn embedding_candidate_selection_matches_resume_rules() {
@@ -2115,5 +2125,13 @@ mod tests {
         let enriched = parse_enriched_definition(&map);
         assert_eq!(enriched.term, "term");
         assert_eq!(enriched.definition, "definition text");
+    }
+
+    #[test]
+    fn test_with_transaction_batch() {
+        let query = "UNWIND $rows AS row :transaction".to_string();
+        let result = Neo4jLoader::with_transaction_batch(query, 5000);
+        assert!(result.contains("CALL { WITH row"));
+        assert!(result.contains("} IN TRANSACTIONS OF 5000 ROWS"));
     }
 }

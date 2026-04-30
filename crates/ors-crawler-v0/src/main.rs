@@ -1531,95 +1531,39 @@ async fn run_seed(
 
     // Phase 9: Create all relationships
     info!("═══ Phase 9: Creating Graph Relationships ═══");
+    let start_all = Instant::now();
+    let rel_batch = seed_batch_config.relationship_batch_size;
 
-    let start = Instant::now();
-    info!("Creating Identity -> Version relationships");
+    // Group 1: Core structural relationships (must be somewhat sequential due to dependencies)
+    info!("Creating core structural relationships...");
+    loader.materialize_identity_version_edges(rel_batch).await?;
     loader
-        .materialize_identity_version_edges(seed_batch_config.relationship_batch_size)
+        .materialize_version_provision_edges(rel_batch)
         .await?;
-    log_seed_phase_done("Identity -> Version relationships", 0, start);
-
-    let start = Instant::now();
-    info!("Creating Version -> Provision relationships");
     loader
-        .materialize_version_provision_edges(seed_batch_config.relationship_batch_size)
+        .materialize_structural_edges(edition_year, rel_batch)
         .await?;
-    log_seed_phase_done("Version -> Provision relationships", 0, start);
-
-    let start = Instant::now();
-    info!("Creating structural jurisdiction/corpus/chapter relationships");
     loader
-        .materialize_structural_edges(edition_year, seed_batch_config.relationship_batch_size)
+        .materialize_provision_hierarchy_edges(rel_batch)
         .await?;
-    log_seed_phase_done("Structural relationships", 0, start);
 
-    let start = Instant::now();
-    info!("Creating Provision hierarchy relationships");
-    loader
-        .materialize_provision_hierarchy_edges(seed_batch_config.relationship_batch_size)
-        .await?;
-    log_seed_phase_done("Provision hierarchy relationships", 0, start);
+    // Group 2: Independent leaf relationships (can run concurrently)
+    info!("Creating leaf relationships concurrently...");
+    tokio::try_join!(
+        loader.materialize_citation_edges(rel_batch),
+        loader.materialize_chunk_edges(rel_batch),
+        loader.materialize_source_edges(rel_batch),
+        loader.materialize_semantic_edges(rel_batch),
+        loader.materialize_definition_edges(rel_batch),
+        loader.materialize_obligation_edges(rel_batch),
+        loader.materialize_history_edges(rel_batch),
+        loader.materialize_specialized_edges(rel_batch),
+    )?;
 
-    let start = Instant::now();
-    info!("Creating CitationMention audit relationships");
-    loader
-        .materialize_citation_edges(seed_batch_config.relationship_batch_size)
-        .await?;
-    log_seed_phase_done("CitationMention audit relationships", 0, start);
-
-    let start = Instant::now();
-    info!("Creating Chunk relationships");
-    loader
-        .materialize_chunk_edges(seed_batch_config.relationship_batch_size)
-        .await?;
-    log_seed_phase_done("Chunk relationships", 0, start);
-
-    let start = Instant::now();
-    info!("Creating SourceDocument relationships");
-    loader
-        .materialize_source_edges(seed_batch_config.relationship_batch_size)
-        .await?;
-    log_seed_phase_done("SourceDocument relationships", 0, start);
-
-    let start = Instant::now();
-    info!("Creating Semantic relationships");
-    loader
-        .materialize_semantic_edges(seed_batch_config.relationship_batch_size)
-        .await?;
-    log_seed_phase_done("Semantic relationships", 0, start);
-
-    let start = Instant::now();
-    info!("Creating Definition relationships");
-    loader
-        .materialize_definition_edges(seed_batch_config.relationship_batch_size)
-        .await?;
-    log_seed_phase_done("Definition relationships", 0, start);
-
-    let start = Instant::now();
-    info!("Creating Obligation/Actor relationships");
-    loader
-        .materialize_obligation_edges(seed_batch_config.relationship_batch_size)
-        .await?;
-    log_seed_phase_done("Obligation relationships", 0, start);
-
-    let start = Instant::now();
-    info!("Creating History/Temporal relationships");
-    loader
-        .materialize_history_edges(seed_batch_config.relationship_batch_size)
-        .await?;
-    log_seed_phase_done("History relationships", 0, start);
-
-    let start = Instant::now();
-    info!("Creating Specialized extract relationships");
-    loader
-        .materialize_specialized_edges(seed_batch_config.relationship_batch_size)
-        .await?;
-    log_seed_phase_done("Specialized relationships", 0, start);
-
-    let start = Instant::now();
-    info!("Enforcing current flags on LegalTextVersion nodes");
+    info!("Enforcing current flags on LegalTextVersion nodes...");
     loader.enforce_current_flags().await?;
-    log_seed_phase_done("Current flag enforcement", 0, start);
+
+    log_seed_phase_done("All relationships materialized", 0, start_all);
 
     // Phase 9: Load CITES edges (if citation resolution has been run)
     let edges_path = graph_dir.join("cites_edges.jsonl");

@@ -241,4 +241,24 @@ mod tests {
         assert!(path.exists());
         let _ = fs::remove_file(path);
     }
+
+    #[test]
+    fn test_jsonl_read_large_buffer() {
+        let path = std::env::temp_dir().join(format!("test-large-{}.jsonl", uuid::Uuid::new_v4()));
+        let mut rows = Vec::new();
+        for i in 0..5000 {
+            rows.push(Row {
+                id: format!("id_{:05}", i),
+            });
+        }
+        super::write_jsonl(&path, &rows).unwrap();
+
+        let mut count = 0;
+        for batch in super::read_jsonl_batches::<Row>(&path, 1000).unwrap() {
+            let batch = batch.unwrap();
+            count += batch.len();
+        }
+        let _ = fs::remove_file(path);
+        assert_eq!(count, 5000);
+    }
 }

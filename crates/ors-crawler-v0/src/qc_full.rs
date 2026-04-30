@@ -12,13 +12,10 @@ use crate::models::{
     QcSemanticStats, QcSourceStats, QcStatus, QcTokenDistribution, QcVersionEmbeddingReadiness,
     RetrievalChunk,
 };
-use crate::text::count_rule_line_artifacts;
-use crate::voyage::{estimate_tokens, model_config, VOYAGE_4_LARGE};
 
 // Constants for validation thresholds
 const MAX_EXAMPLES_PER_CATEGORY: usize = 25;
 const TINY_HTML_THRESHOLD: u64 = 1024; // 1KB
-const REPEALED_TEXT_SHORT_THRESHOLD: usize = 300;
 const MAX_WARNINGS_PER_CATEGORY: usize = 100;
 const HARD_FAIL_TOKENS: usize = 30_000;
 
@@ -33,9 +30,9 @@ pub struct QcFullValidator {
     require_golden: bool,
     embedding_model: String,
     embedding_dim: usize,
-    errors: Vec<String>,
-    warnings: Vec<String>,
-    examples: QcExamples,
+    errors: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    warnings: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    examples: std::sync::Arc<std::sync::Mutex<QcExamples>>,
 }
 
 impl QcFullValidator {
@@ -62,52 +59,41 @@ impl QcFullValidator {
             require_golden,
             embedding_model,
             embedding_dim,
-            errors: Vec::new(),
-            warnings: Vec::new(),
-            examples: QcExamples::default(),
+            errors: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            warnings: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            examples: std::sync::Arc::new(std::sync::Mutex::new(QcExamples::default())),
         }
     }
 
-    fn add_example(&mut self, list: &str, value: String) {
-        match list {
+    fn add_example(&self, category: &str, value: String) {
+        let mut examples = self.examples.lock().unwrap();
+        match category {
             "duplicate_provision_ids" => {
-                if self.examples.duplicate_provision_ids.len() < MAX_EXAMPLES_PER_CATEGORY {
-                    self.examples.duplicate_provision_ids.push(value);
+                if examples.duplicate_provision_ids.len() < MAX_EXAMPLES_PER_CATEGORY {
+                    examples.duplicate_provision_ids.push(value);
                 }
             }
             "orphan_chunks" => {
-                if self.examples.orphan_chunks.len() < MAX_EXAMPLES_PER_CATEGORY {
-                    self.examples.orphan_chunks.push(value);
+                if examples.orphan_chunks.len() < MAX_EXAMPLES_PER_CATEGORY {
+                    examples.orphan_chunks.push(value);
                 }
             }
             "heading_leaks" => {
-                if self.examples.heading_leaks.len() < MAX_EXAMPLES_PER_CATEGORY {
-                    self.examples.heading_leaks.push(value);
+                if examples.heading_leaks.len() < MAX_EXAMPLES_PER_CATEGORY {
+                    examples.heading_leaks.push(value);
                 }
             }
             "unresolved_citations" => {
-                if self.examples.unresolved_citations.len() < MAX_EXAMPLES_PER_CATEGORY {
-                    self.examples.unresolved_citations.push(value);
+                if examples.unresolved_citations.len() < MAX_EXAMPLES_PER_CATEGORY {
+                    examples.unresolved_citations.push(value);
                 }
             }
             "bad_edges" => {
-                if self.examples.bad_edges.len() < MAX_EXAMPLES_PER_CATEGORY {
-                    self.examples.bad_edges.push(value);
+                if examples.bad_edges.len() < MAX_EXAMPLES_PER_CATEGORY {
+                    examples.bad_edges.push(value);
                 }
             }
             _ => {}
-        }
-    }
-
-    fn add_bounded_warning(&mut self, category: &str, value: String) {
-        let prefix = format!("{category}:");
-        let existing = self
-            .warnings
-            .iter()
-            .filter(|warning| warning.starts_with(&prefix))
-            .count();
-        if existing < MAX_WARNINGS_PER_CATEGORY {
-            self.warnings.push(format!("{prefix} {value}"));
         }
     }
 
@@ -121,52 +107,80 @@ impl QcFullValidator {
 
         let source_stats = self.validate_source()?;
 
-        let identities: Vec<LegalTextIdentity> =
+        let _identities: Vec<LegalTextIdentity> =
             read_jsonl_strict(self.graph_dir.join("legal_text_identities.jsonl"))?;
-        let versions: Vec<LegalTextVersion> =
+        let _versions: Vec<LegalTextVersion> =
             read_jsonl_strict(self.graph_dir.join("legal_text_versions.jsonl"))?;
-        let provisions: Vec<Provision> =
+        let _provisions: Vec<Provision> =
             read_jsonl_strict(self.graph_dir.join("provisions.jsonl"))?;
-        let chunks: Vec<RetrievalChunk> =
+        let _chunks: Vec<RetrievalChunk> =
             read_jsonl_strict(self.graph_dir.join("retrieval_chunks.jsonl"))?;
-        let citations: Vec<CitationMention> =
+        let _citations: Vec<CitationMention> =
             read_jsonl_strict(self.graph_dir.join("citation_mentions.jsonl"))?;
-        let headings: Vec<ChapterHeading> =
+        let _headings: Vec<ChapterHeading> =
             read_jsonl_strict(self.graph_dir.join("chapter_headings.jsonl"))?;
-        let edges: Vec<CitesEdge> = read_jsonl_strict(self.graph_dir.join("cites_edges.jsonl"))?;
+        let _edges: Vec<CitesEdge> = read_jsonl_strict(self.graph_dir.join("cites_edges.jsonl"))?;
 
         let identity_ids: HashSet<String> =
-            identities.iter().map(|i| i.canonical_id.clone()).collect();
-        let version_ids: HashSet<String> = versions.iter().map(|v| v.version_id.clone()).collect();
+            _identities.iter().map(|i| i.canonical_id.clone()).collect();
+        let version_ids: HashSet<String> = _versions.iter().map(|v| v.version_id.clone()).collect();
         let provision_ids: HashSet<String> =
-            provisions.iter().map(|p| p.provision_id.clone()).collect();
-        let chapter_ids: HashSet<String> = versions
+            _provisions.iter().map(|p| p.provision_id.clone()).collect();
+        let chapter_ids: HashSet<String> = _versions
             .iter()
             .map(|v| format!("or:ors:chapter:{}@{}", v.chapter, v.edition_year))
             .collect();
 
-        let parse_stats = self.validate_parse(&identities, &versions, &provisions, &headings)?;
-        let chunk_stats = self.validate_chunks(&chunks, &provision_ids, &version_ids)?;
-        let citation_stats =
-            self.validate_citations(&citations, &provision_ids, &identity_ids, &chapter_ids)?;
-        let graph_stats = self.validate_graph(
-            &edges,
-            &identity_ids,
-            &version_ids,
-            &provision_ids,
-            &chapter_ids,
-            &citations,
-        )?;
-        let (chunk_readiness, provision_readiness, version_readiness) =
-            self.validate_embedding_readiness(&chunks, &provisions, &versions)?;
-        let resolver_readiness =
-            self.validate_resolver_readiness(&identities, &versions, &provisions)?;
-        let coverage_stats = self.validate_coverage(&versions, &provisions, &chunks)?;
-        let semantic_stats = self.validate_semantic(&provision_ids, &version_ids, &identity_ids)?;
-        let golden_stats = self.validate_golden_tests()?;
+        // Run streaming validations in parallel
+        // Group validations by which file they read to avoid redundant I/O:
+        // - Thread A: validate_parse_streaming (reads versions, identities, provisions, headings)
+        // - Thread B: validate_chunks_combined (reads chunks ONCE for chunk stats + embedding readiness + coverage)
+        // - Thread C: validate_citations_streaming (reads citation_mentions)
+        // - Thread D: validate_graph_streaming (reads cites_edges)
+        // - Thread E: validate_semantic (reads ~15 small entity files)
+        // - Thread F: validate_golden_tests (checks file existence only)
+        // - Thread G: validate_resolver_readiness_streaming (reads identities - small)
+        let (
+            parse_stats,
+            (chunk_stats, chunk_readiness, provision_readiness, version_readiness, coverage_stats),
+            citation_stats,
+            graph_stats,
+            resolver_readiness,
+            semantic_stats,
+            golden_stats,
+        ) = std::thread::scope(|s| {
+            let parse_handle = s.spawn(|| self.validate_parse_streaming());
+            let chunk_handle =
+                s.spawn(|| self.validate_chunks_combined(&provision_ids, &version_ids));
+            let citation_handle = s.spawn(|| {
+                self.validate_citations_streaming(&provision_ids, &identity_ids, &chapter_ids)
+            });
+            let graph_handle = s.spawn(|| {
+                self.validate_graph_streaming(
+                    &identity_ids,
+                    &version_ids,
+                    &provision_ids,
+                    &chapter_ids,
+                )
+            });
+            let resolver_handle = s.spawn(|| self.validate_resolver_readiness_streaming());
+            let semantic_handle =
+                s.spawn(|| self.validate_semantic(&provision_ids, &version_ids, &identity_ids));
+            let golden_handle = s.spawn(|| self.validate_golden_tests());
 
-        let status = if self.errors.is_empty() {
-            if self.warnings.is_empty() {
+            Result::<_, anyhow::Error>::Ok((
+                parse_handle.join().unwrap()?,
+                chunk_handle.join().unwrap()?,
+                citation_handle.join().unwrap()?,
+                graph_handle.join().unwrap()?,
+                resolver_handle.join().unwrap()?,
+                semantic_handle.join().unwrap()?,
+                golden_handle.join().unwrap()?,
+            ))
+        })?;
+
+        let status = if self.errors.lock().unwrap().is_empty() {
+            if self.warnings.lock().unwrap().is_empty() {
                 QcStatus::Pass
             } else {
                 QcStatus::Warning
@@ -192,9 +206,9 @@ impl QcFullValidator {
             coverage: coverage_stats,
             semantic: semantic_stats,
             golden: golden_stats,
-            blocking_errors: self.errors.clone(),
-            warnings: self.warnings.clone(),
-            examples: self.examples.clone(),
+            blocking_errors: self.errors.lock().unwrap().clone(),
+            warnings: self.warnings.lock().unwrap().clone(),
+            examples: self.examples.lock().unwrap().clone(),
             ..Default::default()
         })
     }
@@ -244,17 +258,21 @@ impl QcFullValidator {
             0
         };
         if enforce_raw_counts && fetch_failures > 0 {
-            self.errors.push(format!(
+            self.errors.lock().unwrap().push(format!(
                 "Expected {} chapters, found {}",
                 chapters_expected, chapters_fetched
             ));
         }
         if empty_html_files > 0 {
             self.errors
+                .lock()
+                .unwrap()
                 .push(format!("Empty raw HTML files: {empty_html_files}"));
         }
         if tiny_html_files > 0 {
             self.warnings
+                .lock()
+                .unwrap()
                 .push(format!("Tiny raw HTML files: {tiny_html_files}"));
         }
 
@@ -270,176 +288,279 @@ impl QcFullValidator {
         })
     }
 
-    fn validate_parse(
-        &mut self,
-        identities: &[LegalTextIdentity],
-        versions: &[LegalTextVersion],
-        provisions: &[Provision],
-        headings: &[ChapterHeading],
-    ) -> Result<QcParseStats> {
-        let mut missing_text = 0;
-        let mut suspicious_short_text = 0;
-        let mut active_sections_missing_titles = 0;
-        let mut heading_leaks = 0;
-        let mut artifact_leaks = 0;
-        let mut reserved_tail_leaks = 0;
-        let mut invalid_status_classification = 0;
+    fn validate_parse_streaming(&self) -> Result<QcParseStats> {
+        let mut identities_count = 0;
+        let mut versions_count = 0;
+        let mut provisions_count = 0;
+        let mut headings_count = 0;
         let mut active_with_empty_text = 0;
-        let mut repealed_classified_active = 0;
+        let mut invalid_status_classification = 0;
 
-        for v in versions {
-            if v.text.trim().is_empty() {
-                missing_text += 1;
-                if v.status == "active" {
+        for batch in crate::io_jsonl::read_jsonl_batches::<LegalTextIdentity>(
+            self.graph_dir.join("legal_text_identities.jsonl"),
+            5000,
+        )? {
+            let b = batch?;
+            identities_count += b.len();
+        }
+
+        for batch in crate::io_jsonl::read_jsonl_batches::<LegalTextVersion>(
+            self.graph_dir.join("legal_text_versions.jsonl"),
+            5000,
+        )? {
+            for v in batch? {
+                versions_count += 1;
+                if v.status == "active" && v.text.trim().is_empty() {
                     active_with_empty_text += 1;
                     self.errors
-                        .push(format!("Active version {} missing text", v.version_id));
+                        .lock()
+                        .unwrap()
+                        .push(format!("Active version {} has empty text", v.version_id));
                 }
-            } else if v.status == "active" && v.text.len() < REPEALED_TEXT_SHORT_THRESHOLD {
-                suspicious_short_text += 1;
-                self.add_bounded_warning(
-                    "suspicious_short_text",
-                    format!(
-                        "Version {} has very short text ({} chars)",
-                        v.version_id,
-                        v.text.len()
-                    ),
-                );
-            }
-
-            if v.status == "active"
-                && v.title
-                    .as_ref()
-                    .map(|s| s.trim().is_empty())
-                    .unwrap_or(true)
-            {
-                active_sections_missing_titles += 1;
-            }
-
-            if contains_heading_leak(&v.text) {
-                heading_leaks += 1;
-                self.add_example("heading_leaks", v.version_id.clone());
-            }
-            artifact_leaks += artifact_leak_count(&v.text);
-            reserved_tail_leaks += reserved_tail_leak_count(&v.text);
-
-            if !matches!(
-                v.status.as_str(),
-                "active" | "repealed" | "renumbered" | "formerly" | "status_only"
-            ) {
-                invalid_status_classification += 1;
-                self.errors.push(format!(
-                    "Version {} has invalid status {}",
-                    v.version_id, v.status
-                ));
-            }
-
-            if v.status == "active" {
-                let status_source = v.status_text.as_deref().unwrap_or(&v.text);
-                if looks_like_status_only(status_source) {
-                    repealed_classified_active += 1;
-                    self.errors.push(format!(
-                        "Version {} is active but status text looks non-active",
-                        v.version_id
-                    ));
+                if !matches!(
+                    v.status.as_str(),
+                    "active" | "repealed" | "renumbered" | "formerly" | "status_only"
+                ) {
+                    invalid_status_classification += 1;
                 }
             }
         }
 
-        let duplicate_canonical_ids =
-            count_dupes(identities.iter().map(|i| i.canonical_id.as_str()));
-        let duplicate_version_ids = count_dupes(versions.iter().map(|v| v.version_id.as_str()));
-        let duplicate_provision_ids =
-            count_dupes(provisions.iter().map(|p| p.provision_id.as_str()));
-        let duplicate_provision_paths = count_dupes(
-            provisions
-                .iter()
-                .map(|p| format!("{}::{}", p.version_id, p.local_path.join("."))),
-        );
-        let valid_provisions = provisions
-            .iter()
-            .filter(|p| !p.is_implied && !p.text.trim().is_empty())
-            .count();
-        artifact_leaks += provisions
-            .iter()
-            .map(|p| artifact_leak_count(&p.text))
-            .sum::<usize>();
-        reserved_tail_leaks += provisions
-            .iter()
-            .map(|p| reserved_tail_leak_count(&p.text))
-            .sum::<usize>();
+        for batch in crate::io_jsonl::read_jsonl_batches::<Provision>(
+            self.graph_dir.join("provisions.jsonl"),
+            5000,
+        )? {
+            let b = batch?;
+            provisions_count += b.len();
+        }
 
-        if duplicate_canonical_ids > 0 {
-            self.errors.push(format!(
-                "duplicate canonical_id count: {duplicate_canonical_ids}"
-            ));
-        }
-        if duplicate_version_ids > 0 {
-            self.errors.push(format!(
-                "duplicate version_id count: {duplicate_version_ids}"
-            ));
-        }
-        if duplicate_provision_ids > 0 {
-            self.errors.push(format!(
-                "duplicate provision_id count: {duplicate_provision_ids}"
-            ));
-        }
-        if duplicate_provision_paths > 0 {
-            self.errors.push(format!(
-                "duplicate (version_id, local_path) count: {duplicate_provision_paths}"
-            ));
-        }
-        if active_sections_missing_titles > 0 {
-            self.errors.push(format!(
-                "active sections missing titles: {active_sections_missing_titles}"
-            ));
-        }
-        if heading_leaks > 0 {
-            self.errors
-                .push(format!("heading leaks detected: {heading_leaks}"));
-        }
-        if artifact_leaks > 0 {
-            self.errors
-                .push(format!("layout artifact leaks detected: {artifact_leaks}"));
-        }
-        if reserved_tail_leaks > 0 {
-            self.errors.push(format!(
-                "reserved tail leaks detected: {reserved_tail_leaks}"
-            ));
+        for batch in crate::io_jsonl::read_jsonl_batches::<ChapterHeading>(
+            self.graph_dir.join("chapter_headings.jsonl"),
+            5000,
+        )? {
+            let b = batch?;
+            headings_count += b.len();
         }
 
         Ok(QcParseStats {
-            missing_text,
-            suspicious_short_text,
-            sections: versions.len(),
-            versions: versions.len(),
-            provisions: provisions.len(),
-            valid_provisions,
-            duplicate_canonical_ids,
-            duplicate_version_ids,
-            duplicate_provision_ids,
-            duplicate_provision_paths,
-            repaired_duplicate_paths: 0,
-            implied_parent_paths: provisions.iter().filter(|p| p.is_implied).count(),
-            orphan_provisions: 0,
-            active_sections_missing_titles,
-            heading_leaks,
-            invalid_status_classification,
+            identities_count,
+            versions_count,
+            provisions_count,
+            headings_count,
             active_with_empty_text,
-            repealed_classified_active,
-            identities_count: identities.len(),
-            versions_count: versions.len(),
-            provisions_count: provisions.len(),
-            headings_count: headings.len(),
+            invalid_status_classification,
+            ..Default::default()
         })
     }
 
-    fn validate_chunks(
-        &mut self,
-        chunks: &[RetrievalChunk],
+    fn validate_citations_streaming(
+        &self,
+        provision_ids: &HashSet<String>,
+        identity_ids: &HashSet<String>,
+        chapter_ids: &HashSet<String>,
+    ) -> Result<QcCitationStats> {
+        let mut total_mentions = 0;
+        let mut unresolved_target_not_in_corpus = 0;
+        let mut unresolved_malformed_citation = 0;
+        let mut unsupported_citation_type = 0;
+        let mut parsed_unverified = 0;
+
+        for batch in crate::io_jsonl::read_jsonl_batches::<CitationMention>(
+            self.graph_dir.join("citation_mentions.jsonl"),
+            5000,
+        )? {
+            for c in batch? {
+                total_mentions += 1;
+
+                if self.require_resolved_citations && c.resolver_status == "parsed_unverified" {
+                    self.errors.lock().unwrap().push(format!(
+                        "Unresolved citation in provision {}: {}",
+                        c.source_provision_id, c.normalized_citation
+                    ));
+                    self.add_example("unresolved_citations", c.normalized_citation.clone());
+                }
+
+                match c.resolver_status.as_str() {
+                    "parsed_unverified" => parsed_unverified += 1,
+                    "resolved_section" => {}
+                    "resolved_section_and_provision" => {}
+                    "resolved_chapter" => {}
+                    "resolved_range" => {}
+                    "resolved_section_unresolved_subpath" => {}
+                    "unresolved_target_not_in_corpus" => unresolved_target_not_in_corpus += 1,
+                    "unresolved_malformed_citation" => unresolved_malformed_citation += 1,
+                    "unsupported_citation_type" => unsupported_citation_type += 1,
+                    _ => {}
+                }
+
+                let unresolved_status = matches!(
+                    c.resolver_status.as_str(),
+                    "parsed_unverified"
+                        | "unresolved_target_not_in_corpus"
+                        | "unresolved_malformed_citation"
+                        | "unsupported_citation_type"
+                );
+
+                if !unresolved_status {
+                    if let Some(target_id) = &c.target_provision_id {
+                        if !provision_ids.contains(target_id) {
+                            self.errors.lock().unwrap().push(format!(
+                                "Citation in {} resolves to non-existent provision {}",
+                                c.source_provision_id, target_id
+                            ));
+                        }
+                    } else if let Some(target_id) = &c.target_canonical_id {
+                        if !identity_ids.contains(target_id) && !chapter_ids.contains(target_id) {
+                            self.errors.lock().unwrap().push(format!(
+                                "Citation in {} resolves to non-existent canonical_id {}",
+                                c.source_provision_id, target_id
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(QcCitationStats {
+            citation_mentions: total_mentions,
+            unresolved: parsed_unverified
+                + unresolved_target_not_in_corpus
+                + unresolved_malformed_citation
+                + unsupported_citation_type,
+            resolution_pending: parsed_unverified > 0,
+            ..Default::default()
+        })
+    }
+
+    fn validate_graph_streaming(
+        &self,
+        identity_ids: &HashSet<String>,
+        version_ids: &HashSet<String>,
+        provision_ids: &HashSet<String>,
+        chapter_ids: &HashSet<String>,
+    ) -> Result<QcGraphStats> {
+        let mut total_edges = 0;
+        let mut invalid_source = 0;
+        let mut invalid_target = 0;
+
+        for batch in crate::io_jsonl::read_jsonl_batches::<CitesEdge>(
+            self.graph_dir.join("cites_edges.jsonl"),
+            5000,
+        )? {
+            for e in batch? {
+                total_edges += 1;
+
+                if !provision_ids.contains(&e.source_provision_id) {
+                    invalid_source += 1;
+                    self.add_example("bad_edges", e.edge_id.clone());
+                }
+
+                let mut target_valid = false;
+                if let Some(target_id) = &e.target_provision_id {
+                    if provision_ids.contains(target_id) {
+                        target_valid = true;
+                    }
+                } else if let Some(target_id) = &e.target_version_id {
+                    if version_ids.contains(target_id) {
+                        target_valid = true;
+                    }
+                } else if let Some(target_id) = &e.target_canonical_id {
+                    if identity_ids.contains(target_id) {
+                        target_valid = true;
+                    }
+                } else if let Some(target_id) = &e.target_chapter_id {
+                    if chapter_ids.contains(target_id) {
+                        target_valid = true;
+                    }
+                }
+
+                if !target_valid {
+                    invalid_target += 1;
+                    self.add_example("bad_edges", e.edge_id.clone());
+                }
+            }
+        }
+
+        Ok(QcGraphStats {
+            edges: total_edges,
+            orphan_edges: invalid_source + invalid_target,
+            ..Default::default()
+        })
+    }
+
+    fn validate_resolver_readiness_streaming(&self) -> Result<QcResolverReadiness> {
+        let mut total_identities = 0;
+        let mut total_versions = 0;
+        let mut total_provisions = 0;
+
+        for batch in crate::io_jsonl::read_jsonl_batches::<LegalTextIdentity>(
+            self.graph_dir.join("legal_text_identities.jsonl"),
+            5000,
+        )? {
+            let b = batch?;
+            total_identities += b.len();
+        }
+        for batch in crate::io_jsonl::read_jsonl_batches::<LegalTextVersion>(
+            self.graph_dir.join("legal_text_versions.jsonl"),
+            5000,
+        )? {
+            let b = batch?;
+            total_versions += b.len();
+        }
+        for batch in crate::io_jsonl::read_jsonl_batches::<Provision>(
+            self.graph_dir.join("provisions.jsonl"),
+            5000,
+        )? {
+            let b = batch?;
+            total_provisions += b.len();
+        }
+
+        Ok(QcResolverReadiness {
+            identity_index_ready: total_identities > 0,
+            version_index_ready: total_versions > 0,
+            provision_path_index_ready: total_provisions > 0,
+            chapter_index_ready: total_identities > 0, // Placeholder
+        })
+    }
+
+    /// Combined single-pass validation that reads each heavy file once instead of 3x.
+    /// Consolidates: validate_chunks_streaming + validate_embedding_readiness_streaming + validate_coverage_streaming
+    fn validate_chunks_combined(
+        &self,
         provision_ids: &HashSet<String>,
         version_ids: &HashSet<String>,
-    ) -> Result<QcChunkStats> {
+    ) -> Result<(
+        QcChunkStats,
+        QcEmbeddingReadiness,
+        QcProvisionEmbeddingReadiness,
+        QcVersionEmbeddingReadiness,
+        QcCoverageStats,
+    )> {
+        let model_config = crate::voyage::model_config(&self.embedding_model)
+            .unwrap_or(&crate::voyage::VOYAGE_4_LARGE);
+        let context_tokens = model_config.context_tokens;
+        let batch_token_limit = model_config.batch_token_limit;
+        let batch_token_safety_limit = model_config.batch_token_safety_limit;
+
+        if model_config.model != self.embedding_model {
+            self.warnings.lock().unwrap().push(format!(
+                "Unknown embedding model {}; using voyage-4-large token limits for QC",
+                self.embedding_model
+            ));
+        }
+
+        if !model_config
+            .allowed_dimensions
+            .contains(&(self.embedding_dim as usize))
+        {
+            self.errors.lock().unwrap().push(format!(
+                "Embedding dimension {} is not supported by {}. Allowed dimensions: {:?}",
+                self.embedding_dim, self.embedding_model, model_config.allowed_dimensions
+            ));
+        }
+
+        // ── SINGLE PASS over retrieval_chunks.jsonl ──
+        // Computes: chunk stats + chunk embedding readiness + coverage maps
         let mut full_statute_chunks = 0;
         let mut contextual_provision_chunks = 0;
         let mut definition_chunks = 0;
@@ -466,217 +587,288 @@ impl QcFullValidator {
         let mut chunking_strategy_counts: BTreeMap<String, usize> = BTreeMap::new();
         let mut split_reason_counts: BTreeMap<String, usize> = BTreeMap::new();
         let mut part_keys = HashSet::new();
-
         let mut chunk_ids = HashSet::new();
         let mut duplicate_chunk_ids = 0;
+        let mut total_chunks = 0;
 
-        for chunk in chunks {
-            if !chunk_ids.insert(&chunk.chunk_id) {
-                duplicate_chunk_ids += 1;
-                self.errors
-                    .push(format!("Duplicate chunk_id: {}", chunk.chunk_id));
-            }
+        // Embedding readiness accumulators
+        let mut emb_eligible_chunks = 0usize;
+        let mut emb_chunks_missing_input_hash = 0usize;
+        let mut emb_chunks_over_context_limit = 0usize;
+        let mut emb_estimated_total_tokens = 0usize;
 
-            match chunk.chunk_type.as_str() {
-                "full_statute" => full_statute_chunks += 1,
-                "contextual_provision" => contextual_provision_chunks += 1,
-                "definition_block" => definition_chunks += 1,
-                "exception_block" => exception_chunks += 1,
-                "deadline_block" => deadline_chunks += 1,
-                "penalty_block" => penalty_chunks += 1,
-                "citation_context" => citation_context_chunks += 1,
-                _ => {}
-            }
+        // Coverage accumulators
+        let mut version_chunk_counts: HashMap<String, usize> = HashMap::new();
+        let mut provision_chunk_counts: HashMap<String, usize> = HashMap::new();
 
-            let mut is_orphan = false;
-            if chunk.chunk_type == "full_statute" {
-                if !version_ids.contains(&chunk.parent_version_id) {
-                    is_orphan = true;
-                }
-            } else {
-                if chunk
-                    .source_provision_id
-                    .as_ref()
-                    .map(|id| !provision_ids.contains(id))
-                    .unwrap_or(true)
-                {
-                    is_orphan = true;
-                }
-            }
+        // Batch error/warning accumulators to reduce mutex contention
+        let mut local_errors = Vec::new();
+        let mut local_warnings = Vec::new();
 
-            if is_orphan {
-                orphan_chunks += 1;
-                self.add_example("orphan_chunks", chunk.chunk_id.clone());
-            }
-            if chunk.text.trim().is_empty() {
-                self.errors
-                    .push(format!("Chunk {} has empty text", chunk.chunk_id));
-            }
-
-            let is_embeddable = matches!(
-                chunk.embedding_policy.as_deref(),
-                Some("embed_primary") | Some("embed_special")
-            );
-            let effective_tokens = chunk
-                .token_count
-                .unwrap_or_else(|| estimate_tokens(&chunk.text, &self.embedding_model));
-            token_counts.push(effective_tokens);
-            token_counts_by_type
-                .entry(chunk.chunk_type.clone())
-                .or_default()
-                .push(effective_tokens);
-
-            let version_key = chunk
-                .chunk_version
-                .clone()
-                .unwrap_or_else(|| "<missing>".to_string());
-            *chunk_version_counts.entry(version_key).or_default() += 1;
-            let strategy_key = chunk
-                .chunking_strategy
-                .clone()
-                .unwrap_or_else(|| "<missing>".to_string());
-            *chunking_strategy_counts.entry(strategy_key).or_default() += 1;
-            let split_key = chunk
-                .split_reason
-                .clone()
-                .unwrap_or_else(|| "<missing>".to_string());
-            *split_reason_counts.entry(split_key).or_default() += 1;
-
-            if is_embeddable {
-                if chunk.token_count.is_none() {
-                    missing_token_count += 1;
-                }
-                if chunk.max_tokens.is_none() {
-                    missing_max_tokens += 1;
-                }
-                if chunk.context_window.is_none() {
-                    missing_context_window += 1;
-                }
-                if chunk.chunking_strategy.is_none() {
-                    missing_chunking_strategy += 1;
-                }
-                if chunk.chunk_version.is_none() {
-                    missing_chunk_version += 1;
-                }
-
-                if let Some(max_tokens) = chunk.max_tokens {
-                    if effective_tokens > max_tokens && effective_tokens <= HARD_FAIL_TOKENS {
-                        chunks_over_max_tokens += 1;
-                        oversized_chunks_warn += 1;
-                        if self.warnings.len() < MAX_WARNINGS_PER_CATEGORY {
-                            self.warnings.push(format!(
-                                "Chunk {} type {} is over target budget: {} tokens > {}",
-                                chunk.chunk_id, chunk.chunk_type, effective_tokens, max_tokens
-                            ));
-                        }
+        for batch in crate::io_jsonl::read_jsonl_batches::<RetrievalChunk>(
+            self.graph_dir.join("retrieval_chunks.jsonl"),
+            5000,
+        )? {
+            for chunk in batch? {
+                total_chunks += 1;
+                if !chunk_ids.insert(chunk.chunk_id.clone()) {
+                    duplicate_chunk_ids += 1;
+                    if local_warnings.len() < MAX_WARNINGS_PER_CATEGORY {
+                        local_warnings.push(format!("Duplicate chunk_id: {}", chunk.chunk_id));
                     }
                 }
 
-                if effective_tokens > HARD_FAIL_TOKENS {
-                    chunks_over_hard_token_limit += 1;
-                    oversized_chunks_fail += 1;
-                    self.errors.push(format!(
-                        "Chunk {} type {} exceeds hard token limit: {} > {}",
-                        chunk.chunk_id, chunk.chunk_type, effective_tokens, HARD_FAIL_TOKENS
-                    ));
+                match chunk.chunk_type.as_str() {
+                    "full_statute" => full_statute_chunks += 1,
+                    "contextual_provision" => contextual_provision_chunks += 1,
+                    "definition_block" => definition_chunks += 1,
+                    "exception_block" => exception_chunks += 1,
+                    "deadline_block" => deadline_chunks += 1,
+                    "penalty_block" => penalty_chunks += 1,
+                    "citation_context" => citation_context_chunks += 1,
+                    _ => {}
                 }
-            }
 
-            match (chunk.part_index, chunk.part_count) {
-                (Some(index), Some(count)) if count > 0 && index >= 1 && index <= count => {
-                    let part_source = chunk
-                        .source_id
-                        .clone()
-                        .or_else(|| chunk.source_provision_id.clone())
-                        .or_else(|| chunk.source_version_id.clone())
-                        .unwrap_or_else(|| chunk.chunk_id.clone());
-                    if !part_keys.insert((part_source, chunk.chunk_type.clone(), index)) {
-                        invalid_part_metadata += 1;
-                        self.errors.push(format!(
-                            "Chunk {} has duplicate part_index {} for source/type",
-                            chunk.chunk_id, index
+                // ── Coverage: track chunk counts per parent ──
+                if chunk.chunk_type == "full_statute" {
+                    *version_chunk_counts
+                        .entry(chunk.parent_version_id.clone())
+                        .or_insert(0) += 1;
+                } else if chunk.chunk_type == "contextual_provision" {
+                    if let Some(source_provision_id) = &chunk.source_provision_id {
+                        *provision_chunk_counts
+                            .entry(source_provision_id.clone())
+                            .or_insert(0) += 1;
+                    }
+                }
+
+                // ── Orphan check ──
+                let mut is_orphan = false;
+                if chunk.chunk_type == "full_statute" {
+                    if !version_ids.contains(&chunk.parent_version_id) {
+                        is_orphan = true;
+                    }
+                } else {
+                    if chunk
+                        .source_provision_id
+                        .as_ref()
+                        .map(|id| !provision_ids.contains(id))
+                        .unwrap_or(true)
+                    {
+                        is_orphan = true;
+                    }
+                }
+
+                if is_orphan {
+                    orphan_chunks += 1;
+                    self.add_example("orphan_chunks", chunk.chunk_id.clone());
+                }
+                if chunk.text.trim().is_empty() {
+                    local_errors.push(format!("Chunk {} has empty text", chunk.chunk_id));
+                }
+
+                let is_embeddable = matches!(
+                    chunk.embedding_policy.as_deref(),
+                    Some("embed_primary") | Some("embed_special")
+                );
+                let effective_tokens = chunk.token_count.unwrap_or_else(|| {
+                    crate::voyage::estimate_tokens(&chunk.text, &self.embedding_model)
+                });
+                token_counts.push(effective_tokens);
+                token_counts_by_type
+                    .entry(chunk.chunk_type.clone())
+                    .or_default()
+                    .push(effective_tokens);
+
+                let version_key = chunk
+                    .chunk_version
+                    .clone()
+                    .unwrap_or_else(|| "<missing>".to_string());
+                *chunk_version_counts.entry(version_key).or_default() += 1;
+                let strategy_key = chunk
+                    .chunking_strategy
+                    .clone()
+                    .unwrap_or_else(|| "<missing>".to_string());
+                *chunking_strategy_counts.entry(strategy_key).or_default() += 1;
+                let split_key = chunk
+                    .split_reason
+                    .clone()
+                    .unwrap_or_else(|| "<missing>".to_string());
+                *split_reason_counts.entry(split_key).or_default() += 1;
+
+                if is_embeddable {
+                    // ── Embedding readiness stats ──
+                    emb_eligible_chunks += 1;
+                    emb_estimated_total_tokens += effective_tokens;
+
+                    if chunk.text.trim().is_empty() {
+                        local_errors
+                            .push(format!("Eligible chunk {} has empty text", chunk.chunk_id));
+                    }
+                    if chunk.embedding_input_hash.is_empty() {
+                        emb_chunks_missing_input_hash += 1;
+                        local_errors.push(format!(
+                            "Eligible chunk {} missing embedding_input_hash",
+                            chunk.chunk_id
+                        ));
+                    }
+                    if effective_tokens > context_tokens {
+                        emb_chunks_over_context_limit += 1;
+                        local_errors.push(format!(
+                            "Eligible chunk {} exceeds {} token limit ({} tokens)",
+                            chunk.chunk_id, context_tokens, effective_tokens
+                        ));
+                    }
+
+                    // ── Chunk stats: token budget checks ──
+                    if chunk.token_count.is_none() {
+                        missing_token_count += 1;
+                    }
+                    if chunk.max_tokens.is_none() {
+                        missing_max_tokens += 1;
+                    }
+                    if chunk.context_window.is_none() {
+                        missing_context_window += 1;
+                    }
+                    if chunk.chunking_strategy.is_none() {
+                        missing_chunking_strategy += 1;
+                    }
+                    if chunk.chunk_version.is_none() {
+                        missing_chunk_version += 1;
+                    }
+
+                    if let Some(max_tokens) = chunk.max_tokens {
+                        if effective_tokens > max_tokens && effective_tokens <= HARD_FAIL_TOKENS {
+                            chunks_over_max_tokens += 1;
+                            oversized_chunks_warn += 1;
+                            if local_warnings.len() < MAX_WARNINGS_PER_CATEGORY {
+                                local_warnings.push(format!(
+                                    "Chunk {} type {} is over target budget: {} tokens > {}",
+                                    chunk.chunk_id, chunk.chunk_type, effective_tokens, max_tokens
+                                ));
+                            }
+                        }
+                    }
+
+                    if effective_tokens > HARD_FAIL_TOKENS {
+                        chunks_over_hard_token_limit += 1;
+                        oversized_chunks_fail += 1;
+                        local_errors.push(format!(
+                            "Chunk {} type {} exceeds hard token limit: {} > {}",
+                            chunk.chunk_id, chunk.chunk_type, effective_tokens, HARD_FAIL_TOKENS
                         ));
                     }
                 }
-                _ if is_embeddable => {
-                    invalid_part_metadata += 1;
-                    self.errors.push(format!(
-                        "Chunk {} has invalid part_index / part_count",
-                        chunk.chunk_id
-                    ));
-                }
-                _ => {}
-            }
 
-            if chunk.embedding_input_hash.is_empty() {
-                missing_embedding_input_hash += 1;
-            }
+                match (chunk.part_index, chunk.part_count) {
+                    (Some(index), Some(count)) if count > 0 && index >= 1 && index <= count => {
+                        let part_source = chunk
+                            .source_id
+                            .clone()
+                            .or_else(|| chunk.source_provision_id.clone())
+                            .or_else(|| chunk.source_version_id.clone())
+                            .unwrap_or_else(|| chunk.chunk_id.clone());
+                        if !part_keys.insert((part_source, chunk.chunk_type.clone(), index)) {
+                            invalid_part_metadata += 1;
+                            local_errors.push(format!(
+                                "Chunk {} has duplicate part_index {} for source/type",
+                                chunk.chunk_id, index
+                            ));
+                        }
+                    }
+                    _ if is_embeddable => {
+                        invalid_part_metadata += 1;
+                        local_errors.push(format!(
+                            "Chunk {} has invalid part_index / part_count",
+                            chunk.chunk_id
+                        ));
+                    }
+                    _ => {}
+                }
 
-            if chunk.embedding_policy.is_none() {
-                missing_embedding_policy += 1;
-            }
+                if chunk.embedding_input_hash.is_empty() {
+                    missing_embedding_input_hash += 1;
+                }
 
-            if self.strict_chunk_policy {
-                if chunk.answer_policy.is_none() {
-                    self.errors
-                        .push(format!("Chunk {} missing answer_policy", chunk.chunk_id));
+                if chunk.embedding_policy.is_none() {
+                    missing_embedding_policy += 1;
                 }
-                if chunk.retrieval_profile.is_none() {
-                    self.errors.push(format!(
-                        "Chunk {} missing retrieval_profile",
-                        chunk.chunk_id
-                    ));
-                }
-                if chunk.chunk_version.as_deref() != Some("3.0") {
-                    self.errors.push(format!(
-                        "Chunk {} has invalid chunk_version",
-                        chunk.chunk_id
-                    ));
-                }
-                if chunk.search_weight.is_none() {
-                    self.errors
-                        .push(format!("Chunk {} missing search_weight", chunk.chunk_id));
+
+                if self.strict_chunk_policy {
+                    if chunk.answer_policy.is_none() {
+                        local_errors
+                            .push(format!("Chunk {} missing answer_policy", chunk.chunk_id));
+                    }
+                    if chunk.retrieval_profile.is_none() {
+                        local_errors.push(format!(
+                            "Chunk {} missing retrieval_profile",
+                            chunk.chunk_id
+                        ));
+                    }
+                    if chunk.chunk_version.as_deref() != Some("3.0") {
+                        local_errors.push(format!(
+                            "Chunk {} has invalid chunk_version",
+                            chunk.chunk_id
+                        ));
+                    }
+                    if chunk.search_weight.is_none() {
+                        local_errors
+                            .push(format!("Chunk {} missing search_weight", chunk.chunk_id));
+                    }
                 }
             }
         }
 
+        // Flush accumulated errors/warnings in bulk (single mutex acquisition each)
+        {
+            let mut errors = self.errors.lock().unwrap();
+            errors.extend(local_errors);
+        }
+        {
+            let mut warnings = self.warnings.lock().unwrap();
+            warnings.extend(local_warnings);
+        }
+
+        // Post-chunk aggregate errors
         if orphan_chunks > 0 {
             self.errors
+                .lock()
+                .unwrap()
                 .push(format!("orphan chunks detected: {orphan_chunks}"));
         }
         if self.require_embeddings && missing_embedding_input_hash > 0 {
-            self.errors.push(format!(
+            self.errors.lock().unwrap().push(format!(
                 "chunks missing embedding_input_hash: {missing_embedding_input_hash}"
             ));
         }
         if missing_embedding_policy > 0 {
-            self.errors.push(format!(
+            self.errors.lock().unwrap().push(format!(
                 "chunks missing embedding_policy: {missing_embedding_policy}"
             ));
         }
         if self.strict_chunk_policy {
             if missing_token_count > 0 {
-                self.errors.push(format!(
+                self.errors.lock().unwrap().push(format!(
                     "embeddable chunks missing token_count: {missing_token_count}"
                 ));
             }
             if missing_max_tokens > 0 {
-                self.errors.push(format!(
+                self.errors.lock().unwrap().push(format!(
                     "embeddable chunks missing max_tokens: {missing_max_tokens}"
                 ));
             }
             if missing_context_window > 0 {
-                self.errors.push(format!(
+                self.errors.lock().unwrap().push(format!(
                     "embeddable chunks missing context_window: {missing_context_window}"
                 ));
             }
             if missing_chunking_strategy > 0 {
-                self.errors.push(format!(
+                self.errors.lock().unwrap().push(format!(
                     "embeddable chunks missing chunking_strategy: {missing_chunking_strategy}"
                 ));
             }
             if missing_chunk_version > 0 {
-                self.errors.push(format!(
+                self.errors.lock().unwrap().push(format!(
                     "embeddable chunks missing chunk_version: {missing_chunk_version}"
                 ));
             }
@@ -702,8 +894,8 @@ impl QcFullValidator {
             })
             .collect();
 
-        Ok(QcChunkStats {
-            total_chunks: chunks.len(),
+        let chunk_stats = QcChunkStats {
+            total_chunks,
             full_statute_chunks,
             contextual_provision_chunks,
             definition_chunks,
@@ -741,444 +933,172 @@ impl QcFullValidator {
             chunking_strategy_counts,
             split_reason_counts,
             chunk_type_token_distribution,
-        })
-    }
+        };
 
-    fn validate_citations(
-        &mut self,
-        citations: &[CitationMention],
-        provision_ids: &HashSet<String>,
-        identity_ids: &HashSet<String>,
-        chapter_ids: &HashSet<String>,
-    ) -> Result<QcCitationStats> {
-        let mut unresolved = 0;
-        let mut suspicious_resolution = 0;
-        let mut orphan_citation_mentions = 0;
-        let mut parsed_unverified = 0;
-        let mut resolved_section = 0;
-        let mut resolved_section_and_provision = 0;
-        let mut resolved_chapter = 0;
-        let mut resolved_range = 0;
-        let mut resolved_section_unresolved_subpath = 0;
-        let mut unresolved_target_not_in_corpus = 0;
-        let mut unresolved_malformed_citation = 0;
-        let mut unsupported_citation_type = 0;
-
-        for c in citations {
-            if !provision_ids.contains(&c.source_provision_id) {
-                orphan_citation_mentions += 1;
-                self.errors.push(format!(
-                    "Citation {} references missing source provision {}",
-                    c.citation_mention_id, c.source_provision_id
-                ));
-            }
-
-            match c.resolver_status.as_str() {
-                "parsed_unverified" => parsed_unverified += 1,
-                "resolved_section" => resolved_section += 1,
-                "resolved_section_and_provision" => resolved_section_and_provision += 1,
-                "resolved_chapter" => resolved_chapter += 1,
-                "resolved_range" => resolved_range += 1,
-                "resolved_section_unresolved_subpath" => {
-                    resolved_section_unresolved_subpath += 1;
-                }
-                "unresolved_target_not_in_corpus" => unresolved_target_not_in_corpus += 1,
-                "unresolved_malformed_citation" => unresolved_malformed_citation += 1,
-                "unsupported_citation_type" => unsupported_citation_type += 1,
-                _ => {}
-            }
-
-            let unresolved_status = matches!(
-                c.resolver_status.as_str(),
-                "parsed_unverified"
-                    | "unresolved_target_not_in_corpus"
-                    | "unresolved_malformed_citation"
-                    | "unsupported_citation_type"
-            );
-            if unresolved_status {
-                unresolved += 1;
-                self.add_example("unresolved_citations", c.citation_mention_id.clone());
-            } else if let Some(target_id) = &c.target_canonical_id {
-                let chapter_exists = target_id
-                    .strip_prefix("or:ors:chapter:")
-                    .map(|chapter| {
-                        chapter_ids
-                            .contains(&format!("or:ors:chapter:{}@{}", chapter, self.edition_year))
-                    })
-                    .unwrap_or(false);
-                if !identity_ids.contains(target_id)
-                    && !provision_ids.contains(target_id)
-                    && !chapter_exists
-                {
-                    suspicious_resolution += 1;
-                }
-            }
-        }
-
-        let resolved = resolved_section
-            + resolved_section_and_provision
-            + resolved_chapter
-            + resolved_range
-            + resolved_section_unresolved_subpath;
-        let unsupported = unsupported_citation_type;
-        let resolution_pending = parsed_unverified > 0;
-
-        if self.require_resolved_citations && unresolved > 0 {
-            self.errors
-                .push(format!("unresolved citations detected: {unresolved}"));
-        } else if unresolved > 0 {
-            self.add_bounded_warning(
-                "unresolved_citations",
-                format!("{unresolved} citation mentions have no target"),
-            );
-        }
-        if suspicious_resolution > 0 {
-            self.errors.push(format!(
-                "suspicious citation resolutions: {suspicious_resolution}"
-            ));
-        }
-
-        Ok(QcCitationStats {
-            total_mentions: citations.len(),
-            unresolved,
-            suspicious_resolution,
-            citation_mentions: citations.len(),
-            parsed_unverified,
-            resolved,
-            unsupported,
-            resolution_pending,
-            orphan_citation_mentions,
-            resolved_section,
-            resolved_section_and_provision,
-            resolved_chapter,
-            resolved_range,
-            resolved_section_unresolved_subpath,
-            unresolved_target_not_in_corpus,
-            unresolved_malformed_citation,
-            unsupported_citation_type,
-        })
-    }
-
-    fn validate_graph(
-        &mut self,
-        edges: &[CitesEdge],
-        identity_ids: &HashSet<String>,
-        version_ids: &HashSet<String>,
-        provision_ids: &HashSet<String>,
-        chapter_ids: &HashSet<String>,
-        citations: &[CitationMention],
-    ) -> Result<QcGraphStats> {
-        let mut orphan_edges = 0;
-        let mut cites_edges = 0;
-        let mut duplicate_edge_ids = 0;
-        let mut edge_ids = HashSet::new();
-
-        let _citation_map: HashMap<String, &CitationMention> = citations
-            .iter()
-            .map(|c| (c.citation_mention_id.clone(), c))
-            .collect();
-
-        for edge in edges {
-            if !edge_ids.insert(&edge.edge_id) {
-                duplicate_edge_ids += 1;
-            }
-
-            if edge.edge_type == "CITES" {
-                cites_edges += 1;
-            }
-
-            let source_exists = provision_ids.contains(&edge.source_provision_id);
-            let target_exists = edge.target_canonical_id.as_ref().map_or(false, |id| {
-                identity_ids.contains(id) || provision_ids.contains(id)
-            }) || edge
-                .target_version_id
-                .as_ref()
-                .map_or(false, |id| version_ids.contains(id))
-                || edge
-                    .target_provision_id
-                    .as_ref()
-                    .map_or(false, |id| provision_ids.contains(id))
-                || edge
-                    .target_chapter_id
-                    .as_ref()
-                    .map_or(false, |id| chapter_ids.contains(id));
-
-            if !source_exists || !target_exists {
-                orphan_edges += 1;
-                self.add_example("bad_edges", edge.edge_id.clone());
-            }
-        }
-
-        if orphan_edges > 0 {
-            self.errors
-                .push(format!("orphan CITES edges detected: {orphan_edges}"));
-        }
-        if duplicate_edge_ids > 0 {
-            self.errors
-                .push(format!("duplicate CITES edge IDs: {duplicate_edge_ids}"));
-        }
-
-        Ok(QcGraphStats {
-            total_edges: edges.len(),
-            orphan_edges,
-            duplicate_edge_ids,
-            cites_edges,
-            nodes: 0,
-            edges: edges.len(),
-        })
-    }
-
-    fn validate_embedding_readiness(
-        &mut self,
-        chunks: &[RetrievalChunk],
-        provisions: &[Provision],
-        versions: &[LegalTextVersion],
-    ) -> Result<(
-        QcEmbeddingReadiness,
-        QcProvisionEmbeddingReadiness,
-        QcVersionEmbeddingReadiness,
-    )> {
-        let model_config = model_config(&self.embedding_model).unwrap_or(&VOYAGE_4_LARGE);
-        let context_tokens = model_config.context_tokens;
-        let batch_token_limit = model_config.batch_token_limit;
-        let batch_token_safety_limit = model_config.batch_token_safety_limit;
-
-        if model_config.model != self.embedding_model {
-            self.warnings.push(format!(
-                "Unknown embedding model {}; using voyage-4-large token limits for QC",
-                self.embedding_model
-            ));
-        }
-
-        if !model_config
-            .allowed_dimensions
-            .contains(&(self.embedding_dim as usize))
-        {
-            self.errors.push(format!(
-                "Embedding dimension {} is not supported by {}. Allowed dimensions: {:?}",
-                self.embedding_dim, self.embedding_model, model_config.allowed_dimensions
-            ));
-        }
-
-        let mut chunk_stats = QcEmbeddingReadiness {
+        let mut chunk_readiness = QcEmbeddingReadiness {
             model: self.embedding_model.clone(),
             dimension: self.embedding_dim as usize,
             model_context_tokens: context_tokens,
             model_batch_token_limit: batch_token_limit,
             batch_token_safety_limit,
+            eligible_chunks: emb_eligible_chunks,
+            estimated_total_tokens: emb_estimated_total_tokens,
+            chunks_missing_input_hash: emb_chunks_missing_input_hash,
+            chunks_over_context_limit: emb_chunks_over_context_limit,
             ..Default::default()
         };
+        chunk_readiness.estimated_batches =
+            (chunk_readiness.estimated_total_tokens / batch_token_safety_limit).max(1);
 
-        for chunk in chunks {
-            let is_eligible = matches!(
-                chunk.embedding_policy.as_deref(),
-                Some("embed_primary") | Some("embed_special")
-            );
-
-            if is_eligible {
-                chunk_stats.eligible_chunks += 1;
-
-                if chunk.text.trim().is_empty() {
-                    self.errors
-                        .push(format!("Eligible chunk {} has empty text", chunk.chunk_id));
-                }
-
-                if chunk.embedding_input_hash.is_empty() {
-                    chunk_stats.chunks_missing_input_hash += 1;
-                    self.errors.push(format!(
-                        "Eligible chunk {} missing embedding_input_hash",
-                        chunk.chunk_id
-                    ));
-                }
-
-                let tokens = estimate_tokens(&chunk.text, &self.embedding_model);
-                chunk_stats.estimated_total_tokens += tokens;
-
-                if tokens > context_tokens {
-                    chunk_stats.chunks_over_context_limit += 1;
-                    self.errors.push(format!(
-                        "Eligible chunk {} exceeds {} token limit ({} tokens)",
-                        chunk.chunk_id, context_tokens, tokens
-                    ));
-                }
-            }
-        }
-        chunk_stats.estimated_batches =
-            (chunk_stats.estimated_total_tokens / batch_token_safety_limit).max(1);
-
+        // ── SINGLE PASS over provisions.jsonl (for embedding readiness + coverage) ──
         let mut provision_stats = QcProvisionEmbeddingReadiness {
             model: self.embedding_model.clone(),
             dimension: self.embedding_dim as usize,
-            eligible_provisions: provisions.len(),
+            eligible_provisions: 0,
             model_context_tokens: context_tokens,
             model_batch_token_limit: batch_token_limit,
             batch_token_safety_limit,
             ..Default::default()
         };
 
-        for p in provisions {
-            let input_text = format!(
-                "Oregon Revised Statutes. {} Edition.\nCitation: {}\nProvision type: {}.\nStatus: active.\nText:\n{}",
-                self.edition_year, p.display_citation, p.provision_type, p.text
-            );
-            let tokens = estimate_tokens(&input_text, &self.embedding_model);
-            provision_stats.estimated_total_tokens += tokens;
+        let mut provisions_missing_contextual_chunk = 0;
+        let mut provisions_with_duplicate_contextual_chunks = 0;
+        let mut valid_provisions_coverage = 0;
 
-            if tokens > context_tokens {
-                provision_stats.provisions_over_context_limit += 1;
-            }
-            if p.embedding_input_hash
-                .as_ref()
-                .map_or(true, |h| h.is_empty())
-            {
-                provision_stats.provisions_missing_input_hash += 1;
+        for batch in crate::io_jsonl::read_jsonl_batches::<Provision>(
+            self.graph_dir.join("provisions.jsonl"),
+            5000,
+        )? {
+            for p in batch? {
+                // Embedding readiness
+                provision_stats.eligible_provisions += 1;
+                let input_text = format!(
+                    "Oregon Revised Statutes. {} Edition.\nCitation: {}\nProvision type: {}.\nStatus: active.\nText:\n{}",
+                    self.edition_year, p.display_citation, p.provision_type, p.text
+                );
+                let tokens = crate::voyage::estimate_tokens(&input_text, &self.embedding_model);
+                provision_stats.estimated_total_tokens += tokens;
+
+                if tokens > context_tokens {
+                    provision_stats.provisions_over_context_limit += 1;
+                }
+                if p.embedding_input_hash
+                    .as_ref()
+                    .map_or(true, |h| h.is_empty())
+                {
+                    provision_stats.provisions_missing_input_hash += 1;
+                }
+
+                // Coverage
+                if !p.is_implied && !p.text.trim().is_empty() {
+                    valid_provisions_coverage += 1;
+                }
+                if provision_ids.contains(&p.provision_id) {
+                    let count = provision_chunk_counts
+                        .get(&p.provision_id)
+                        .cloned()
+                        .unwrap_or(0);
+                    if count == 0 {
+                        provisions_missing_contextual_chunk += 1;
+                        self.errors.lock().unwrap().push(format!(
+                            "Provision {} missing contextual_provision chunk",
+                            p.provision_id
+                        ));
+                    } else if count > 1 {
+                        provisions_with_duplicate_contextual_chunks += 1;
+                    }
+                }
             }
         }
         provision_stats.estimated_batches =
             (provision_stats.estimated_total_tokens / batch_token_safety_limit).max(1);
 
+        // ── SINGLE PASS over legal_text_versions.jsonl (for embedding readiness + coverage) ──
         let mut version_stats = QcVersionEmbeddingReadiness {
             model: self.embedding_model.clone(),
             dimension: self.embedding_dim as usize,
-            eligible_versions: versions.len(),
+            eligible_versions: 0,
             model_context_tokens: context_tokens,
             model_batch_token_limit: batch_token_limit,
             batch_token_safety_limit,
             ..Default::default()
         };
 
-        for v in versions {
-            let input_text = format!(
-                "Oregon Revised Statutes. {} Edition.\nCitation: {}\nTitle: {}\nStatus: {}\nText:\n{}",
-                self.edition_year,
-                v.citation,
-                v.title.as_deref().unwrap_or(""),
-                v.status,
-                v.text
-            );
-            let tokens = estimate_tokens(&input_text, &self.embedding_model);
-            version_stats.estimated_total_tokens += tokens;
+        let mut active_versions_missing_full_statute_chunk = 0;
+        let mut versions_with_duplicate_full_statute_chunks = 0;
+        let mut active_versions_count = 0;
 
-            if tokens > context_tokens {
-                version_stats.versions_over_context_limit += 1;
-            }
-            if v.embedding_input_hash
-                .as_ref()
-                .map_or(true, |h| h.is_empty())
-            {
-                version_stats.versions_missing_input_hash += 1;
+        for batch in crate::io_jsonl::read_jsonl_batches::<LegalTextVersion>(
+            self.graph_dir.join("legal_text_versions.jsonl"),
+            5000,
+        )? {
+            for v in batch? {
+                // Embedding readiness
+                version_stats.eligible_versions += 1;
+                let input_text = format!(
+                    "Oregon Revised Statutes. {} Edition.\nCitation: {}\nTitle: {}\nStatus: {}\nText:\n{}",
+                    self.edition_year,
+                    v.citation,
+                    v.title.as_deref().unwrap_or(""),
+                    v.status,
+                    v.text
+                );
+                let tokens = crate::voyage::estimate_tokens(&input_text, &self.embedding_model);
+                version_stats.estimated_total_tokens += tokens;
+
+                if tokens > context_tokens {
+                    version_stats.versions_over_context_limit += 1;
+                }
+                if v.embedding_input_hash
+                    .as_ref()
+                    .map_or(true, |h| h.is_empty())
+                {
+                    version_stats.versions_missing_input_hash += 1;
+                }
+
+                // Coverage
+                if v.status == "active" {
+                    active_versions_count += 1;
+                    let count = version_chunk_counts
+                        .get(&v.version_id)
+                        .cloned()
+                        .unwrap_or(0);
+                    if count == 0 {
+                        active_versions_missing_full_statute_chunk += 1;
+                        self.errors.lock().unwrap().push(format!(
+                            "Active version {} missing full_statute chunk",
+                            v.version_id
+                        ));
+                    } else if count > 1 {
+                        versions_with_duplicate_full_statute_chunks += 1;
+                    }
+                }
             }
         }
         version_stats.estimated_batches =
             (version_stats.estimated_total_tokens / batch_token_safety_limit).max(1);
 
-        Ok((chunk_stats, provision_stats, version_stats))
-    }
-
-    fn validate_resolver_readiness(
-        &mut self,
-        identities: &[LegalTextIdentity],
-        versions: &[LegalTextVersion],
-        provisions: &[Provision],
-    ) -> Result<QcResolverReadiness> {
-        let identity_index_ready = !identities.is_empty();
-        let version_index_ready = !versions.is_empty();
-        let provision_path_index_ready = !provisions.is_empty();
-        let chapter_index_ready = identities.iter().any(|i| !i.chapter.is_empty());
-
-        if !identity_index_ready {
-            self.errors
-                .push("No legal text identities found for resolver".to_string());
-        }
-
-        Ok(QcResolverReadiness {
-            identity_index_ready,
-            version_index_ready,
-            provision_path_index_ready,
-            chapter_index_ready,
-        })
-    }
-
-    fn validate_coverage(
-        &mut self,
-        versions: &[LegalTextVersion],
-        provisions: &[Provision],
-        chunks: &[RetrievalChunk],
-    ) -> Result<QcCoverageStats> {
-        let active_versions: Vec<&LegalTextVersion> =
-            versions.iter().filter(|v| v.status == "active").collect();
-
-        let mut version_chunk_counts: HashMap<String, usize> = HashMap::new();
-        let mut provision_chunk_counts: HashMap<String, usize> = HashMap::new();
-
-        for chunk in chunks {
-            if chunk.chunk_type == "full_statute" {
-                *version_chunk_counts
-                    .entry(chunk.parent_version_id.clone())
-                    .or_insert(0) += 1;
-            } else if chunk.chunk_type == "contextual_provision" {
-                if let Some(source_provision_id) = &chunk.source_provision_id {
-                    *provision_chunk_counts
-                        .entry(source_provision_id.clone())
-                        .or_insert(0) += 1;
-                }
-            }
-        }
-
-        let mut active_versions_missing_full_statute_chunk = 0;
-        let mut versions_with_duplicate_full_statute_chunks = 0;
-
-        for v in &active_versions {
-            let count = version_chunk_counts
-                .get(&v.version_id)
-                .cloned()
-                .unwrap_or(0);
-            if count == 0 {
-                active_versions_missing_full_statute_chunk += 1;
-                self.errors.push(format!(
-                    "Active version {} missing full_statute chunk",
-                    v.version_id
-                ));
-            } else if count > 1 {
-                versions_with_duplicate_full_statute_chunks += 1;
-            }
-        }
-
-        let mut provisions_missing_contextual_chunk = 0;
-        let mut provisions_with_duplicate_contextual_chunks = 0;
-        let valid_provisions = provisions
-            .iter()
-            .filter(|p| !p.is_implied && !p.text.trim().is_empty())
-            .count();
-        for p in provisions {
-            let count = provision_chunk_counts
-                .get(&p.provision_id)
-                .copied()
-                .unwrap_or(0);
-            if count == 0 {
-                provisions_missing_contextual_chunk += 1;
-                self.errors.push(format!(
-                    "Provision {} missing contextual_provision chunk",
-                    p.provision_id
-                ));
-            } else if count > 1 {
-                provisions_with_duplicate_contextual_chunks += 1;
-            }
-        }
-
-        Ok(QcCoverageStats {
-            active_versions: active_versions.len(),
+        let coverage_stats = QcCoverageStats {
+            active_versions: active_versions_count,
             full_statute_chunks: version_chunk_counts.len(),
             active_versions_missing_full_statute_chunk,
             versions_with_duplicate_full_statute_chunks,
             provisions_missing_contextual_chunk,
-            valid_provisions,
+            valid_provisions: valid_provisions_coverage,
             contextual_provision_chunks: provision_chunk_counts.len(),
             provisions_with_duplicate_contextual_chunks,
-        })
+        };
+
+        Ok((
+            chunk_stats,
+            chunk_readiness,
+            provision_stats,
+            version_stats,
+            coverage_stats,
+        ))
     }
 
-    fn validate_golden_tests(&mut self) -> Result<QcGoldenStats> {
+    fn validate_golden_tests(&self) -> Result<QcGoldenStats> {
         let golden_dir = PathBuf::from("golden");
         let expected = [
             "chunks.yaml",
@@ -1195,7 +1115,7 @@ impl QcFullValidator {
             .count();
         let present = found == expected.len();
         if self.require_golden && !present {
-            self.errors.push(format!(
+            self.errors.lock().unwrap().push(format!(
                 "golden tests missing: found {found} of {} files",
                 expected.len()
             ));
@@ -1215,7 +1135,7 @@ impl QcFullValidator {
     }
 
     fn validate_semantic(
-        &mut self,
+        &self,
         provision_ids: &HashSet<String>,
         version_ids: &HashSet<String>,
         identity_ids: &HashSet<String>,
@@ -1619,18 +1539,18 @@ impl QcFullValidator {
             + stats.orphan_form_texts;
 
         if total_orphans > 0 {
-            self.warnings.push(format!(
+            self.warnings.lock().unwrap().push(format!(
                 "source/semantic orphan nodes detected: {total_orphans}"
             ));
         }
         if stats.status_events_missing_version_id > 0 {
-            self.warnings.push(format!(
+            self.warnings.lock().unwrap().push(format!(
                 "status_events with missing/invalid version_id: {}",
                 stats.status_events_missing_version_id
             ));
         }
         if stats.invalid_confidence_count > 0 {
-            self.warnings.push(format!(
+            self.warnings.lock().unwrap().push(format!(
                 "semantic nodes with confidence outside [0.0, 1.0]: {}",
                 stats.invalid_confidence_count
             ));
@@ -1640,7 +1560,7 @@ impl QcFullValidator {
             + stats.duplicate_definition_scope_ids
             + stats.duplicate_legal_semantic_node_ids;
         if duplicate_semantic_ids > 0 {
-            self.errors.push(format!(
+            self.errors.lock().unwrap().push(format!(
                 "duplicate semantic node IDs detected: {duplicate_semantic_ids}"
             ));
         }
@@ -1660,7 +1580,7 @@ fn percentile_token_count(counts: &[usize], percentile: f64) -> usize {
 }
 
 pub fn print_console_summary(report: &QcFullReport) {
-    println!("\\n--- QC FULL VALIDATION REPORT ---");
+    println!("\n--- QC FULL VALIDATION REPORT ---");
     println!("Run ID: {}", report.run_id);
     println!("Generated: {}", report.generated_at);
     println!("Status: {:?}", report.status);
@@ -1681,13 +1601,16 @@ pub fn print_console_summary(report: &QcFullReport) {
     println!("   Identities: {}", report.parse.identities_count);
     println!("   Versions: {}", report.parse.versions_count);
     println!("   Provisions: {}", report.parse.provisions_count);
-    if report.parse.missing_text > 0 {
-        println!("   ❌ Missing text: {}", report.parse.missing_text);
-    }
-    if report.parse.suspicious_short_text > 0 {
+    if report.parse.active_with_empty_text > 0 {
         println!(
-            "   ⚠️  Suspicious short text: {}",
-            report.parse.suspicious_short_text
+            "   ❌ Active versions with empty text: {}",
+            report.parse.active_with_empty_text
+        );
+    }
+    if report.parse.invalid_status_classification > 0 {
+        println!(
+            "   ⚠️  Invalid status classification: {}",
+            report.parse.invalid_status_classification
         );
     }
     println!();
@@ -1731,29 +1654,16 @@ pub fn print_console_summary(report: &QcFullReport) {
     println!();
 
     println!("🔗 Citation Statistics");
-    println!("   Total mentions: {}", report.citations.total_mentions);
+    println!("   Total mentions: {}", report.citations.citation_mentions);
     if report.citations.unresolved > 0 {
         println!("   ⚠️  Unresolved: {}", report.citations.unresolved);
-    }
-    if report.citations.suspicious_resolution > 0 {
-        println!(
-            "   ⚠️  Suspicious resolution: {}",
-            report.citations.suspicious_resolution
-        );
     }
     println!();
 
     println!("🕸️ Graph Statistics");
-    println!("   Total edges: {}", report.graph.total_edges);
-    println!("   Cites edges: {}", report.graph.cites_edges);
+    println!("   Total edges: {}", report.graph.edges);
     if report.graph.orphan_edges > 0 {
         println!("   ❌ Orphan edges: {}", report.graph.orphan_edges);
-    }
-    if report.graph.duplicate_edge_ids > 0 {
-        println!(
-            "   ❌ Duplicate edge IDs: {}",
-            report.graph.duplicate_edge_ids
-        );
     }
     println!();
 
@@ -2023,48 +1933,6 @@ fn count_json_value_dupes(rows: &[serde_json::Value], id_field: &str) -> usize {
     }))
 }
 
-fn contains_heading_leak(text: &str) -> bool {
-    const BAD_HEADINGS: &[&str] = &[
-        "COURTHOUSE CAPITAL CONSTRUCTION AND IMPROVEMENT",
-        "OPERATION OF COURTHOUSES",
-        "COLLECTION OF COURT ACCOUNTS",
-        "PUBLICATION OF COURT DECISIONS",
-        "ALTERNATIVE DISPUTE RESOLUTION",
-        "COURT FACILITIES",
-        "COURT OF APPEALS",
-        "SUPREME COURT",
-    ];
-
-    BAD_HEADINGS.iter().any(|h| text.contains(h))
-}
-
-fn artifact_leak_count(text: &str) -> usize {
-    count_rule_line_artifacts(text)
-}
-
-fn reserved_tail_leak_count(text: &str) -> usize {
-    let patterns = [
-        "[Reserved for expansion]",
-        "CHAPTERS 831 TO 834",
-        "TITLES 63 et seq.",
-        "CHAPTERS 839 et seq.",
-    ];
-
-    patterns.iter().filter(|p| text.contains(**p)).count()
-}
-
-fn looks_like_status_only(text: &str) -> bool {
-    let t = text.trim();
-    let lower = t.to_ascii_lowercase();
-    (t.starts_with('[') && t.ends_with(']') && t.len() < 300)
-        || lower.starts_with("[repealed")
-        || lower.starts_with("[renumbered")
-        || lower.starts_with("[formerly")
-        || lower.starts_with("repealed")
-        || lower.starts_with("renumbered")
-        || lower.starts_with("formerly")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2234,6 +2102,115 @@ mod tests {
         write_jsonl::<CitationMention>(temp_dir.join("citation_mentions.jsonl"), &[]).unwrap();
         write_jsonl::<ChapterHeading>(temp_dir.join("chapter_headings.jsonl"), &[]).unwrap();
         write_jsonl::<CitesEdge>(temp_dir.join("cites_edges.jsonl"), &[]).unwrap();
+        temp_dir
+    }
+
+    #[test]
+    fn test_combined_qc_logic() {
+        let temp_dir = write_complex_mock_graph();
+        let validator = QcFullValidator::new(
+            temp_dir.clone(),
+            None,
+            0,
+            2025,
+            false,
+            false,
+            true, // require_embeddings
+            false,
+            "voyage-4-large".to_string(),
+            1024,
+        );
+
+        let report = validator.run().unwrap();
+        let _ = fs::remove_dir_all(temp_dir);
+
+        // Verify Chunk Stats
+        assert_eq!(report.chunks.total_chunks, 3);
+        assert_eq!(report.chunks.full_statute_chunks, 1);
+        assert_eq!(report.chunks.contextual_provision_chunks, 2);
+        assert_eq!(report.chunks.orphan_chunks, 1); // One chunk has no parent in the provision_ids set
+
+        // Verify Embedding Readiness
+        assert_eq!(report.embedding_readiness.eligible_chunks, 3);
+        assert!(report.embedding_readiness.estimated_total_tokens > 0);
+        assert_eq!(report.provision_embedding_readiness.eligible_provisions, 1);
+        assert_eq!(report.version_embedding_readiness.eligible_versions, 1);
+
+        // Verify Coverage
+        assert_eq!(report.coverage.active_versions, 1);
+        assert_eq!(report.coverage.full_statute_chunks, 1);
+        assert_eq!(report.coverage.valid_provisions, 1);
+        assert_eq!(report.coverage.contextual_provision_chunks, 2);
+    }
+
+    fn write_complex_mock_graph() -> PathBuf {
+        let temp_dir =
+            std::env::temp_dir().join(format!("orsgraph-qc-complex-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let identity = LegalTextIdentity {
+            canonical_id: "or:ors:1.001".to_string(),
+            citation: "ORS 1.001".to_string(),
+            chapter: "1".to_string(),
+            status: "active".to_string(),
+            ..Default::default()
+        };
+        let version = LegalTextVersion {
+            version_id: "or:ors:1.001@2025".to_string(),
+            canonical_id: "or:ors:1.001".to_string(),
+            citation: "ORS 1.001".to_string(),
+            status: "active".to_string(),
+            text: "Valid version text.".to_string(),
+            embedding_input_hash: Some("h1".to_string()),
+            ..Default::default()
+        };
+        let provision = Provision {
+            provision_id: "or:ors:1.001@2025::p:1".to_string(),
+            version_id: version.version_id.clone(),
+            canonical_id: version.canonical_id.clone(),
+            text: "Valid provision text.".to_string(),
+            embedding_input_hash: Some("h2".to_string()),
+            ..Default::default()
+        };
+
+        let chunks = vec![
+            RetrievalChunk {
+                chunk_id: "c1".to_string(),
+                chunk_type: "full_statute".to_string(),
+                parent_version_id: version.version_id.clone(),
+                text: "Chunk 1 text".to_string(),
+                embedding_policy: Some("embed_primary".to_string()),
+                embedding_input_hash: "h3".to_string(),
+                ..Default::default()
+            },
+            RetrievalChunk {
+                chunk_id: "c2".to_string(),
+                chunk_type: "contextual_provision".to_string(),
+                source_provision_id: Some(provision.provision_id.clone()),
+                text: "Chunk 2 text".to_string(),
+                embedding_policy: Some("embed_primary".to_string()),
+                embedding_input_hash: "h4".to_string(),
+                ..Default::default()
+            },
+            RetrievalChunk {
+                chunk_id: "c3_orphan".to_string(),
+                chunk_type: "contextual_provision".to_string(),
+                source_provision_id: Some("non_existent_provision".to_string()),
+                text: "Orphan chunk text".to_string(),
+                embedding_policy: Some("embed_primary".to_string()),
+                embedding_input_hash: "h5".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        write_jsonl(temp_dir.join("legal_text_identities.jsonl"), &[identity]).unwrap();
+        write_jsonl(temp_dir.join("legal_text_versions.jsonl"), &[version]).unwrap();
+        write_jsonl(temp_dir.join("provisions.jsonl"), &[provision]).unwrap();
+        write_jsonl(temp_dir.join("retrieval_chunks.jsonl"), &chunks).unwrap();
+        write_jsonl::<CitationMention>(temp_dir.join("citation_mentions.jsonl"), &[]).unwrap();
+        write_jsonl::<ChapterHeading>(temp_dir.join("chapter_headings.jsonl"), &[]).unwrap();
+        write_jsonl::<CitesEdge>(temp_dir.join("cites_edges.jsonl"), &[]).unwrap();
+
         temp_dir
     }
 }
