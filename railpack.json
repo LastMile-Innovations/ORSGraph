@@ -1,0 +1,13 @@
+{
+  "provider": "rust",
+  "packages": {
+    "rust": "1.95.0"
+  },
+  "build": {
+    "commands": [
+      "mkdir -p bin",
+      "cargo build --release --bin ors-crawler",
+      "cp target/release/ors-crawler bin/"
+    ]
+  }
+}

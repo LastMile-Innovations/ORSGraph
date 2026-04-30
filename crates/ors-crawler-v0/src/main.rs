@@ -420,6 +420,11 @@ fn parse_embedding_phases(values: &[u8]) -> Result<BTreeSet<embeddings::Embeddin
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install rustls crypto provider for TLS connections (required for neo4j+s://)
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     tracing_subscriber::fmt().with_env_filter("info").init();
 
     let cli = Cli::parse();
