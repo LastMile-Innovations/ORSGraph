@@ -7,7 +7,7 @@ edition = "2021"
 path = "src/lib.rs"
 
 [[bin]]
-name = "ors-crawler"
+name = "ors-crawler-v0"
 path = "src/main.rs"
 
 [dependencies]
