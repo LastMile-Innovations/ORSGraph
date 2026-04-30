@@ -20,7 +20,13 @@
     },
     "neo4j": {
       "source": {
-        "image": "neo4j:2026.04.0-community"
+        "image": "neo4j:2026.04.0-community",
+        "repo": "LastMile-Innovations/ORSGraph",
+        "branch": "main"
+      },
+      "build": {
+        "builder": "DOCKERFILE",
+        "dockerfilePath": "/dev/null"
       },
       "variables": {
         "NEO4J_AUTH": "neo4j/orsgraph2025",
