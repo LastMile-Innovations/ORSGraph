@@ -3,7 +3,7 @@ use crate::models::{
     Deadline, DefinedTerm, Definition, DefinitionScope, Exception, FormText, LegalAction,
     LegalActor, LegalSemanticNode, LegalTextVersion, LineageEvent, MoneyAmount, Obligation,
     Penalty, Provision, RateLimit, Remedy, RequiredNotice, SessionLaw, SourceDocument, SourceNote,
-    StatusEvent, TaxRule, TemporalEffect,
+    StatusEvent, TaxRule, TemporalEffect, TimeInterval,
 };
 use crate::text::normalize_ws;
 use once_cell::sync::Lazy;
@@ -78,6 +78,7 @@ pub struct DerivedHistoricalNodes {
     pub temporal_effects: Vec<TemporalEffect>,
     pub lineage_events: Vec<LineageEvent>,
     pub session_laws: Vec<SessionLaw>,
+    pub time_intervals: Vec<TimeInterval>,
 }
 
 #[derive(Debug, Default)]
@@ -193,6 +194,7 @@ pub fn derive_note_semantics(
             source_document,
             Some(note),
         ));
+        out.time_intervals.extend(extract_time_intervals(note));
     }
 
     dedupe_historical_nodes(&mut out);
@@ -486,6 +488,7 @@ fn dedupe_historical_nodes(out: &mut DerivedHistoricalNodes) {
     });
     retain_unique_by(&mut out.lineage_events, |row| row.lineage_event_id.clone());
     retain_unique_by(&mut out.session_laws, |row| row.session_law_id.clone());
+    retain_unique_by(&mut out.time_intervals, |row| row.time_interval_id.clone());
 }
 
 fn dedupe_semantic_nodes(out: &mut DerivedSemanticNodes) {
@@ -664,6 +667,32 @@ fn extract_temporal_effects(note: &SourceNote, edition_year: i32) -> Vec<Tempora
     }
 
     effects
+}
+
+fn extract_time_intervals(note: &SourceNote) -> Vec<TimeInterval> {
+    let text = normalize_ws(&note.text);
+    let mut intervals = Vec::new();
+
+    // Basic date extraction: looking for specific dates to create intervals
+    // In a real scenario, we might want to distinguish between start/end dates.
+    // For now, if we find a date, we'll treat it as a point interval or start date.
+    for caps in DATE_RE.captures_iter(&text) {
+        let date_str = caps.get(0).unwrap().as_str().to_string();
+        let time_interval_id = format!(
+            "time_interval:{}",
+            stable_id(&format!("{}::{}", note.source_note_id, date_str))
+        );
+
+        intervals.push(TimeInterval {
+            time_interval_id,
+            start_date: Some(date_str.clone()),
+            end_date: None,
+            label: Some(format!("Date mentioned in source note: {}", date_str)),
+            certainty: Some("high".to_string()),
+        });
+    }
+
+    intervals
 }
 
 fn extract_lineage_events(note: &SourceNote) -> Vec<LineageEvent> {

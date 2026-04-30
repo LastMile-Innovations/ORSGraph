@@ -376,6 +376,7 @@ pub fn parse_ors_chapter_html(
         amendments,
         chapter_toc_entries,
         reserved_ranges,
+        time_intervals: Vec::new(),
         parser_diagnostic_rows,
         parser_diagnostics,
     })

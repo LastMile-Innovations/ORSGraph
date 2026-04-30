@@ -304,6 +304,8 @@ pub struct ParsedChapter {
     #[serde(default)]
     pub reserved_ranges: Vec<ReservedRange>,
     #[serde(default)]
+    pub time_intervals: Vec<TimeInterval>,
+    #[serde(default)]
     pub parser_diagnostic_rows: Vec<ParserDiagnostic>,
     #[serde(default)]
     pub parser_diagnostics: ParserDiagnostics,

@@ -2679,7 +2679,7 @@ fn write_derived_graph_nodes(graph_dir: &Path, parsed: &models::ParsedChapter) -
     write_jsonl(graph_dir.join("session_laws.jsonl"), &session_laws)?;
     write_jsonl(
         graph_dir.join("time_intervals.jsonl"),
-        &Vec::<TimeInterval>::new(),
+        &note_semantics.time_intervals,
     )?;
     write_jsonl(
         graph_dir.join("defined_terms.jsonl"),
@@ -2748,6 +2748,12 @@ fn append_derived_graph_nodes(graph_dir: &Path, parsed: &models::ParsedChapter) 
     append_jsonl(
         &graph_dir.join("lineage_events.jsonl"),
         &note_semantics.lineage_events,
+    )?;
+    append_jsonl(&graph_dir.join("amendments.jsonl"), &parsed.amendments)?;
+    append_jsonl(&graph_dir.join("session_laws.jsonl"), &session_laws)?;
+    append_jsonl(
+        &graph_dir.join("time_intervals.jsonl"),
+        &note_semantics.time_intervals,
     )?;
     append_jsonl(
         &graph_dir.join("defined_terms.jsonl"),
