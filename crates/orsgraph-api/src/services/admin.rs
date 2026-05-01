@@ -58,7 +58,6 @@ struct JobIndex {
 impl AdminService {
     pub async fn new(config: Arc<ApiConfig>) -> anyhow::Result<Self> {
         let jobs_dir = PathBuf::from(&config.admin_jobs_dir);
-        fs::create_dir_all(&jobs_dir).await?;
 
         let service = Self {
             inner: Arc::new(AdminInner {
@@ -69,7 +68,10 @@ impl AdminService {
                 counter: AtomicU64::new(0),
             }),
         };
-        service.recover_jobs().await?;
+        if service.enabled() {
+            fs::create_dir_all(&service.inner.jobs_dir).await?;
+            service.recover_jobs().await?;
+        }
         Ok(service)
     }
 
@@ -1971,5 +1973,20 @@ mod tests {
             .contains("API restarted"));
 
         let _ = fs::remove_dir_all(jobs_dir).await;
+    }
+
+    #[tokio::test]
+    async fn disabled_admin_does_not_create_job_storage() {
+        let root = std::env::temp_dir().join(format!("orsgraph-admin-disabled-{}", now_ms()));
+        let jobs_dir = root.join("jobs");
+        let mut config = (*test_config_with_jobs_dir(&jobs_dir.display().to_string())).clone();
+        config.admin_enabled = false;
+
+        let service = AdminService::new(Arc::new(config)).await.unwrap();
+
+        assert!(!service.enabled());
+        assert!(!fs::try_exists(&jobs_dir).await.unwrap());
+
+        let _ = fs::remove_dir_all(root).await;
     }
 }

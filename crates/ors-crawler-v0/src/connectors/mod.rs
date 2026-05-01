@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeMap;
 
+const DEFAULT_ORS_CHAPTER_COUNT: u32 = 524;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceItem {
     pub item_id: String,
@@ -77,12 +79,7 @@ impl DataConnector for OrsHtmlConnector {
         let chapters = if let Some(chapters) = &self.options.chapters {
             parse_chapter_list(chapters)?
         } else {
-            let max = if self.options.max_items == 0 {
-                524
-            } else {
-                self.options.max_items
-            };
-            (1..=max).map(|chapter| chapter.to_string()).collect()
+            default_ors_chapters(self.options.max_items)
         };
         Ok(chapters
             .into_iter()
@@ -317,11 +314,45 @@ fn parse_chapter_list(list: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
+fn default_ors_chapters(max_items: usize) -> Vec<String> {
+    let max = if max_items > 0 {
+        max_items as u32
+    } else {
+        DEFAULT_ORS_CHAPTER_COUNT
+    };
+    (1..=max).map(|chapter| chapter.to_string()).collect()
+}
+
 fn chapter_pad(chapter: &str) -> String {
     if chapter.chars().all(|ch| ch.is_ascii_digit()) {
         format!("{:03}", chapter.parse::<u32>().unwrap_or(0))
     } else {
         chapter.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_ors_chapters, DEFAULT_ORS_CHAPTER_COUNT};
+
+    #[test]
+    fn default_ors_discovery_uses_full_corpus_when_unbounded() {
+        let chapters = default_ors_chapters(0);
+
+        assert_eq!(chapters.len(), DEFAULT_ORS_CHAPTER_COUNT as usize);
+        assert_eq!(chapters.first().map(String::as_str), Some("1"));
+        assert_eq!(
+            chapters.last().cloned(),
+            Some(DEFAULT_ORS_CHAPTER_COUNT.to_string())
+        );
+    }
+
+    #[test]
+    fn default_ors_discovery_respects_positive_max_items() {
+        assert_eq!(
+            default_ors_chapters(2),
+            vec!["1".to_string(), "2".to_string()]
+        );
     }
 }
 
