@@ -1,8 +1,8 @@
-use crate::models::casebuilder::*;
-use crate::services::work_product_ast::{
+use super::work_product_ast::{
     canonical_work_product_blocks, humanize_product_type, now_string,
     required_role_specs_for_work_product, role_spec_matches_block, sanitize_path_segment,
 };
+use crate::models::casebuilder::*;
 
 pub(crate) fn work_product_findings(product: &WorkProduct) -> Vec<WorkProductFinding> {
     let now = now_string();
@@ -188,7 +188,7 @@ fn block_ai_generated(block: &WorkProductBlock) -> bool {
         .unwrap_or(false)
 }
 
-fn work_product_finding(
+pub(crate) fn work_product_finding(
     product: &WorkProduct,
     rule_id: &str,
     category: &str,
@@ -239,11 +239,11 @@ fn work_product_finding(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::models::casebuilder::{default_work_product_schema_version, RuleProfileSummary};
-    use crate::services::work_product_ast::{
+    use super::super::work_product_ast::{
         expected_formatting_profile_id, expected_profile_id, expected_rule_pack_id,
     };
+    use super::*;
+    use crate::models::casebuilder::{default_work_product_schema_version, RuleProfileSummary};
 
     fn test_product(blocks: Vec<WorkProductBlock>) -> WorkProduct {
         WorkProduct {

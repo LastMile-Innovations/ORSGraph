@@ -1,6 +1,6 @@
+use super::citation_resolver::work_product_citations_for_text;
 use crate::error::{ApiError, ApiResult};
 use crate::models::casebuilder::*;
-use crate::services::citation_resolver::work_product_citations_for_text;
 use serde_json::json;
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -487,19 +487,14 @@ pub(crate) fn now_string() -> String {
 }
 
 pub(crate) fn canonical_work_product_type(value: &str) -> Option<&'static str> {
-    match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
-        "complaint" => Some("complaint"),
-        "answer" => Some("answer"),
-        "motion" => Some("motion"),
-        "declaration" => Some("declaration"),
-        "affidavit" => Some("affidavit"),
-        "memo" | "legal_memo" | "brief" => Some("memo"),
-        "notice" => Some("notice"),
-        "letter" | "demand_letter" => Some("letter"),
-        "exhibit_list" => Some("exhibit_list"),
-        "proposed_order" => Some("proposed_order"),
-        "custom" => Some("custom"),
-        _ => None,
+    let normalized = value.trim().to_ascii_lowercase().replace('-', "_");
+    match normalized.as_str() {
+        "legal_memo" | "brief" => Some("memo"),
+        "demand_letter" => Some("letter"),
+        known => SUPPORTED_WORK_PRODUCT_TYPES
+            .iter()
+            .copied()
+            .find(|supported| *supported == known),
     }
 }
 

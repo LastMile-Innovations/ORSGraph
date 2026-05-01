@@ -1,10 +1,10 @@
-use crate::error::{ApiError, ApiResult};
-use crate::models::casebuilder::*;
-use crate::services::ast_validation::validate_work_product_document;
-use crate::services::work_product_ast::{
+use super::ast_validation::validate_work_product_document;
+use super::work_product_ast::{
     find_ast_block, find_ast_block_mut, flatten_work_product_blocks, now_string, push_unique,
     validate_optional_text_range,
 };
+use crate::error::{ApiError, ApiResult};
+use crate::models::casebuilder::*;
 
 pub(crate) fn apply_ast_patch_atomic(
     product: &WorkProduct,

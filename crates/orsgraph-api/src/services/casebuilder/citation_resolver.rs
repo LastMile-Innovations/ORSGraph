@@ -1,5 +1,5 @@
+use super::work_product_ast::sanitize_path_segment;
 use crate::models::casebuilder::*;
-use crate::services::work_product_ast::sanitize_path_segment;
 use regex::Regex;
 use std::sync::LazyLock;
 

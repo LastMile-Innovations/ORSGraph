@@ -1,5 +1,5 @@
+use super::work_product_ast::now_string;
 use crate::models::casebuilder::*;
-use crate::services::work_product_ast::now_string;
 
 pub(crate) fn empty_provider_free_ai_patch(
     product: &WorkProduct,

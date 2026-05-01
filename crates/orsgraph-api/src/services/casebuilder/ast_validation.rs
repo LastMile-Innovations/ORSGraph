@@ -1,11 +1,11 @@
-use crate::error::{ApiError, ApiResult};
-use crate::models::casebuilder::*;
-use crate::services::work_product_ast::{
+use super::work_product_ast::{
     ast_block_spec, expected_formatting_profile_id, expected_profile_id, expected_rule_pack_id,
     find_ast_block, flatten_work_product_blocks, normalize_work_product_type_lossy,
     registered_template_product_type, required_role_specs_for_work_product,
     role_spec_matches_block, validate_optional_text_range, SUPPORTED_BLOCK_TYPES,
 };
+use crate::error::{ApiError, ApiResult};
+use crate::models::casebuilder::*;
 use std::collections::HashSet;
 
 pub(crate) fn validate_work_product_document(product: &WorkProduct) -> AstValidationResponse {
@@ -266,7 +266,7 @@ fn validate_ast_blocks(
 
 fn validate_block_against_spec(
     block: &WorkProductBlock,
-    spec: crate::services::work_product_ast::AstBlockSpec,
+    spec: super::work_product_ast::AstBlockSpec,
     errors: &mut Vec<AstValidationIssue>,
     warnings: &mut Vec<AstValidationIssue>,
 ) {

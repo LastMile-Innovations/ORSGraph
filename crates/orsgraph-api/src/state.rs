@@ -1,7 +1,9 @@
 use crate::config::ApiConfig;
 use crate::services::admin::AdminService;
 use crate::services::analytics::AnalyticsService;
-use crate::services::casebuilder::{AssemblyAiProviderConfig, CaseBuilderService};
+use crate::services::casebuilder::{
+    AssemblyAiProviderConfig, CaseBuilderService, CaseBuilderServiceConfig,
+};
 use crate::services::embedding::EmbeddingService;
 use crate::services::graph_expand::GraphExpandService;
 use crate::services::health::HealthService;
@@ -111,16 +113,16 @@ impl AppState {
         ));
         let rule_applicability_resolver = Arc::new(RuleApplicabilityResolver::new(neo4j.clone()));
         let object_store = object_store_from_config(&config).await?;
-        let casebuilder_service = Arc::new(CaseBuilderService::new(
-            neo4j_service.clone(),
+        let casebuilder_service = Arc::new(CaseBuilderService::new(CaseBuilderServiceConfig {
+            neo4j: neo4j_service.clone(),
             object_store,
-            config.r2_upload_ttl_seconds,
-            config.r2_download_ttl_seconds,
-            config.r2_max_upload_bytes,
-            config.casebuilder_ast_entity_inline_bytes,
-            config.casebuilder_ast_snapshot_inline_bytes,
-            config.casebuilder_ast_block_inline_bytes,
-            AssemblyAiProviderConfig {
+            upload_ttl_seconds: config.r2_upload_ttl_seconds,
+            download_ttl_seconds: config.r2_download_ttl_seconds,
+            max_upload_bytes: config.r2_max_upload_bytes,
+            ast_entity_inline_bytes: config.casebuilder_ast_entity_inline_bytes,
+            ast_snapshot_inline_bytes: config.casebuilder_ast_snapshot_inline_bytes,
+            ast_block_inline_bytes: config.casebuilder_ast_block_inline_bytes,
+            assemblyai: AssemblyAiProviderConfig {
                 enabled: config.assemblyai_enabled,
                 api_key: config.assemblyai_api_key.clone(),
                 base_url: config.assemblyai_base_url.clone(),
@@ -129,7 +131,7 @@ impl AppState {
                 timeout_ms: config.assemblyai_timeout_ms,
                 max_media_bytes: config.assemblyai_max_media_bytes,
             },
-        ));
+        }));
 
         if let Err(e) = casebuilder_service.ensure_indexes().await {
             tracing::error!("Failed to ensure CaseBuilder indexes: {}", e);

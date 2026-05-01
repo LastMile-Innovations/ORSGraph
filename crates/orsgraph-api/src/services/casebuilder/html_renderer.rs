@@ -1,7 +1,7 @@
+use super::markdown_adapter::work_product_markdown;
+use super::work_product_ast::{canonical_work_product_blocks, now_string};
 use crate::error::ApiResult;
 use crate::models::casebuilder::*;
-use crate::services::markdown_adapter::work_product_markdown;
-use crate::services::work_product_ast::{canonical_work_product_blocks, now_string};
 
 pub(crate) fn render_work_product_preview(product: &WorkProduct) -> WorkProductPreviewResponse {
     let mut html = String::new();

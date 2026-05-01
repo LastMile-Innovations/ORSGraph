@@ -1,8 +1,8 @@
-use crate::models::casebuilder::*;
-use crate::services::work_product_ast::{
+use super::work_product_ast::{
     find_ast_block_mut, normalize_work_product_type_lossy, prosemirror_doc_for_text,
     work_product_document_from_projection,
 };
+use crate::models::casebuilder::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default)]

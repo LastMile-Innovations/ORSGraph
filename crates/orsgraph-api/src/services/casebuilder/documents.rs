@@ -1,0 +1,1000 @@
+use super::*;
+
+impl CaseBuilderService {
+    pub async fn upload_file(
+        &self,
+        matter_id: &str,
+        request: UploadFileRequest,
+    ) -> ApiResult<CaseDocument> {
+        self.require_matter(matter_id).await?;
+        let now = now_string();
+        let document_id = generate_opaque_id("doc");
+        let title = title_from_filename(&request.filename);
+        let bytes = request
+            .text
+            .as_ref()
+            .map(|text| text.len() as u64)
+            .or(request.bytes)
+            .unwrap_or(0);
+        self.ensure_upload_size(bytes)?;
+        let object_key = build_document_object_key(&document_id, &request.filename);
+        let (stored_object, hash) = if let Some(text) = &request.text {
+            let hash = sha256_hex(text.as_bytes());
+            let stored = self
+                .object_store
+                .put_bytes(
+                    &object_key,
+                    Bytes::copy_from_slice(text.as_bytes()),
+                    put_options(request.mime_type.clone(), Some(hash.clone())),
+                )
+                .await?;
+            (Some(stored), Some(hash))
+        } else {
+            (None, None)
+        };
+        let storage_status = if stored_object.is_some() {
+            "stored"
+        } else {
+            "metadata_only"
+        };
+
+        let mut document = CaseDocument {
+            id: document_id.clone(),
+            document_id,
+            matter_id: matter_id.to_string(),
+            filename: request.filename,
+            title,
+            document_type: request.document_type.unwrap_or_else(|| "other".to_string()),
+            mime_type: request.mime_type,
+            pages: 1,
+            bytes,
+            file_hash: hash,
+            uploaded_at: now,
+            source: "user_upload".to_string(),
+            confidentiality: request
+                .confidentiality
+                .unwrap_or_else(|| "private".to_string()),
+            processing_status: if request.text.is_some() {
+                "processed".to_string()
+            } else {
+                "queued".to_string()
+            },
+            is_exhibit: false,
+            exhibit_label: None,
+            summary: "Uploaded to CaseBuilder. Run extraction to populate facts and evidence."
+                .to_string(),
+            date_observed: None,
+            parties_mentioned: Vec::new(),
+            entities_mentioned: Vec::new(),
+            facts_extracted: 0,
+            citations_found: 0,
+            contradictions_flagged: 0,
+            linked_claim_ids: Vec::new(),
+            folder: request.folder.unwrap_or_else(|| "Uploads".to_string()),
+            storage_path: stored_object
+                .as_ref()
+                .and_then(|object| object.local_path.clone()),
+            storage_provider: self.object_store.provider().to_string(),
+            storage_status: storage_status.to_string(),
+            storage_bucket: stored_object
+                .as_ref()
+                .and_then(|object| object.bucket.clone())
+                .or_else(|| self.object_store.bucket().map(str::to_string)),
+            storage_key: stored_object.as_ref().map(|object| object.key.clone()),
+            content_etag: stored_object
+                .as_ref()
+                .and_then(|object| object.etag.clone()),
+            upload_expires_at: None,
+            deleted_at: None,
+            object_blob_id: None,
+            current_version_id: None,
+            ingestion_run_ids: Vec::new(),
+            source_spans: Vec::new(),
+            extracted_text: request.text,
+        };
+
+        let provenance = stored_object
+            .as_ref()
+            .map(|object| build_original_provenance(matter_id, &document, object, "stored"));
+        if let Some(provenance) = &provenance {
+            apply_document_provenance(&mut document, provenance);
+        }
+
+        let document = self
+            .merge_node(matter_id, document_spec(), &document.document_id, &document)
+            .await?;
+        if let Some(provenance) = provenance {
+            self.persist_document_provenance(matter_id, &provenance)
+                .await?;
+        }
+        Ok(document)
+    }
+
+    pub async fn upload_binary_file(
+        &self,
+        matter_id: &str,
+        request: BinaryUploadRequest,
+    ) -> ApiResult<CaseDocument> {
+        self.require_matter(matter_id).await?;
+        self.ensure_upload_size(request.bytes.len() as u64)?;
+        validate_mime_type(request.mime_type.as_deref())?;
+
+        let now = now_string();
+        let document_id = generate_opaque_id("doc");
+        let object_key = build_document_object_key(&document_id, &request.filename);
+        let hash = sha256_hex(&request.bytes);
+        let stored_object = self
+            .object_store
+            .put_bytes(
+                &object_key,
+                request.bytes.clone(),
+                put_options(request.mime_type.clone(), Some(hash.clone())),
+            )
+            .await?;
+        let parser = parse_document_bytes(
+            &request.filename,
+            request.mime_type.as_deref(),
+            &request.bytes,
+        );
+        let parser_id = parser.parser_id.clone();
+        let processing_status = parser.status.clone();
+
+        let mut document = CaseDocument {
+            id: document_id.clone(),
+            document_id,
+            matter_id: matter_id.to_string(),
+            filename: request.filename.clone(),
+            title: title_from_filename(&request.filename),
+            document_type: request.document_type.unwrap_or_else(|| "other".to_string()),
+            mime_type: request.mime_type,
+            pages: 1,
+            bytes: stored_object.content_length,
+            file_hash: Some(hash),
+            uploaded_at: now,
+            source: "user_upload".to_string(),
+            confidentiality: request
+                .confidentiality
+                .unwrap_or_else(|| "private".to_string()),
+            processing_status,
+            is_exhibit: false,
+            exhibit_label: None,
+            summary: parser.message,
+            date_observed: None,
+            parties_mentioned: Vec::new(),
+            entities_mentioned: Vec::new(),
+            facts_extracted: 0,
+            citations_found: 0,
+            contradictions_flagged: 0,
+            linked_claim_ids: Vec::new(),
+            folder: request.folder.unwrap_or_else(|| "Uploads".to_string()),
+            storage_path: stored_object.local_path.clone(),
+            storage_provider: self.object_store.provider().to_string(),
+            storage_status: "stored".to_string(),
+            storage_bucket: stored_object
+                .bucket
+                .clone()
+                .or_else(|| self.object_store.bucket().map(str::to_string)),
+            storage_key: Some(stored_object.key.clone()),
+            content_etag: stored_object.etag.clone(),
+            upload_expires_at: None,
+            deleted_at: None,
+            object_blob_id: None,
+            current_version_id: None,
+            ingestion_run_ids: Vec::new(),
+            source_spans: Vec::new(),
+            extracted_text: parser.text,
+        };
+
+        let mut provenance =
+            build_original_provenance(matter_id, &document, &stored_object, "stored");
+        provenance.ingestion_run.parser_id = Some(parser_id);
+        apply_document_provenance(&mut document, &provenance);
+        let document = self
+            .merge_node(matter_id, document_spec(), &document.document_id, &document)
+            .await?;
+        self.persist_document_provenance(matter_id, &provenance)
+            .await?;
+        Ok(document)
+    }
+
+    pub async fn create_file_upload(
+        &self,
+        matter_id: &str,
+        request: CreateFileUploadRequest,
+    ) -> ApiResult<FileUploadResponse> {
+        self.require_matter(matter_id).await?;
+        if request.bytes == 0 {
+            return Err(ApiError::BadRequest(
+                "Upload intent bytes must be greater than 0".to_string(),
+            ));
+        }
+        self.ensure_upload_size(request.bytes)?;
+        validate_mime_type(request.mime_type.as_deref())?;
+
+        let normalized_hash = match request.sha256.as_deref() {
+            Some(value) => Some(normalize_sha256(value).ok_or_else(|| {
+                ApiError::BadRequest("sha256 must be a hex SHA-256 digest".to_string())
+            })?),
+            None => None,
+        };
+        let now = now_string();
+        let document_id = generate_opaque_id("doc");
+        let upload_id = upload_id_for_document(&document_id);
+        let object_key = build_document_object_key(&document_id, &request.filename);
+        let expires_at = timestamp_after(self.upload_ttl_seconds);
+        let presigned = self
+            .object_store
+            .presign_put(
+                &object_key,
+                put_options(request.mime_type.clone(), normalized_hash.clone()),
+                Duration::from_secs(self.upload_ttl_seconds),
+            )
+            .await?;
+
+        let document = CaseDocument {
+            id: document_id.clone(),
+            document_id: document_id.clone(),
+            matter_id: matter_id.to_string(),
+            filename: request.filename.clone(),
+            title: title_from_filename(&request.filename),
+            document_type: request.document_type.unwrap_or_else(|| "other".to_string()),
+            mime_type: request.mime_type,
+            pages: 1,
+            bytes: request.bytes,
+            file_hash: normalized_hash,
+            uploaded_at: now,
+            source: "user_upload".to_string(),
+            confidentiality: request
+                .confidentiality
+                .unwrap_or_else(|| "private".to_string()),
+            processing_status: "queued".to_string(),
+            is_exhibit: false,
+            exhibit_label: None,
+            summary: "Upload pending. Complete the direct R2 upload to queue extraction."
+                .to_string(),
+            date_observed: None,
+            parties_mentioned: Vec::new(),
+            entities_mentioned: Vec::new(),
+            facts_extracted: 0,
+            citations_found: 0,
+            contradictions_flagged: 0,
+            linked_claim_ids: Vec::new(),
+            folder: request.folder.unwrap_or_else(|| "Uploads".to_string()),
+            storage_path: None,
+            storage_provider: self.object_store.provider().to_string(),
+            storage_status: "pending".to_string(),
+            storage_bucket: self.object_store.bucket().map(str::to_string),
+            storage_key: Some(object_key),
+            content_etag: None,
+            upload_expires_at: Some(expires_at.clone()),
+            deleted_at: None,
+            object_blob_id: None,
+            current_version_id: None,
+            ingestion_run_ids: Vec::new(),
+            source_spans: Vec::new(),
+            extracted_text: None,
+        };
+        let document = self
+            .merge_node(matter_id, document_spec(), &document.document_id, &document)
+            .await?;
+
+        Ok(FileUploadResponse {
+            upload_id,
+            document_id,
+            method: presigned.method,
+            url: presigned.url,
+            expires_at,
+            headers: presigned.headers,
+            document,
+        })
+    }
+
+    pub async fn complete_file_upload(
+        &self,
+        matter_id: &str,
+        upload_id: &str,
+        request: CompleteFileUploadRequest,
+    ) -> ApiResult<CaseDocument> {
+        let mut document = self.get_document(matter_id, &request.document_id).await?;
+        if upload_id_for_document(&document.document_id) != upload_id {
+            return Err(ApiError::BadRequest(
+                "Upload id does not match document".to_string(),
+            ));
+        }
+        if document.storage_status == "deleted" {
+            return Err(ApiError::BadRequest(
+                "Cannot complete a deleted document upload".to_string(),
+            ));
+        }
+        if let Some(expires_at) = &document.upload_expires_at {
+            if parse_timestamp(expires_at).is_some_and(|expires| expires < now_secs()) {
+                document.storage_status = "failed".to_string();
+                document.summary = "Upload URL expired before completion.".to_string();
+                self.merge_node(matter_id, document_spec(), &document.document_id, &document)
+                    .await?;
+                return Err(ApiError::BadRequest("Upload URL expired".to_string()));
+            }
+        }
+        if let Some(bytes) = request.bytes {
+            self.ensure_upload_size(bytes)?;
+            if bytes != document.bytes {
+                return Err(ApiError::BadRequest(
+                    "Completed upload size does not match intent".to_string(),
+                ));
+            }
+        }
+        if let Some(sha256) = request.sha256.as_deref() {
+            let normalized = normalize_sha256(sha256).ok_or_else(|| {
+                ApiError::BadRequest("sha256 must be a hex SHA-256 digest".to_string())
+            })?;
+            if document
+                .file_hash
+                .as_deref()
+                .is_some_and(|expected| expected != normalized)
+            {
+                return Err(ApiError::BadRequest(
+                    "Completed upload hash does not match intent".to_string(),
+                ));
+            }
+            document.file_hash = Some(normalized);
+        }
+
+        let key = document
+            .storage_key
+            .clone()
+            .ok_or_else(|| ApiError::BadRequest("Document has no storage key".to_string()))?;
+        let object = self.object_store.head(&key).await?;
+        if object.content_length != document.bytes {
+            document.storage_status = "failed".to_string();
+            document.summary = "Uploaded object size did not match the upload intent.".to_string();
+            self.merge_node(matter_id, document_spec(), &document.document_id, &document)
+                .await?;
+            return Err(ApiError::BadRequest(
+                "Uploaded object size did not match intent".to_string(),
+            ));
+        }
+        if let (Some(actual), Some(expected)) = (object.etag.as_deref(), request.etag.as_deref()) {
+            if clean_etag(actual) != clean_etag(expected) {
+                return Err(ApiError::BadRequest(
+                    "Completed upload ETag does not match R2 object".to_string(),
+                ));
+            }
+        }
+        if let Some(expected_hash) = document.file_hash.as_deref() {
+            if let Some(actual_hash) = object.metadata.get("sha256") {
+                if actual_hash != expected_hash {
+                    return Err(ApiError::BadRequest(
+                        "Completed upload hash metadata does not match intent".to_string(),
+                    ));
+                }
+            }
+        }
+        if document.file_hash.is_none() {
+            document.file_hash = object
+                .metadata
+                .get("sha256")
+                .and_then(|hash| normalize_sha256(hash));
+        }
+
+        document.storage_status = "stored".to_string();
+        document.storage_bucket = object
+            .bucket
+            .clone()
+            .or_else(|| self.object_store.bucket().map(str::to_string));
+        document.content_etag = object.etag.clone();
+        document.upload_expires_at = None;
+        document.summary =
+            "Uploaded to private object storage. Run extraction to populate facts and evidence."
+                .to_string();
+        let provenance = build_original_provenance(matter_id, &document, &object, "stored");
+        apply_document_provenance(&mut document, &provenance);
+        let document = self
+            .merge_node(matter_id, document_spec(), &document.document_id, &document)
+            .await?;
+        self.persist_document_provenance(matter_id, &provenance)
+            .await?;
+        Ok(document)
+    }
+
+    pub async fn list_documents(&self, matter_id: &str) -> ApiResult<Vec<CaseDocument>> {
+        self.list_nodes(matter_id, document_spec()).await
+    }
+
+    pub async fn get_document(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+    ) -> ApiResult<CaseDocument> {
+        self.get_node(matter_id, document_spec(), document_id).await
+    }
+
+    pub async fn get_document_workspace(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+    ) -> ApiResult<DocumentWorkspace> {
+        let document = self.get_document(matter_id, document_id).await?;
+        let current_version = self.current_document_version(matter_id, &document).await?;
+        let annotations = self
+            .list_document_annotations(matter_id, document_id)
+            .await?;
+        let source_spans = self
+            .list_nodes::<SourceSpan>(matter_id, source_span_spec())
+            .await?
+            .into_iter()
+            .filter(|span| span.document_id == document_id)
+            .collect::<Vec<_>>();
+        let mut warnings = Vec::new();
+        let bytes = match self.document_bytes(&document).await {
+            Ok(bytes) => Some(bytes),
+            Err(ApiError::NotFound(_)) if document.storage_status != "stored" => None,
+            Err(error) => {
+                warnings.push(format!("Source bytes are unavailable: {error}"));
+                None
+            }
+        };
+        let docx_manifest = if document_is_docx(&document) {
+            match bytes.as_ref() {
+                Some(bytes) => {
+                    match docx_package_manifest(&document, current_version.as_ref(), bytes) {
+                        Ok(manifest) => {
+                            if !manifest.editable {
+                                warnings.push(
+                                "DOCX contains unsupported complex OOXML parts; editable text is gated for review."
+                                    .to_string(),
+                            );
+                            }
+                            Some(manifest)
+                        }
+                        Err(error) => {
+                            warnings.push(format!("DOCX package manifest failed: {error}"));
+                            None
+                        }
+                    }
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        let text_content = workspace_text_content(&document, bytes.as_ref());
+        let capabilities = document_capabilities(&document, docx_manifest.as_ref());
+        let transcriptions = if document_is_media(&document) {
+            self.list_transcriptions(matter_id, document_id).await?
+        } else {
+            Vec::new()
+        };
+        let content_url = if document.storage_status == "stored" || document.storage_key.is_some() {
+            Some(format!(
+                "/api/v1/matters/{}/documents/{}/content",
+                matter_id, document_id
+            ))
+        } else {
+            None
+        };
+
+        Ok(DocumentWorkspace {
+            matter_id: matter_id.to_string(),
+            document,
+            current_version,
+            capabilities,
+            annotations,
+            source_spans,
+            transcriptions,
+            docx_manifest,
+            text_content,
+            content_url,
+            warnings,
+        })
+    }
+
+    pub async fn get_document_content_bytes(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+    ) -> ApiResult<(CaseDocument, Bytes)> {
+        let document = self.get_document(matter_id, document_id).await?;
+        let bytes = self.document_bytes(&document).await?;
+        Ok((document, bytes))
+    }
+
+    pub async fn list_document_annotations(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+    ) -> ApiResult<Vec<DocumentAnnotation>> {
+        self.get_document(matter_id, document_id).await?;
+        let mut annotations = self
+            .list_nodes::<DocumentAnnotation>(matter_id, document_annotation_spec())
+            .await?
+            .into_iter()
+            .filter(|annotation| annotation.document_id == document_id)
+            .filter(|annotation| annotation.status != "deleted")
+            .collect::<Vec<_>>();
+        annotations.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+        Ok(annotations)
+    }
+
+    pub async fn create_document_annotation(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        request: UpsertDocumentAnnotationRequest,
+    ) -> ApiResult<DocumentAnnotation> {
+        let document = self.get_document(matter_id, document_id).await?;
+        validate_document_annotation_range(&request)?;
+        self.validate_document_annotation_target(matter_id, &request)
+            .await?;
+        let annotation_type = normalize_document_annotation_type(&request.annotation_type)?;
+        let now = now_string();
+        let annotation_id = generate_opaque_id("document-annotation");
+        let annotation = DocumentAnnotation {
+            annotation_id: annotation_id.clone(),
+            id: annotation_id,
+            matter_id: matter_id.to_string(),
+            document_id: document_id.to_string(),
+            document_version_id: document.current_version_id.clone(),
+            annotation_type: annotation_type.clone(),
+            status: request
+                .status
+                .filter(|status| !status.trim().is_empty())
+                .unwrap_or_else(|| "active".to_string()),
+            label: request
+                .label
+                .filter(|label| !label.trim().is_empty())
+                .unwrap_or_else(|| default_annotation_label(&annotation_type).to_string()),
+            note: request.note.filter(|note| !note.trim().is_empty()),
+            color: request.color.filter(|color| !color.trim().is_empty()),
+            page_range: request.page_range,
+            text_range: request.text_range,
+            target_type: request.target_type.filter(|value| !value.trim().is_empty()),
+            target_id: request.target_id.filter(|value| !value.trim().is_empty()),
+            created_by: "user".to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        self.merge_document_annotation(matter_id, &annotation).await
+    }
+
+    pub async fn save_document_text(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        request: SaveDocumentTextRequest,
+    ) -> ApiResult<SaveDocumentTextResponse> {
+        let document = self.get_document(matter_id, document_id).await?;
+        let mut warnings = Vec::new();
+        let (bytes, mime_type, extension) = if document_is_docx(&document) {
+            let existing = self.document_bytes(&document).await?;
+            let (updated, docx_warnings) =
+                docx_with_replaced_document_xml(&existing, &request.text)?;
+            warnings.extend(docx_warnings);
+            (
+                Bytes::from(updated),
+                Some(
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        .to_string(),
+                ),
+                "docx".to_string(),
+            )
+        } else if document_is_markdown(&document) || document_is_text(&document) {
+            (
+                Bytes::from(request.text.into_bytes()),
+                Some(if document_is_markdown(&document) {
+                    "text/markdown".to_string()
+                } else {
+                    document
+                        .mime_type
+                        .clone()
+                        .unwrap_or_else(|| "text/plain".to_string())
+                }),
+                document_file_extension(&document).unwrap_or_else(|| "txt".to_string()),
+            )
+        } else {
+            return Err(ApiError::BadRequest(format!(
+                "{} cannot be edited as structured text in the OSS document workspace.",
+                document.filename
+            )));
+        };
+        let (document, document_version, ingestion_run) = self
+            .store_edited_document_bytes(
+                matter_id,
+                document,
+                bytes,
+                mime_type,
+                &extension,
+                "document_workspace_text_save",
+            )
+            .await?;
+        Ok(SaveDocumentTextResponse {
+            document,
+            document_version,
+            ingestion_run,
+            warnings,
+        })
+    }
+
+    pub async fn promote_document_work_product(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        request: PromoteDocumentWorkProductRequest,
+    ) -> ApiResult<PromoteDocumentWorkProductResponse> {
+        let document = self.get_document(matter_id, document_id).await?;
+        if !(document_is_markdown(&document)
+            || document_is_text(&document)
+            || document_is_docx(&document))
+        {
+            return Err(ApiError::BadRequest(
+                "Only Markdown, text, and supported DOCX text can be promoted into WorkProduct.document_ast in v1."
+                    .to_string(),
+            ));
+        }
+        let text = match document.extracted_text.clone() {
+            Some(text) if !text.trim().is_empty() => text,
+            _ => self.document_bytes_as_text(&document).await?,
+        };
+        if text.trim().is_empty() {
+            return Err(ApiError::BadRequest(
+                "No source text is available to promote into a work product.".to_string(),
+            ));
+        }
+        let mut product = self
+            .create_work_product(
+                matter_id,
+                CreateWorkProductRequest {
+                    title: request.title.or_else(|| Some(document.title.clone())),
+                    product_type: request.product_type.unwrap_or_else(|| "memo".to_string()),
+                    template: None,
+                    source_draft_id: None,
+                    source_complaint_id: None,
+                },
+            )
+            .await?;
+        let markdown = if document_is_markdown(&document) {
+            text.clone()
+        } else {
+            text_to_markdown_paragraphs(&text)
+        };
+        let (document_ast, warnings) =
+            super::markdown_adapter::markdown_to_work_product_ast(&product, &markdown);
+        product.document_ast = document_ast;
+        product.blocks = flatten_work_product_blocks(&product.document_ast.blocks);
+        product.history.push(work_product_event(
+            matter_id,
+            &product.work_product_id,
+            "promote_document",
+            "document",
+            document_id,
+            "Document source promoted into canonical WorkProduct AST.",
+        ));
+        let work_product = self.save_work_product(matter_id, product).await?;
+        Ok(PromoteDocumentWorkProductResponse {
+            work_product,
+            warnings,
+        })
+    }
+
+    pub async fn extract_document(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+    ) -> ApiResult<DocumentExtractionResponse> {
+        let mut document = self.get_document(matter_id, document_id).await?;
+        let provenance = self
+            .ensure_document_original_provenance(matter_id, &mut document)
+            .await?;
+        let text = match document.extracted_text.clone() {
+            Some(text) if !text.trim().is_empty() => text,
+            _ => self.document_bytes_as_text(&document).await?,
+        };
+
+        if text.trim().is_empty() {
+            let extraction_status = match document.processing_status.as_str() {
+                "ocr_required" | "transcription_deferred" | "unsupported" => {
+                    document.processing_status.clone()
+                }
+                _ => "failed".to_string(),
+            };
+            let error_code = match extraction_status.as_str() {
+                "ocr_required" => "ocr_required",
+                "transcription_deferred" => "transcription_deferred",
+                "unsupported" => "unsupported_file_type",
+                _ => "no_extractable_text",
+            };
+            document.processing_status = extraction_status.clone();
+            document.summary = match extraction_status.as_str() {
+                "ocr_required" => {
+                    "No extractable text is available yet; OCR is required for this document."
+                }
+                "transcription_deferred" => {
+                    "No extractable text is available yet; transcription is deferred for this media file."
+                }
+                "unsupported" => {
+                    "No extractable text is available for this unsupported deterministic V0 file type."
+                }
+                _ => "No extractable text is available for this document in V0.",
+            }
+            .to_string();
+            let ingestion_run = provenance.as_ref().map(|provenance| {
+                failed_ingestion_run(
+                    &provenance.ingestion_run,
+                    "extract_text",
+                    error_code,
+                    &document.summary,
+                    matches!(
+                        extraction_status.as_str(),
+                        "ocr_required" | "transcription_deferred"
+                    ),
+                )
+            });
+            if let Some(run) = &ingestion_run {
+                self.merge_ingestion_run(matter_id, run).await?;
+            }
+            let document = self
+                .merge_node(matter_id, document_spec(), document_id, &document)
+                .await?;
+            return Ok(DocumentExtractionResponse {
+                enabled: true,
+                mode: "deterministic".to_string(),
+                status: extraction_status,
+                message: document.summary.clone(),
+                document,
+                chunks: Vec::new(),
+                proposed_facts: Vec::new(),
+                ingestion_run,
+                document_version: provenance.map(|provenance| provenance.document_version),
+                source_spans: Vec::new(),
+            });
+        }
+
+        let source_context = source_context_from_provenance(provenance.as_ref());
+        let mut chunks = chunk_text(document_id, &text);
+        for chunk in &mut chunks {
+            chunk.document_version_id = source_context.document_version_id.clone();
+            chunk.object_blob_id = source_context.object_blob_id.clone();
+            chunk.source_span_id = Some(source_span_id(document_id, "chunk", chunk.page));
+        }
+        let mut source_spans =
+            source_spans_for_chunks(matter_id, document_id, &chunks, &source_context);
+        let proposed_facts = propose_facts(matter_id, document_id, &text, &source_context);
+        for fact in &proposed_facts {
+            source_spans.extend(fact.source_spans.clone());
+        }
+        document.extracted_text = Some(text.clone());
+        document.processing_status = "processed".to_string();
+        document.summary = summarize_text(&text);
+        document.facts_extracted = proposed_facts.len() as u64;
+        document.source_spans = source_spans.clone();
+        let document = self
+            .merge_node(matter_id, document_spec(), document_id, &document)
+            .await?;
+
+        for span in &source_spans {
+            self.merge_source_span(matter_id, span).await?;
+        }
+
+        for chunk in &chunks {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (d:CaseDocument {document_id: $document_id})
+                         MERGE (t:ExtractedText {chunk_id: $chunk_id})
+                         SET t.document_id = $document_id,
+                             t.matter_id = $matter_id,
+                             t.page = $page,
+                             t.text = $text,
+                             t.document_version_id = $document_version_id,
+                             t.object_blob_id = $object_blob_id,
+                             t.source_span_id = $source_span_id,
+                             t.byte_start = $byte_start,
+                             t.byte_end = $byte_end,
+                             t.char_start = $char_start,
+                             t.char_end = $char_end
+                         MERGE (d)-[:HAS_EXTRACTED_TEXT]->(t)
+                         WITH d, t
+                         OPTIONAL MATCH (v:DocumentVersion {document_version_id: $document_version_id})
+                         OPTIONAL MATCH (s:SourceSpan {source_span_id: $source_span_id})
+                         FOREACH (_ IN CASE WHEN v IS NULL THEN [] ELSE [1] END |
+                           MERGE (v)-[:HAS_CHUNK]->(t)
+                         )
+                         FOREACH (_ IN CASE WHEN s IS NULL THEN [] ELSE [1] END |
+                           MERGE (s)-[:QUOTES]->(t)
+                         )",
+                    )
+                    .param("document_id", document_id)
+                    .param("matter_id", matter_id)
+                    .param("chunk_id", chunk.chunk_id.clone())
+                    .param("page", chunk.page as i64)
+                    .param("text", chunk.text.clone())
+                    .param(
+                        "document_version_id",
+                        chunk.document_version_id.clone().unwrap_or_default(),
+                    )
+                    .param("object_blob_id", chunk.object_blob_id.clone().unwrap_or_default())
+                    .param("source_span_id", chunk.source_span_id.clone().unwrap_or_default())
+                    .param("byte_start", chunk.byte_start.unwrap_or_default() as i64)
+                    .param("byte_end", chunk.byte_end.unwrap_or_default() as i64)
+                    .param("char_start", chunk.char_start.unwrap_or_default() as i64)
+                    .param("char_end", chunk.char_end.unwrap_or_default() as i64),
+                )
+                .await?;
+        }
+
+        let mut stored_facts = Vec::with_capacity(proposed_facts.len());
+        for fact in proposed_facts {
+            let fact = self
+                .merge_node(matter_id, fact_spec(), &fact.fact_id, &fact)
+                .await?;
+            self.materialize_fact_edges(&fact).await?;
+            stored_facts.push(fact);
+        }
+        let ingestion_run = provenance.as_ref().map(|provenance| {
+            completed_ingestion_run(
+                &provenance.ingestion_run,
+                "review_ready",
+                "review_ready",
+                produced_node_ids(&chunks, &source_spans, &stored_facts),
+            )
+        });
+        if let Some(run) = &ingestion_run {
+            self.merge_ingestion_run(matter_id, run).await?;
+        }
+
+        Ok(DocumentExtractionResponse {
+            enabled: true,
+            mode: "deterministic".to_string(),
+            status: "processed".to_string(),
+            message: "Extracted text chunks and proposed reviewable facts. AI fact extraction is provider-gated in V0.".to_string(),
+            document,
+            chunks,
+            proposed_facts: stored_facts,
+            ingestion_run,
+            document_version: provenance.map(|provenance| provenance.document_version),
+            source_spans,
+        })
+    }
+
+    pub async fn create_download_url(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+    ) -> ApiResult<DownloadUrlResponse> {
+        let document = self.get_document(matter_id, document_id).await?;
+        if document.storage_status == "deleted" {
+            return Err(ApiError::NotFound(format!(
+                "Document {document_id} has been deleted"
+            )));
+        }
+        let key = document
+            .storage_key
+            .as_deref()
+            .ok_or_else(|| ApiError::BadRequest("Document has no stored object".to_string()))?;
+        let expires_at = timestamp_after(self.download_ttl_seconds);
+        let presigned = self
+            .object_store
+            .presign_get(key, Duration::from_secs(self.download_ttl_seconds))
+            .await?;
+        Ok(DownloadUrlResponse {
+            method: presigned.method,
+            url: presigned.url,
+            expires_at,
+            headers: presigned.headers,
+            filename: document.filename,
+            mime_type: document.mime_type,
+            bytes: document.bytes,
+        })
+    }
+
+    pub async fn delete_document(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+    ) -> ApiResult<DeleteDocumentResponse> {
+        let mut document = self.get_document(matter_id, document_id).await?;
+        if let Some(key) = document.storage_key.clone() {
+            self.object_store.delete(&key).await?;
+        }
+        document.storage_status = "deleted".to_string();
+        document.processing_status = "failed".to_string();
+        document.summary =
+            "Document object deleted; metadata tombstone retained for provenance.".to_string();
+        document.deleted_at = Some(now_string());
+        document.content_etag = None;
+        document.upload_expires_at = None;
+        document.extracted_text = None;
+        let document = self
+            .merge_node(matter_id, document_spec(), document_id, &document)
+            .await?;
+        Ok(DeleteDocumentResponse {
+            deleted: true,
+            document,
+        })
+    }
+
+    pub(super) async fn store_document_artifact_version(
+        &self,
+        matter_id: &str,
+        document: &CaseDocument,
+        bytes: Bytes,
+        mime_type: Option<String>,
+        role: &str,
+        artifact_kind: &str,
+        extension: &str,
+        current: bool,
+    ) -> ApiResult<DocumentVersion> {
+        self.ensure_upload_size(bytes.len() as u64)?;
+        let now = now_string();
+        let sha256 = sha256_hex(&bytes);
+        let document_version_id =
+            artifact_version_id(&document.document_id, artifact_kind, &sha256);
+        let storage_key = document_version_object_key(
+            matter_id,
+            &document.document_id,
+            &document_version_id,
+            &sha256,
+            extension,
+        );
+        let stored = self
+            .object_store
+            .put_bytes(
+                &storage_key,
+                bytes,
+                put_options(mime_type.clone(), Some(sha256.clone())),
+            )
+            .await?;
+        let object_blob_id = object_blob_id_for_hash(&sha256);
+        let object_blob = ObjectBlob {
+            object_blob_id: object_blob_id.clone(),
+            id: object_blob_id.clone(),
+            sha256: Some(sha256.clone()),
+            size_bytes: stored.content_length,
+            mime_type: stored.content_type.clone().or(mime_type.clone()),
+            storage_provider: self.object_store.provider().to_string(),
+            storage_bucket: stored
+                .bucket
+                .clone()
+                .or_else(|| self.object_store.bucket().map(str::to_string)),
+            storage_key: stored.key.clone(),
+            etag: stored.etag.clone(),
+            storage_class: None,
+            created_at: now.clone(),
+            retention_state: "active".to_string(),
+        };
+        self.merge_object_blob(matter_id, &object_blob).await?;
+        if current {
+            for mut version in self
+                .list_document_versions(matter_id, &document.document_id)
+                .await?
+                .into_iter()
+                .filter(|version| version.current)
+            {
+                version.current = false;
+                self.merge_document_version(matter_id, &version).await?;
+            }
+        }
+        let version = DocumentVersion {
+            document_version_id: document_version_id.clone(),
+            id: document_version_id,
+            matter_id: matter_id.to_string(),
+            document_id: document.document_id.clone(),
+            object_blob_id,
+            role: role.to_string(),
+            artifact_kind: artifact_kind.to_string(),
+            source_version_id: document.current_version_id.clone(),
+            created_by: "casebuilder_transcription".to_string(),
+            current,
+            created_at: now,
+            storage_provider: self.object_store.provider().to_string(),
+            storage_bucket: stored
+                .bucket
+                .clone()
+                .or_else(|| self.object_store.bucket().map(str::to_string)),
+            storage_key: stored.key,
+            sha256: Some(sha256),
+            size_bytes: stored.content_length,
+            mime_type,
+        };
+        self.merge_document_version(matter_id, &version).await
+    }
+}

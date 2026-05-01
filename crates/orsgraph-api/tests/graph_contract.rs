@@ -1,5 +1,22 @@
 use orsgraph_api::models::casebuilder::{DocumentVersion, IngestionRun, ObjectBlob, SourceSpan};
 
+fn casebuilder_service_sources() -> String {
+    [
+        include_str!("../src/services/casebuilder/mod.rs"),
+        include_str!("../src/services/casebuilder/authority.rs"),
+        include_str!("../src/services/casebuilder/complaints.rs"),
+        include_str!("../src/services/casebuilder/documents.rs"),
+        include_str!("../src/services/casebuilder/graph_projection.rs"),
+        include_str!("../src/services/casebuilder/indexes.rs"),
+        include_str!("../src/services/casebuilder/matters.rs"),
+        include_str!("../src/services/casebuilder/repository.rs"),
+        include_str!("../src/services/casebuilder/storage.rs"),
+        include_str!("../src/services/casebuilder/transcription.rs"),
+        include_str!("../src/services/casebuilder/work_products.rs"),
+    ]
+    .join("\n")
+}
+
 #[test]
 fn api_queries_use_loader_relationship_vocabulary() {
     let service = include_str!("../src/services/neo4j.rs");
@@ -222,7 +239,7 @@ fn casebuilder_routes_cover_v0_contracts() {
 
 #[test]
 fn casebuilder_constraints_cover_core_graph_nodes() {
-    let service = include_str!("../src/services/casebuilder.rs");
+    let service = casebuilder_service_sources();
 
     for expected in [
         "casebuilder_matter_id",
@@ -296,7 +313,7 @@ fn casebuilder_constraints_cover_core_graph_nodes() {
 #[test]
 fn document_workspace_contract_is_oss_only_and_casebuilder_native() {
     let backend_models = include_str!("../src/models/casebuilder.rs");
-    let backend_service = include_str!("../src/services/casebuilder.rs");
+    let backend_service = casebuilder_service_sources();
     let frontend_types = include_str!("../../../frontend/lib/casebuilder/types.ts");
     let frontend_api = include_str!("../../../frontend/lib/casebuilder/api.ts");
     let frontend_workspace =
@@ -402,7 +419,7 @@ fn document_workspace_contract_is_oss_only_and_casebuilder_native() {
 #[test]
 fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
     let backend_models = include_str!("../src/models/casebuilder.rs");
-    let backend_service = include_str!("../src/services/casebuilder.rs");
+    let backend_service = casebuilder_service_sources();
     let frontend_types = include_str!("../../../frontend/lib/casebuilder/types.ts");
     let frontend_api = include_str!("../../../frontend/lib/casebuilder/api.ts");
     let frontend_routes = include_str!("../../../frontend/lib/casebuilder/routes.ts");
@@ -620,14 +637,14 @@ fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
 
 #[test]
 fn workproduct_ast_canonicalization_contract_is_explicit() {
-    let backend_service = include_str!("../src/services/casebuilder.rs");
+    let backend_service = casebuilder_service_sources();
     let backend_models = include_str!("../src/models/casebuilder.rs");
-    let services_mod = include_str!("../src/services/mod.rs");
-    let work_product_ast = include_str!("../src/services/work_product_ast.rs");
-    let ast_validation = include_str!("../src/services/ast_validation.rs");
-    let ast_patch = include_str!("../src/services/ast_patch.rs");
-    let markdown_adapter = include_str!("../src/services/markdown_adapter.rs");
-    let html_renderer = include_str!("../src/services/html_renderer.rs");
+    let casebuilder_mod = include_str!("../src/services/casebuilder/mod.rs");
+    let work_product_ast = include_str!("../src/services/casebuilder/work_product_ast.rs");
+    let ast_validation = include_str!("../src/services/casebuilder/ast_validation.rs");
+    let ast_patch = include_str!("../src/services/casebuilder/ast_patch.rs");
+    let markdown_adapter = include_str!("../src/services/casebuilder/markdown_adapter.rs");
+    let html_renderer = include_str!("../src/services/casebuilder/html_renderer.rs");
     let frontend_types = include_str!("../../../frontend/lib/casebuilder/types.ts");
     let frontend_api = include_str!("../../../frontend/lib/casebuilder/api.ts");
 
@@ -652,21 +669,21 @@ fn workproduct_ast_canonicalization_contract_is_explicit() {
     }
 
     for expected in [
-        "pub mod work_product_ast",
-        "pub mod ast_validation",
-        "pub mod ast_patch",
-        "pub mod ast_diff",
-        "pub mod markdown_adapter",
-        "pub mod html_renderer",
-        "pub mod docx_renderer",
-        "pub mod pdf_renderer",
-        "pub mod rule_engine",
-        "pub mod citation_resolver",
-        "pub mod support_linker",
-        "pub mod ai_patch",
+        "mod work_product_ast",
+        "mod ast_validation",
+        "mod ast_patch",
+        "mod ast_diff",
+        "mod markdown_adapter",
+        "mod html_renderer",
+        "mod docx_renderer",
+        "mod pdf_renderer",
+        "mod rule_engine",
+        "mod citation_resolver",
+        "mod support_linker",
+        "mod ai_patch",
     ] {
         assert!(
-            services_mod.contains(expected),
+            casebuilder_mod.contains(expected),
             "missing dedicated WorkProduct AST service module {expected}"
         );
     }
@@ -735,7 +752,7 @@ fn workproduct_ast_canonicalization_contract_is_explicit() {
 
 #[test]
 fn workproduct_hybrid_ast_storage_contract_is_bounded_and_object_backed() {
-    let backend_service = include_str!("../src/services/casebuilder.rs");
+    let backend_service = casebuilder_service_sources();
     let backend_models = include_str!("../src/models/casebuilder.rs");
     let frontend_api = include_str!("../../../frontend/lib/casebuilder/api.ts");
     let object_store = include_str!("../src/services/object_store.rs");
@@ -805,7 +822,7 @@ fn workproduct_hybrid_ast_storage_contract_is_bounded_and_object_backed() {
 
 #[test]
 fn casebuilder_matter_isolation_contracts_cover_ast_and_object_backed_paths() {
-    let backend_service = include_str!("../src/services/casebuilder.rs");
+    let backend_service = casebuilder_service_sources();
     let backend_routes = include_str!("../src/routes/casebuilder.rs");
 
     for expected in [
