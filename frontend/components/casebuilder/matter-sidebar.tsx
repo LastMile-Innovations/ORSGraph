@@ -9,19 +9,20 @@ import {
   BookOpen,
   Calendar,
   CheckSquare,
-  ClipboardList,
   FileText,
   Folder,
   GavelIcon,
-  Layers3,
+  GitGraphIcon,
   ListChecks,
-  MessageSquare,
   Microscope,
+  PackageCheck,
   Scale,
   ShieldCheck,
   Sparkles,
+  Users,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { casebuilderHomeHref, matterHref } from "@/lib/casebuilder/routes"
 import type { MatterSummary } from "@/lib/casebuilder/types"
 
 interface MatterSidebarProps {
@@ -41,7 +42,7 @@ interface MatterSidebarProps {
 
 export function MatterSidebar({ matter, counts = {} }: MatterSidebarProps) {
   const pathname = usePathname()
-  const base = `/matters/${matter.matter_id}`
+  const base = matterHref(matter.matter_id)
 
   const groups: { title: string; items: { href: string; label: string; icon: typeof Folder; count?: number; accent?: boolean }[] }[] = [
     {
@@ -55,6 +56,7 @@ export function MatterSidebar({ matter, counts = {} }: MatterSidebarProps) {
       title: "evidence layer",
       items: [
         { href: `${base}/documents`, label: "Documents", icon: Folder, count: counts.documents ?? matter.document_count },
+        { href: `${base}/parties`, label: "Parties", icon: Users },
         { href: `${base}/facts`, label: "Facts", icon: ListChecks, count: counts.facts ?? matter.fact_count },
         { href: `${base}/timeline`, label: "Timeline", icon: Calendar, count: counts.events },
         { href: `${base}/evidence`, label: "Evidence matrix", icon: Microscope, count: counts.evidence ?? matter.evidence_count },
@@ -66,13 +68,17 @@ export function MatterSidebar({ matter, counts = {} }: MatterSidebarProps) {
         { href: `${base}/claims`, label: "Claims & defenses", icon: Scale, count: counts.claims ?? matter.claim_count },
         { href: `${base}/deadlines`, label: "Deadlines", icon: AlertTriangle, count: counts.deadlines },
         { href: `${base}/authorities`, label: "Authorities", icon: BookOpen },
+        { href: `${base}/graph`, label: "Graph", icon: GitGraphIcon },
+        { href: `${base}/qc`, label: "QC", icon: ShieldCheck },
       ],
     },
     {
       title: "work product",
       items: [
+        { href: `${base}/complaint`, label: "Complaint builder", icon: GavelIcon },
         { href: `${base}/drafts`, label: "Drafts", icon: FileText, count: counts.drafts ?? matter.draft_count },
         { href: `${base}/tasks`, label: "Tasks", icon: CheckSquare, count: counts.tasks ?? matter.open_task_count },
+        { href: `${base}/export`, label: "Exports", icon: PackageCheck },
       ],
     },
   ]
@@ -81,7 +87,7 @@ export function MatterSidebar({ matter, counts = {} }: MatterSidebarProps) {
     <aside className="flex h-full w-60 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
       <div className="border-b border-sidebar-border px-3 py-3">
         <Link
-          href="/matters"
+          href={casebuilderHomeHref()}
           className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="h-3 w-3" />

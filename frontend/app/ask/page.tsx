@@ -1,6 +1,6 @@
 import { Shell } from "@/components/orsg/shell"
 import { AskClient } from "@/components/orsg/ask/ask-client"
-import { askWithFallback } from "@/lib/api"
+import { askWithFallbackState } from "@/lib/api"
 
 export default async function AskPage({
   searchParams,
@@ -9,10 +9,15 @@ export default async function AskPage({
 }) {
   const { q } = await searchParams
   const question = q ?? "What Oregon laws define district attorney duties?"
-  const answer = await askWithFallback(question)
+  const answerState = await askWithFallbackState(question)
   return (
     <Shell>
-      <AskClient initialQuery={question} initialAnswer={answer} />
+      <AskClient
+        initialQuery={question}
+        initialAnswer={answerState.data}
+        initialDataSource={answerState.source}
+        initialDataError={answerState.error}
+      />
     </Shell>
   )
 }

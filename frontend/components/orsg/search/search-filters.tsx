@@ -104,7 +104,7 @@ export function SearchFilters({
   }
 
   return (
-    <aside className={cn("flex w-64 flex-none flex-col border-r border-border bg-card", className)}>
+    <aside className={cn("hidden w-64 flex-none flex-col border-r border-border bg-card lg:flex", className)}>
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
           <Filter className="h-3 w-3" />
@@ -120,7 +120,7 @@ export function SearchFilters({
       </div>
 
       <div className="flex-1 overflow-y-auto p-2 scrollbar-thin">
-        <Section title="Result type">
+        <Section title="Candidate type">
           <div className="space-y-0.5">
             {RESULT_TYPES.map((t) => (
               <button

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
   Search,
   Filter,
@@ -14,12 +15,14 @@ import {
   Tag,
 } from "lucide-react"
 import type { Matter, ExtractedFact } from "@/lib/casebuilder/types"
+import { matterClaimsHref, matterDocumentHref } from "@/lib/casebuilder/routes"
+import { approveFact, patchFact } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { ConfidenceBadge } from "./badges"
+import { ConfidenceBadge, FactStatusBadge } from "./badges"
 import { cn } from "@/lib/utils"
 
 interface FactsBoardProps {
@@ -42,8 +45,8 @@ export function FactsBoard({ matter }: FactsBoardProps) {
       const matchesFilter =
         filter === "all" ||
         (filter === "disputed" && f.disputed) ||
-        (filter === "supported" && !f.disputed && f.confidence >= 0.8) ||
-        (filter === "needs-review" && f.confidence < 0.7)
+        (filter === "supported" && f.status === "supported") ||
+        (filter === "needs-review" && (f.status === "proposed" || f.needs_verification || f.confidence < 0.7))
       return matchesQuery && matchesFilter
     })
   }, [matter.facts, query, filter])
@@ -87,7 +90,7 @@ export function FactsBoard({ matter }: FactsBoardProps) {
             All ({matter.facts.length})
           </FilterPill>
           <FilterPill active={filter === "supported"} onClick={() => setFilter("supported")}>
-            Supported ({matter.facts.filter((f) => !f.disputed && f.confidence >= 0.8).length})
+            Supported ({matter.facts.filter((f) => f.status === "supported").length})
           </FilterPill>
           <FilterPill active={filter === "disputed"} onClick={() => setFilter("disputed")}>
             Disputed ({matter.facts.filter((f) => f.disputed).length})
@@ -96,7 +99,7 @@ export function FactsBoard({ matter }: FactsBoardProps) {
             active={filter === "needs-review"}
             onClick={() => setFilter("needs-review")}
           >
-            Needs review ({matter.facts.filter((f) => f.confidence < 0.7).length})
+            Needs review ({matter.facts.filter((f) => f.status === "proposed" || f.needs_verification || f.confidence < 0.7).length})
           </FilterPill>
         </div>
       </div>
@@ -129,7 +132,7 @@ export function FactsBoard({ matter }: FactsBoardProps) {
 
         <aside className="bg-card">
           {selectedFact ? (
-            <FactDetail fact={selectedFact} matter={matter} />
+            <FactDetail key={selectedFact.id} fact={selectedFact} matter={matter} />
           ) : (
             <div className="flex h-full items-center justify-center p-8 text-center">
               <p className="text-sm text-muted-foreground">Select a fact to inspect</p>
@@ -220,8 +223,27 @@ function FactStatusIcon({ fact }: { fact: ExtractedFact }) {
 }
 
 function FactDetail({ fact, matter }: { fact: ExtractedFact; matter: Matter }) {
+  const router = useRouter()
   const sources = matter.documents.filter((d) => fact.sourceDocumentIds.includes(d.id))
   const linkedClaims = matter.claims.filter((c) => c.supportingFactIds.includes(fact.id))
+  const [editText, setEditText] = useState(fact.statement)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function runMutation(action: () => Promise<{ data: ExtractedFact | null; error?: string }>, success: string) {
+    setSaving(true)
+    setMessage(null)
+    setError(null)
+    const result = await action()
+    setSaving(false)
+    if (!result.data) {
+      setError(result.error || "Fact update failed.")
+      return
+    }
+    setMessage(success)
+    router.refresh()
+  }
 
   return (
     <ScrollArea className="h-[calc(100vh-200px)]">
@@ -237,6 +259,7 @@ function FactDetail({ fact, matter }: { fact: ExtractedFact; matter: Matter }) {
             {fact.statement}
           </p>
           <div className="mt-3 flex items-center gap-2">
+            <FactStatusBadge status={fact.status} />
             <ConfidenceBadge value={fact.confidence} />
             {fact.disputed && (
               <Badge variant="outline" className="gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400">
@@ -245,6 +268,71 @@ function FactDetail({ fact, matter }: { fact: ExtractedFact; matter: Matter }) {
               </Badge>
             )}
           </div>
+        </div>
+
+        <div className="space-y-2 rounded-md border border-border bg-background p-3">
+          <label className="block font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            Review statement
+          </label>
+          <textarea
+            value={editText}
+            onChange={(event) => setEditText(event.target.value)}
+            rows={4}
+            className="w-full rounded border border-border bg-card px-3 py-2 text-sm leading-relaxed text-foreground focus:border-primary focus:outline-none"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              disabled={saving}
+              onClick={() => runMutation(() => approveFact(matter.id, fact.id), "Fact approved.")}
+            >
+              Approve
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={saving || editText.trim() === fact.statement}
+              onClick={() =>
+                runMutation(
+                  () => patchFact(matter.id, fact.id, { statement: editText.trim() }),
+                  "Fact statement saved.",
+                )
+              }
+            >
+              Save edit
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={saving}
+              onClick={() =>
+                runMutation(
+                  () => patchFact(matter.id, fact.id, { status: "disputed" }),
+                  "Fact marked disputed.",
+                )
+              }
+            >
+              Mark disputed
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={saving}
+              onClick={() =>
+                runMutation(
+                  () => patchFact(matter.id, fact.id, { status: "rejected" }),
+                  "Fact rejected.",
+                )
+              }
+            >
+              Reject
+            </Button>
+          </div>
+          {(message || error) && (
+            <p className={cn("text-xs", error ? "text-destructive" : "text-muted-foreground")}>
+              {error || message}
+            </p>
+          )}
         </div>
 
         <DetailRow label="Date">
@@ -271,7 +359,7 @@ function FactDetail({ fact, matter }: { fact: ExtractedFact; matter: Matter }) {
               return (
                 <li key={doc.id}>
                   <Link
-                    href={`/matters/${matter.id}/documents/${doc.id}${citation?.chunkId ? `#${citation.chunkId}` : ""}`}
+                    href={matterDocumentHref(matter.id, doc.id, citation?.chunkId)}
                     className="flex items-start gap-2 rounded-md border border-border bg-background p-2.5 text-xs transition-colors hover:border-foreground/20 hover:bg-muted/40"
                   >
                     <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -293,6 +381,36 @@ function FactDetail({ fact, matter }: { fact: ExtractedFact; matter: Matter }) {
           </ul>
         </div>
 
+        {fact.source_spans && fact.source_spans.length > 0 && (
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Source spans
+            </h3>
+            <ul className="mt-2 space-y-1.5">
+              {fact.source_spans.map((span) => (
+                <li key={span.source_span_id} className="rounded-md border border-border bg-background p-2.5 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-[10px] text-muted-foreground">
+                      {span.source_span_id}
+                    </span>
+                    <span className="font-mono text-[10px] text-muted-foreground">
+                      {span.page ? `p.${span.page}` : "no page"}
+                    </span>
+                  </div>
+                  {span.quote && (
+                    <p className="mt-1 line-clamp-4 leading-relaxed text-foreground">
+                      “{span.quote}”
+                    </p>
+                  )}
+                  <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                    {span.extraction_method} · {Math.round(span.confidence * 100)}%
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {linkedClaims.length > 0 && (
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -302,7 +420,7 @@ function FactDetail({ fact, matter }: { fact: ExtractedFact; matter: Matter }) {
               {linkedClaims.map((claim) => (
                 <li key={claim.id}>
                   <Link
-                    href={`/matters/${matter.id}/claims#${claim.id}`}
+                    href={matterClaimsHref(matter.id, claim.id)}
                     className="block rounded-md border border-border bg-background p-2 text-xs hover:border-foreground/20 hover:bg-muted/40"
                   >
                     <Badge variant="outline" className="text-[9px] capitalize">

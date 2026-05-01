@@ -26,6 +26,7 @@ const BASE = "inline-flex items-center gap-1 rounded font-mono text-[10px] upper
 
 export function FactStatusBadge({ status, className }: { status: FactStatus; className?: string }) {
   const map: Record<FactStatus, { label: string; cls: string; icon: typeof CheckCircle2 }> = {
+    proposed: { label: "proposed", cls: "bg-primary/15 text-primary", icon: Sparkles },
     supported: { label: "supported", cls: "bg-success/15 text-success", icon: CheckCircle2 },
     alleged: { label: "alleged", cls: "bg-primary/15 text-primary", icon: Sparkles },
     disputed: { label: "disputed", cls: "bg-warning/15 text-warning", icon: AlertTriangle },
@@ -34,6 +35,7 @@ export function FactStatusBadge({ status, className }: { status: FactStatus; cla
     unknown: { label: "unknown", cls: "bg-muted text-muted-foreground", icon: CircleHelp },
     contradicted: { label: "contradicted", cls: "bg-destructive/15 text-destructive", icon: XCircle },
     needs_evidence: { label: "needs evidence", cls: "bg-warning/15 text-warning", icon: FileQuestion },
+    rejected: { label: "rejected", cls: "bg-muted text-muted-foreground", icon: CircleSlash },
   }
   const m = map[status]
   const Icon = m.icon
@@ -103,6 +105,7 @@ export function ProcessingBadge({
     processing: { label: "processing", cls: "bg-primary/15 text-primary" },
     processed: { label: "processed", cls: "bg-success/15 text-success" },
     failed: { label: "failed", cls: "bg-destructive/15 text-destructive" },
+    unsupported: { label: "unsupported", cls: "bg-warning/15 text-warning" },
   }
   return <span className={cn(BASE, map[status].cls, className)}>{map[status].label}</span>
 }

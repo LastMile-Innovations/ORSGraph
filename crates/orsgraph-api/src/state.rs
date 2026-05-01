@@ -1,10 +1,12 @@
 use crate::config::ApiConfig;
 use crate::services::analytics::AnalyticsService;
+use crate::services::casebuilder::CaseBuilderService;
 use crate::services::embedding::EmbeddingService;
 use crate::services::graph_expand::GraphExpandService;
 use crate::services::health::HealthService;
 use crate::services::home::HomeService;
 use crate::services::neo4j::Neo4jService;
+use crate::services::object_store::object_store_from_config;
 use crate::services::rerank::RerankService;
 use crate::services::search::SearchService;
 use crate::services::stats::StatsService;
@@ -25,11 +27,12 @@ pub struct AppState {
     pub health_service: Arc<HealthService>,
     pub analytics_service: Arc<AnalyticsService>,
     pub home_service: Arc<HomeService>,
+    pub casebuilder_service: Arc<CaseBuilderService>,
     pub config: Arc<ApiConfig>,
 }
 
 impl AppState {
-    pub async fn new(config: ApiConfig) -> Result<Self, neo4rs::Error> {
+    pub async fn new(config: ApiConfig) -> anyhow::Result<Self> {
         let neo4j = Arc::new(
             Graph::new(
                 config.neo4j_uri.clone(),
@@ -100,6 +103,18 @@ impl AppState {
             health_service.clone(),
             analytics_service.clone(),
         ));
+        let object_store = object_store_from_config(&config).await?;
+        let casebuilder_service = Arc::new(CaseBuilderService::new(
+            neo4j_service.clone(),
+            object_store,
+            config.r2_upload_ttl_seconds,
+            config.r2_download_ttl_seconds,
+            config.r2_max_upload_bytes,
+        ));
+
+        if let Err(e) = casebuilder_service.ensure_indexes().await {
+            tracing::error!("Failed to ensure CaseBuilder indexes: {}", e);
+        }
 
         Ok(Self {
             neo4j,
@@ -113,6 +128,7 @@ impl AppState {
             health_service,
             analytics_service,
             home_service,
+            casebuilder_service,
             config: Arc::new(config),
         })
     }

@@ -1,39 +1,29 @@
 import { notFound } from "next/navigation"
 import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { MatterDashboard } from "@/components/casebuilder/matter-dashboard"
-import {
-  getClaimsByMatter,
-  getDeadlinesByMatter,
-  getDefensesByMatter,
-  getDocumentsByMatter,
-  getDraftsByMatter,
-  getEventsByMatter,
-  getEvidenceByMatter,
-  getFactsByMatter,
-  getMatterById,
-  getPartiesByMatter,
-  getTasksByMatter,
-} from "@/lib/casebuilder/mock-matters"
+import { getMatterState } from "@/lib/casebuilder/api"
 
 export default async function MatterDashboardPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const matter = getMatterById(id)
+  const matterState = await getMatterState(id)
+  const matter = matterState.data
   if (!matter) notFound()
 
-  const documents = getDocumentsByMatter(id)
-  const parties = getPartiesByMatter(id)
-  const facts = getFactsByMatter(id)
-  const events = getEventsByMatter(id)
-  const evidence = getEvidenceByMatter(id)
-  const claims = getClaimsByMatter(id)
-  const defenses = getDefensesByMatter(id)
-  const deadlines = getDeadlinesByMatter(id)
-  const tasks = getTasksByMatter(id)
-  const drafts = getDraftsByMatter(id)
+  const documents = matter.documents
+  const parties = matter.parties
+  const facts = matter.facts
+  const events = matter.timeline
+  const evidence = matter.evidence
+  const claims = matter.claims.filter((claim) => claim.kind !== "defense")
+  const defenses = matter.defenses
+  const deadlines = matter.deadlines
+  const tasks = matter.tasks
+  const drafts = matter.drafts
 
   return (
     <MatterShell
       matter={matter}
+      dataState={matterState}
       counts={{
         documents: documents.length,
         facts: facts.length,

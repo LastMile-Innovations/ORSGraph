@@ -19,7 +19,11 @@ interface SearchResultCardProps {
 }
 
 export function SearchResultCard({ result }: SearchResultCardProps) {
-  const href = result.href || `/statutes/${encodeURIComponent(result.citation || result.id)}`
+  const identity = result.citation ?? result.id ?? result.source_id ?? result.source_provision ?? "result"
+  const href = result.href || `/statutes/${encodeURIComponent(identity)}`
+  const kind = result.kind ?? result.result_type ?? "result"
+  const semanticTypes = result.semantic_types ?? []
+  const qcWarnings = result.qc_warnings ?? []
   const scoreParts = [
     ["exact", result.score_breakdown?.exact],
     ["text", result.fulltext_score ?? result.score_breakdown?.keyword],
@@ -34,7 +38,7 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-              {formatKind(result.kind)}
+              {formatKind(kind)}
             </span>
             {result.rank_source && (
               <span className={cn(
@@ -47,7 +51,7 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
               </span>
             )}
             <Link href={href} className="font-mono text-base font-semibold text-primary hover:underline">
-              {result.citation || result.id}
+              {identity}
             </Link>
             {result.title && <span className="text-sm font-medium text-foreground">{result.title}</span>}
             {result.chapter && (
@@ -59,9 +63,9 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
             {result.source_backed && <SourceBadge />}
           </div>
 
-          {result.semantic_types?.length > 0 && (
+          {semanticTypes.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {result.semantic_types.map((type) => (
+              {semanticTypes.map((type) => (
                 <SemanticBadge key={type} type={type} />
               ))}
             </div>
@@ -71,10 +75,10 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
             {result.snippet}
           </p>
 
-          {result.qc_warnings?.length > 0 && (
+          {qcWarnings.length > 0 && (
             <div className="mt-2 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-warning">
               <AlertTriangle className="h-3 w-3" />
-              {result.qc_warnings.join(", ")}
+              {qcWarnings.join(", ")}
             </div>
           )}
 
@@ -123,7 +127,7 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
                 <FolderPlus className="h-3 w-3" /> add
               </button>
               <Link
-                href={`/ask?q=${encodeURIComponent(result.citation || `${result.id} ${result.title || ""}`)}`}
+                href={`/ask?q=${encodeURIComponent(`${identity} ${result.title || ""}`)}`}
                 className="flex items-center gap-1 transition-colors hover:text-primary"
               >
                 <MessageSquare className="h-3 w-3" /> ask

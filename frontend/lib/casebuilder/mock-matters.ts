@@ -7,6 +7,7 @@
 // This data is shaped to be drop-in replaceable by real API responses.
 
 import type {
+  Matter,
   MatterSummary,
   CaseDocument,
   MatterParty,
@@ -20,6 +21,8 @@ import type {
   CaseDraft,
   DocumentExtraction,
   MatterAskMessage,
+  MatterChatCitation,
+  MatterChatMessage,
 } from "./types"
 
 // ===== Matters list =====
@@ -107,7 +110,7 @@ export const matters: MatterSummary[] = [
 
 export const matterSmithAbc: MatterSummary = matters[0]
 
-export const partiesSmithAbc: MatterParty[] = [
+export const partiesSmithAbc = [
   {
     party_id: "party:smith",
     matter_id: "matter:smith-abc",
@@ -148,7 +151,7 @@ export const partiesSmithAbc: MatterParty[] = [
 
 // ===== Documents =====
 
-export const documentsSmithAbc: CaseDocument[] = [
+export const documentsSmithAbc = [
   {
     document_id: "doc:complaint",
     matter_id: "matter:smith-abc",
@@ -506,7 +509,7 @@ export const documentsSmithAbc: CaseDocument[] = [
 
 // ===== Facts =====
 
-export const factsSmithAbc: CaseFact[] = [
+export const factsSmithAbc = [
   {
     fact_id: "fact:lease-start",
     matter_id: "matter:smith-abc",
@@ -697,7 +700,7 @@ export const factsSmithAbc: CaseFact[] = [
 
 // ===== Events / Timeline =====
 
-export const eventsSmithAbc: CaseEvent[] = [
+export const eventsSmithAbc = [
   {
     event_id: "event:lease-start",
     matter_id: "matter:smith-abc",
@@ -994,7 +997,7 @@ export const evidenceSmithAbc: CaseEvidence[] = [
 
 // ===== Claims =====
 
-export const claimsSmithAbc: CaseClaim[] = [
+export const claimsSmithAbc = [
   {
     claim_id: "claim:wrongful-eviction",
     matter_id: "matter:smith-abc",
@@ -1195,7 +1198,7 @@ export const defensesSmithAbc: CaseDefense[] = [
 
 // ===== Deadlines =====
 
-export const deadlinesSmithAbc: CaseDeadline[] = [
+export const deadlinesSmithAbc = [
   {
     deadline_id: "dl:answer",
     matter_id: "matter:smith-abc",
@@ -1326,7 +1329,7 @@ export const tasksSmithAbc: CaseTask[] = [
 
 // ===== Drafts =====
 
-export const draftAnswerSmithAbc: CaseDraft = {
+export const draftAnswerSmithAbc = {
   draft_id: "draft:answer-v3",
   matter_id: "matter:smith-abc",
   title: "Draft Answer + Counterclaims (v3)",
@@ -1662,7 +1665,7 @@ export const documentExtractionsSmithAbc: Record<string, DocumentExtraction> = {
 
 // ===== Ask Matter (mock chat seed) =====
 
-export const askMatterSmithAbc: MatterAskMessage[] = [
+export const askMatterSmithAbc = [
   {
     message_id: "m1",
     role: "user",
@@ -1695,74 +1698,580 @@ export const askMatterSmithAbc: MatterAskMessage[] = [
 
 // ===== Helpers =====
 
-export function getMatterById(id: string): MatterSummary | undefined {
-  return matters.find((m) => m.matter_id === id)
+const SMITH_MATTER_ID = "matter:smith-abc"
+
+type LegacyDocument = Omit<
+  CaseDocument,
+  "id" | "title" | "kind" | "pageCount" | "fileSize" | "dateUploaded" | "status" | "entities" | "chunks" | "clauses" | "linkedFacts" | "issues"
+> & {
+  document_id: string
+  filename: string
+  document_type: CaseDocument["kind"]
+  uploaded_at: string
+  processing_status: CaseDocument["status"]
+}
+type LegacyFact = Omit<CaseFact, "id" | "statement" | "disputed" | "tags" | "sourceDocumentIds" | "citations"> & {
+  fact_id: string
+  text: string
+  fact_type: string
+  status: NonNullable<CaseFact["status"]>
+}
+type LegacyEvent = Omit<CaseEvent, "id" | "title" | "kind" | "category"> & {
+  event_id: string
+  description: string
+  category: string
+}
+type LegacyClaimElement = {
+  element_id: string
+  text: string
+  authority: string
+  satisfied: boolean
+  fact_ids: string[]
+  evidence_ids: string[]
+  missing_facts: string[]
+}
+type LegacyClaim = Omit<CaseClaim, "id" | "kind" | "title" | "cause" | "theory" | "against" | "risk" | "elements" | "supportingFactIds" | "counterArguments"> & {
+  claim_id: string
+  count_label: string
+  name: string
+  claim_type: string
+  legal_theory: string
+  risk_level: NonNullable<CaseClaim["risk"]>
+  elements: LegacyClaimElement[]
+  fact_ids: string[]
+}
+type LegacyDeadline = Omit<
+  CaseDeadline,
+  "id" | "title" | "category" | "kind" | "dueDate" | "daysRemaining" | "source" | "tasks"
+> & {
+  deadline_id: string
+  description: string
+  due_date: string
+  days_remaining: number
+}
+type LegacyDraft = Omit<CaseDraft, "id" | "description" | "kind" | "lastEdited" | "wordCount" | "sections" | "citeCheckIssues" | "versions"> & {
+  draft_id: string
+  draft_type: CaseDraft["kind"]
+  updated_at: string
+  word_count: number
+  paragraphs: NonNullable<CaseDraft["paragraphs"]>
+}
+
+function decodeSegment(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+function normalizeId(id: string): string {
+  const decoded = decodeSegment(id).trim()
+  if (!decoded.includes(":")) {
+    const matterId = `matter:${decoded}`
+    if (matters.some((matter) => matter.matter_id === matterId)) return matterId
+  }
+  return decoded
+}
+
+function shortMatterName(name: string): string {
+  return name.split(/\s+v\.\s+/i)[0] ?? name
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const kb = bytes / 1024
+  if (kb < 1024) return `${kb.toFixed(1)} KB`
+  return `${(kb / 1024).toFixed(1)} MB`
+}
+
+function titleFromFilename(filename: string): string {
+  return filename
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))]
+}
+
+function evidenceFor(id: string): CaseEvidence | undefined {
+  return evidenceSmithAbc.find((e) => e.evidence_id === id)
+}
+
+function factStatusToElementStatus(status: boolean): "supported" | "missing" {
+  return status ? "supported" : "missing"
+}
+
+function normalizeParty(party: (typeof partiesSmithAbc)[number]): MatterParty {
+  return {
+    id: party.party_id,
+    party_id: party.party_id,
+    matter_id: party.matter_id,
+    name: party.name,
+    role: party.role as MatterParty["role"],
+    partyType: party.party_type as MatterParty["partyType"],
+    party_type: party.party_type as MatterParty["party_type"],
+    representedBy: party.represented_by,
+    represented_by: party.represented_by,
+    contactEmail: party.contact_email,
+    contact_email: party.contact_email,
+    notes: party.notes,
+  }
+}
+
+function normalizeFact(fact: LegacyFact): CaseFact {
+  const sourceEvidenceIds = fact.source_evidence_ids ?? []
+  const citations = sourceEvidenceIds.flatMap((evidenceId) => {
+    const evidence = evidenceFor(evidenceId)
+    if (!evidence) return []
+    return {
+      documentId: evidence.document_id,
+      quote: evidence.quote,
+      snippet: evidence.quote,
+    }
+  })
+  const sourceDocumentIds = unique(citations.map((citation) => citation.documentId))
+
+  return {
+    ...fact,
+    id: fact.fact_id,
+    statement: fact.text,
+    disputed: fact.status === "disputed" || (fact.contradicted_by_evidence_ids?.length ?? 0) > 0,
+    tags: unique([fact.fact_type, ...(fact.supports_claim_ids ?? []).map((claimId) => claimId.replace(/^claim:/, ""))]),
+    sourceDocumentIds,
+    citations,
+  }
+}
+
+function normalizeDocument(document: LegacyDocument, facts: CaseFact[]): CaseDocument {
+  const id = document.document_id
+  const summary = document.summary || titleFromFilename(document.filename)
+  const chunks = [
+    {
+      id: `chunk:${id}:summary`,
+      heading: document.folder,
+      page: 1,
+      text: summary,
+      tokens: Math.max(1, Math.ceil(summary.length / 4)),
+    },
+  ]
+  const entities = [
+    ...(document.parties_mentioned ?? []).map((value, index) => ({
+      id: `ent:${id}:party:${index}`,
+      type: "party" as const,
+      value,
+      confidence: 0.86,
+      spans: [],
+    })),
+    ...(document.entities_mentioned ?? []).map((value, index) => ({
+      id: `ent:${id}:entity:${index}`,
+      type: /\d+\s+\w+/.test(value) ? ("address" as const) : ("org" as const),
+      value,
+      confidence: 0.8,
+      spans: [],
+    })),
+  ]
+
+  return {
+    ...document,
+    id,
+    title: titleFromFilename(document.filename),
+    kind: document.document_type,
+    pageCount: document.pages,
+    fileSize: formatBytes(document.bytes),
+    dateUploaded: document.uploaded_at,
+    dateFiled: document.date_observed ?? undefined,
+    status: document.processing_status,
+    entities,
+    chunks,
+    clauses: [],
+    linkedFacts: facts.filter((fact) => fact.sourceDocumentIds.includes(id)),
+    issues: document.contradictions_flagged
+      ? [
+          {
+            id: `issue:${id}:contradictions`,
+            type: "contradiction",
+            severity: document.contradictions_flagged > 1 ? "high" : "med",
+            status: "open",
+            label: `${document.contradictions_flagged} contradiction${document.contradictions_flagged === 1 ? "" : "s"}`,
+            title: "Contradictions flagged",
+            detail: "The inspector found statements that conflict with other matter evidence.",
+          },
+        ]
+      : [],
+  }
+}
+
+function normalizeEvent(event: LegacyEvent): CaseEvent {
+  const kindMap: Record<string, CaseEvent["kind"]> = {
+    filing: "filing",
+    communication: "communication",
+    incident: "incident",
+    payment: "payment",
+    notice: "notice",
+    court_event: "court",
+  }
+  return {
+    ...event,
+    id: event.event_id,
+    title: event.description,
+    kind: kindMap[event.category] ?? "other",
+    category: event.category,
+    status: "complete",
+  }
+}
+
+function normalizeClaim(claim: LegacyClaim): CaseClaim {
+  return {
+    ...claim,
+    id: claim.claim_id,
+    kind: claim.count_label.toLowerCase().includes("counterclaim") ? "counterclaim" : "claim",
+    title: claim.name,
+    cause: claim.claim_type.replace(/_/g, " "),
+    theory: claim.legal_theory,
+    against: "Northpoint Holdings LLC / ABC Property Management LLC",
+    risk: claim.risk_level,
+    status: claim.status ?? "candidate",
+    elements: claim.elements.map((element) => ({
+      ...element,
+      id: element.element_id,
+      title: element.text.replace(/\.$/, ""),
+      description: element.text,
+      status: factStatusToElementStatus(element.satisfied),
+      legalAuthority: element.authority,
+      supportingFactIds: element.fact_ids,
+    })),
+    supportingFactIds: claim.fact_ids,
+    counterArguments: [],
+  }
+}
+
+function normalizeDefenseAsClaim(defense: CaseDefense): CaseClaim {
+  return {
+    id: defense.defense_id,
+    defense_id: defense.defense_id,
+    matter_id: defense.matter_id,
+    kind: "defense",
+    title: defense.name,
+    cause: "Affirmative defense",
+    theory: defense.basis,
+    against: defense.applies_to_claim_ids.join(", ") || "Opposing party",
+    risk: defense.viability,
+    risk_level: defense.viability,
+    status: defense.status === "candidate" ? "candidate" : "asserted",
+    elements: defense.required_facts.map((requiredFact, index) => ({
+      id: `${defense.defense_id}:el:${index + 1}`,
+      title: requiredFact,
+      description: requiredFact,
+      status: defense.fact_ids.length > index ? "supported" : "missing",
+      supportingFactIds: defense.fact_ids,
+      fact_ids: defense.fact_ids,
+      evidence_ids: defense.evidence_ids,
+    })),
+    fact_ids: defense.fact_ids,
+    evidence_ids: defense.evidence_ids,
+    authorities: defense.authorities,
+    supportingFactIds: defense.fact_ids,
+    counterArguments: [],
+  }
+}
+
+function normalizeDeadline(deadline: LegacyDeadline): CaseDeadline {
+  const linkedTasks = tasksSmithAbc
+    .filter((task) => task.related_deadline_id === deadline.deadline_id)
+    .map((task) => ({
+      id: task.task_id,
+      label: task.title,
+      done: task.status === "done",
+      assignee: task.assigned_to ?? undefined,
+    }))
+
+  return {
+    ...deadline,
+    id: deadline.deadline_id,
+    title: deadline.description,
+    category: deadline.source_citation?.startsWith("ORCP") ? "filing" : "trial",
+    kind: deadline.source_citation?.startsWith("ORS") ? "statutory" : "rule",
+    dueDate: deadline.due_date,
+    daysRemaining: deadline.days_remaining,
+    source: deadline.source_citation ?? "Matter calendar",
+    sourceCitation: deadline.source_citation,
+    sourceCanonicalId: deadline.source_canonical_id,
+    computedFrom: deadline.triggered_by_event_id,
+    tasks: linkedTasks,
+  }
+}
+
+function normalizeDraft(draft: LegacyDraft): CaseDraft {
+  const sections = draft.paragraphs.map((paragraph) => ({
+    id: paragraph.paragraph_id,
+    heading: paragraph.heading_level ? paragraph.text : paragraph.role.replace(/_/g, " "),
+    tone: "formal" as const,
+    body: paragraph.text,
+    citations: paragraph.authorities.map((authority, index) => ({
+      id: `cite:${paragraph.paragraph_id}:${index}`,
+      sourceId: authority.canonical_id,
+      sourceKind: "statute" as const,
+      shortLabel: authority.citation,
+      fullLabel: authority.pinpoint ? `${authority.citation} ${authority.pinpoint}` : authority.citation,
+      verified: paragraph.factcheck_status !== "citation_issue",
+    })),
+    comments: paragraph.factcheck_note
+      ? [
+          {
+            id: `comment:${paragraph.paragraph_id}`,
+            author: "AI Inspector",
+            body: paragraph.factcheck_note,
+            timestamp: draft.updated_at,
+          },
+        ]
+      : [],
+    suggestions:
+      paragraph.factcheck_status === "supported"
+        ? []
+        : [
+            {
+              id: `suggestion:${paragraph.paragraph_id}`,
+              kind: paragraph.factcheck_status === "needs_authority" ? ("add_authority" as const) : ("factcheck" as const),
+              original: paragraph.text,
+              proposed: paragraph.text,
+              rationale: paragraph.factcheck_note ?? "Review this paragraph before filing.",
+              sources: [...paragraph.fact_ids, ...paragraph.evidence_ids],
+              confidence: 0.76,
+            },
+          ],
+  }))
+
+  return {
+    ...draft,
+    id: draft.draft_id,
+    description: "Answer, affirmative defenses, and counterclaims generated from the matter graph.",
+    kind: draft.draft_type,
+    lastEdited: draft.updated_at,
+    wordCount: draft.word_count,
+    sections,
+    citeCheckIssues: draft.paragraphs.flatMap((paragraph) =>
+      paragraph.factcheck_status === "citation_issue" || paragraph.factcheck_status === "needs_authority"
+        ? [
+            {
+              id: `cite-issue:${paragraph.paragraph_id}`,
+              citationId: paragraph.authorities[0]?.canonical_id ?? paragraph.paragraph_id,
+              kind: paragraph.factcheck_status === "citation_issue" ? "unverified" : "missing_authority",
+              severity: "med" as const,
+              message: paragraph.factcheck_note ?? "Citation needs review.",
+              title: "Citation review needed",
+              detail: paragraph.text,
+              sectionId: paragraph.paragraph_id,
+            },
+          ]
+        : [],
+    ),
+    versions: [
+      {
+        id: `${draft.draft_id}:v3`,
+        label: "v3",
+        timestamp: draft.updated_at,
+        author: "CaseBuilder",
+        summary: "Current AI-assisted working draft.",
+      },
+    ],
+  }
+}
+
+function citationsFromContext(message: MatterAskMessage): MatterChatCitation[] {
+  const context = message.context_used
+  if (!context) return []
+
+  let index = 1
+  const nextIndex = () => String(index++)
+  const documentCitations = context.document_ids.map((documentId) => {
+    const doc = getDocumentsByMatter(SMITH_MATTER_ID).find((document) => document.id === documentId)
+    return {
+      id: `chat-cite:${message.message_id}:doc:${documentId}`,
+      indexLabel: nextIndex(),
+      kind: "document" as const,
+      refId: documentId,
+      sourceId: documentId,
+      sourceKind: "document" as const,
+      shortLabel: doc?.title ?? documentId,
+      fullLabel: doc?.filename ?? documentId,
+      title: doc?.title ?? documentId,
+      snippet: doc?.summary,
+    }
+  })
+  const factCitations = context.fact_ids.map((factId) => {
+    const fact = getFactsByMatter(SMITH_MATTER_ID).find((item) => item.id === factId)
+    return {
+      id: `chat-cite:${message.message_id}:fact:${factId}`,
+      indexLabel: nextIndex(),
+      kind: "fact" as const,
+      refId: factId,
+      sourceId: factId,
+      sourceKind: "fact" as const,
+      shortLabel: factId,
+      fullLabel: fact?.statement ?? factId,
+      title: fact?.statement ?? factId,
+      snippet: fact?.statement,
+    }
+  })
+  const authorityCitations = context.authorities.map((authority) => ({
+    id: `chat-cite:${message.message_id}:auth:${authority.canonical_id}`,
+    indexLabel: nextIndex(),
+    kind: "statute" as const,
+    refId: authority.canonical_id,
+    sourceId: authority.canonical_id,
+    sourceKind: "statute" as const,
+    shortLabel: authority.citation,
+    fullLabel: authority.citation,
+    title: authority.citation,
+  }))
+
+  return [...documentCitations, ...factCitations, ...authorityCitations]
+}
+
+function normalizeChatMessage(message: MatterAskMessage): MatterChatMessage {
+  return {
+    id: message.message_id,
+    role: message.role,
+    content: message.text,
+    timestamp: message.timestamp,
+    citations: citationsFromContext(message),
+    reasoning: message.caveats,
+  }
+}
+
+function buildMatter(summary: MatterSummary): Matter {
+  const parties = getPartiesByMatter(summary.matter_id)
+  const documents = getDocumentsByMatter(summary.matter_id)
+  const facts = getFactsByMatter(summary.matter_id)
+  const timeline = getEventsByMatter(summary.matter_id)
+  const evidence = getEvidenceByMatter(summary.matter_id)
+  const defenses = getDefensesByMatter(summary.matter_id)
+  const claims = [...getClaimsByMatter(summary.matter_id), ...defenses.map(normalizeDefenseAsClaim)]
+  const deadlines = getDeadlinesByMatter(summary.matter_id)
+  const tasks = getTasksByMatter(summary.matter_id)
+  const drafts = getDraftsByMatter(summary.matter_id)
+  const chatHistory = getAskMatterSeed(summary.matter_id).map(normalizeChatMessage)
+
+  return {
+    ...summary,
+    id: summary.matter_id,
+    title: summary.name,
+    shortName: summary.shortName ?? shortMatterName(summary.name),
+    parties,
+    documents,
+    facts,
+    timeline,
+    claims,
+    evidence,
+    defenses,
+    deadlines,
+    tasks,
+    drafts,
+    fact_check_findings: [],
+    citation_check_findings: [],
+    chatHistory,
+    recentThreads: chatHistory.length
+      ? [
+          {
+            id: "thread:fed-defenses",
+            title: "FED complaint defenses",
+            preview: chatHistory[chatHistory.length - 1]?.content.slice(0, 120) ?? "",
+            date: chatHistory[0]?.timestamp ?? summary.updated_at,
+            lastMessageAt: chatHistory[chatHistory.length - 1]?.timestamp ?? summary.updated_at,
+            messageCount: chatHistory.length,
+          },
+        ]
+      : [],
+    milestones: timeline.slice(0, 5).map((event) => ({
+      id: `milestone:${event.id}`,
+      title: event.title,
+      date: event.date,
+      kind: event.kind === "filing" ? "filed" : event.kind === "court" ? "trial" : "intake",
+      status: "complete",
+      label: event.category,
+      description: event.description,
+    })),
+  }
+}
+
+export function getMatterById(id: string): Matter | undefined {
+  const normalizedId = normalizeId(id)
+  const summary = matters.find((m) => m.matter_id === normalizedId)
+  return summary ? buildMatter(summary) : undefined
 }
 
 export function getDocumentsByMatter(id: string): CaseDocument[] {
-  if (id === "matter:smith-abc") return documentsSmithAbc
-  return []
+  if (normalizeId(id) !== SMITH_MATTER_ID) return []
+  const facts = getFactsByMatter(id)
+  return (documentsSmithAbc as LegacyDocument[]).map((document) => normalizeDocument(document, facts))
 }
 
 export function getDocumentById(matterId: string, docId: string): CaseDocument | undefined {
-  return getDocumentsByMatter(matterId).find((d) => d.document_id === docId)
+  const normalizedDocId = normalizeId(docId)
+  return getDocumentsByMatter(matterId).find((d) => d.document_id === normalizedDocId || d.id === normalizedDocId)
 }
 
 export function getFactsByMatter(id: string): CaseFact[] {
-  if (id === "matter:smith-abc") return factsSmithAbc
-  return []
+  if (normalizeId(id) !== SMITH_MATTER_ID) return []
+  return (factsSmithAbc as LegacyFact[]).map(normalizeFact)
 }
 
 export function getEventsByMatter(id: string): CaseEvent[] {
-  if (id === "matter:smith-abc") return eventsSmithAbc
-  return []
+  if (normalizeId(id) !== SMITH_MATTER_ID) return []
+  return (eventsSmithAbc as LegacyEvent[]).map(normalizeEvent)
 }
 
 export function getEvidenceByMatter(id: string): CaseEvidence[] {
-  if (id === "matter:smith-abc") return evidenceSmithAbc
+  if (normalizeId(id) === SMITH_MATTER_ID) return evidenceSmithAbc
   return []
 }
 
 export function getClaimsByMatter(id: string): CaseClaim[] {
-  if (id === "matter:smith-abc") return claimsSmithAbc
-  return []
+  if (normalizeId(id) !== SMITH_MATTER_ID) return []
+  return (claimsSmithAbc as LegacyClaim[]).map(normalizeClaim)
 }
 
 export function getDefensesByMatter(id: string): CaseDefense[] {
-  if (id === "matter:smith-abc") return defensesSmithAbc
+  if (normalizeId(id) === SMITH_MATTER_ID) return defensesSmithAbc
   return []
 }
 
 export function getDeadlinesByMatter(id: string): CaseDeadline[] {
-  if (id === "matter:smith-abc") return deadlinesSmithAbc
-  return []
+  if (normalizeId(id) !== SMITH_MATTER_ID) return []
+  return (deadlinesSmithAbc as LegacyDeadline[]).map(normalizeDeadline)
 }
 
 export function getTasksByMatter(id: string): CaseTask[] {
-  if (id === "matter:smith-abc") return tasksSmithAbc
+  if (normalizeId(id) === SMITH_MATTER_ID) return tasksSmithAbc
   return []
 }
 
 export function getPartiesByMatter(id: string): MatterParty[] {
-  if (id === "matter:smith-abc") return partiesSmithAbc
-  return []
+  if (normalizeId(id) !== SMITH_MATTER_ID) return []
+  return partiesSmithAbc.map(normalizeParty)
 }
 
 export function getDraftsByMatter(id: string): CaseDraft[] {
-  if (id === "matter:smith-abc") return [draftAnswerSmithAbc]
-  return []
+  if (normalizeId(id) !== SMITH_MATTER_ID) return []
+  return [normalizeDraft(draftAnswerSmithAbc as LegacyDraft)]
 }
 
 export function getDraftById(matterId: string, draftId: string): CaseDraft | undefined {
-  return getDraftsByMatter(matterId).find((d) => d.draft_id === draftId)
+  const normalizedDraftId = normalizeId(draftId)
+  return getDraftsByMatter(matterId).find((d) => d.draft_id === normalizedDraftId || d.id === normalizedDraftId)
 }
 
 export function getDocumentExtraction(matterId: string, documentId: string): DocumentExtraction | undefined {
-  if (matterId !== "matter:smith-abc") return undefined
+  if (normalizeId(matterId) !== SMITH_MATTER_ID) return undefined
+  const normalizedDocumentId = normalizeId(documentId)
   return (
-    documentExtractionsSmithAbc[documentId] ?? {
-      document_id: documentId,
-      summary: "Extraction pending — this document has been processed but no AI inspector summary is stored in the demo seed.",
+    documentExtractionsSmithAbc[normalizedDocumentId] ?? {
+      document_id: normalizedDocumentId,
+      summary: "Extraction pending - this document has been processed but no AI inspector summary is stored in the demo seed.",
       key_dates: [],
       parties: [],
       entities: [],
@@ -1777,6 +2286,6 @@ export function getDocumentExtraction(matterId: string, documentId: string): Doc
 }
 
 export function getAskMatterSeed(matterId: string): MatterAskMessage[] {
-  if (matterId === "matter:smith-abc") return askMatterSmithAbc
+  if (normalizeId(matterId) === SMITH_MATTER_ID) return askMatterSmithAbc as MatterAskMessage[]
   return []
 }

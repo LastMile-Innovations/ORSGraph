@@ -1,8 +1,9 @@
 use crate::error::{ApiError, ApiResult};
-use crate::models::search::SearchResult;
+use crate::models::search::{SearchResult, SearchRetrievalFilters};
 use crate::services::embedding::EmbeddingService;
 use crate::services::neo4j::Neo4jService;
 use std::sync::Arc;
+use tokio::sync::OnceCell;
 
 pub struct VectorSearchService {
     neo4j: Arc<Neo4jService>,
@@ -11,6 +12,7 @@ pub struct VectorSearchService {
     top_k: usize,
     min_score: f32,
     profile: String,
+    index_ready: OnceCell<bool>,
 }
 
 impl VectorSearchService {
@@ -29,11 +31,22 @@ impl VectorSearchService {
             top_k,
             min_score,
             profile,
+            index_ready: OnceCell::new(),
         }
     }
 
-    pub async fn search_chunks(&self, query: &str, limit: usize) -> ApiResult<Vec<SearchResult>> {
-        if !self.neo4j.vector_index_exists(&self.index_name).await? {
+    pub async fn search_chunks(
+        &self,
+        query: &str,
+        limit: usize,
+        filters: &SearchRetrievalFilters,
+    ) -> ApiResult<Vec<SearchResult>> {
+        let index_ready = *self
+            .index_ready
+            .get_or_try_init(|| async { self.neo4j.vector_index_exists(&self.index_name).await })
+            .await?;
+
+        if !index_ready {
             return Err(ApiError::External(format!(
                 "Vector index '{}' is unavailable",
                 self.index_name
@@ -48,6 +61,7 @@ impl VectorSearchService {
                 self.top_k,
                 self.min_score,
                 limit.max(1).min(self.top_k),
+                filters,
             )
             .await
     }

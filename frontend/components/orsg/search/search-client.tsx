@@ -4,12 +4,14 @@ import { useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { AlertTriangle, ChevronLeft, ChevronRight, Database, GitBranch, Sparkles } from "lucide-react"
 import type { SearchResponse } from "@/lib/types"
+import type { DataSource } from "@/lib/data-state"
 import { SearchInput } from "./search-input"
 import { DEFAULT_FILTERS, SearchFilters, type SearchFiltersState } from "./search-filters"
 import { SearchResultCard } from "./search-result-card"
 import { SearchEmptyState } from "./search-empty-state"
 import { SearchLoadingState } from "./search-loading-state"
-import { searchWithParams } from "@/lib/api"
+import { searchWithParamsState } from "@/lib/api"
+import { DataStateBanner } from "@/components/orsg/data-state-banner"
 import { cn } from "@/lib/utils"
 
 const MODES = [
@@ -25,6 +27,8 @@ interface Props {
   initialType?: string
   initialFilters?: SearchFiltersState
   response?: SearchResponse
+  initialDataSource?: DataSource
+  initialDataError?: string
 }
 
 export function SearchClient({
@@ -33,6 +37,8 @@ export function SearchClient({
   initialType = "all",
   initialFilters = DEFAULT_FILTERS,
   response: initialResponse,
+  initialDataSource = "live",
+  initialDataError,
 }: Props) {
   const router = useRouter()
   const [q, setQ] = useState(initialQuery)
@@ -44,7 +50,13 @@ export function SearchClient({
   const [offset, setOffset] = useState(initialResponse?.offset || 0)
   const [isLoading, setIsLoading] = useState(false)
   const [hasSearched, setHasSearched] = useState(!!initialQuery)
-  const [error, setError] = useState<string | undefined>()
+  const [dataSource, setDataSource] = useState<DataSource>(initialDataSource)
+  const [dataError, setDataError] = useState<string | undefined>(initialDataError)
+  const [error, setError] = useState<string | undefined>(
+    initialQuery && !initialResponse && initialDataSource !== "live"
+      ? initialDataError ?? "Search API unavailable"
+      : undefined,
+  )
 
   const performSearch = async ({
     query = q,
@@ -68,6 +80,8 @@ export function SearchClient({
       setResponse(undefined)
       setHasSearched(false)
       setError(undefined)
+      setDataSource("live")
+      setDataError(undefined)
       router.replace("/search", { scroll: false })
       return
     }
@@ -87,11 +101,18 @@ export function SearchClient({
     router.replace(`/search?${toSearchParams(params)}`, { scroll: false })
 
     try {
-      const res = await searchWithParams(params)
-      setResponse(res)
-      setMode(res.mode || searchMode)
-      setLimit(res.limit || nextLimit)
-      setOffset(res.offset || nextOffset)
+      const res = await searchWithParamsState(params)
+      setDataSource(res.source)
+      setDataError(res.error)
+      if (!res.data) {
+        setError(res.error ?? "Search API unavailable")
+        setResponse(undefined)
+        return
+      }
+      setResponse(res.data)
+      setMode(res.data.mode || searchMode)
+      setLimit(res.data.limit || nextLimit)
+      setOffset(res.data.offset || nextOffset)
     } catch (searchError) {
       console.error("Search failed:", searchError)
       setError(searchError instanceof Error ? searchError.message : "Search failed")
@@ -126,11 +147,12 @@ export function SearchClient({
     performSearch({ query: suggestion, nextOffset: 0 })
   }
 
-  const results = response?.results || []
+  const results = useMemo(() => response?.results ?? [], [response?.results])
   const counts = useMemo(() => {
     const fromFacets = response?.facets?.kinds || {}
     const fallback = results.reduce<Record<string, number>>((acc, result) => {
-      acc[result.kind] = (acc[result.kind] || 0) + 1
+      const kind = result.kind ?? result.result_type ?? "result"
+      acc[kind] = (acc[kind] || 0) + 1
       acc.all = (acc.all || 0) + 1
       return acc
     }, { all: 0 })
@@ -141,13 +163,16 @@ export function SearchClient({
     }
   }, [response, results])
 
-  const pageStart = response ? response.offset + 1 : 0
-  const pageEnd = response ? Math.min(response.offset + response.results.length, response.total) : 0
-  const canPageBack = !!response && response.offset > 0
-  const canPageForward = !!response && response.offset + response.limit < response.total
+  const responseOffset = response?.offset ?? 0
+  const responseLimit = response?.limit ?? limit
+  const pageStart = response ? responseOffset + 1 : 0
+  const pageEnd = response ? Math.min(responseOffset + response.results.length, response.total) : 0
+  const canPageBack = !!response && responseOffset > 0
+  const canPageForward = !!response && responseOffset + responseLimit < response.total
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
+      <DataStateBanner source={dataSource} error={dataError} label="Search data" />
       <header className="border-b border-border bg-card px-6 py-3">
         <SearchInput
           value={q}
@@ -248,6 +273,8 @@ export function SearchClient({
                 onClick={() => {
                   setHasSearched(false)
                   setResponse(undefined)
+                  setDataSource("live")
+                  setDataError(undefined)
                   router.replace("/search", { scroll: false })
                 }}
                 className="mt-4 text-sm text-primary hover:underline"
@@ -279,7 +306,11 @@ function SearchRunSummary({
         <span>
           {pageStart}-{pageEnd} of {response?.total || 0} for &quot;{query}&quot;
         </span>
+        {response?.took_ms !== undefined && <span>{response.took_ms}ms</span>}
         {response?.intent && <span>intent {response.intent}</span>}
+        {response?.applied_filters && response.applied_filters.length > 0 && (
+          <span>filters {response.applied_filters.join(", ")}</span>
+        )}
         {response?.embeddings && (
           <span className="inline-flex items-center gap-1">
             <Sparkles className="h-3 w-3" />
@@ -291,6 +322,9 @@ function SearchRunSummary({
             <Database className="h-3 w-3" />
             exact {response.retrieval.exact_candidates} · text {response.retrieval.fulltext_candidates} · vector{" "}
             {response.retrieval.vector_candidates}
+            {response.retrieval.capped_candidates !== undefined
+              ? ` · candidates ${response.retrieval.capped_candidates}`
+              : ""}
           </span>
         )}
         {response?.retrieval && (

@@ -16,6 +16,7 @@ import {
   Filter,
 } from "lucide-react"
 import type { Matter, MatterChatMessage, MatterChatCitation } from "@/lib/casebuilder/types"
+import { matterClaimsHref, matterDocumentHref, matterFactsHref } from "@/lib/casebuilder/routes"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
@@ -49,6 +50,7 @@ export function AskMatter({ matter }: AskMatterProps) {
       role: "user",
       content: text,
       timestamp: new Date().toISOString(),
+      citations: [],
     }
     setMessages((prev) => [...prev, userMsg])
     setInput("")
@@ -318,11 +320,11 @@ function CitationsBlock({
       <ul className="space-y-1.5">
         {citations.map((c) => {
           const href = c.kind === "document"
-            ? `/matters/${matter.id}/documents/${c.refId}${c.chunkId ? `#${c.chunkId}` : ""}`
+            ? matterDocumentHref(matter.id, c.refId ?? c.sourceId, c.chunkId)
             : c.kind === "fact"
-              ? `/matters/${matter.id}/facts#${c.refId}`
+              ? matterFactsHref(matter.id, c.refId ?? c.sourceId)
               : c.kind === "claim"
-                ? `/matters/${matter.id}/claims#${c.refId}`
+                ? matterClaimsHref(matter.id, c.refId ?? c.sourceId)
                 : c.kind === "statute"
                   ? `/statutes/${c.refId}`
                   : `/sources/${c.refId}`
@@ -436,6 +438,10 @@ function mockCitations(matter: Matter): MatterChatCitation[] {
       indexLabel: String(idx),
       kind: "document",
       refId: doc.id,
+      sourceId: doc.id,
+      sourceKind: "document",
+      shortLabel: doc.title,
+      fullLabel: doc.filename,
       chunkId: doc.chunks[0]?.id,
       title: doc.title,
       snippet: doc.summary?.slice(0, 140),
@@ -448,6 +454,10 @@ function mockCitations(matter: Matter): MatterChatCitation[] {
       indexLabel: String(idx),
       kind: "fact",
       refId: fact.id,
+      sourceId: fact.id,
+      sourceKind: "fact",
+      shortLabel: fact.id,
+      fullLabel: fact.statement,
       title: fact.statement,
       snippet: fact.tags.join(" · "),
     })

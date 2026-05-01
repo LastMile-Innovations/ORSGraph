@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
   CalendarClock,
   FileText,
@@ -10,8 +11,11 @@ import {
   CheckCircle2,
   Filter,
   Download,
+  Plus,
 } from "lucide-react"
 import type { Matter } from "@/lib/casebuilder/types"
+import { matterDocumentHref, matterFactsHref, matterHref } from "@/lib/casebuilder/routes"
+import { createTimelineEvent } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -25,7 +29,7 @@ interface TimelineViewProps {
 type TimelineEntry = {
   id: string
   date: string
-  kind: "fact" | "document" | "deadline" | "milestone"
+  kind: "event" | "fact" | "document" | "deadline" | "milestone"
   title: string
   description?: string
   href?: string
@@ -35,6 +39,11 @@ type TimelineEntry = {
 }
 
 const KIND_CONFIG: Record<TimelineEntry["kind"], { color: string; icon: typeof FileText; label: string }> = {
+  event: {
+    color: "border-cyan-500/40 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
+    icon: CalendarClock,
+    label: "Event",
+  },
   fact: {
     color: "border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300",
     icon: CheckCircle2,
@@ -58,13 +67,35 @@ const KIND_CONFIG: Record<TimelineEntry["kind"], { color: string; icon: typeof F
 }
 
 export function TimelineView({ matter }: TimelineViewProps) {
+  const router = useRouter()
   const [activeKinds, setActiveKinds] = useState<Set<TimelineEntry["kind"]>>(
-    new Set(["fact", "document", "deadline", "milestone"]),
+    new Set(["event", "fact", "document", "deadline", "milestone"]),
   )
+  const [showCreate, setShowCreate] = useState(false)
+  const [eventDate, setEventDate] = useState("")
+  const [eventTitle, setEventTitle] = useState("")
+  const [eventKind, setEventKind] = useState("other")
+  const [eventDescription, setEventDescription] = useState("")
+  const [sourceDocumentId, setSourceDocumentId] = useState("")
+  const [linkedFactId, setLinkedFactId] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const entries: TimelineEntry[] = useMemo(() => {
     const out: TimelineEntry[] = []
 
+    for (const event of matter.timeline) {
+      out.push({
+        id: event.id,
+        date: event.date,
+        kind: "event",
+        title: event.title,
+        description: event.description,
+        disputed: event.disputed,
+        status: event.status,
+        meta: event.kind,
+      })
+    }
     for (const fact of matter.facts) {
       if (!fact.date) continue
       out.push({
@@ -74,7 +105,7 @@ export function TimelineView({ matter }: TimelineViewProps) {
         title: fact.statement,
         meta: fact.tags.slice(0, 2).join(" · "),
         disputed: fact.disputed,
-        href: `/matters/${matter.id}/facts#${fact.id}`,
+        href: matterFactsHref(matter.id, fact.id),
       })
     }
     for (const doc of matter.documents) {
@@ -86,7 +117,7 @@ export function TimelineView({ matter }: TimelineViewProps) {
         title: doc.title,
         description: `${doc.kind} · ${doc.party}`,
         meta: doc.summary,
-        href: `/matters/${matter.id}/documents/${doc.id}`,
+        href: matterDocumentHref(matter.id, doc.id),
       })
     }
     for (const deadline of matter.deadlines) {
@@ -98,7 +129,7 @@ export function TimelineView({ matter }: TimelineViewProps) {
         description: deadline.description,
         status: deadline.status,
         meta: `Owner: ${deadline.owner}`,
-        href: `/matters/${matter.id}/deadlines#${deadline.id}`,
+        href: `${matterHref(matter.id, "deadlines")}#${encodeURIComponent(deadline.id)}`,
       })
     }
     for (const ms of matter.milestones) {
@@ -135,6 +166,36 @@ export function TimelineView({ matter }: TimelineViewProps) {
     })
   }
 
+  async function onCreateEvent() {
+    if (!eventDate || !eventTitle.trim()) {
+      setError("Add a date and title before creating the event.")
+      return
+    }
+    setSaving(true)
+    setError(null)
+    const result = await createTimelineEvent(matter.id, {
+      date: eventDate,
+      title: eventTitle.trim(),
+      kind: eventKind,
+      description: eventDescription.trim() || undefined,
+      source_document_id: sourceDocumentId || undefined,
+      linked_fact_ids: linkedFactId ? [linkedFactId] : [],
+    })
+    setSaving(false)
+    if (!result.data) {
+      setError(result.error || "Timeline event could not be created.")
+      return
+    }
+    setShowCreate(false)
+    setEventDate("")
+    setEventTitle("")
+    setEventKind("other")
+    setEventDescription("")
+    setSourceDocumentId("")
+    setLinkedFactId("")
+    router.refresh()
+  }
+
   return (
     <div className="flex flex-col">
       {/* Header */}
@@ -147,6 +208,10 @@ export function TimelineView({ matter }: TimelineViewProps) {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <Button size="sm" className="gap-1.5" onClick={() => setShowCreate((value) => !value)}>
+              <Plus className="h-3.5 w-3.5" />
+              Add event
+            </Button>
             <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
               <Download className="h-3.5 w-3.5" />
               Export
@@ -180,6 +245,71 @@ export function TimelineView({ matter }: TimelineViewProps) {
             )
           })}
         </div>
+
+        {showCreate && (
+          <div className="mt-4 grid gap-3 rounded-md border border-border bg-card p-3 md:grid-cols-[140px_minmax(0,1fr)_160px]">
+            <input
+              type="date"
+              value={eventDate}
+              onChange={(event) => setEventDate(event.target.value)}
+              className="rounded border border-border bg-background px-3 py-2 text-xs focus:border-primary focus:outline-none"
+            />
+            <input
+              value={eventTitle}
+              onChange={(event) => setEventTitle(event.target.value)}
+              placeholder="Event title"
+              className="rounded border border-border bg-background px-3 py-2 text-xs focus:border-primary focus:outline-none"
+            />
+            <select
+              value={eventKind}
+              onChange={(event) => setEventKind(event.target.value)}
+              className="rounded border border-border bg-background px-3 py-2 font-mono text-xs"
+            >
+              {["other", "communication", "filing", "service", "payment", "notice", "incident", "meeting", "court"].map((kind) => (
+                <option key={kind} value={kind}>
+                  {kind}
+                </option>
+              ))}
+            </select>
+            <textarea
+              value={eventDescription}
+              onChange={(event) => setEventDescription(event.target.value)}
+              placeholder="Description or notes"
+              rows={3}
+              className="rounded border border-border bg-background px-3 py-2 text-xs focus:border-primary focus:outline-none md:col-span-3"
+            />
+            <select
+              value={sourceDocumentId}
+              onChange={(event) => setSourceDocumentId(event.target.value)}
+              className="rounded border border-border bg-background px-3 py-2 text-xs md:col-span-2"
+            >
+              <option value="">No source document</option>
+              {matter.documents.map((document) => (
+                <option key={document.id} value={document.id}>
+                  {document.title}
+                </option>
+              ))}
+            </select>
+            <select
+              value={linkedFactId}
+              onChange={(event) => setLinkedFactId(event.target.value)}
+              className="rounded border border-border bg-background px-3 py-2 text-xs"
+            >
+              <option value="">No linked fact</option>
+              {matter.facts.map((fact) => (
+                <option key={fact.id} value={fact.id}>
+                  {fact.statement.slice(0, 80)}
+                </option>
+              ))}
+            </select>
+            <div className="flex items-center justify-between gap-3 md:col-span-3">
+              <p className="text-xs text-destructive">{error}</p>
+              <Button size="sm" onClick={onCreateEvent} disabled={saving}>
+                {saving ? "Saving" : "Create event"}
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Timeline */}

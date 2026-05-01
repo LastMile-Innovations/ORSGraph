@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
   Plus,
   Sparkles,
@@ -16,6 +17,8 @@ import {
   ChevronRight,
 } from "lucide-react"
 import type { Matter, Claim, ClaimElement } from "@/lib/casebuilder/types"
+import { matterFactsHref } from "@/lib/casebuilder/routes"
+import { createClaim, mapClaimElements } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
@@ -47,12 +50,58 @@ const KIND_META: Record<Claim["kind"], { label: string; icon: typeof Scale; colo
 }
 
 export function ClaimsBuilder({ matter }: ClaimsBuilderProps) {
+  const router = useRouter()
   const [tab, setTab] = useState<Claim["kind"] | "all">("all")
   const [selected, setSelected] = useState<string | null>(matter.claims[0]?.id ?? null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [kind, setKind] = useState<Claim["kind"]>("claim")
+  const [title, setTitle] = useState("")
+  const [claimType, setClaimType] = useState("custom")
+  const [legalTheory, setLegalTheory] = useState("")
+  const [elementLines, setElementLines] = useState("")
+  const [supportingFactId, setSupportingFactId] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const filteredClaims =
     tab === "all" ? matter.claims : matter.claims.filter((c) => c.kind === tab)
   const selectedClaim = matter.claims.find((c) => c.id === selected) ?? filteredClaims[0]
+
+  async function onCreateClaim() {
+    if (!title.trim()) {
+      setError("Add a title for the claim.")
+      return
+    }
+    setSaving(true)
+    setError(null)
+    const elements = elementLines
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((text) => ({ text }))
+    const result = await createClaim(matter.id, {
+      kind,
+      title: title.trim(),
+      claim_type: claimType.trim() || "custom",
+      legal_theory: legalTheory.trim(),
+      fact_ids: supportingFactId ? [supportingFactId] : [],
+      elements,
+    })
+    setSaving(false)
+    if (!result.data) {
+      setError(result.error || "Claim could not be created.")
+      return
+    }
+    setSelected(result.data.id)
+    setShowCreate(false)
+    setKind("claim")
+    setTitle("")
+    setClaimType("custom")
+    setLegalTheory("")
+    setElementLines("")
+    setSupportingFactId("")
+    router.refresh()
+  }
 
   return (
     <div className="flex flex-col">
@@ -71,7 +120,7 @@ export function ClaimsBuilder({ matter }: ClaimsBuilderProps) {
               <Sparkles className="h-3.5 w-3.5" />
               Suggest claims
             </Button>
-            <Button size="sm" className="gap-1.5">
+            <Button size="sm" className="gap-1.5" onClick={() => setShowCreate((value) => !value)}>
               <Plus className="h-3.5 w-3.5" />
               New claim
             </Button>
@@ -95,6 +144,64 @@ export function ClaimsBuilder({ matter }: ClaimsBuilderProps) {
           </TabsList>
           <TabsContent value={tab} className="mt-0" />
         </Tabs>
+
+        {showCreate && (
+          <div className="mt-4 grid gap-3 rounded-md border border-border bg-card p-3 md:grid-cols-[160px_minmax(0,1fr)_180px]">
+            <select
+              value={kind}
+              onChange={(event) => setKind(event.target.value as Claim["kind"])}
+              className="rounded border border-border bg-background px-3 py-2 font-mono text-xs"
+            >
+              <option value="claim">claim</option>
+              <option value="counterclaim">counterclaim</option>
+              <option value="defense">defense</option>
+            </select>
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="Claim title"
+              className="rounded border border-border bg-background px-3 py-2 text-xs focus:border-primary focus:outline-none"
+            />
+            <input
+              value={claimType}
+              onChange={(event) => setClaimType(event.target.value)}
+              placeholder="claim type"
+              className="rounded border border-border bg-background px-3 py-2 font-mono text-xs focus:border-primary focus:outline-none"
+            />
+            <textarea
+              value={legalTheory}
+              onChange={(event) => setLegalTheory(event.target.value)}
+              placeholder="Legal theory"
+              rows={3}
+              className="rounded border border-border bg-background px-3 py-2 text-xs focus:border-primary focus:outline-none md:col-span-3"
+            />
+            <textarea
+              value={elementLines}
+              onChange={(event) => setElementLines(event.target.value)}
+              placeholder="One required element per line"
+              rows={4}
+              className="rounded border border-border bg-background px-3 py-2 text-xs focus:border-primary focus:outline-none md:col-span-2"
+            />
+            <select
+              value={supportingFactId}
+              onChange={(event) => setSupportingFactId(event.target.value)}
+              className="rounded border border-border bg-background px-3 py-2 text-xs"
+            >
+              <option value="">No starting fact</option>
+              {matter.facts.map((fact) => (
+                <option key={fact.id} value={fact.id}>
+                  {fact.statement.slice(0, 80)}
+                </option>
+              ))}
+            </select>
+            <div className="flex items-center justify-between gap-3 md:col-span-3">
+              <p className="text-xs text-destructive">{error}</p>
+              <Button size="sm" onClick={onCreateClaim} disabled={saving}>
+                {saving ? "Saving" : "Create claim"}
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[360px_minmax(0,1fr)]">
@@ -186,9 +293,24 @@ function KindBadge({ kind, small }: { kind: Claim["kind"]; small?: boolean }) {
 }
 
 function ClaimDetail({ claim, matter }: { claim: Claim; matter: Matter }) {
+  const router = useRouter()
   const meta = KIND_META[claim.kind]
   const supportedCount = claim.elements.filter((e) => e.status === "supported").length
   const allSupported = supportedCount === claim.elements.length
+  const [mapping, setMapping] = useState(false)
+  const [mapError, setMapError] = useState<string | null>(null)
+
+  async function onMapElements() {
+    setMapping(true)
+    setMapError(null)
+    const result = await mapClaimElements(matter.id, claim.id)
+    setMapping(false)
+    if (!result.data) {
+      setMapError(result.error || "Element mapping failed.")
+      return
+    }
+    router.refresh()
+  }
 
   return (
     <ScrollArea className="h-[calc(100vh-220px)]">
@@ -248,11 +370,12 @@ function ClaimDetail({ claim, matter }: { claim: Claim; matter: Matter }) {
         <div className="mt-8">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-foreground">Elements</h3>
-            <Button variant="ghost" size="sm" className="h-7 gap-1 text-[11px]">
-              <Plus className="h-3 w-3" />
-              Add element
+            <Button variant="ghost" size="sm" className="h-7 gap-1 text-[11px]" onClick={onMapElements} disabled={mapping}>
+              <Sparkles className="h-3 w-3" />
+              {mapping ? "Mapping" : "Map elements"}
             </Button>
           </div>
+          {mapError && <p className="mt-2 text-xs text-destructive">{mapError}</p>}
 
           <ol className="mt-3 space-y-3">
             {claim.elements.map((element, idx) => (
@@ -374,7 +497,7 @@ function ElementCard({
             {supportingFacts.map((fact) => (
               <li key={fact.id}>
                 <Link
-                  href={`/matters/${matter.id}/facts#${fact.id}`}
+                  href={matterFactsHref(matter.id, fact.id)}
                   className="flex items-start justify-between gap-2 rounded px-1.5 py-1 text-[11px] hover:bg-background"
                 >
                   <span className="line-clamp-1 text-foreground">{fact.statement}</span>

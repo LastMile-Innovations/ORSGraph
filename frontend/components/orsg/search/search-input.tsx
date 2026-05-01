@@ -4,7 +4,6 @@ import { Search, Loader2 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import { searchSuggest } from "@/lib/api"
 import type { SuggestResult } from "@/lib/types"
-import { cn } from "@/lib/utils"
 
 interface SearchInputProps {
   value: string
@@ -20,23 +19,31 @@ export function SearchInput({ value, onChange, onKeyDown, onSelectSuggestion, to
   const [isSuggesting, setIsSuggesting] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const suggestRequestRef = useRef(0)
 
   useEffect(() => {
+    const requestId = ++suggestRequestRef.current
     const fetchSuggestions = async () => {
       if (value.length < 2) {
         setSuggestions([])
+        setShowDropdown(false)
+        setIsSuggesting(false)
         return
       }
 
       setIsSuggesting(true)
       try {
         const res = await searchSuggest(value)
+        if (requestId !== suggestRequestRef.current) return
         setSuggestions(res)
         setShowDropdown(res.length > 0)
       } catch (err) {
+        if (requestId !== suggestRequestRef.current) return
         console.error("Suggest failed:", err)
       } finally {
-        setIsSuggesting(false)
+        if (requestId === suggestRequestRef.current) {
+          setIsSuggesting(false)
+        }
       }
     }
 

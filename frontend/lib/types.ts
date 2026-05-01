@@ -216,6 +216,8 @@ export interface RetrievalInfo {
   exact_candidates: number
   fulltext_candidates: number
   vector_candidates: number
+  filtered_candidates?: number
+  capped_candidates?: number
   graph_expanded_candidates: number
   reranked_candidates: number
 }
@@ -228,9 +230,9 @@ export interface EmbeddingsInfo {
 }
 
 export interface SearchResult {
-  id: string
+  id?: string
   result_type?: string
-  kind: string
+  kind?: string
   citation?: string
   title?: string
   chapter?: string
@@ -244,10 +246,17 @@ export interface SearchResult {
   pre_rerank_score?: number
   rank_source?: "exact" | "keyword" | "keyword-fallback" | "vector" | "graph" | "rerank"
   score_breakdown?: ScoreBreakdown
-  semantic_types: string[]
-  source_backed: boolean
-  qc_warnings: string[]
-  href: string
+  semantic_types?: string[]
+  source_backed?: boolean
+  qc_warnings?: string[]
+  href?: string
+  source_provision?: string
+  edition_year?: number
+  cited_by_count?: number
+  cites_count?: number
+  qc_status?: QCStatus
+  source_id?: string
+  matched_chunk_type?: ChunkType
   source?: {
     source_document_id?: string
     provision_id?: string
@@ -260,18 +269,20 @@ export interface SearchResult {
 
 export interface SearchResponse {
   query: string
-  normalized_query: string
-  intent: string
+  normalized_query?: string
+  intent?: string
   mode: string
   total: number
-  limit: number
-  offset: number
+  limit?: number
+  offset?: number
   results: SearchResult[]
   facets?: SearchFacets
-  warnings: string[]
-  retrieval: RetrievalInfo
+  warnings?: string[]
+  retrieval?: RetrievalInfo
   embeddings?: EmbeddingsInfo
   rerank?: RerankInfo
+  took_ms?: number
+  applied_filters?: string[]
 }
 
 export interface SearchFacets {

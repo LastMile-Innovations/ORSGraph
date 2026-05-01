@@ -134,6 +134,8 @@ export function ComplaintClient({ analysis }: { analysis: ComplaintAnalysis }) {
 // ===== Steps =====
 
 function UploadStep({ analysis, onNext }: { analysis: ComplaintAnalysis; onNext: () => void }) {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-6">
       <Section title="upload complaint">
@@ -143,9 +145,23 @@ function UploadStep({ analysis, onNext }: { analysis: ComplaintAnalysis; onNext:
           <p className="mt-1 text-xs text-muted-foreground">
             ORSGraph extracts parties, claims, allegations, deadlines, and runs each citation through the graph.
           </p>
-          <button className="mt-4 rounded bg-primary px-4 py-1.5 font-mono text-xs uppercase tracking-wider text-primary-foreground hover:bg-primary/90">
+          <label className="mt-4 inline-flex cursor-pointer rounded bg-primary px-4 py-1.5 font-mono text-xs uppercase tracking-wider text-primary-foreground hover:bg-primary/90">
             select file
-          </button>
+            <input
+              type="file"
+              className="sr-only"
+              accept=".pdf,.doc,.docx,.txt"
+              onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+            />
+          </label>
+          {selectedFile && (
+            <div className="mx-auto mt-3 max-w-md rounded border border-border bg-background px-3 py-2 text-left font-mono text-xs">
+              <div className="truncate text-foreground">{selectedFile.name}</div>
+              <div className="mt-0.5 text-[10px] tabular-nums text-muted-foreground">
+                {(selectedFile.size / 1024).toFixed(1)} KB selected · demo analysis will stay read-only
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="mt-4 rounded border border-border bg-card p-4">

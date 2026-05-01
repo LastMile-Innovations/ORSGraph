@@ -32,8 +32,22 @@ impl Neo4jService {
             "CREATE INDEX legal_identity_citation IF NOT EXISTS FOR (n:LegalTextIdentity) ON (n.citation)",
             "CREATE INDEX legal_identity_canonical IF NOT EXISTS FOR (n:LegalTextIdentity) ON (n.canonical_id)",
             "CREATE INDEX legal_version_id IF NOT EXISTS FOR (n:LegalTextVersion) ON (n.version_id)",
+            "CREATE INDEX legal_version_canonical IF NOT EXISTS FOR (n:LegalTextVersion) ON (n.canonical_id)",
             "CREATE INDEX provision_display_citation IF NOT EXISTS FOR (n:Provision) ON (n.display_citation)",
             "CREATE INDEX provision_id IF NOT EXISTS FOR (n:Provision) ON (n.provision_id)",
+            "CREATE INDEX provision_version_id IF NOT EXISTS FOR (n:Provision) ON (n.version_id)",
+            "CREATE INDEX provision_canonical_id IF NOT EXISTS FOR (n:Provision) ON (n.canonical_id)",
+            "CREATE INDEX citation_mention_source_provision IF NOT EXISTS FOR (n:CitationMention) ON (n.source_provision_id)",
+            "CREATE INDEX legal_semantic_source_provision IF NOT EXISTS FOR (n:LegalSemanticNode) ON (n.source_provision_id)",
+            "CREATE INDEX definition_source_provision IF NOT EXISTS FOR (n:Definition) ON (n.source_provision_id)",
+            "CREATE INDEX source_note_version_id IF NOT EXISTS FOR (n:SourceNote) ON (n.version_id)",
+            "CREATE INDEX source_note_provision_id IF NOT EXISTS FOR (n:SourceNote) ON (n.provision_id)",
+            "CREATE INDEX source_note_canonical_id IF NOT EXISTS FOR (n:SourceNote) ON (n.canonical_id)",
+            "CREATE INDEX status_event_canonical_id IF NOT EXISTS FOR (n:StatusEvent) ON (n.canonical_id)",
+            "CREATE INDEX status_event_version_id IF NOT EXISTS FOR (n:StatusEvent) ON (n.version_id)",
+            "CREATE INDEX temporal_effect_canonical_id IF NOT EXISTS FOR (n:TemporalEffect) ON (n.canonical_id)",
+            "CREATE INDEX temporal_effect_version_id IF NOT EXISTS FOR (n:TemporalEffect) ON (n.version_id)",
+            "CREATE INDEX temporal_effect_source_provision IF NOT EXISTS FOR (n:TemporalEffect) ON (n.source_provision_id)",
             "CREATE FULLTEXT INDEX statute_fulltext IF NOT EXISTS FOR (n:LegalTextIdentity|LegalTextVersion) ON EACH [n.citation, n.title, n.text]",
             "CREATE FULLTEXT INDEX provision_fulltext IF NOT EXISTS FOR (n:Provision) ON EACH [n.display_citation, n.text, n.normalized_text]",
             "CREATE FULLTEXT INDEX definition_fulltext IF NOT EXISTS FOR (n:Definition|DefinedTerm) ON EACH [n.term, n.normalized_term, n.definition_text]",
@@ -153,19 +167,21 @@ impl Neo4jService {
 
     pub async fn search_exact(&self, citation: &str) -> ApiResult<Vec<SearchResultModel>> {
         let mut results = Vec::new();
+        let citation_upper = citation.to_ascii_uppercase();
 
         // Statute lookup
         let mut statute_res = self
             .graph
             .execute(
                 query(
-                    "MATCH (n:LegalTextIdentity) 
-                   WHERE toUpper(n.citation) = toUpper($c) OR n.canonical_id = $c
-                   RETURN n.canonical_id as id, n.citation as citation, n.title as title, 
-                          n.chapter as chapter, n.status as status, labels(n)[0] as kind,
-                          n.title as text",
+                    "MATCH (n:LegalTextIdentity)
+		                   WHERE n.citation = $c OR n.citation = $c_upper OR n.canonical_id = $c
+		                   RETURN n.canonical_id as id, n.citation as citation, n.title as title,
+		                          n.chapter as chapter, n.status as status, labels(n)[0] as kind,
+		                          n.title as text",
                 )
-                .param("c", citation),
+                .param("c", citation)
+                .param("c_upper", citation_upper.clone()),
             )
             .await
             .map_err(ApiError::Neo4jConnection)?;
@@ -183,13 +199,14 @@ impl Neo4jService {
             .graph
             .execute(
                 query(
-                    "MATCH (n:Provision) 
-                   WHERE toUpper(n.display_citation) = toUpper($c)
-                   RETURN n.provision_id as id, n.display_citation as citation, null as title, 
-                          n.chapter as chapter, n.status as status, labels(n)[0] as kind,
-                          n.text as text",
+                    "MATCH (n:Provision)
+		                   WHERE n.display_citation = $c OR n.display_citation = $c_upper
+		                   RETURN n.provision_id as id, n.display_citation as citation, null as title,
+		                          n.chapter as chapter, n.status as status, labels(n)[0] as kind,
+		                          n.text as text",
                 )
-                .param("c", citation),
+                .param("c", citation)
+                .param("c_upper", citation_upper),
             )
             .await
             .map_err(ApiError::Neo4jConnection)?;
@@ -234,87 +251,124 @@ impl Neo4jService {
     pub async fn search_fulltext(
         &self,
         q: &str,
-        result_type: Option<&str>,
+        filters: &SearchRetrievalFilters,
         limit: u32,
     ) -> ApiResult<Vec<SearchResultModel>> {
         let mut results = Vec::new();
-        let limit = limit as i64;
+        let sanitized_query = sanitize_fulltext_query(q);
+        if sanitized_query.is_empty() {
+            return Ok(results);
+        }
 
-        let queries = match result_type {
+        let limit = limit.max(1) as usize;
+
+        let queries: Vec<(&str, &str, f32)> = match filters
+            .result_type
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
             Some("statute") => vec![(
-                "statute_fulltext", 
-                "MATCH (node) 
+                "statute_fulltext",
+                "MATCH (node)
                  OPTIONAL MATCH (node)-[:HAS_VERSION]->(v:LegalTextVersion)
                  WITH coalesce(node, v) as n, score
-                 RETURN n.canonical_id as id, n.citation as citation, n.title as title, 
+                 RETURN n.canonical_id as id, n.citation as citation, n.title as title,
                         n.chapter as chapter, n.status as status, 'statute' as kind, score,
-                        coalesce(n.text, n.title) as text"
+                        coalesce(n.text, n.title) as text",
+                1.05,
             )],
             Some("provision") => vec![(
                 "provision_fulltext",
                 "MATCH (node)
                  RETURN node.provision_id as id, node.display_citation as citation, null as title,
                         node.chapter as chapter, node.status as status, 'provision' as kind, score,
-                        node.text as text"
+                        node.text as text",
+                1.15,
             )],
-            Some("definition") => vec![(
+            Some("definition") | Some("definedterm") => vec![(
                 "definition_fulltext",
                 "MATCH (node)
                  RETURN coalesce(node.term, node.definition_id) as id, node.term as citation, null as title,
                         null as chapter, null as status, 'definition' as kind, score,
-                        coalesce(node.definition_text, node.term) as text"
+                        coalesce(node.definition_text, node.term) as text",
+                1.1,
             )],
-            Some("semantic") | Some("obligation") | Some("deadline") | Some("penalty") | Some("notice") => vec![(
-                "semantic_fulltext",
-                "MATCH (node)
-                 RETURN coalesce(node.semantic_id, node.provision_id) as id, node.citation as citation, null as title,
-                        node.chapter as chapter, null as status, labels(node)[0] as kind, score,
-                        node.text as text"
-            )],
-            Some("history") => vec![(
+            Some("semantic") | Some("obligation") | Some("exception") | Some("deadline")
+            | Some("penalty") | Some("notice") | Some("requirednotice") | Some("remedy") => {
+                vec![(
+                    "semantic_fulltext",
+                    "MATCH (node)
+                     RETURN coalesce(node.semantic_id, node.provision_id) as id, node.citation as citation, null as title,
+                            node.chapter as chapter, null as status, labels(node)[0] as kind, score,
+                            node.text as text",
+                    1.0,
+                )]
+            }
+            Some("history") | Some("sourcenote") | Some("source_note") | Some("temporaleffect")
+            | Some("temporal_effect") | Some("sessionlaw") | Some("amendment") => vec![(
                 "history_fulltext",
                 "MATCH (node)
                  RETURN coalesce(node.source_note_id, node.version_id) as id, node.citation as citation, null as title,
                         null as chapter, null as status, labels(node)[0] as kind, score,
-                        coalesce(node.text, node.raw_text) as text"
+                        coalesce(node.text, node.raw_text) as text",
+                0.9,
             )],
             Some("chunk") => vec![(
                 "chunk_fulltext",
                 "MATCH (node)
                  RETURN node.chunk_id as id, node.citation as citation, null as title,
                         null as chapter, null as status, 'chunk' as kind, score,
-                        node.text as text"
+                        node.text as text",
+                0.85,
             )],
             Some("actor") => vec![(
                 "actor_action_fulltext",
                 "MATCH (node)
                  RETURN coalesce(node.actor_id, node.action_id) as id, null as citation, null as title,
                         null as chapter, null as status, labels(node)[0] as kind, score,
-                        coalesce(node.actor_text, node.object_text) as text"
+                        coalesce(node.actor_text, node.object_text) as text",
+                0.95,
             )],
-            Some("taxrule") | Some("moneyamount") | Some("ratelimit") | Some("legalaction") | Some("legalactor") => vec![(
+            Some("taxrule") | Some("moneyamount") | Some("ratelimit") | Some("legalaction")
+            | Some("legalactor") => vec![(
                 "specialized_legal_fulltext",
                 "MATCH (node)
                  RETURN coalesce(node.tax_rule_id, node.money_amount_id, node.rate_limit_id, node.action_id, node.actor_id) as id,
                         node.citation as citation, null as title, node.chapter as chapter, null as status,
                         labels(node)[0] as kind, score,
-                        coalesce(node.text, node.normalized_text, node.actor_text, node.action_text, node.object_text, node.tax_type, node.rate_type, node.amount_type) as text"
+                        coalesce(node.text, node.normalized_text, node.actor_text, node.action_text, node.object_text, node.tax_type, node.rate_type, node.amount_type) as text",
+                0.95,
             )],
             _ => vec![
-                ("statute_fulltext", "MATCH (node) RETURN node.canonical_id as id, node.citation as citation, node.title as title, node.chapter as chapter, node.status as status, 'statute' as kind, score, coalesce(node.text, node.title) as text"),
-                ("provision_fulltext", "MATCH (node) RETURN node.provision_id as id, node.display_citation as citation, null as title, node.chapter as chapter, node.status as status, 'provision' as kind, score, node.text as text"),
-                ("definition_fulltext", "MATCH (node) RETURN coalesce(node.term, node.definition_id) as id, node.term as citation, null as title, null as chapter, null as status, 'definition' as kind, score, coalesce(node.definition_text, node.term) as text"),
-                ("semantic_fulltext", "MATCH (node) RETURN coalesce(node.semantic_id, node.provision_id) as id, node.citation as citation, null as title, node.chapter as chapter, null as status, labels(node)[0] as kind, score, node.text as text"),
-                ("specialized_legal_fulltext", "MATCH (node) RETURN coalesce(node.tax_rule_id, node.money_amount_id, node.rate_limit_id, node.action_id, node.actor_id) as id, node.citation as citation, null as title, node.chapter as chapter, null as status, labels(node)[0] as kind, score, coalesce(node.text, node.normalized_text, node.actor_text, node.action_text, node.object_text, node.tax_type, node.rate_type, node.amount_type) as text"),
-                ("history_fulltext", "MATCH (node) RETURN coalesce(node.source_note_id, node.version_id) as id, node.citation as citation, null as title, null as chapter, null as status, labels(node)[0] as kind, score, coalesce(node.text, node.raw_text) as text"),
-                ("chunk_fulltext", "MATCH (node) RETURN node.chunk_id as id, node.citation as citation, null as title, node.chapter as chapter, null as status, 'chunk' as kind, score, node.text as text"),
-            ]
+                ("statute_fulltext", "MATCH (node) RETURN node.canonical_id as id, node.citation as citation, node.title as title, node.chapter as chapter, node.status as status, 'statute' as kind, score, coalesce(node.text, node.title) as text", 1.05),
+                ("provision_fulltext", "MATCH (node) RETURN node.provision_id as id, node.display_citation as citation, null as title, node.chapter as chapter, node.status as status, 'provision' as kind, score, node.text as text", 1.15),
+                ("definition_fulltext", "MATCH (node) RETURN coalesce(node.term, node.definition_id) as id, node.term as citation, null as title, null as chapter, null as status, 'definition' as kind, score, coalesce(node.definition_text, node.term) as text", 1.1),
+                ("semantic_fulltext", "MATCH (node) RETURN coalesce(node.semantic_id, node.provision_id) as id, node.citation as citation, null as title, node.chapter as chapter, null as status, labels(node)[0] as kind, score, node.text as text", 1.0),
+                ("specialized_legal_fulltext", "MATCH (node) RETURN coalesce(node.tax_rule_id, node.money_amount_id, node.rate_limit_id, node.action_id, node.actor_id) as id, node.citation as citation, null as title, node.chapter as chapter, null as status, labels(node)[0] as kind, score, coalesce(node.text, node.normalized_text, node.actor_text, node.action_text, node.object_text, node.tax_type, node.rate_type, node.amount_type) as text", 0.95),
+                ("history_fulltext", "MATCH (node) RETURN coalesce(node.source_note_id, node.version_id) as id, node.citation as citation, null as title, null as chapter, null as status, labels(node)[0] as kind, score, coalesce(node.text, node.raw_text) as text", 0.9),
+                ("chunk_fulltext", "MATCH (node) RETURN node.chunk_id as id, node.citation as citation, null as title, node.chapter as chapter, null as status, 'chunk' as kind, score, node.text as text", 0.85),
+            ],
         };
 
-        for (index_name, return_clause) in queries {
+        let per_index_limit = if queries.len() == 1 {
+            limit
+        } else {
+            limit.clamp(10, 40)
+        };
+
+        for (index_name, return_clause, source_weight) in queries {
             let cypher = format!(
-                "CALL db.index.fulltext.queryNodes($index, $q) YIELD node, score 
-                 {} 
+                "CALL {{
+                   CALL db.index.fulltext.queryNodes($index, $q) YIELD node, score
+                   {}
+                 }}
+                 WITH id, citation, title, chapter, status, kind, score, text
+                 WHERE ($chapter = '' OR chapter = $chapter)
+                   AND ($status = '' OR status = $status)
+                   AND ($current_only = false OR status IS NULL OR status = 'active')
+                 RETURN id, citation, title, chapter, status, kind, score, text
+                 ORDER BY score DESC
                  LIMIT $limit",
                 return_clause
             );
@@ -324,16 +378,22 @@ impl Neo4jService {
                 .execute(
                     query(&cypher)
                         .param("index", index_name)
-                        .param("q", q)
-                        .param("limit", limit),
+                        .param("q", sanitized_query.clone())
+                        .param("limit", per_index_limit as i64)
+                        .param("chapter", filters.chapter.clone().unwrap_or_default())
+                        .param("status", filters.status.clone().unwrap_or_default())
+                        .param("current_only", filters.current_only),
                 )
                 .await
                 .map_err(ApiError::Neo4jConnection)?;
 
+            let mut rank = 0usize;
             while let Some(row) = res.next().await.map_err(ApiError::Neo4jConnection)? {
-                let score = row.get::<f64>("score").unwrap_or(1.0) as f32;
+                rank += 1;
+                let score = fulltext_rank_score(rank, source_weight);
                 let mut result = self.row_to_search_result(row, score)?;
                 result.fulltext_score = Some(score);
+                result.rank_source = Some("keyword".to_string());
                 result.score_breakdown = Some(ScoreBreakdown {
                     exact: None,
                     keyword: Some(score),
@@ -347,6 +407,13 @@ impl Neo4jService {
             }
         }
 
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results.truncate(limit);
+
         Ok(results)
     }
 
@@ -357,50 +424,89 @@ impl Neo4jService {
         top_k: usize,
         min_score: f32,
         limit: usize,
+        filters: &SearchRetrievalFilters,
     ) -> ApiResult<Vec<SearchResultModel>> {
+        let index_name = safe_vector_index_name(index_name)?;
+        let top_k = top_k.max(1);
+        let limit = limit.max(1);
+        let mut search_where = vec![
+            "node.citation IS NOT NULL".to_string(),
+            "node.embedding_policy IN ['embed_primary', 'embed_special']".to_string(),
+            "(node.answer_policy IS NULL OR node.answer_policy IN ['authoritative_support', 'answerable', 'preferred', 'supporting'])".to_string(),
+        ];
+        let chunk_type = filters.vector_chunk_type();
+        if filters.chapter.is_some() {
+            search_where.push("node.chapter = $chapter".to_string());
+        }
+        if chunk_type.is_some() {
+            search_where.push("node.chunk_type = $chunk_type".to_string());
+        }
+
+        let cypher = format!(
+            "MATCH (node:RetrievalChunk)
+               SEARCH node IN (
+                 VECTOR INDEX {index_name}
+                 FOR $embedding
+                 WHERE {search_where}
+                 LIMIT {top_k}
+               ) SCORE AS score
+             WHERE score >= $min_score
+             MATCH (node)-[:DERIVED_FROM]->(source)
+             OPTIONAL MATCH (source:Provision)-[:PART_OF_VERSION]->(v:LegalTextVersion)-[:VERSION_OF]->(id:LegalTextIdentity)
+             OPTIONAL MATCH (source:LegalTextVersion)-[:VERSION_OF]->(id2:LegalTextIdentity)
+             WITH node, source, score, coalesce(id, id2) AS identity, v,
+                  coalesce(source.chapter, identity.chapter, node.chapter) AS chapter,
+                  coalesce(source.status, identity.status, 'active') AS status
+             WHERE ($chapter = '' OR chapter = $chapter)
+               AND ($status = '' OR status = $status)
+               AND ($current_only = false OR status IS NULL OR status = 'active')
+             RETURN
+               coalesce(source.provision_id, identity.canonical_id, node.chunk_id) as id,
+               CASE
+                 WHEN source:Provision THEN 'provision'
+                 WHEN source:LegalTextVersion THEN 'statute'
+                 ELSE 'chunk'
+               END as kind,
+               coalesce(source.display_citation, identity.citation, node.citation) as citation,
+               identity.title as title,
+               chapter,
+               status,
+               coalesce(source.text, node.text) as text,
+               node.chunk_id as chunk_id,
+               source.provision_id as provision_id,
+               coalesce(v.version_id, source.version_id, node.parent_version_id, node.source_version_id) as version_id,
+               score
+             ORDER BY score DESC
+             LIMIT $limit",
+            index_name = index_name,
+            search_where = search_where.join(" AND "),
+            top_k = top_k,
+        );
+
+        let mut query_builder = query(&cypher)
+            .param("embedding", embedding)
+            .param("min_score", min_score as f64)
+            .param("limit", limit as i64)
+            .param("chapter", filters.chapter.clone().unwrap_or_default())
+            .param("status", filters.status.clone().unwrap_or_default())
+            .param("current_only", filters.current_only);
+        if let Some(chunk_type) = chunk_type {
+            query_builder = query_builder.param("chunk_type", chunk_type);
+        }
+
         let mut result = self
             .graph
-            .execute(
-                query(
-                    "CALL db.index.vector.queryNodes($index_name, $top_k, $embedding)
-                     YIELD node, score
-                     WHERE node:RetrievalChunk AND score >= $min_score
-                     MATCH (node)-[:DERIVED_FROM]->(source)
-                     OPTIONAL MATCH (source:Provision)-[:PART_OF_VERSION]->(v:LegalTextVersion)-[:VERSION_OF]->(id:LegalTextIdentity)
-                     OPTIONAL MATCH (source:LegalTextVersion)-[:VERSION_OF]->(id2:LegalTextIdentity)
-                     WITH node, source, score, coalesce(id, id2) AS identity, v
-                     RETURN
-                       coalesce(source.provision_id, identity.canonical_id, node.chunk_id) as id,
-                       CASE
-                         WHEN source:Provision THEN 'provision'
-                         WHEN source:LegalTextVersion THEN 'statute'
-                         ELSE 'chunk'
-                       END as kind,
-                       coalesce(source.display_citation, identity.citation, node.citation) as citation,
-                       identity.title as title,
-                       coalesce(source.chapter, identity.chapter, node.chapter) as chapter,
-                       coalesce(source.status, identity.status, 'active') as status,
-                       coalesce(source.text, node.text) as text,
-                       node.chunk_id as chunk_id,
-                       source.provision_id as provision_id,
-                       coalesce(v.version_id, source.version_id, node.parent_version_id, node.source_version_id) as version_id,
-                       score
-                     ORDER BY score DESC
-                     LIMIT $limit",
-                )
-                .param("index_name", index_name)
-                .param("top_k", top_k as i64)
-                .param("embedding", embedding)
-                .param("min_score", min_score as f64)
-                .param("limit", limit as i64),
-            )
+            .execute(query_builder)
             .await
             .map_err(ApiError::Neo4jConnection)?;
 
         let mut results = Vec::new();
+        let mut rank = 0usize;
         while let Some(row) = result.next().await.map_err(ApiError::Neo4jConnection)? {
+            rank += 1;
             let score = row.get::<f64>("score").unwrap_or(0.0) as f32;
-            let mut search_result = self.row_to_search_result(row, score)?;
+            let rank_score = vector_rank_score(rank, score);
+            let mut search_result = self.row_to_search_result(row, rank_score)?;
             search_result.vector_score = Some(score);
             search_result.rank_source = Some("vector".to_string());
             let mut source = search_result.source.unwrap_or(SourceInfo {
@@ -756,19 +862,21 @@ impl Neo4jService {
                 query(
                     "MATCH (i:LegalTextIdentity)
                      WHERE $chapter IS NULL OR i.chapter = $chapter
-                     WITH i
+                     WITH count(i) AS total
+                     MATCH (i:LegalTextIdentity)
+                     WHERE $chapter IS NULL OR i.chapter = $chapter
+                     WITH i, total
                      ORDER BY i.chapter, i.citation
                      SKIP $offset
                      LIMIT $limit
-                     RETURN collect({
+                     RETURN total, collect({
                        canonical_id: i.canonical_id,
                        citation: i.citation,
                        title: i.title,
                        chapter: i.chapter,
                        status: coalesce(i.status, 'active'),
                        edition_year: coalesce(i.edition_year, 2025)
-                     }) as items,
-                     count(*) as page_count",
+                     }) as items",
                 )
                 .param("chapter", chapter.map(|value| value.to_string()))
                 .param("offset", offset as i64)
@@ -797,7 +905,7 @@ impl Neo4jService {
             .collect::<Vec<_>>();
 
         Ok(StatuteIndexResponse {
-            total: items.len() as u64,
+            total: row.get::<i64>("total").unwrap_or(0).max(0) as u64,
             items,
             limit,
             offset,
@@ -811,15 +919,60 @@ impl Neo4jService {
                 query(
                     "MATCH (i:LegalTextIdentity)
                      WHERE i.citation = $citation OR i.canonical_id = $citation
-                     OPTIONAL MATCH (i)-[:HAS_CURRENT_VERSION]->(v:LegalTextVersion)
-                     OPTIONAL MATCH (v)-[:FROM_SOURCE]->(s:SourceDocument)
-                     OPTIONAL MATCH (i)<-[:BELONGS_TO]-(p:Provision)
+                     CALL {
+                       WITH i
+                       OPTIONAL MATCH (i)-[:HAS_VERSION]->(candidate:LegalTextVersion)
+                       WITH candidate
+                       ORDER BY coalesce(candidate.current, candidate.is_current, false) DESC,
+                                coalesce(candidate.edition_year, 0) DESC,
+                                coalesce(candidate.effective_date, '') DESC
+                       RETURN candidate AS v
+                       LIMIT 1
+                     }
+                     OPTIONAL MATCH (v)-[:DERIVED_FROM]->(s:SourceDocument)
+                     CALL {
+                       WITH v
+                       OPTIONAL MATCH (v)-[:CONTAINS]->(p:Provision)
+                       RETURN count(DISTINCT p) AS provision_count
+                     }
+                     CALL {
+                       WITH v
+                       OPTIONAL MATCH (v)-[:CONTAINS]->(:Provision)-[r:CITES|CITES_VERSION|CITES_PROVISION|CITES_CHAPTER|CITES_RANGE]->()
+                       RETURN count(DISTINCT r) AS outbound_count
+                     }
+                     CALL {
+                       WITH i, v
+                       OPTIONAL MATCH (source:Provision)-[r:CITES|CITES_VERSION|CITES_PROVISION|CITES_CHAPTER|CITES_RANGE]->(target)
+                       WHERE target = i
+                          OR target = v
+                          OR (target:Provision AND EXISTS { MATCH (target)-[:PART_OF_VERSION]->(v) })
+                       RETURN count(DISTINCT r) AS inbound_count
+                     }
+                     CALL {
+                       WITH v
+                       OPTIONAL MATCH (v)-[:CONTAINS]->(sp:Provision)-[:EXPRESSES|DEFINES]->(sem)
+                       RETURN
+                         count(DISTINCT CASE WHEN sem:Obligation THEN sem END) AS obligations,
+                         count(DISTINCT CASE WHEN sem:Exception THEN sem END) AS exceptions,
+                         count(DISTINCT CASE WHEN sem:Deadline THEN sem END) AS deadlines,
+                         count(DISTINCT CASE WHEN sem:Penalty THEN sem END) AS penalties,
+                         count(DISTINCT CASE WHEN sem:Definition THEN sem END) AS definitions
+                     }
+                     CALL {
+                       WITH v
+                       OPTIONAL MATCH (v)-[:HAS_SOURCE_NOTE]->(version_note:SourceNote)
+                       WITH v, collect(DISTINCT version_note.text) AS version_notes
+                       OPTIONAL MATCH (v)-[:CONTAINS]->(:Provision)-[:HAS_SOURCE_NOTE]->(provision_note:SourceNote)
+                       RETURN [note IN version_notes + collect(DISTINCT provision_note.text)
+                               WHERE note IS NOT NULL AND note <> ''][0..25] AS source_notes
+                     }
                      RETURN i.canonical_id as canonical_id, i.citation as citation, i.title as title,
-                            i.chapter as chapter, i.status as status,
-                            v.version_id as version_id, v.effective_date as effective_date,
-                            v.end_date as end_date, v.is_current as is_current, v.text as text,
+                            i.chapter as chapter, coalesce(i.status, v.status, 'active') as status,
+                            v.version_id as version_id, coalesce(v.effective_date, '') as effective_date,
+                            v.end_date as end_date, coalesce(v.is_current, v.current, false) as is_current, v.text as text,
                             s.source_document_id as source_id, s.url as url, s.edition_year as edition_year,
-                            count(p) as provision_count"
+                            provision_count, outbound_count, inbound_count,
+                            obligations, exceptions, deadlines, penalties, definitions, source_notes"
                 )
                 .param("citation", citation),
             )
@@ -861,17 +1014,17 @@ impl Neo4jService {
                 .and_then(|v: i64| Some(v as u64))
                 .unwrap_or(0),
             citation_counts: CitationCounts {
-                outbound: 0,
-                inbound: 0,
+                outbound: row.get::<i64>("outbound_count").unwrap_or(0).max(0) as u64,
+                inbound: row.get::<i64>("inbound_count").unwrap_or(0).max(0) as u64,
             },
             semantic_counts: SemanticCounts {
-                obligations: 0,
-                exceptions: 0,
-                deadlines: 0,
-                penalties: 0,
-                definitions: 0,
+                obligations: row.get::<i64>("obligations").unwrap_or(0).max(0) as u64,
+                exceptions: row.get::<i64>("exceptions").unwrap_or(0).max(0) as u64,
+                deadlines: row.get::<i64>("deadlines").unwrap_or(0).max(0) as u64,
+                penalties: row.get::<i64>("penalties").unwrap_or(0).max(0) as u64,
+                definitions: row.get::<i64>("definitions").unwrap_or(0).max(0) as u64,
             },
-            source_notes: vec![],
+            source_notes: row.get("source_notes").unwrap_or_default(),
         })
     }
 
@@ -880,8 +1033,19 @@ impl Neo4jService {
             .graph
             .execute(
                 query(
-                    "MATCH (i:LegalTextIdentity)<-[:BELONGS_TO]-(p:Provision)
+                    "MATCH (i:LegalTextIdentity)
                      WHERE i.citation = $citation OR i.canonical_id = $citation
+                     CALL {
+                       WITH i
+                       OPTIONAL MATCH (i)-[:HAS_VERSION]->(candidate:LegalTextVersion)
+                       WITH candidate
+                       ORDER BY coalesce(candidate.current, candidate.is_current, false) DESC,
+                                coalesce(candidate.edition_year, 0) DESC,
+                                coalesce(candidate.effective_date, '') DESC
+                       RETURN candidate AS v
+                       LIMIT 1
+                     }
+                     MATCH (v)-[:CONTAINS]->(p:Provision)
                      RETURN p.provision_id as provision_id, p.display_citation as display_citation,
                             p.local_path as local_path, p.depth as depth, p.text as text
                      ORDER BY p.order_index",
@@ -917,13 +1081,58 @@ impl Neo4jService {
                 query(
                     "MATCH (i:LegalTextIdentity)
                      WHERE i.citation = $citation OR i.canonical_id = $citation
-                     OPTIONAL MATCH (i)-[:CITES]->(t:LegalTextIdentity)
-                     OPTIONAL MATCH (s:LegalTextIdentity)-[:CITES]->(i)
-                     RETURN i.citation as citation,
-                            collect(DISTINCT {target_canonical_id: t.canonical_id, target_citation: t.citation,
-                                             context_snippet: '', source_provision: i.citation, resolved: true}) as outbound,
-                            collect(DISTINCT {target_canonical_id: s.canonical_id, target_citation: s.citation,
-                                             context_snippet: '', source_provision: s.citation, resolved: true}) as inbound"
+                     CALL {
+                       WITH i
+                       OPTIONAL MATCH (i)-[:HAS_VERSION]->(candidate:LegalTextVersion)
+                       WITH candidate
+                       ORDER BY coalesce(candidate.current, candidate.is_current, false) DESC,
+                                coalesce(candidate.edition_year, 0) DESC,
+                                coalesce(candidate.effective_date, '') DESC
+                       RETURN candidate AS v
+                       LIMIT 1
+                     }
+                     CALL {
+                       WITH v
+                       MATCH (v)-[:CONTAINS]->(source:Provision)-[r:CITES|CITES_VERSION|CITES_PROVISION|CITES_CHAPTER|CITES_RANGE]->(target)
+                       RETURN collect(DISTINCT {
+                         target_canonical_id: coalesce(target.canonical_id, target.version_id, target.provision_id, target.chapter_id),
+                         target_citation: coalesce(target.citation, target.display_citation, target.chapter, target.version_id, target.provision_id, target.chapter_id),
+                         context_snippet: coalesce(r.raw_text, r.normalized_citation, ''),
+                         source_provision: coalesce(source.display_citation, source.provision_id),
+                         resolved: true
+                       }) AS outbound
+                     }
+                     CALL {
+                       WITH i, v
+                       MATCH (target)
+                       WHERE target = i
+                          OR target = v
+                          OR (target:Provision AND EXISTS { MATCH (target)-[:PART_OF_VERSION]->(v) })
+                       MATCH (source:Provision)-[r:CITES|CITES_VERSION|CITES_PROVISION|CITES_CHAPTER|CITES_RANGE]->(target)
+                       OPTIONAL MATCH (source)-[:PART_OF_VERSION]->(:LegalTextVersion)-[:VERSION_OF]->(source_identity:LegalTextIdentity)
+                       RETURN collect(DISTINCT {
+                         target_canonical_id: source_identity.canonical_id,
+                         target_citation: coalesce(source_identity.citation, source.display_citation, source.citation, source.provision_id),
+                         context_snippet: coalesce(r.raw_text, r.normalized_citation, ''),
+                         source_provision: coalesce(source.display_citation, source.provision_id),
+                         resolved: true
+                       }) AS inbound
+                     }
+                     CALL {
+                       WITH v
+                       MATCH (v)-[:CONTAINS]->(source:Provision)-[:MENTIONS_CITATION]->(cm:CitationMention)
+                       WHERE cm.resolver_status IS NULL
+                          OR NOT cm.resolver_status IN ['resolved', 'ok']
+                          OR NOT (cm)-[:RESOLVES_TO|RESOLVES_TO_VERSION|RESOLVES_TO_PROVISION|RESOLVES_TO_CHAPTER|RESOLVES_TO_EXTERNAL]->()
+                       RETURN collect(DISTINCT {
+                         target_canonical_id: null,
+                         target_citation: coalesce(cm.raw_text, cm.normalized_citation, ''),
+                         context_snippet: coalesce(cm.raw_text, cm.normalized_citation, ''),
+                         source_provision: coalesce(source.display_citation, source.provision_id),
+                         resolved: false
+                       }) AS unresolved
+                     }
+                     RETURN i.citation as citation, outbound, inbound, unresolved"
                 )
                 .param("citation", citation),
             )
@@ -936,56 +1145,190 @@ impl Neo4jService {
             .map_err(ApiError::Neo4jConnection)?
             .ok_or_else(|| ApiError::NotFound(format!("Statute not found: {}", citation)))?;
 
-        let outbound_json: Vec<serde_json::Value> = row.get("outbound").ok().unwrap_or_default();
-        let outbound: Vec<Citation> = outbound_json
-            .into_iter()
-            .map(|c: serde_json::Value| Citation {
-                target_canonical_id: c["target_canonical_id"].as_str().map(|s| s.to_string()),
-                target_citation: c["target_citation"].as_str().unwrap_or("").to_string(),
-                context_snippet: c["context_snippet"].as_str().unwrap_or("").to_string(),
-                source_provision: c["source_provision"].as_str().unwrap_or("").to_string(),
-                resolved: c["resolved"].as_bool().unwrap_or(true),
-            })
-            .collect();
-
-        let inbound_json: Vec<serde_json::Value> = row.get("inbound").ok().unwrap_or_default();
-        let inbound: Vec<Citation> = inbound_json
-            .into_iter()
-            .map(|c: serde_json::Value| Citation {
-                target_canonical_id: c["target_canonical_id"].as_str().map(|s| s.to_string()),
-                target_citation: c["target_citation"].as_str().unwrap_or("").to_string(),
-                context_snippet: c["context_snippet"].as_str().unwrap_or("").to_string(),
-                source_provision: c["source_provision"].as_str().unwrap_or("").to_string(),
-                resolved: c["resolved"].as_bool().unwrap_or(true),
-            })
-            .collect();
+        let outbound = json_to_citations(row.get("outbound").ok().unwrap_or_default());
+        let inbound = json_to_citations(row.get("inbound").ok().unwrap_or_default());
+        let unresolved = json_to_citations(row.get("unresolved").ok().unwrap_or_default());
 
         Ok(CitationsResponse {
-            citation: citation.to_string(),
+            citation: row.get("citation").unwrap_or_else(|_| citation.to_string()),
             outbound,
             inbound,
-            unresolved: vec![],
+            unresolved,
         })
     }
 
     pub async fn get_semantics(&self, citation: &str) -> ApiResult<SemanticsResponse> {
+        let mut result = self
+            .graph
+            .execute(
+                query(
+                    "MATCH (i:LegalTextIdentity)
+                     WHERE i.citation = $citation OR i.canonical_id = $citation
+                     CALL {
+                       WITH i
+                       OPTIONAL MATCH (i)-[:HAS_VERSION]->(candidate:LegalTextVersion)
+                       WITH candidate
+                       ORDER BY coalesce(candidate.current, candidate.is_current, false) DESC,
+                                coalesce(candidate.edition_year, 0) DESC,
+                                coalesce(candidate.effective_date, '') DESC
+                       RETURN candidate AS v
+                       LIMIT 1
+                     }
+                     CALL {
+                       WITH v
+                       MATCH (v)-[:CONTAINS]->(p:Provision)-[:EXPRESSES]->(o:Obligation)
+                       RETURN collect(DISTINCT {
+                         text: coalesce(o.text, o.action_text, o.normalized_text, ''),
+                         source_provision: coalesce(p.display_citation, p.provision_id)
+                       })[0..200] AS obligations
+                     }
+                     CALL {
+                       WITH v
+                       MATCH (v)-[:CONTAINS]->(p:Provision)-[:EXPRESSES]->(e:Exception)
+                       RETURN collect(DISTINCT {
+                         text: coalesce(e.text, e.trigger_phrase, e.normalized_text, ''),
+                         source_provision: coalesce(p.display_citation, p.provision_id)
+                       })[0..200] AS exceptions
+                     }
+                     CALL {
+                       WITH v
+                       MATCH (v)-[:CONTAINS]->(p:Provision)-[:EXPRESSES]->(d:Deadline)
+                       RETURN collect(DISTINCT {
+                         description: coalesce(d.text, d.action_required, ''),
+                         duration: coalesce(d.duration, d.date_text, ''),
+                         trigger: coalesce(d.trigger_event, ''),
+                         source_provision: coalesce(p.display_citation, p.provision_id)
+                       })[0..200] AS deadlines
+                     }
+                     CALL {
+                       WITH v
+                       MATCH (v)-[:CONTAINS]->(p:Provision)-[:EXPRESSES]->(pnl:Penalty)
+                       RETURN collect(DISTINCT {
+                         text: coalesce(pnl.text, pnl.penalty_type, pnl.target_conduct, ''),
+                         source_provision: coalesce(p.display_citation, p.provision_id)
+                       })[0..200] AS penalties
+                     }
+                     CALL {
+                       WITH v
+                       MATCH (v)-[:CONTAINS]->(p:Provision)-[:DEFINES]->(d:Definition)
+                       OPTIONAL MATCH (d)-[:HAS_SCOPE]->(scope)
+                       RETURN collect(DISTINCT {
+                         term: coalesce(d.term, d.normalized_term, ''),
+                         text: coalesce(d.definition_text, d.text, ''),
+                         source_provision: coalesce(p.display_citation, p.provision_id),
+                         scope: coalesce(scope.scope_citation, d.scope_citation, scope.scope_type, d.scope_type, '')
+                       })[0..200] AS definitions
+                     }
+                     RETURN i.citation AS citation, obligations, exceptions, deadlines, penalties, definitions",
+                )
+                .param("citation", citation),
+            )
+            .await
+            .map_err(ApiError::Neo4jConnection)?;
+
+        let row = result
+            .next()
+            .await
+            .map_err(ApiError::Neo4jConnection)?
+            .ok_or_else(|| ApiError::NotFound(format!("Statute not found: {}", citation)))?;
+
         Ok(SemanticsResponse {
-            citation: citation.to_string(),
-            obligations: vec![],
-            exceptions: vec![],
-            deadlines: vec![],
-            penalties: vec![],
-            definitions: vec![],
+            citation: row.get("citation").unwrap_or_else(|_| citation.to_string()),
+            obligations: json_to_semantic_items(row.get("obligations").ok().unwrap_or_default()),
+            exceptions: json_to_semantic_items(row.get("exceptions").ok().unwrap_or_default()),
+            deadlines: json_to_deadlines(row.get("deadlines").ok().unwrap_or_default()),
+            penalties: json_to_semantic_items(row.get("penalties").ok().unwrap_or_default()),
+            definitions: json_to_definitions(row.get("definitions").ok().unwrap_or_default()),
         })
     }
 
     pub async fn get_history(&self, citation: &str) -> ApiResult<HistoryResponse> {
+        let mut result = self
+            .graph
+            .execute(
+                query(
+                    "MATCH (i:LegalTextIdentity)
+                     WHERE i.citation = $citation OR i.canonical_id = $citation
+                     CALL {
+                       WITH i
+                       OPTIONAL MATCH (i)-[:HAS_VERSION]->(candidate:LegalTextVersion)
+                       WITH candidate
+                       ORDER BY coalesce(candidate.current, candidate.is_current, false) DESC,
+                                coalesce(candidate.edition_year, 0) DESC,
+                                coalesce(candidate.effective_date, '') DESC
+                       RETURN candidate AS v
+                       LIMIT 1
+                     }
+                     CALL {
+                       WITH v
+                       OPTIONAL MATCH (v)-[:HAS_SOURCE_NOTE]->(version_note:SourceNote)
+                       WITH v, collect(DISTINCT version_note) AS version_notes
+                       OPTIONAL MATCH (v)-[:CONTAINS]->(:Provision)-[:HAS_SOURCE_NOTE]->(provision_note:SourceNote)
+                       WITH version_notes + collect(DISTINCT provision_note) AS notes
+                       RETURN [note IN notes WHERE note IS NOT NULL | note.text][0..200] AS source_notes
+                     }
+                     CALL {
+                       WITH i, v
+                       OPTIONAL MATCH (am:Amendment)
+                       WHERE (am)-[:AFFECTS]->(i) OR (v IS NOT NULL AND (am)-[:AFFECTS_VERSION]->(v))
+                       RETURN collect(DISTINCT {
+                         amendment_id: am.amendment_id,
+                         description: coalesce(am.text, am.raw_text, am.amendment_type, ''),
+                         effective_date: coalesce(am.effective_date, '')
+                       })[0..200] AS amendments
+                     }
+                     CALL {
+                       WITH i, v
+                       OPTIONAL MATCH (i)-[:HAS_STATUS_EVENT]->(identity_event:StatusEvent)
+                       WITH i, v, collect(DISTINCT identity_event) AS identity_events
+                       OPTIONAL MATCH (v)-[:HAS_STATUS_EVENT]->(version_event:StatusEvent)
+                       WITH i, v, identity_events + collect(DISTINCT version_event) AS status_events
+                       OPTIONAL MATCH (v)-[:HAS_TEMPORAL_EFFECT]->(version_effect:TemporalEffect)
+                       WITH v, status_events, collect(DISTINCT version_effect) AS version_effects
+                       OPTIONAL MATCH (v)-[:CONTAINS]->(:Provision)-[:HAS_TEMPORAL_EFFECT]->(provision_effect:TemporalEffect)
+                       WITH status_events + version_effects + collect(DISTINCT provision_effect) AS events
+                       RETURN [event IN events WHERE event IS NOT NULL | {
+                         event_id: coalesce(event.status_event_id, event.temporal_effect_id),
+                         event_type: coalesce(event.status_type, event.effect_type, 'temporal_effect'),
+                         date: coalesce(event.effective_date, event.operative_date, event.repeal_date, event.expiration_date, ''),
+                         description: coalesce(event.status_text, event.trigger_text, event.text, event.session_law_ref, '')
+                       }][0..200] AS status_events
+                     }
+                     CALL {
+                       WITH i, v
+                       OPTIONAL MATCH (v)-[:HAS_SOURCE_NOTE]->(sn:SourceNote)-[:MENTIONS_SESSION_LAW]->(source_law:SessionLaw)
+                       WITH i, v, collect(DISTINCT source_law) AS source_laws
+                       OPTIONAL MATCH (am:Amendment)
+                       WHERE (am)-[:AFFECTS]->(i) OR (v IS NOT NULL AND (am)-[:AFFECTS_VERSION]->(v))
+                       OPTIONAL MATCH (law_from_amendment:SessionLaw)-[:ENACTS]->(am)
+                       WITH v, source_laws + collect(DISTINCT law_from_amendment) AS laws
+                       OPTIONAL MATCH (v)-[:HAS_TEMPORAL_EFFECT]->(:TemporalEffect)-[:REFERENCES_SESSION_LAW]->(law_from_effect:SessionLaw)
+                       WITH laws + collect(DISTINCT law_from_effect) AS session_laws
+                       RETURN [law IN session_laws WHERE law IS NOT NULL | {
+                         session_law_id: law.session_law_id,
+                         citation: coalesce(law.citation, ''),
+                         description: coalesce(law.text, law.raw_text, law.bill_number, '')
+                       }][0..200] AS session_laws
+                     }
+                     RETURN i.citation AS citation, source_notes, amendments, session_laws, status_events",
+                )
+                .param("citation", citation),
+            )
+            .await
+            .map_err(ApiError::Neo4jConnection)?;
+
+        let row = result
+            .next()
+            .await
+            .map_err(ApiError::Neo4jConnection)?
+            .ok_or_else(|| ApiError::NotFound(format!("Statute not found: {}", citation)))?;
+
         Ok(HistoryResponse {
-            citation: citation.to_string(),
-            source_notes: vec![],
-            amendments: vec![],
-            session_laws: vec![],
-            status_events: vec![],
+            citation: row.get("citation").unwrap_or_else(|_| citation.to_string()),
+            source_notes: row.get("source_notes").unwrap_or_default(),
+            amendments: json_to_amendments(row.get("amendments").ok().unwrap_or_default()),
+            session_laws: json_to_session_laws(row.get("session_laws").ok().unwrap_or_default()),
+            status_events: json_to_status_events(row.get("status_events").ok().unwrap_or_default()),
         })
     }
 
@@ -999,12 +1342,43 @@ impl Neo4jService {
                 query(
                     "MATCH (p:Provision)
                      WHERE p.provision_id = $provision_id OR p.display_citation = $provision_id
-                     MATCH (p)-[:BELONGS_TO]->(i:LegalTextIdentity)
+                     MATCH (p)-[:PART_OF_VERSION]->(v:LegalTextVersion)-[:VERSION_OF]->(i:LegalTextIdentity)
                      OPTIONAL MATCH (p)<-[:DERIVED_FROM]-(chunk:RetrievalChunk)
-                     OPTIONAL MATCH (p)-[:CITES]->(target:LegalTextIdentity)
-                     OPTIONAL MATCH (source:LegalTextIdentity)-[:CITES]->(p)
-                     OPTIONAL MATCH (p)<-[:PARENT_OF]-(child:Provision)
-                     WITH p, i,
+                     CALL {
+                       WITH p
+                       OPTIONAL MATCH (p)-[r:CITES|CITES_VERSION|CITES_PROVISION|CITES_CHAPTER|CITES_RANGE]->(target)
+                       RETURN collect(DISTINCT {
+                         target_canonical_id: coalesce(target.canonical_id, target.version_id, target.provision_id, target.chapter_id),
+                         target_citation: coalesce(target.citation, target.display_citation, target.chapter, target.version_id, target.provision_id, target.chapter_id),
+                         context_snippet: coalesce(r.raw_text, r.normalized_citation, ''),
+                         source_provision: coalesce(p.display_citation, p.provision_id),
+                         resolved: true
+                       })[0..50] AS outbound_nodes
+                     }
+                     CALL {
+                       WITH p
+                       OPTIONAL MATCH (source:Provision)-[r:CITES|CITES_VERSION|CITES_PROVISION|CITES_CHAPTER|CITES_RANGE]->(p)
+                       OPTIONAL MATCH (source)-[:PART_OF_VERSION]->(:LegalTextVersion)-[:VERSION_OF]->(source_identity:LegalTextIdentity)
+                       RETURN collect(DISTINCT {
+                         target_canonical_id: source_identity.canonical_id,
+                         target_citation: coalesce(source_identity.citation, source.display_citation, source.citation, source.provision_id),
+                         context_snippet: coalesce(r.raw_text, r.normalized_citation, ''),
+                         source_provision: coalesce(source.display_citation, source.provision_id),
+                         resolved: true
+                       })[0..50] AS inbound_nodes
+                     }
+                     OPTIONAL MATCH (p)-[:CONTAINS]->(child:Provision)
+                     OPTIONAL MATCH path = (p)-[:HAS_PARENT*1..8]->(ancestor:Provision)
+                     WITH p, v, i, chunk, outbound_nodes, inbound_nodes, child,
+                          [node IN reverse(nodes(path)) WHERE node <> p | {
+                            provision_id: node.provision_id,
+                            citation: coalesce(node.display_citation, node.provision_id)
+                          }] AS ancestor_links
+                     OPTIONAL MATCH (p)-[:HAS_PARENT]->(parent:Provision)
+                     OPTIONAL MATCH (parent)-[:CONTAINS]->(sibling_from_parent:Provision)
+                     OPTIONAL MATCH (v)-[:CONTAINS]->(sibling_top:Provision)
+                     WITH p, v, i, parent,
+                       collect(DISTINCT ancestor_links) AS ancestor_groups,
                        collect(DISTINCT {
                          chunk_id: chunk.chunk_id,
                          chunk_type: chunk.chunk_type,
@@ -1018,14 +1392,6 @@ impl Neo4jService {
                          parser_confidence: chunk.parser_confidence
                        })[0..25] as chunks,
                        collect(DISTINCT {
-                         canonical_id: target.canonical_id,
-                         citation: target.citation
-                       })[0..50] as outbound_nodes,
-                       collect(DISTINCT {
-                         canonical_id: source.canonical_id,
-                         citation: source.citation
-                       })[0..50] as inbound_nodes,
-                       collect(DISTINCT {
                          provision_id: child.provision_id,
                          display_citation: child.display_citation,
                          provision_type: coalesce(child.provision_type, child.kind, 'section'),
@@ -1033,7 +1399,61 @@ impl Neo4jService {
                          text: child.text,
                          qc_status: coalesce(child.qc_status, 'pass'),
                          status: coalesce(child.status, i.status, 'active')
-                       })[0..50] as children
+                       })[0..50] as children,
+                       outbound_nodes,
+                       inbound_nodes,
+                       collect(DISTINCT CASE
+                         WHEN parent IS NOT NULL AND sibling_from_parent IS NOT NULL THEN {
+                           provision_id: sibling_from_parent.provision_id,
+                           citation: coalesce(sibling_from_parent.display_citation, sibling_from_parent.provision_id)
+                         }
+                         WHEN parent IS NULL AND sibling_top IS NOT NULL AND NOT (sibling_top)-[:HAS_PARENT]->() AND sibling_top <> p THEN {
+                           provision_id: sibling_top.provision_id,
+                           citation: coalesce(sibling_top.display_citation, sibling_top.provision_id)
+                         }
+                       END)[0..50] as siblings
+                     CALL {
+                       WITH p
+                       OPTIONAL MATCH (p)-[:DEFINES]->(d:Definition)
+                       OPTIONAL MATCH (d)-[:HAS_SCOPE]->(scope)
+                       RETURN collect(DISTINCT {
+                         term: coalesce(d.term, d.normalized_term, ''),
+                         text: coalesce(d.definition_text, d.text, ''),
+                         source_provision: coalesce(p.display_citation, p.provision_id),
+                         scope: coalesce(scope.scope_citation, d.scope_citation, scope.scope_type, d.scope_type, '')
+                       })[0..100] AS definitions
+                     }
+                     CALL {
+                       WITH p
+                       OPTIONAL MATCH (p)-[:EXPRESSES]->(e:Exception)
+                       RETURN collect(DISTINCT {
+                         exception_id: e.exception_id,
+                         text: coalesce(e.text, e.trigger_phrase, ''),
+                         applies_to_provision: coalesce(e.target_provision_id, e.target_canonical_id, p.provision_id),
+                         source_provision: coalesce(p.display_citation, p.provision_id)
+                       })[0..100] AS exceptions
+                     }
+                     CALL {
+                       WITH p
+                       OPTIONAL MATCH (p)-[:EXPRESSES]->(d:Deadline)
+                       RETURN collect(DISTINCT {
+                         description: coalesce(d.text, d.action_required, ''),
+                         duration: coalesce(d.duration, d.date_text, ''),
+                         trigger: coalesce(d.trigger_event, ''),
+                         source_provision: coalesce(p.display_citation, p.provision_id)
+                       })[0..100] AS deadlines
+                     }
+                     CALL {
+                       WITH p
+                       OPTIONAL MATCH (p)-[:HAS_SOURCE_NOTE]->(sn:SourceNote)
+                       RETURN collect(DISTINCT {
+                         note_id: sn.source_note_id,
+                         level: coalesce(sn.qc_severity, 'info'),
+                         category: coalesce(sn.note_type, 'source'),
+                         message: coalesce(sn.text, sn.normalized_text, ''),
+                         related_id: coalesce(sn.provision_id, sn.version_id, sn.canonical_id)
+                       })[0..100] AS qc_notes
+                     }
                      RETURN i.canonical_id as canonical_id,
                             i.citation as statute_citation,
                             i.title as statute_title,
@@ -1051,7 +1471,13 @@ impl Neo4jService {
                             chunks,
                             outbound_nodes,
                             inbound_nodes,
-                            children",
+                            children,
+                            ancestor_groups,
+                            siblings,
+                            definitions,
+                            exceptions,
+                            deadlines,
+                            qc_notes",
                 )
                 .param("provision_id", provision_id),
             )
@@ -1089,6 +1515,7 @@ impl Neo4jService {
         let chunks_json: Vec<serde_json::Value> = row.get("chunks").ok().unwrap_or_default();
         let chunks = chunks_json
             .into_iter()
+            .filter(|chunk| !json_string(chunk, "chunk_id").is_empty())
             .map(|chunk| ProvisionChunk {
                 chunk_id: json_string(&chunk, "chunk_id"),
                 chunk_type: json_string_or(&chunk, "chunk_type", "contextual_provision"),
@@ -1107,6 +1534,7 @@ impl Neo4jService {
         let children_json: Vec<serde_json::Value> = row.get("children").ok().unwrap_or_default();
         let children = children_json
             .into_iter()
+            .filter(|child| !json_string(child, "provision_id").is_empty())
             .map(|child| {
                 let text = json_string(&child, "text");
                 ProvisionDetail {
@@ -1126,14 +1554,11 @@ impl Neo4jService {
             })
             .collect::<Vec<_>>();
 
-        let outbound = nodes_to_citations(
-            row.get("outbound_nodes").ok().unwrap_or_default(),
-            &provision.display_citation,
-        );
-        let inbound = nodes_to_citations(
-            row.get("inbound_nodes").ok().unwrap_or_default(),
-            &provision.display_citation,
-        );
+        let ancestors =
+            json_to_provision_links(row.get("ancestor_groups").ok().unwrap_or_default());
+        let siblings = json_to_provision_links(row.get("siblings").ok().unwrap_or_default());
+        let outbound = json_to_citations(row.get("outbound_nodes").ok().unwrap_or_default());
+        let inbound = json_to_citations(row.get("inbound_nodes").ok().unwrap_or_default());
 
         Ok(ProvisionDetailResponse {
             parent_statute: StatuteIndexItem {
@@ -1147,16 +1572,18 @@ impl Neo4jService {
                 edition_year: row.get("edition_year").unwrap_or(2025),
             },
             provision,
-            ancestors: Vec::new(),
+            ancestors,
             children,
-            siblings: Vec::new(),
+            siblings,
             chunks,
             outbound_citations: outbound,
             inbound_citations: inbound,
-            definitions: Vec::new(),
-            exceptions: Vec::new(),
-            deadlines: Vec::new(),
-            qc_notes: Vec::new(),
+            definitions: json_to_definitions(row.get("definitions").ok().unwrap_or_default()),
+            exceptions: json_to_provision_exceptions(
+                row.get("exceptions").ok().unwrap_or_default(),
+            ),
+            deadlines: json_to_deadlines(row.get("deadlines").ok().unwrap_or_default()),
+            qc_notes: json_to_qc_notes(row.get("qc_notes").ok().unwrap_or_default()),
         })
     }
 
@@ -1625,6 +2052,104 @@ fn graph_csv(value: Option<&str>) -> Vec<String> {
         .collect()
 }
 
+pub(crate) fn sanitize_fulltext_query(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let mut escaped = String::with_capacity(trimmed.len());
+    for ch in trimmed.chars() {
+        if matches!(
+            ch,
+            '+' | '-'
+                | '&'
+                | '|'
+                | '!'
+                | '('
+                | ')'
+                | '{'
+                | '}'
+                | '['
+                | ']'
+                | '^'
+                | '"'
+                | '~'
+                | '*'
+                | '?'
+                | ':'
+                | '\\'
+                | '/'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
+}
+
+pub(crate) fn fulltext_rank_score(rank: usize, source_weight: f32) -> f32 {
+    if rank == 0 {
+        return 0.0;
+    }
+    source_weight / (rank as f32).sqrt()
+}
+
+pub(crate) fn vector_rank_score(rank: usize, similarity: f32) -> f32 {
+    if rank == 0 {
+        return similarity.max(0.0);
+    }
+    similarity.max(0.0) + 0.75 / (rank as f32).sqrt()
+}
+
+fn safe_vector_index_name(index_name: &str) -> ApiResult<&str> {
+    if index_name
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        Ok(index_name)
+    } else {
+        Err(ApiError::BadRequest(format!(
+            "Invalid vector index name {index_name}"
+        )))
+    }
+}
+
+#[cfg(test)]
+mod search_support_tests {
+    use super::*;
+
+    #[test]
+    fn sanitizes_lucene_special_characters_without_touching_legal_words() {
+        assert_eq!(
+            sanitize_fulltext_query(r#"ORS 90.300(1) "deposit" + fee"#),
+            r#"ORS 90.300\(1\) \"deposit\" \+ fee"#
+        );
+        assert_eq!(
+            sanitize_fulltext_query("landlord notice"),
+            "landlord notice"
+        );
+    }
+
+    #[test]
+    fn source_rank_scores_decay_by_rank() {
+        let first = fulltext_rank_score(1, 1.0);
+        let fourth = fulltext_rank_score(4, 1.0);
+        assert!(first > fourth);
+        assert!((fourth - 0.5).abs() < 0.001);
+
+        let vector_first = vector_rank_score(1, 0.72);
+        let vector_tenth = vector_rank_score(10, 0.72);
+        assert!(vector_first > vector_tenth);
+    }
+
+    #[test]
+    fn rejects_unsafe_dynamic_vector_index_names() {
+        assert!(safe_vector_index_name("retrieval_chunk_embedding_1024").is_ok());
+        assert!(safe_vector_index_name("retrieval`) MATCH (n) //").is_err());
+    }
+}
+
 fn graph_relationship_types(mode: &str, override_value: Option<&str>) -> Vec<String> {
     let explicit = graph_csv(override_value);
     if !explicit.is_empty() {
@@ -1788,21 +2313,213 @@ fn json_string_or(value: &serde_json::Value, key: &str, fallback: &str) -> Strin
     value[key].as_str().unwrap_or(fallback).to_string()
 }
 
-fn nodes_to_citations(nodes: Vec<serde_json::Value>, source_provision: &str) -> Vec<Citation> {
-    nodes
+fn json_to_citations(values: Vec<serde_json::Value>) -> Vec<Citation> {
+    values
         .into_iter()
-        .filter_map(|node| {
-            let citation = json_string(&node, "citation");
-            if citation.is_empty() {
+        .filter_map(|value| {
+            let target_citation = json_string(&value, "target_citation");
+            let source_provision = json_string(&value, "source_provision");
+            if target_citation.is_empty() && source_provision.is_empty() {
                 return None;
             }
 
             Some(Citation {
-                target_canonical_id: node["canonical_id"].as_str().map(|value| value.to_string()),
-                target_citation: citation,
-                context_snippet: String::new(),
-                source_provision: source_provision.to_string(),
-                resolved: true,
+                target_canonical_id: value["target_canonical_id"]
+                    .as_str()
+                    .filter(|value| !value.is_empty())
+                    .map(|value| value.to_string()),
+                target_citation,
+                context_snippet: json_string(&value, "context_snippet"),
+                source_provision,
+                resolved: value["resolved"].as_bool().unwrap_or(true),
+            })
+        })
+        .collect()
+}
+
+fn json_to_semantic_items(values: Vec<serde_json::Value>) -> Vec<SemanticItem> {
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let text = json_string(&value, "text");
+            if text.is_empty() {
+                return None;
+            }
+
+            Some(SemanticItem {
+                text,
+                source_provision: json_string(&value, "source_provision"),
+            })
+        })
+        .collect()
+}
+
+fn json_to_deadlines(values: Vec<serde_json::Value>) -> Vec<DeadlineItem> {
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let description = json_string(&value, "description");
+            if description.is_empty() {
+                return None;
+            }
+
+            Some(DeadlineItem {
+                description,
+                duration: json_string(&value, "duration"),
+                trigger: json_string(&value, "trigger"),
+                source_provision: json_string(&value, "source_provision"),
+            })
+        })
+        .collect()
+}
+
+fn json_to_definitions(values: Vec<serde_json::Value>) -> Vec<DefinitionItem> {
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let term = json_string(&value, "term");
+            let text = json_string(&value, "text");
+            if term.is_empty() && text.is_empty() {
+                return None;
+            }
+
+            Some(DefinitionItem {
+                term,
+                text,
+                source_provision: json_string(&value, "source_provision"),
+                scope: json_string(&value, "scope"),
+            })
+        })
+        .collect()
+}
+
+fn json_to_provision_exceptions(values: Vec<serde_json::Value>) -> Vec<ProvisionException> {
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let exception_id = json_string(&value, "exception_id");
+            let text = json_string(&value, "text");
+            if exception_id.is_empty() && text.is_empty() {
+                return None;
+            }
+
+            Some(ProvisionException {
+                exception_id,
+                text,
+                applies_to_provision: json_string(&value, "applies_to_provision"),
+                source_provision: json_string(&value, "source_provision"),
+            })
+        })
+        .collect()
+}
+
+fn json_to_qc_notes(values: Vec<serde_json::Value>) -> Vec<QCNoteItem> {
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let note_id = json_string(&value, "note_id");
+            let message = json_string(&value, "message");
+            if note_id.is_empty() && message.is_empty() {
+                return None;
+            }
+
+            Some(QCNoteItem {
+                note_id,
+                level: json_string_or(&value, "level", "info"),
+                category: json_string_or(&value, "category", "source"),
+                message,
+                related_id: value["related_id"]
+                    .as_str()
+                    .filter(|value| !value.is_empty())
+                    .map(|value| value.to_string()),
+            })
+        })
+        .collect()
+}
+
+fn json_to_provision_links(values: Vec<serde_json::Value>) -> Vec<ProvisionLink> {
+    let mut links = Vec::new();
+    let mut seen = HashSet::new();
+
+    for value in values {
+        if let Some(items) = value.as_array() {
+            for item in items {
+                push_provision_link(item, &mut links, &mut seen);
+            }
+        } else {
+            push_provision_link(&value, &mut links, &mut seen);
+        }
+    }
+
+    links
+}
+
+fn push_provision_link(
+    value: &serde_json::Value,
+    links: &mut Vec<ProvisionLink>,
+    seen: &mut HashSet<String>,
+) {
+    let provision_id = json_string(value, "provision_id");
+    if provision_id.is_empty() || !seen.insert(provision_id.clone()) {
+        return;
+    }
+
+    links.push(ProvisionLink {
+        provision_id,
+        citation: json_string(value, "citation"),
+    });
+}
+
+fn json_to_amendments(values: Vec<serde_json::Value>) -> Vec<Amendment> {
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let amendment_id = json_string(&value, "amendment_id");
+            if amendment_id.is_empty() {
+                return None;
+            }
+
+            Some(Amendment {
+                amendment_id,
+                description: json_string(&value, "description"),
+                effective_date: json_string(&value, "effective_date"),
+            })
+        })
+        .collect()
+}
+
+fn json_to_session_laws(values: Vec<serde_json::Value>) -> Vec<SessionLaw> {
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let session_law_id = json_string(&value, "session_law_id");
+            if session_law_id.is_empty() {
+                return None;
+            }
+
+            Some(SessionLaw {
+                session_law_id,
+                citation: json_string(&value, "citation"),
+                description: json_string(&value, "description"),
+            })
+        })
+        .collect()
+}
+
+fn json_to_status_events(values: Vec<serde_json::Value>) -> Vec<StatusEvent> {
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let event_id = json_string(&value, "event_id");
+            if event_id.is_empty() {
+                return None;
+            }
+
+            Some(StatusEvent {
+                event_id,
+                event_type: json_string_or(&value, "event_type", "status"),
+                date: json_string(&value, "date"),
+                description: json_string(&value, "description"),
             })
         })
         .collect()
@@ -1813,5 +2530,74 @@ fn percentage(part: u64, total: u64) -> f64 {
         0.0
     } else {
         (part as f64 / total as f64) * 100.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn citation_mapping_filters_blank_optional_matches() {
+        let citations = json_to_citations(vec![
+            json!({
+                "target_canonical_id": null,
+                "target_citation": "",
+                "context_snippet": "",
+                "source_provision": "",
+                "resolved": true
+            }),
+            json!({
+                "target_canonical_id": "or:ors:90.300",
+                "target_citation": "ORS 90.300",
+                "context_snippet": "ORS 90.300",
+                "source_provision": "ORS 90.100(1)",
+                "resolved": true
+            }),
+        ]);
+
+        assert_eq!(citations.len(), 1);
+        assert_eq!(citations[0].target_citation, "ORS 90.300");
+        assert!(citations[0].resolved);
+    }
+
+    #[test]
+    fn unresolved_citation_mapping_preserves_raw_text() {
+        let citations = json_to_citations(vec![json!({
+            "target_canonical_id": null,
+            "target_citation": "ORS 999.999",
+            "context_snippet": "ORS 999.999",
+            "source_provision": "ORS 90.100(2)",
+            "resolved": false
+        })]);
+
+        assert_eq!(citations.len(), 1);
+        assert_eq!(citations[0].target_canonical_id, None);
+        assert!(!citations[0].resolved);
+    }
+
+    #[test]
+    fn semantic_mapping_filters_empty_nodes() {
+        let items = json_to_semantic_items(vec![
+            json!({"text": "", "source_provision": ""}),
+            json!({"text": "The tenant shall pay rent.", "source_provision": "ORS 90.100(3)"}),
+        ]);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].source_provision, "ORS 90.100(3)");
+    }
+
+    #[test]
+    fn provision_link_mapping_flattens_ancestor_groups_and_dedupes() {
+        let links = json_to_provision_links(vec![json!([
+            {"provision_id": "p1", "citation": "ORS 1.001(1)"},
+            {"provision_id": "p2", "citation": "ORS 1.001(2)"},
+            {"provision_id": "p1", "citation": "ORS 1.001(1)"}
+        ])]);
+
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].provision_id, "p1");
+        assert_eq!(links[1].provision_id, "p2");
     }
 }

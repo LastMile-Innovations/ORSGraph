@@ -15,6 +15,7 @@ import {
   Users,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { matterHref } from "@/lib/casebuilder/routes"
 import type {
   CaseClaim,
   CaseDefense,
@@ -69,7 +70,7 @@ export function MatterDashboard({
   const criticalDeadlines = deadlines.filter((d) => d.severity === "critical" && d.status === "open")
   const recentDocs = [...documents].sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at)).slice(0, 5)
 
-  const base = `/matters/${matter.matter_id}`
+  const base = matterHref(matter.matter_id)
 
   return (
     <div className="flex flex-1 flex-col overflow-y-auto scrollbar-thin">
@@ -279,7 +280,7 @@ export function MatterDashboard({
                         </div>
                         <div className="flex items-center gap-1">
                           <ClaimStatusBadge status={c.status} />
-                          <RiskBadge level={c.risk_level} />
+                          <RiskBadge level={c.risk_level ?? c.risk} />
                         </div>
                       </div>
                       <div className="mt-2">

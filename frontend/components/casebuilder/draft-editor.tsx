@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
   ArrowLeft,
   Sparkles,
@@ -30,6 +31,8 @@ import type {
   DraftCitation,
   DraftComment,
 } from "@/lib/casebuilder/types"
+import { matterDocumentHref, matterDraftHref, matterFactsHref } from "@/lib/casebuilder/routes"
+import { citationCheckDraft, factCheckDraft, generateDraft, patchDraft } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
@@ -47,11 +50,15 @@ interface DraftEditorProps {
 type RightTab = "sources" | "citecheck" | "outline" | "versions"
 
 export function DraftEditor({ matter, draft: initialDraft }: DraftEditorProps) {
+  const router = useRouter()
   const [draft, setDraft] = useState<Draft>(initialDraft)
   const [activeSection, setActiveSection] = useState<string>(initialDraft.sections[0]?.id ?? "")
   const [rightTab, setRightTab] = useState<RightTab>("sources")
   const [aiPrompt, setAiPrompt] = useState("")
   const [pendingPrompt, setPendingPrompt] = useState(false)
+  const [actionPending, setActionPending] = useState(false)
+  const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const editorRef = useRef<HTMLDivElement>(null)
 
@@ -83,6 +90,65 @@ export function DraftEditor({ matter, draft: initialDraft }: DraftEditorProps) {
       ),
     }))
   }
+
+  const updateSectionBody = (sectionId: string, body: string) => {
+    setDraft((prev) => ({
+      ...prev,
+      sections: prev.sections.map((section) =>
+        section.id === sectionId ? { ...section, body } : section,
+      ),
+    }))
+  }
+
+  const runDraftAction = async (action: () => Promise<string | null>) => {
+    setActionPending(true)
+    setActionMessage(null)
+    setActionError(null)
+    const error = await action()
+    setActionPending(false)
+    if (error) setActionError(error)
+  }
+
+  const saveDraft = () =>
+    runDraftAction(async () => {
+      const result = await patchDraft(matter.id, draft.id, {
+        title: draft.title,
+        description: draft.description,
+        status: draft.status,
+        sections: draft.sections,
+        paragraphs: draft.paragraphs,
+      })
+      if (!result.data) return result.error || "Draft could not be saved."
+      setDraft(result.data)
+      setActionMessage("Draft saved.")
+      router.refresh()
+      return null
+    })
+
+  const generateScaffold = () =>
+    runDraftAction(async () => {
+      const result = await generateDraft(matter.id, draft.id)
+      if (!result.data?.result) return result.error || "Draft scaffold could not be generated."
+      setDraft(result.data.result)
+      setActiveSection(result.data.result.sections[0]?.id ?? "")
+      setActionMessage(result.data.message)
+      router.refresh()
+      return null
+    })
+
+  const runSupportChecks = () =>
+    runDraftAction(async () => {
+      const [factResult, citationResult] = await Promise.all([
+        factCheckDraft(matter.id, draft.id),
+        citationCheckDraft(matter.id, draft.id),
+      ])
+      if (!factResult.data) return factResult.error || "Fact-check failed."
+      if (!citationResult.data) return citationResult.error || "Citation-check failed."
+      setRightTab("citecheck")
+      setActionMessage(`${factResult.data.message} ${citationResult.data.message}`)
+      router.refresh()
+      return null
+    })
 
   const handlePrompt = (e: React.FormEvent) => {
     e.preventDefault()
@@ -126,7 +192,7 @@ export function DraftEditor({ matter, draft: initialDraft }: DraftEditorProps) {
         <div className="border-b border-border bg-card px-6 py-3">
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             <Link
-              href={`/matters/${matter.id}/drafts`}
+              href={matterDraftHref(matter.id)}
               className="flex items-center gap-1 hover:text-foreground"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
@@ -156,13 +222,35 @@ export function DraftEditor({ matter, draft: initialDraft }: DraftEditorProps) {
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
-              <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 bg-transparent"
+                disabled={actionPending}
+                onClick={runSupportChecks}
+              >
                 <ShieldCheck className="h-3.5 w-3.5" />
-                Cite-check
+                Check support
               </Button>
-              <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 bg-transparent"
+                disabled={actionPending}
+                onClick={saveDraft}
+              >
                 <Save className="h-3.5 w-3.5" />
                 Save
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 bg-transparent"
+                disabled={actionPending}
+                onClick={generateScaffold}
+              >
+                <Wand2 className="h-3.5 w-3.5" />
+                Scaffold
               </Button>
               <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
                 <Download className="h-3.5 w-3.5" />
@@ -174,6 +262,18 @@ export function DraftEditor({ matter, draft: initialDraft }: DraftEditorProps) {
               </Button>
             </div>
           </div>
+          {(actionMessage || actionError) && (
+            <div
+              className={cn(
+                "mt-2 rounded border px-3 py-2 text-xs",
+                actionError
+                  ? "border-destructive/30 bg-destructive/5 text-destructive"
+                  : "border-primary/20 bg-primary/5 text-muted-foreground",
+              )}
+            >
+              {actionError || actionMessage}
+            </div>
+          )}
         </div>
 
         {/* Three-pane layout */}
@@ -236,6 +336,7 @@ export function DraftEditor({ matter, draft: initialDraft }: DraftEditorProps) {
                     matter={matter}
                     onAcceptSuggestion={(sid) => acceptSuggestion(section.id, sid)}
                     onRejectSuggestion={(sid) => rejectSuggestion(section.id, sid)}
+                    onBodyChange={(body) => updateSectionBody(section.id, body)}
                     onFocus={() => setActiveSection(section.id)}
                   />
                 ))}
@@ -312,7 +413,7 @@ export function DraftEditor({ matter, draft: initialDraft }: DraftEditorProps) {
                   />
                 </TabsContent>
                 <TabsContent value="citecheck" className="m-0 p-4">
-                  <CiteCheckPanel draft={draft} />
+                  <CiteCheckPanel draft={draft} matter={matter} />
                 </TabsContent>
                 <TabsContent value="outline" className="m-0 p-4">
                   <OutlinePanel sections={draft.sections} active={activeSection} />
@@ -350,6 +451,7 @@ interface SectionBlockProps {
   matter: Matter
   onAcceptSuggestion: (id: string) => void
   onRejectSuggestion: (id: string) => void
+  onBodyChange: (body: string) => void
   onFocus: () => void
 }
 
@@ -359,10 +461,9 @@ function SectionBlock({
   matter,
   onAcceptSuggestion,
   onRejectSuggestion,
+  onBodyChange,
   onFocus,
 }: SectionBlockProps) {
-  const paragraphs = section.body.split("\n\n").filter(Boolean)
-
   return (
     <section
       id={`section-${section.id}`}
@@ -391,17 +492,24 @@ function SectionBlock({
         />
       ))}
 
-      {/* Body paragraphs with inline citations */}
-      <div className="space-y-4 font-serif text-[15px] leading-7 text-foreground">
-        {paragraphs.map((para, idx) => (
-          <ParagraphWithCitations
-            key={idx}
-            text={para}
-            citations={citations}
-            matter={matter}
-          />
-        ))}
-      </div>
+      <textarea
+        value={section.body}
+        onChange={(event) => onBodyChange(event.target.value)}
+        className="min-h-52 w-full resize-y rounded border border-border bg-card px-4 py-3 font-serif text-[15px] leading-7 text-foreground focus:border-primary focus:outline-none"
+      />
+
+      {citations.length > 0 && (
+        <div className="mt-3 space-y-3 font-serif text-[15px] leading-7 text-foreground">
+          {section.body.split("\n\n").filter(Boolean).map((para, idx) => (
+            <ParagraphWithCitations
+              key={idx}
+              text={para}
+              citations={citations}
+              matter={matter}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Comments rendered in margin-style block */}
       {section.comments && section.comments.length > 0 && (
@@ -445,9 +553,9 @@ function ParagraphWithCitations({
 
 function CitationPill({ citation, matter }: { citation: DraftCitation; matter: Matter }) {
   const sourceHref = citation.sourceKind === "document"
-    ? `/matters/${matter.id}/documents/${citation.sourceId}`
+    ? matterDocumentHref(matter.id, citation.sourceId)
     : citation.sourceKind === "fact"
-      ? `/matters/${matter.id}/facts#${citation.sourceId}`
+      ? matterFactsHref(matter.id, citation.sourceId)
       : citation.sourceKind === "statute"
         ? `/statutes/${citation.sourceId}`
         : `/sources/${citation.sourceId}`
@@ -552,11 +660,15 @@ function SuggestionBlock({
         {suggestion.sources && suggestion.sources.length > 0 && (
           <div className="flex flex-wrap items-center gap-1 pt-1 text-[10px] text-muted-foreground">
             <span>Grounded in:</span>
-            {suggestion.sources.map((s) => (
-              <Badge key={s} variant="outline" className="font-mono text-[9px]">
-                {s}
+            {suggestion.sources.map((source) => {
+              const sourceId = typeof source === "string" ? source : source.id
+              const sourceLabel = typeof source === "string" ? source : source.label
+              return (
+              <Badge key={sourceId} variant="outline" className="font-mono text-[9px]">
+                {sourceLabel}
               </Badge>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
@@ -629,9 +741,9 @@ function SourcesPanel({
 
 function CitationCard({ citation, matter }: { citation: DraftCitation; matter: Matter }) {
   const sourceHref = citation.sourceKind === "document"
-    ? `/matters/${matter.id}/documents/${citation.sourceId}`
+    ? matterDocumentHref(matter.id, citation.sourceId)
     : citation.sourceKind === "fact"
-      ? `/matters/${matter.id}/facts#${citation.sourceId}`
+      ? matterFactsHref(matter.id, citation.sourceId)
       : citation.sourceKind === "statute"
         ? `/statutes/${citation.sourceId}`
         : `/sources/${citation.sourceId}`
@@ -659,18 +771,25 @@ function CitationCard({ citation, matter }: { citation: DraftCitation; matter: M
   )
 }
 
-function CiteCheckPanel({ draft }: { draft: Draft }) {
+function CiteCheckPanel({ draft, matter }: { draft: Draft; matter: Matter }) {
   const allCites = draft.sections.flatMap((s) => s.citations)
   const verified = allCites.filter((c) => c.verified)
   const unverified = allCites.filter((c) => !c.verified)
   const issues = draft.citeCheckIssues ?? []
+  const factFindings = (matter.fact_check_findings ?? []).filter(
+    (finding) => finding.draft_id === draft.id || finding.draft_id === draft.draft_id,
+  )
+  const citationFindings = (matter.citation_check_findings ?? []).filter(
+    (finding) => finding.draft_id === draft.id || finding.draft_id === draft.draft_id,
+  )
+  const persistedFindingCount = factFindings.length + citationFindings.length
 
   return (
     <div className="space-y-4">
       <Card className="p-3">
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-foreground">Status</span>
-          {issues.length === 0 && unverified.length === 0 ? (
+          {issues.length === 0 && unverified.length === 0 && persistedFindingCount === 0 ? (
             <Badge className="gap-1 bg-emerald-600/15 text-emerald-700 hover:bg-emerald-600/15 dark:text-emerald-300">
               <CheckCircle2 className="h-3 w-3" />
               Clean
@@ -678,7 +797,7 @@ function CiteCheckPanel({ draft }: { draft: Draft }) {
           ) : (
             <Badge variant="outline" className="gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400">
               <AlertTriangle className="h-3 w-3" />
-              {issues.length + unverified.length} flag{issues.length + unverified.length === 1 ? "" : "s"}
+              {issues.length + unverified.length + persistedFindingCount} flag{issues.length + unverified.length + persistedFindingCount === 1 ? "" : "s"}
             </Badge>
           )}
         </div>
@@ -693,6 +812,46 @@ function CiteCheckPanel({ draft }: { draft: Draft }) {
           </div>
         </div>
       </Card>
+
+      {persistedFindingCount > 0 && (
+        <div>
+          <h3 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Persisted findings
+          </h3>
+          <ul className="mt-2 space-y-2">
+            {factFindings.map((finding) => (
+              <li key={finding.finding_id} className="rounded border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <div>
+                    <p className="font-medium text-foreground">{finding.finding_type}</p>
+                    <p className="mt-0.5 leading-relaxed text-muted-foreground">{finding.message}</p>
+                    {finding.paragraph_id && (
+                      <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+                        {finding.paragraph_id}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </li>
+            ))}
+            {citationFindings.map((finding) => (
+              <li key={finding.finding_id} className="rounded border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <div>
+                    <p className="font-medium text-foreground">{finding.finding_type}</p>
+                    <p className="mt-0.5 leading-relaxed text-muted-foreground">{finding.message}</p>
+                    <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+                      {finding.citation || "missing citation"}
+                    </p>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {issues.length > 0 && (
         <div>

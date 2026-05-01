@@ -22,6 +22,21 @@ static CONCURRENT_TX_PATTERN: once_cell::sync::Lazy<Regex> = once_cell::sync::La
     Regex::new(r"IN \d+ CONCURRENT TRANSACTIONS OF \d+ ROWS").unwrap()
 });
 
+fn normalize_cypher_statement(statement: &str) -> Option<String> {
+    let normalized = statement
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
 #[cfg(test)]
 fn needs_embedding_for_metadata(
     has_embedding: bool,
@@ -187,10 +202,9 @@ impl Neo4jLoader {
 
     async fn run_multi_statement_query(&self, query_str: &str) -> Result<()> {
         // Split by semicolon and execute each statement
-        let statements: Vec<&str> = query_str
+        let statements: Vec<String> = query_str
             .split(';')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty() && !s.starts_with("//"))
+            .filter_map(normalize_cypher_statement)
             .collect();
 
         let total = statements.len();
@@ -204,7 +218,7 @@ impl Neo4jLoader {
                 stmt.to_string()
             };
 
-            if let Err(e) = self.graph.run(query(*stmt)).await {
+            if let Err(e) = self.graph.run(query(stmt)).await {
                 return Err(anyhow::anyhow!(
                     "Failed to execute statement {}/{}: {}\nStatement: {}",
                     idx + 1,
@@ -2133,5 +2147,23 @@ mod tests {
         let result = Neo4jLoader::with_transaction_batch(query, 5000);
         assert!(result.contains("CALL { WITH row"));
         assert!(result.contains("} IN TRANSACTIONS OF 5000 ROWS"));
+    }
+
+    #[test]
+    fn normalize_cypher_statement_strips_comments_without_dropping_statement() {
+        let statement = r#"
+            // Create source citation links
+
+            CALL {
+                MATCH (cm:CitationMention)
+                MATCH (p:Provision {provision_id: cm.source_provision_id})
+                MERGE (p)-[:MENTIONS_CITATION]->(cm)
+            } IN TRANSACTIONS OF 5000 ROWS
+        "#;
+
+        let normalized = super::normalize_cypher_statement(statement).expect("statement");
+        assert!(normalized.starts_with("CALL {"));
+        assert!(normalized.contains("MENTIONS_CITATION"));
+        assert!(!normalized.contains("//"));
     }
 }

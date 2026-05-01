@@ -41,6 +41,7 @@ WORKDIR /app
 
 # Copy the compiled binary from the builder stage
 COPY --from=builder /app/target/release/ors-crawler-v0 /app/ors-crawler-v0
+COPY --from=builder /app/target/release/orsgraph-api /app/orsgraph-api
 
 # Copy the Cypher queries (the loader looks for them in 'cypher/queries')
 COPY cypher ./cypher
@@ -51,6 +52,8 @@ RUN mkdir -p /app/data
 # Set environment variables (defaults)
 ENV RUST_LOG=info
 ENV NEO4J_USER=neo4j
+ENV ORS_API_HOST=0.0.0.0
+ENV ORS_API_PORT=8080
 
 # Copy startup script
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh

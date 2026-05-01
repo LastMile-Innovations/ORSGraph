@@ -72,7 +72,7 @@ export function FactCheckClient({ report }: { report: FactCheckReport }) {
   const findingsRef = useRef<HTMLDivElement>(null)
 
   const findingsByPara = useMemo(() => {
-    const map = new Map<number, typeof report.findings>()
+    const map = new Map<number, FactCheckReport["findings"]>()
     for (const f of report.findings) {
       const arr = map.get(f.paragraph_index) ?? []
       arr.push(f)

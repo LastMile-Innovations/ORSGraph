@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { DeadlinesView } from "@/components/casebuilder/deadlines-view"
-import { getMatterById } from "@/lib/casebuilder/mock-matters"
+import { getMatterState } from "@/lib/casebuilder/api"
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -9,10 +9,11 @@ interface PageProps {
 
 export default async function DeadlinesPage({ params }: PageProps) {
   const { id } = await params
-  const matter = getMatterById(id)
+  const matterState = await getMatterState(id)
+  const matter = matterState.data
   if (!matter) notFound()
   return (
-    <MatterShell matter={matter} activeSection="deadlines">
+    <MatterShell matter={matter} activeSection="deadlines" dataState={matterState}>
       <DeadlinesView matter={matter} />
     </MatterShell>
   )

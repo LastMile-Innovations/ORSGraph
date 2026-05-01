@@ -18,7 +18,6 @@ const CATEGORY_ICON: Record<QCPanel["category"], React.ComponentType<{ className
 export function QCConsoleClient() {
   const [activePanel, setActivePanel] = useState<string>(qcCorpus.panels[0]?.panel_id ?? "")
   const panel = qcCorpus.panels.find((p) => p.panel_id === activePanel) ?? qcCorpus.panels[0]
-  const totalIssues = qcCorpus.warnings + qcCorpus.failures
   const passRate = qcCorpus.passed / qcCorpus.total_checks
 
   return (
@@ -73,8 +72,8 @@ export function QCConsoleClient() {
               icon={Hash}
               tone="info"
               label="unresolved citations"
-              value={corpusStatus.unresolved_citations.toLocaleString()}
-              hint={`of ${corpusStatus.citation_mentions.toLocaleString()} mentions`}
+              value={corpusStatus.citations.unresolved.toLocaleString()}
+              hint={`of ${corpusStatus.citations.total.toLocaleString()} mentions`}
             />
           </div>
         </div>

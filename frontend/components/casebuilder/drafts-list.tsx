@@ -1,9 +1,12 @@
 "use client"
 
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useState } from "react"
 import { Plus, Sparkles, FileText, Search, Clock, CheckCircle2 } from "lucide-react"
 import type { Matter } from "@/lib/casebuilder/types"
+import { matterDraftHref } from "@/lib/casebuilder/routes"
+import { createDraft, generateDraft } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
@@ -19,41 +22,75 @@ const DRAFT_TEMPLATES = [
   {
     id: "tpl-complaint",
     label: "Complaint",
+    draftType: "complaint",
     description: "Civil complaint with claims, parties, jurisdiction, prayer for relief.",
   },
   {
     id: "tpl-motion-summary",
     label: "Motion for Summary Judgment",
+    draftType: "motion",
     description: "MSJ with statement of undisputed facts and legal argument.",
   },
   {
     id: "tpl-discovery",
     label: "Discovery Requests",
+    draftType: "legal_memo",
     description: "Interrogatories, RFPs, and RFAs tailored to your claims.",
   },
   {
     id: "tpl-demand",
     label: "Demand Letter",
+    draftType: "demand_letter",
     description: "Pre-litigation demand citing supporting facts and damages.",
   },
   {
     id: "tpl-deposition",
     label: "Deposition Outline",
+    draftType: "legal_memo",
     description: "Topic-by-topic deposition outline with exhibits and goals.",
   },
   {
     id: "tpl-brief",
     label: "Trial Brief",
+    draftType: "legal_memo",
     description: "Pre-trial brief with statement of case, evidentiary issues, jury instructions.",
   },
 ]
 
 export function DraftsList({ matter }: DraftsListProps) {
+  const router = useRouter()
   const [query, setQuery] = useState("")
+  const [showCreate, setShowCreate] = useState(false)
+  const [title, setTitle] = useState("")
+  const [draftType, setDraftType] = useState("complaint")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const filtered = matter.drafts.filter((d) =>
     !query || d.title.toLowerCase().includes(query.toLowerCase()),
   )
+
+  async function createAndOpen(input: { title: string; draft_type: string; description?: string }, shouldGenerate = false) {
+    if (!input.title.trim()) {
+      setError("Add a draft title.")
+      return
+    }
+    setSaving(true)
+    setError(null)
+    const created = await createDraft(matter.id, input)
+    if (!created.data) {
+      setSaving(false)
+      setError(created.error || "Draft could not be created.")
+      return
+    }
+    let draftId = created.data.id
+    if (shouldGenerate) {
+      const generated = await generateDraft(matter.id, created.data.id)
+      if (generated.data?.result) draftId = generated.data.result.id
+    }
+    setSaving(false)
+    router.push(matterDraftHref(matter.id, draftId))
+  }
 
   return (
     <div className="flex flex-col">
@@ -69,11 +106,26 @@ export function DraftsList({ matter }: DraftsListProps) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 bg-transparent"
+              disabled={saving}
+              onClick={() =>
+                createAndOpen(
+                  {
+                    title: `${matter.shortName || matter.name} complaint draft`,
+                    draft_type: "complaint",
+                    description: "Template complaint scaffold generated from current facts and claims.",
+                  },
+                  true,
+                )
+              }
+            >
               <Sparkles className="h-3.5 w-3.5" />
               Generate from claims
             </Button>
-            <Button size="sm" className="gap-1.5">
+            <Button size="sm" className="gap-1.5" onClick={() => setShowCreate((value) => !value)}>
               <Plus className="h-3.5 w-3.5" />
               New draft
             </Button>
@@ -89,6 +141,36 @@ export function DraftsList({ matter }: DraftsListProps) {
             className="h-8 pl-8 text-xs"
           />
         </div>
+
+        {showCreate && (
+          <div className="mt-4 grid gap-2 rounded border border-border bg-card p-3 md:grid-cols-[minmax(0,1fr)_180px_auto]">
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="Draft title"
+              className="rounded border border-border bg-background px-3 py-2 text-xs focus:border-primary focus:outline-none"
+            />
+            <select
+              value={draftType}
+              onChange={(event) => setDraftType(event.target.value)}
+              className="rounded border border-border bg-background px-3 py-2 font-mono text-xs"
+            >
+              {["complaint", "answer", "motion", "declaration", "demand_letter", "legal_memo", "exhibit_list"].map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+            <Button
+              size="sm"
+              disabled={saving}
+              onClick={() => createAndOpen({ title, draft_type: draftType, description: "User-created draft." })}
+            >
+              {saving ? "Saving" : "Create"}
+            </Button>
+            {error && <p className="text-xs text-destructive md:col-span-3">{error}</p>}
+          </div>
+        )}
       </div>
 
       <ScrollArea className="h-[calc(100vh-220px)]">
@@ -103,7 +185,7 @@ export function DraftsList({ matter }: DraftsListProps) {
                 {filtered.map((draft) => (
                   <li key={draft.id}>
                     <Link
-                      href={`/matters/${matter.id}/drafts/${draft.id}`}
+                      href={matterDraftHref(matter.id, draft.id)}
                       className="group block"
                     >
                       <Card className="h-full p-4 transition-colors group-hover:border-foreground/30 group-hover:bg-muted/30">
@@ -142,7 +224,20 @@ export function DraftsList({ matter }: DraftsListProps) {
             <ul className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
               {DRAFT_TEMPLATES.map((tpl) => (
                 <li key={tpl.id}>
-                  <button className="group w-full text-left">
+                  <button
+                    className="group w-full text-left"
+                    disabled={saving}
+                    onClick={() =>
+                      createAndOpen(
+                        {
+                          title: tpl.label,
+                          draft_type: tpl.draftType,
+                          description: tpl.description,
+                        },
+                        tpl.draftType === "complaint",
+                      )
+                    }
+                  >
                     <Card className="h-full border-dashed bg-transparent p-4 transition-colors group-hover:border-foreground/30 group-hover:bg-muted/30">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted">

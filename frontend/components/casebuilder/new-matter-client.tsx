@@ -1,10 +1,13 @@
 "use client"
 
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useState } from "react"
-import { ArrowRight, Briefcase, FileText, GavelIcon, Sparkles, Upload } from "lucide-react"
+import { AlertCircle, ArrowRight, Briefcase, FileText, GavelIcon, Loader2, Sparkles, Upload } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { MatterType } from "@/lib/casebuilder/types"
+import { createMatter, uploadBinaryFile, uploadTextFile } from "@/lib/casebuilder/api"
+import { matterHref } from "@/lib/casebuilder/routes"
 
 type Intent = "fight" | "build" | "blank"
 
@@ -44,15 +47,73 @@ const TYPES: { id: MatterType; label: string }[] = [
 ]
 
 export function NewMatterClient({ initialIntent }: { initialIntent: Intent }) {
+  const router = useRouter()
   const [intent, setIntent] = useState<Intent>(initialIntent)
   const [name, setName] = useState("")
   const [type, setType] = useState<MatterType>("civil")
   const [court, setCourt] = useState("")
-  const [files, setFiles] = useState<{ name: string; size: number }[]>([])
+  const [story, setStory] = useState("")
+  const [files, setFiles] = useState<File[]>([])
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   function onSelectFiles(list: FileList | null) {
     if (!list) return
-    setFiles([...files, ...Array.from(list).map((f) => ({ name: f.name, size: f.size }))])
+    setFiles([...files, ...Array.from(list)])
+  }
+
+  async function onCreateMatter() {
+    const trimmedName = name.trim()
+    if (!trimmedName) {
+      setError("Add a matter name before creating the workspace.")
+      return
+    }
+
+    setSubmitting(true)
+    setError(null)
+
+    const result = await createMatter({
+      name: trimmedName,
+      matter_type: type,
+      user_role: intent === "fight" ? "defendant" : intent === "build" ? "plaintiff" : "neutral",
+      jurisdiction: "Oregon",
+      court: court.trim() || undefined,
+    })
+
+    if (!result.data) {
+      setSubmitting(false)
+      setError(result.error || "CaseBuilder API did not create the matter.")
+      return
+    }
+
+    const matterId = result.data.id || result.data.matter_id
+    const uploads = []
+
+    if (story.trim()) {
+      uploads.push(
+        uploadTextFile(matterId, {
+          filename: "case-narrative.txt",
+          mime_type: "text/plain",
+          document_type: "evidence",
+          folder: "Intake",
+          confidentiality: "private",
+          text: story.trim(),
+        }),
+      )
+    }
+
+    for (const file of files) {
+      uploads.push(
+        uploadBinaryFile(matterId, file, {
+          document_type: file.name.match(/\.csv$/i) ? "spreadsheet" : "evidence",
+          folder: "Uploads",
+          confidentiality: "private",
+        }),
+      )
+    }
+
+    await Promise.allSettled(uploads)
+    router.push(matterHref(matterId))
   }
 
   return (
@@ -181,6 +242,8 @@ export function NewMatterClient({ initialIntent }: { initialIntent: Intent }) {
           {intent === "build" && (
             <Section step={4} title="What happened? (optional)">
               <textarea
+                value={story}
+                onChange={(event) => setStory(event.target.value)}
                 placeholder="Tell us the story in plain English. Dates, parties, what they did, what you want."
                 rows={6}
                 className="w-full rounded border border-border bg-background px-3 py-2 text-sm leading-relaxed focus:border-primary focus:outline-none"
@@ -189,23 +252,49 @@ export function NewMatterClient({ initialIntent }: { initialIntent: Intent }) {
           )}
 
           {/* CTA */}
-          <div className="flex items-center justify-between rounded border border-border bg-card p-4">
-            <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              <Sparkles className="h-3.5 w-3.5 text-primary" />
-              CaseBuilder will extract parties, facts, events, deadlines, and citations.
+          <div className="rounded border border-border bg-card p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+                Live matter creation. Text files can be extracted now; binary files are stored privately for later parsing/OCR.
+              </div>
+              <div className="flex items-center gap-2">
+                <Link
+                  href={matterHref("matter:smith-abc")}
+                  className="rounded border border-border px-3 py-2 font-mono text-xs uppercase tracking-wider text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  open demo
+                </Link>
+                <button
+                  type="button"
+                  onClick={onCreateMatter}
+                  disabled={submitting}
+                  className="flex items-center gap-1.5 rounded bg-primary px-4 py-2 font-mono text-xs uppercase tracking-wider text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {submitting ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      creating
+                    </>
+                  ) : (
+                    <>
+                      create matter
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
-            <Link
-              href="/matters/matter:smith-abc"
-              className="flex items-center gap-1.5 rounded bg-primary px-4 py-2 font-mono text-xs uppercase tracking-wider text-primary-foreground hover:bg-primary/90"
-            >
-              create matter
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
+            {error && (
+              <div className="mt-3 flex items-start gap-2 rounded border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
           </div>
 
           <p className="text-center font-mono text-[10px] text-muted-foreground">
-            Demo flow — clicking <span className="text-foreground">create matter</span> opens the seeded
-            <span className="text-foreground"> Smith v. ABC Property Management</span> demo.
+            CaseBuilder can organize legal information, but it is not a lawyer and does not make filings court-ready.
           </p>
         </div>
       </div>

@@ -1,6 +1,6 @@
 import { Shell } from "@/components/orsg/shell"
 import { SearchClient } from "@/components/orsg/search/search-client"
-import { searchWithParams } from "@/lib/api"
+import { searchWithParamsState } from "@/lib/api"
 
 type SearchPageParams = {
   q?: string
@@ -51,15 +51,15 @@ export default async function SearchPage({
     needs_review: boolParam(params.needs_review),
   }
 
-  const response = q
-    ? await searchWithParams({
+  const responseState = q
+    ? await searchWithParamsState({
         q,
         type: initialType,
         mode: initialMode,
         limit: initialLimit,
         offset: initialOffset,
         ...initialFilters,
-      }).catch(() => undefined)
+      })
     : undefined
 
   return (
@@ -69,7 +69,9 @@ export default async function SearchPage({
         initialMode={initialMode}
         initialType={initialType}
         initialFilters={initialFilters}
-        response={response}
+        response={responseState?.data}
+        initialDataSource={responseState?.source}
+        initialDataError={responseState?.error}
       />
     </Shell>
   )

@@ -24,7 +24,7 @@ export function GraphInspector({
   }, {})
 
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col overflow-y-auto border-l border-border bg-card/50 scrollbar-thin">
+    <aside className="hidden h-full w-80 shrink-0 flex-col overflow-y-auto border-l border-border bg-card/50 scrollbar-thin xl:flex">
       <section className="border-b border-border p-4">
         <div className="mb-2 font-mono text-[11px] uppercase tracking-wide text-muted-foreground">Overview</div>
         {node ? (

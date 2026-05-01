@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { AlertTriangle } from "lucide-react"
 import { getGraphNeighborhood } from "@/lib/api"
 import { graphEdges as mockEdges, graphNodes as mockNodes } from "@/lib/mock-data"
+import { DataStateBanner } from "@/components/orsg/data-state-banner"
 import { GraphCanvas } from "./GraphCanvas"
 import { GraphFilterPanel, type GraphFilters } from "./GraphFilterPanel"
 import { GraphForceControls, type GraphForces } from "./GraphForceControls"
@@ -45,6 +46,7 @@ export function GraphViewer() {
   const [selectedId, setSelectedId] = useState<string>(DEFAULT_FOCUS)
   const [loading, setLoading] = useState(false)
   const [warning, setWarning] = useState<string | null>(null)
+  const [usingDemoGraph, setUsingDemoGraph] = useState(true)
   const [refreshKey, setRefreshKey] = useState(0)
 
   const relationshipTypes = useMemo(() => flattenFamilies(RELATIONSHIP_FAMILIES, filters.relationshipFamilies), [filters.relationshipFamilies])
@@ -72,6 +74,7 @@ export function GraphViewer() {
         if (cancelled) return
         setResponse(normalizeResponse(next))
         setSelectedId(next.center?.id ?? focus)
+        setUsingDemoGraph(false)
         if (next.layout?.name === "timeline") setLayout("timeline")
         if (next.layout?.name === "radial") setLayout("radial")
       })
@@ -79,6 +82,7 @@ export function GraphViewer() {
         if (cancelled) return
         setResponse(mockGraphResponse())
         setSelectedId(DEFAULT_FOCUS)
+        setUsingDemoGraph(true)
         setWarning(error instanceof Error ? `API unavailable: ${error.message}` : "API unavailable; showing bundled sample graph.")
       })
       .finally(() => {
@@ -113,7 +117,13 @@ export function GraphViewer() {
   }
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 flex-col">
+      <DataStateBanner
+        source={usingDemoGraph ? "demo" : "live"}
+        error={warning ?? undefined}
+        label="Graph data"
+      />
+      <div className="flex min-h-0 flex-1">
       <aside className="hidden w-80 shrink-0 overflow-y-auto border-r border-border bg-card/40 p-4 scrollbar-thin lg:block">
         <div className="mb-5">
           <div className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">Controls</div>
@@ -170,6 +180,7 @@ export function GraphViewer() {
         onSelect={setSelectedId}
         onExpand={openNode}
       />
+      </div>
     </div>
   )
 }

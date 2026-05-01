@@ -17,6 +17,7 @@ Thumbs.db
 .env
 
 # Data
+# CaseBuilder uploads default to data/casebuilder/uploads and must stay local.
 /data/
 
 # Logs

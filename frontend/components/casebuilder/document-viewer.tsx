@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
 import Link from "next/link"
 import {
   ArrowLeft,
@@ -28,7 +29,10 @@ import type {
   ExtractedFact,
   DocumentClause,
   DocumentChunk,
+  SourceSpan,
 } from "@/lib/casebuilder/types"
+import { matterFactsHref, matterHref } from "@/lib/casebuilder/routes"
+import { createDocumentDownloadUrl, extractDocument } from "@/lib/casebuilder/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -36,12 +40,13 @@ import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { ConfidenceBadge, MatterStatusBadge } from "./badges"
+import { ConfidenceBadge, ProcessingBadge } from "./badges"
 import { cn } from "@/lib/utils"
 
-const ENTITY_COLORS: Record<ExtractedEntity["type"], string> = {
+const ENTITY_COLORS: Partial<Record<ExtractedEntity["type"], string>> = {
   person: "bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30",
   org: "bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-500/30",
+  address: "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30",
   date: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30",
   money: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
   location: "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30",
@@ -50,9 +55,10 @@ const ENTITY_COLORS: Record<ExtractedEntity["type"], string> = {
   party: "bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-500/30",
 }
 
-const ENTITY_ICONS: Record<ExtractedEntity["type"], typeof User> = {
+const ENTITY_ICONS: Partial<Record<ExtractedEntity["type"], typeof User>> = {
   person: User,
   org: User,
+  address: MapPin,
   date: Calendar,
   money: DollarSign,
   location: MapPin,
@@ -69,10 +75,16 @@ interface DocumentViewerProps {
 type InspectorTab = "extractions" | "clauses" | "facts" | "chunks" | "issues"
 
 export function DocumentViewer({ matter, document }: DocumentViewerProps) {
+  const router = useRouter()
   const [showHighlights, setShowHighlights] = useState(true)
   const [activeTab, setActiveTab] = useState<InspectorTab>("extractions")
   const [selectedEntity, setSelectedEntity] = useState<string | null>(null)
   const [hoveredEntity, setHoveredEntity] = useState<string | null>(null)
+  const [extracting, setExtracting] = useState(false)
+  const [extractMessage, setExtractMessage] = useState<string | null>(null)
+  const [extractError, setExtractError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
 
   const entityById = useMemo(
     () => new Map(document.entities.map((e) => [e.id, e])),
@@ -86,6 +98,32 @@ export function DocumentViewer({ matter, document }: DocumentViewerProps) {
     }))
   }, [document.chunks, document.entities, document.clauses])
 
+  async function onExtract() {
+    setExtracting(true)
+    setExtractMessage(null)
+    setExtractError(null)
+    const result = await extractDocument(matter.id, document.document_id)
+    setExtracting(false)
+    if (!result.data) {
+      setExtractError(result.error || "Extraction failed.")
+      return
+    }
+    setExtractMessage(result.data.message)
+    router.refresh()
+  }
+
+  async function onDownload() {
+    setDownloading(true)
+    setDownloadError(null)
+    const result = await createDocumentDownloadUrl(matter.id, document.document_id)
+    setDownloading(false)
+    if (!result.data) {
+      setDownloadError(result.error || "Download URL failed.")
+      return
+    }
+    window.open(result.data.url, "_blank", "noopener,noreferrer")
+  }
+
   return (
     <TooltipProvider delayDuration={200}>
       <div className="flex flex-col">
@@ -93,7 +131,7 @@ export function DocumentViewer({ matter, document }: DocumentViewerProps) {
         <div className="border-b border-border bg-card px-6 py-4">
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             <Link
-              href={`/matters/${matter.id}/documents`}
+              href={matterHref(matter.id, "documents")}
               className="flex items-center gap-1 hover:text-foreground"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
@@ -112,7 +150,7 @@ export function DocumentViewer({ matter, document }: DocumentViewerProps) {
                 <Badge variant="outline" className="font-mono text-[10px]">
                   {document.kind}
                 </Badge>
-                <MatterStatusBadge status={document.status} />
+                <ProcessingBadge status={document.status} />
                 <span>·</span>
                 <span>{document.pageCount} pages</span>
                 <span>·</span>
@@ -133,16 +171,34 @@ export function DocumentViewer({ matter, document }: DocumentViewerProps) {
                 {showHighlights ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                 Highlights
               </Button>
-              <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 bg-transparent"
+                onClick={onDownload}
+                disabled={downloading || document.storage_status !== "stored"}
+              >
                 <Download className="h-3.5 w-3.5" />
-                Export
+                {downloading ? "Preparing" : "Download"}
               </Button>
-              <Button size="sm" className="gap-1.5">
+              <Button size="sm" className="gap-1.5" onClick={onExtract} disabled={extracting}>
                 <Sparkles className="h-3.5 w-3.5" />
-                Re-extract
+                {extracting ? "Extracting" : "Re-extract"}
               </Button>
             </div>
           </div>
+          {(extractMessage || extractError || downloadError) && (
+            <div
+              className={cn(
+                "mt-3 rounded border px-3 py-2 text-xs",
+                extractError || downloadError
+                  ? "border-destructive/30 bg-destructive/5 text-destructive"
+                  : "border-primary/20 bg-primary/5 text-muted-foreground",
+              )}
+            >
+              {extractError || downloadError || extractMessage}
+            </div>
+          )}
         </div>
 
         {/* Two-pane layout */}
@@ -228,10 +284,15 @@ export function DocumentViewer({ matter, document }: DocumentViewerProps) {
                   <ClausesPanel clauses={document.clauses} />
                 </TabsContent>
                 <TabsContent value="facts" className="m-0 p-4">
-                  <FactsPanel facts={document.linkedFacts} matter={matter} />
+                  <FactsPanel
+                    facts={matter.facts.filter((fact) =>
+                      fact.sourceDocumentIds.includes(document.document_id),
+                    )}
+                    matter={matter}
+                  />
                 </TabsContent>
                 <TabsContent value="chunks" className="m-0 p-4">
-                  <ChunksPanel chunks={document.chunks} />
+                  <ChunksPanel chunks={document.chunks} spans={document.source_spans ?? []} />
                 </TabsContent>
                 <TabsContent value="issues" className="m-0 p-4">
                   <IssuesPanel document={document} />
@@ -336,7 +397,9 @@ function ChunkBlock({
                   <span
                     className={cn(
                       "cursor-pointer rounded-sm border px-0.5 transition-colors",
-                      showHighlights ? ENTITY_COLORS[seg.entity.type] : "border-transparent",
+                      showHighlights
+                        ? ENTITY_COLORS[seg.entity.type] ?? "bg-muted text-foreground border-border"
+                        : "border-transparent",
                       isActive && "ring-2 ring-ring ring-offset-1 ring-offset-background",
                       !showHighlights && "hover:bg-muted",
                     )}
@@ -423,7 +486,7 @@ function ExtractionsPanel({
         </Button>
       </div>
       {grouped.map(([type, items]) => {
-        const Icon = ENTITY_ICONS[type]
+        const Icon = ENTITY_ICONS[type] ?? Tag
         return (
           <div key={type} className="space-y-1.5">
             <div className="flex items-center gap-2">
@@ -534,7 +597,7 @@ function FactsPanel({
       {facts.map((fact) => (
         <Link
           key={fact.id}
-          href={`/matters/${matter.id}/facts#${fact.id}`}
+          href={matterFactsHref(matter.id, fact.id)}
           className="block rounded-md border border-border bg-background p-3 text-xs transition-colors hover:border-foreground/20 hover:bg-muted/40"
         >
           <div className="flex items-start justify-between gap-2">
@@ -557,7 +620,7 @@ function FactsPanel({
   )
 }
 
-function ChunksPanel({ chunks }: { chunks: DocumentChunk[] }) {
+function ChunksPanel({ chunks, spans }: { chunks: DocumentChunk[]; spans: SourceSpan[] }) {
   return (
     <div className="space-y-2">
       <p className="text-xs font-medium text-muted-foreground">
@@ -581,6 +644,33 @@ function ChunksPanel({ chunks }: { chunks: DocumentChunk[] }) {
           <p className="mt-1 line-clamp-2 leading-relaxed text-muted-foreground">{chunk.text}</p>
         </a>
       ))}
+      {spans.length > 0 && (
+        <div className="border-t border-border pt-3">
+          <p className="text-xs font-medium text-muted-foreground">
+            {spans.length} source spans
+          </p>
+          <ul className="mt-2 space-y-2">
+            {spans.map((span) => (
+              <li key={span.source_span_id} className="rounded-md border border-border bg-background p-2.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    {span.source_span_id}
+                  </span>
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    {span.page ? `p.${span.page}` : "no page"}
+                  </span>
+                </div>
+                {span.quote && (
+                  <p className="mt-1 line-clamp-3 leading-relaxed text-foreground">{span.quote}</p>
+                )}
+                <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                  {span.extraction_method} · {Math.round(span.confidence * 100)}%
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

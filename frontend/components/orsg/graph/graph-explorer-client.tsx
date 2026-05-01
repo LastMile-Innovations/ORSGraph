@@ -65,7 +65,7 @@ export function GraphExplorerClient() {
       frontier = next
     }
     return visited
-  }, [focusId, hop, filteredEdges])
+  }, [focusId, hop, filteredEdges, filteredNodes])
 
   const visibleNodes = useMemo(
     () => filteredNodes.filter((n) => visibleSet.has(n.id)),

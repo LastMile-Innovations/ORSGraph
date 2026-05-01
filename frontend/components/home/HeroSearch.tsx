@@ -27,7 +27,7 @@ export function HeroSearch() {
       }
       
       router.push(`/search?q=${encodeURIComponent(query)}`)
-    } catch (error) {
+    } catch {
       router.push(`/search?q=${encodeURIComponent(query)}`)
     } finally {
       setIsLoading(false)

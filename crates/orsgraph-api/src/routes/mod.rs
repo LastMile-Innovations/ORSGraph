@@ -1,5 +1,6 @@
 pub mod analytics;
 pub mod ask;
+pub mod casebuilder;
 pub mod graph;
 pub mod health;
 pub mod home;
@@ -13,6 +14,7 @@ use axum::Router;
 
 pub fn create_routes() -> Router<AppState> {
     Router::new()
+        .merge(casebuilder::routes())
         .route("/home", axum::routing::get(home::get_home))
         .route(
             "/featured-statutes",

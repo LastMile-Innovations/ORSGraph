@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
   CheckCircle2,
   XCircle,
@@ -10,8 +11,11 @@ import {
   Download,
   FileText,
   Filter,
+  Plus,
 } from "lucide-react"
 import type { Matter, Claim, ClaimElement, ExtractedFact } from "@/lib/casebuilder/types"
+import { matterClaimsHref, matterFactsHref } from "@/lib/casebuilder/routes"
+import { createEvidence } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -141,7 +145,7 @@ export function EvidenceMatrix({ matter }: EvidenceMatrixProps) {
                             <p className="mt-0.5 text-xs text-muted-foreground">{claim.cause}</p>
                           </div>
                           <Link
-                            href={`/matters/${matter.id}/claims#${claim.id}`}
+                            href={matterClaimsHref(matter.id, claim.id)}
                             className="text-[11px] text-muted-foreground hover:text-foreground hover:underline"
                           >
                             View claim →
@@ -259,7 +263,48 @@ function CellStateIcon({ state }: { state: CellState }) {
 }
 
 function CellDetail({ entry, matter }: { entry: CellEntry; matter: Matter }) {
+  const router = useRouter()
   const { claim, element, facts, state } = entry
+  const [documentId, setDocumentId] = useState(matter.documents[0]?.id ?? "")
+  const [factId, setFactId] = useState(facts[0]?.id ?? matter.facts[0]?.id ?? "")
+  const [relation, setRelation] = useState<"supports" | "contradicts">("supports")
+  const [quote, setQuote] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const linkedEvidence = matter.evidence.filter((evidence) =>
+    facts.some(
+      (fact) =>
+        evidence.supports_fact_ids.includes(fact.id) ||
+        evidence.contradicts_fact_ids.includes(fact.id),
+    ),
+  )
+
+  async function onCreateEvidence() {
+    if (!documentId || !factId || !quote.trim()) {
+      setError("Choose a document, fact, and quote.")
+      return
+    }
+    setSaving(true)
+    setError(null)
+    const result = await createEvidence(matter.id, {
+      document_id: documentId,
+      quote: quote.trim(),
+      source_span: "manual quote",
+      evidence_type: "document_text",
+      strength: "moderate",
+      confidence: 0.75,
+      supports_fact_ids: relation === "supports" ? [factId] : [],
+      contradicts_fact_ids: relation === "contradicts" ? [factId] : [],
+    })
+    setSaving(false)
+    if (!result.data) {
+      setError(result.error || "Evidence could not be created.")
+      return
+    }
+    setQuote("")
+    router.refresh()
+  }
 
   return (
     <ScrollArea className="h-[calc(100vh-280px)]">
@@ -310,7 +355,7 @@ function CellDetail({ entry, matter }: { entry: CellEntry; matter: Matter }) {
               {facts.map((fact) => (
                 <li key={fact.id}>
                   <Link
-                    href={`/matters/${matter.id}/facts#${fact.id}`}
+                    href={matterFactsHref(matter.id, fact.id)}
                     className="block rounded-md border border-border bg-background p-2.5 text-xs transition-colors hover:border-foreground/20 hover:bg-muted/40"
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -327,6 +372,72 @@ function CellDetail({ entry, matter }: { entry: CellEntry; matter: Matter }) {
               ))}
             </ul>
           )}
+        </div>
+
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Evidence links
+          </h3>
+          {linkedEvidence.length > 0 && (
+            <ul className="mt-2 space-y-1.5">
+              {linkedEvidence.map((evidence) => (
+                <li key={evidence.evidence_id} className="rounded-md border border-border bg-background p-2.5 text-xs">
+                  <p className="line-clamp-3 leading-relaxed text-foreground">{evidence.quote}</p>
+                  <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                    {evidence.strength} · {Math.round(evidence.confidence * 100)}%
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="mt-2 space-y-2 rounded-md border border-border bg-background p-3">
+            <div className="grid gap-2">
+              <select
+                value={documentId}
+                onChange={(event) => setDocumentId(event.target.value)}
+                className="rounded border border-border bg-card px-3 py-2 text-xs"
+              >
+                {matter.documents.map((document) => (
+                  <option key={document.id} value={document.id}>
+                    {document.title}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={factId}
+                onChange={(event) => setFactId(event.target.value)}
+                className="rounded border border-border bg-card px-3 py-2 text-xs"
+              >
+                {matter.facts.map((fact) => (
+                  <option key={fact.id} value={fact.id}>
+                    {fact.statement.slice(0, 90)}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={relation}
+                onChange={(event) => setRelation(event.target.value as "supports" | "contradicts")}
+                className="rounded border border-border bg-card px-3 py-2 font-mono text-xs"
+              >
+                <option value="supports">supports</option>
+                <option value="contradicts">contradicts</option>
+              </select>
+              <textarea
+                value={quote}
+                onChange={(event) => setQuote(event.target.value)}
+                rows={3}
+                placeholder="Evidence quote or description"
+                className="rounded border border-border bg-card px-3 py-2 text-xs focus:border-primary focus:outline-none"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-destructive">{error}</p>
+              <Button size="sm" onClick={onCreateEvidence} disabled={saving || matter.documents.length === 0 || matter.facts.length === 0}>
+                <Plus className="mr-1 h-3 w-3" />
+                {saving ? "Saving" : "Add evidence"}
+              </Button>
+            </div>
+          </div>
         </div>
 
         <Card className="border-border/60 bg-muted/20 p-3">

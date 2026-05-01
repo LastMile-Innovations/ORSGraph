@@ -38,7 +38,12 @@ export function GraphCanvasSigma({
 
   useEffect(() => {
     let cancelled = false
-    let renderer: { kill: () => void } | undefined
+    let renderer:
+      | {
+          kill: () => void
+          on: (event: string, handler: (payload: { node: string }) => void) => void
+        }
+      | undefined
     const container = containerRef.current
     if (!container || typeof window === "undefined") return undefined
 
@@ -81,21 +86,26 @@ export function GraphCanvasSigma({
           renderEdgeLabels: false,
           labelDensity: Math.max(0.08, forces.labelDensity / 100),
           defaultEdgeType: "arrow",
-          nodeReducer: (node: string, data: Record<string, unknown>) => {
+          nodeReducer: (node: string, data) => {
             const active = node === selectedId || selectedNeighborIds.has(node)
+            const label = typeof data.label === "string" ? data.label : ""
+            const size = typeof data.size === "number" ? data.size : 8
             return {
               ...data,
-              label: active || forces.labelDensity > 40 ? data.label : "",
+              label: active || forces.labelDensity > 40 ? label : "",
               highlighted: active,
-              size: active ? Number(data.size ?? 8) * 1.35 : data.size,
+              size: active ? size * 1.35 : size,
               borderColor: data.qc ? "#f59e0b" : undefined,
             }
           },
-          edgeReducer: (_edge: string, data: Record<string, unknown>) => ({
+          edgeReducer: (_edge: string, data) => ({
             ...data,
             hidden: false,
           }),
-        })
+        }) as {
+          kill: () => void
+          on: (event: string, handler: (payload: { node: string }) => void) => void
+        }
 
         renderer.on("enterNode", ({ node }: { node: string }) => setHoveredId(node))
         renderer.on("leaveNode", () => setHoveredId(null))

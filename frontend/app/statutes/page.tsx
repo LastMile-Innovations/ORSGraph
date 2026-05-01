@@ -1,11 +1,13 @@
 import Link from "next/link"
 import { Shell } from "@/components/orsg/shell"
-import { getStatuteIndex } from "@/lib/api"
+import { DataStateBanner } from "@/components/orsg/data-state-banner"
+import { getStatuteIndexState } from "@/lib/api"
 import { StatusBadge } from "@/components/orsg/badges"
 import { ChevronRight, BookOpen } from "lucide-react"
 
 export default async function StatuteIndexPage() {
-  const statutes = await getStatuteIndex()
+  const state = await getStatuteIndexState()
+  const statutes = state.data
   // Group by chapter for a corpus directory listing
   const grouped: Record<string, typeof statutes> = {}
   for (const s of statutes) {
@@ -16,6 +18,7 @@ export default async function StatuteIndexPage() {
   return (
     <Shell>
       <div className="flex flex-1 flex-col overflow-y-auto scrollbar-thin">
+        <DataStateBanner source={state.source} error={state.error} label="Statute index data" />
         <header className="border-b border-border bg-card px-6 py-5">
           <div className="flex items-baseline gap-3">
             <BookOpen className="h-5 w-5 text-primary" />

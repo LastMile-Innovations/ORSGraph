@@ -2,7 +2,6 @@ import {
   SearchResponse, 
   SuggestResult, 
   DirectOpenResponse,
-  SearchResult,
   HomePageData,
   SystemHealth,
   GraphInsightCard,
@@ -25,8 +24,15 @@ import {
   askAnswer as mockAskAnswer,
 } from './mock-data';
 import type { GraphNeighborhoodParams, GraphViewerResponse } from '@/components/graph/types';
+import {
+  classifyFallbackSource,
+  dataErrorMessage,
+  type DataSource,
+  type DataState,
+} from "./data-state";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_ORS_API_BASE_URL || 'http://localhost:8080/api/v1';
+const reportedFallbacks = new Set<string>();
 
 export type SearchMode = 'hybrid' | 'keyword' | 'semantic' | 'citation'
 
@@ -68,6 +74,22 @@ async function fetchApi<T>(
   return response.json();
 }
 
+function reportFallback(endpoint: string, error: unknown) {
+  if (reportedFallbacks.has(endpoint)) return;
+  reportedFallbacks.add(endpoint);
+  console.info(`[ORSGraph] ${endpoint} unavailable; using fallback path (${dataErrorMessage(error)})`);
+}
+
+function fallbackState<T>(
+  endpoint: string,
+  data: T,
+  error: unknown,
+  source: DataSource = classifyFallbackSource(error),
+): DataState<T> {
+  reportFallback(endpoint, error);
+  return { source, data, error: dataErrorMessage(error) };
+}
+
 // Health
 export async function healthCheck() {
   return fetchApi<{ ok: boolean; service: string; neo4j: string; version: string }>('/health');
@@ -75,35 +97,73 @@ export async function healthCheck() {
 
 // Home Page
 export async function getHomePageData(): Promise<HomePageData> {
+  return (await getHomePageState()).data;
+}
+
+export async function getHomePageState(): Promise<DataState<HomePageData>> {
   try {
-    return await fetchApi<HomePageData>('/home');
+    return { source: "live", data: await fetchApi<HomePageData>('/home') };
   } catch (error) {
-    console.warn("Failed to fetch /home, falling back to mock data", error);
-    return mockHomePageData;
+    const source = classifyFallbackSource(error);
+    return fallbackState(
+      "/home",
+      {
+        ...mockHomePageData,
+        health: {
+          ...mockHomePageData.health,
+          api: source === "offline" ? "offline" : "mock",
+          lastCheckedAt: new Date().toISOString(),
+        },
+      },
+      error,
+      source,
+    );
   }
 }
 
 export async function getHealth(): Promise<SystemHealth> {
+  return (await getHealthState()).data;
+}
+
+export async function getHealthState(): Promise<DataState<SystemHealth>> {
   try {
-    return await fetchApi<SystemHealth>('/health');
+    return { source: "live", data: await fetchApi<SystemHealth>('/health') };
   } catch (error) {
-    return mockSystemHealth;
+    const source = classifyFallbackSource(error);
+    return fallbackState(
+      "/health",
+      {
+        ...mockSystemHealth,
+        api: source === "offline" ? "offline" : "mock",
+        lastCheckedAt: new Date().toISOString(),
+      },
+      error,
+      source,
+    );
   }
 }
 
 export async function getGraphInsights(): Promise<GraphInsightCard[]> {
+  return (await getGraphInsightsState()).data;
+}
+
+export async function getGraphInsightsState(): Promise<DataState<GraphInsightCard[]>> {
   try {
-    return await fetchApi<GraphInsightCard[]>('/analytics/home');
+    return { source: "live", data: await fetchApi<GraphInsightCard[]>('/analytics/home') };
   } catch (error) {
-    return mockGraphInsights;
+    return fallbackState("/analytics/home", mockGraphInsights, error);
   }
 }
 
 export async function getFeaturedStatutes(): Promise<FeaturedStatute[]> {
+  return (await getFeaturedStatutesState()).data;
+}
+
+export async function getFeaturedStatutesState(): Promise<DataState<FeaturedStatute[]>> {
   try {
-    return await fetchApi<FeaturedStatute[]>('/featured-statutes');
+    return { source: "live", data: await fetchApi<FeaturedStatute[]>('/featured-statutes') };
   } catch (error) {
-    return mockFeaturedStatutes;
+    return fallbackState("/featured-statutes", mockFeaturedStatutes, error);
   }
 }
 
@@ -145,6 +205,10 @@ interface StatuteIndexApiResponse {
 }
 
 export async function getStatuteIndex(paramsInput: { limit?: number; offset?: number; chapter?: string } = {}): Promise<StatuteIdentity[]> {
+  return (await getStatuteIndexState(paramsInput)).data;
+}
+
+export async function getStatuteIndexState(paramsInput: { limit?: number; offset?: number; chapter?: string } = {}): Promise<DataState<StatuteIdentity[]>> {
   try {
     const params = new URLSearchParams({
       limit: String(paramsInput.limit ?? 1000),
@@ -153,7 +217,7 @@ export async function getStatuteIndex(paramsInput: { limit?: number; offset?: nu
     if (paramsInput.chapter) params.set("chapter", paramsInput.chapter)
 
     const response = await fetchApi<StatuteIndexApiResponse>(`/statutes?${params}`)
-    return response.items.map((item) => ({
+    return { source: "live", data: response.items.map((item) => ({
       canonical_id: item.canonical_id,
       citation: item.citation,
       title: item.title ?? item.citation,
@@ -162,10 +226,9 @@ export async function getStatuteIndex(paramsInput: { limit?: number; offset?: nu
       chapter: item.chapter,
       status: normalizeLegalStatus(item.status),
       edition: item.edition_year,
-    }))
+    })) }
   } catch (error) {
-    console.warn("Failed to fetch /statutes, falling back to mock index", error)
-    return statuteIndex
+    return fallbackState("/statutes", statuteIndex, error)
   }
 }
 
@@ -218,6 +281,15 @@ export async function searchWithParams(paramsInput: SearchParams): Promise<Searc
 
 export const getSearchResults = search;
 
+export async function searchWithParamsState(paramsInput: SearchParams): Promise<DataState<SearchResponse | undefined>> {
+  try {
+    return { source: "live", data: await searchWithParams(paramsInput) };
+  } catch (error) {
+    reportFallback("/search", error);
+    return { source: classifyFallbackSource(error), data: undefined, error: dataErrorMessage(error) };
+  }
+}
+
 export async function searchSuggest(query: string, limit: number = 10): Promise<SuggestResult[]> {
   const params = new URLSearchParams({ q: query, limit: limit.toString() });
   return fetchApi<SuggestResult[]>(`/search/suggest?${params}`);
@@ -234,6 +306,10 @@ export async function getStatute(citation: string) {
 }
 
 export async function getStatutePageData(citationOrCanonicalId: string): Promise<StatutePageResponse | null> {
+  return (await getStatutePageDataState(citationOrCanonicalId)).data;
+}
+
+export async function getStatutePageDataState(citationOrCanonicalId: string): Promise<DataState<StatutePageResponse | null>> {
   try {
     const [detail, provisions, citations, semantics, history] = await Promise.all([
       getStatute(citationOrCanonicalId),
@@ -243,10 +319,10 @@ export async function getStatutePageData(citationOrCanonicalId: string): Promise
       getHistory(citationOrCanonicalId),
     ])
 
-    return mapStatutePage(detail, provisions, citations, semantics, history)
+    return { source: "live", data: mapStatutePage(detail, provisions, citations, semantics, history) }
   } catch (error) {
-    console.warn("Failed to fetch statute detail, falling back to mock statute", error)
-    return getStatuteByCanonicalId(citationOrCanonicalId)
+    const fallback = getStatuteByCanonicalId(citationOrCanonicalId)
+    return fallbackState(`/statutes/${citationOrCanonicalId}`, fallback, error, fallback ? classifyFallbackSource(error) : "error")
   }
 }
 
@@ -379,21 +455,28 @@ export async function ask(question: string, mode: string = "research"): Promise<
 }
 
 export async function askWithFallback(question: string, mode: string = "research"): Promise<AskAnswer> {
+  return (await askWithFallbackState(question, mode)).data
+}
+
+export async function askWithFallbackState(question: string, mode: string = "research"): Promise<DataState<AskAnswer>> {
   try {
-    return await ask(question, mode)
+    return { source: "live", data: await ask(question, mode) }
   } catch (error) {
-    console.warn("Failed to fetch /ask, falling back to mock answer", error)
-    return { ...mockAskAnswer, question }
+    return fallbackState("/ask", { ...mockAskAnswer, question }, error)
   }
 }
 
 export async function getProvisionInspectorData(provisionId: string): Promise<ProvisionInspectorData | null> {
+  return (await getProvisionInspectorDataState(provisionId)).data
+}
+
+export async function getProvisionInspectorDataState(provisionId: string): Promise<DataState<ProvisionInspectorData | null>> {
   try {
     const response = await fetchApi<any>(`/provisions/${encodeURIComponent(provisionId)}`)
-    return mapProvisionInspector(response)
+    return { source: "live", data: mapProvisionInspector(response) }
   } catch (error) {
-    console.warn("Failed to fetch provision detail, falling back to mock provision", error)
-    return getProvisionById(provisionId)
+    const fallback = getProvisionById(provisionId)
+    return fallbackState(`/provisions/${provisionId}`, fallback, error, fallback ? classifyFallbackSource(error) : "error")
   }
 }
 

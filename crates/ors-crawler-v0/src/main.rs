@@ -63,7 +63,7 @@ enum Command {
         #[arg(long)]
         source_url: Option<String>,
 
-        #[arg(long, default_value_t = true)]
+        #[arg(long, default_value_t = false)]
         fail_on_qc: bool,
     },
     Crawl {
@@ -176,6 +176,23 @@ enum Command {
         relationship_batch_size: usize,
     },
 
+    MaterializeNeo4j {
+        #[arg(long)]
+        graph_dir: PathBuf,
+        #[arg(long)]
+        neo4j_uri: String,
+        #[arg(long)]
+        neo4j_user: String,
+        #[arg(long)]
+        neo4j_password_env: String,
+        #[arg(long, default_value_t = 2025)]
+        edition_year: i32,
+        #[arg(long, default_value_t = 5000)]
+        edge_batch_size: usize,
+        #[arg(long, default_value_t = 5000)]
+        relationship_batch_size: usize,
+    },
+
     QcNeo4j {
         #[arg(long)]
         graph_dir: Option<PathBuf>,
@@ -235,8 +252,10 @@ enum Command {
         chapters: String,
         #[arg(long, default_value_t = 2025)]
         edition_year: i32,
-        #[arg(long, default_value_t = true)]
+        #[arg(long, default_value_t = false)]
         fail_on_qc: bool,
+        #[arg(long, default_value_t = false)]
+        append: bool,
     },
     ResolveCitations {
         #[arg(long)]
@@ -692,6 +711,27 @@ async fn main() -> Result<()> {
             .await?;
             Ok(())
         }
+        Command::MaterializeNeo4j {
+            graph_dir,
+            neo4j_uri,
+            neo4j_user,
+            neo4j_password_env,
+            edition_year,
+            edge_batch_size,
+            relationship_batch_size,
+        } => {
+            let pass = std::env::var(neo4j_password_env)?;
+            let loader = neo4j_loader::Neo4jLoader::new(&neo4j_uri, &neo4j_user, &pass).await?;
+            materialize_seed_relationships(
+                &graph_dir,
+                &loader,
+                edition_year,
+                edge_batch_size,
+                relationship_batch_size,
+            )
+            .await?;
+            Ok(())
+        }
         Command::QcNeo4j {
             graph_dir,
             neo4j_uri,
@@ -767,8 +807,9 @@ async fn main() -> Result<()> {
             chapters,
             edition_year,
             fail_on_qc,
+            append,
         } => {
-            run_parse_cached(raw_dir, out, chapters, edition_year, fail_on_qc).await?;
+            run_parse_cached(raw_dir, out, chapters, edition_year, fail_on_qc, append).await?;
             Ok(())
         }
         Command::ResolveCitations {
@@ -817,13 +858,16 @@ async fn run_parse_cached(
     chapters: String,
     edition_year: i32,
     fail_on_qc: bool,
+    append: bool,
 ) -> Result<()> {
     info!("═══ Parse Cached ═══");
     let chapters = parse_chapter_list(&chapters)?;
     let graph_dir = out.join("graph");
 
-    // Clear old graph files for clean output
-    let _ = fs::remove_dir_all(&graph_dir);
+    if !append {
+        // Clear old graph files for clean output
+        let _ = fs::remove_dir_all(&graph_dir);
+    }
     fs::create_dir_all(&graph_dir)?;
 
     let mut total_sections = 0;
@@ -1529,59 +1573,14 @@ async fn run_seed(
         load_form_texts
     );
 
-    // Phase 9: Create all relationships
-    info!("═══ Phase 9: Creating Graph Relationships ═══");
-    let start_all = Instant::now();
-    let rel_batch = seed_batch_config.relationship_batch_size;
-
-    // Group 1: Core structural relationships (must be somewhat sequential due to dependencies)
-    info!("Creating core structural relationships...");
-    loader.materialize_identity_version_edges(rel_batch).await?;
-    loader
-        .materialize_version_provision_edges(rel_batch)
-        .await?;
-    loader
-        .materialize_structural_edges(edition_year, rel_batch)
-        .await?;
-    loader
-        .materialize_provision_hierarchy_edges(rel_batch)
-        .await?;
-
-    // Group 2: Independent leaf relationships (can run concurrently)
-    info!("Creating leaf relationships concurrently...");
-    tokio::try_join!(
-        loader.materialize_citation_edges(rel_batch),
-        loader.materialize_chunk_edges(rel_batch),
-        loader.materialize_source_edges(rel_batch),
-        loader.materialize_semantic_edges(rel_batch),
-        loader.materialize_definition_edges(rel_batch),
-        loader.materialize_obligation_edges(rel_batch),
-        loader.materialize_history_edges(rel_batch),
-        loader.materialize_specialized_edges(rel_batch),
-    )?;
-
-    info!("Enforcing current flags on LegalTextVersion nodes...");
-    loader.enforce_current_flags().await?;
-
-    log_seed_phase_done("All relationships materialized", 0, start_all);
-
-    // Phase 9: Load CITES edges (if citation resolution has been run)
-    let edges_path = graph_dir.join("cites_edges.jsonl");
-    if edges_path.exists() {
-        info!("═══ Phase 10: Loading CITES Edges ═══");
-        let start = Instant::now();
-        let mut total = 0usize;
-        for batch in
-            read_jsonl_batches::<CitesEdge>(&edges_path, seed_batch_config.edge_batch_size)?
-        {
-            let edges = batch?;
-            total += edges.len();
-            loader
-                .create_cites_edges(edges, seed_batch_config.edge_batch_size)
-                .await?;
-        }
-        log_seed_phase_done("CITES Edges", total, start);
-    }
+    materialize_seed_relationships(
+        &graph_dir,
+        &loader,
+        edition_year,
+        seed_batch_config.edge_batch_size,
+        seed_batch_config.relationship_batch_size,
+    )
+    .await?;
 
     // Warm up vector index after all data is loaded
     if create_vector_index {
@@ -1757,6 +1756,63 @@ async fn run_seed(
     info!("═══════════════════════════════════════════════════════════");
     info!("✅ Neo4j seed complete");
     info!("═══════════════════════════════════════════════════════════");
+    Ok(())
+}
+
+async fn materialize_seed_relationships(
+    graph_dir: &Path,
+    loader: &neo4j_loader::Neo4jLoader,
+    edition_year: i32,
+    edge_batch_size: usize,
+    relationship_batch_size: usize,
+) -> Result<()> {
+    info!("═══ Phase 9: Creating Graph Relationships ═══");
+    let start_all = Instant::now();
+
+    info!("Creating core structural relationships...");
+    loader
+        .materialize_identity_version_edges(relationship_batch_size)
+        .await?;
+    loader
+        .materialize_version_provision_edges(relationship_batch_size)
+        .await?;
+    loader
+        .materialize_structural_edges(edition_year, relationship_batch_size)
+        .await?;
+    loader
+        .materialize_provision_hierarchy_edges(relationship_batch_size)
+        .await?;
+
+    info!("Creating leaf relationships concurrently...");
+    tokio::try_join!(
+        loader.materialize_citation_edges(relationship_batch_size),
+        loader.materialize_chunk_edges(relationship_batch_size),
+        loader.materialize_source_edges(relationship_batch_size),
+        loader.materialize_semantic_edges(relationship_batch_size),
+        loader.materialize_definition_edges(relationship_batch_size),
+        loader.materialize_obligation_edges(relationship_batch_size),
+        loader.materialize_history_edges(relationship_batch_size),
+        loader.materialize_specialized_edges(relationship_batch_size),
+    )?;
+
+    info!("Enforcing current flags on LegalTextVersion nodes...");
+    loader.enforce_current_flags().await?;
+
+    log_seed_phase_done("All relationships materialized", 0, start_all);
+
+    let edges_path = graph_dir.join("cites_edges.jsonl");
+    if edges_path.exists() {
+        info!("═══ Phase 10: Loading CITES Edges ═══");
+        let start = Instant::now();
+        let mut total = 0usize;
+        for batch in read_jsonl_batches::<CitesEdge>(&edges_path, edge_batch_size)? {
+            let edges = batch?;
+            total += edges.len();
+            loader.create_cites_edges(edges, edge_batch_size).await?;
+        }
+        log_seed_phase_done("CITES Edges", total, start);
+    }
+
     Ok(())
 }
 

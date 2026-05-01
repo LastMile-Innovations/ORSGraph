@@ -14,7 +14,7 @@ use crate::text::{
 use anyhow::{anyhow, Result};
 use regex::Regex;
 use scraper::{Html, Selector};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 static SECTION_LINE_RE: LazyLock<Regex> =
@@ -189,9 +189,34 @@ pub fn parse_ors_chapter_html(
     let mut amendments = Vec::new();
 
     let mut heading_seen: HashMap<String, usize> = HashMap::new();
-    let mut citation_seen_count: HashMap<String, usize> = HashMap::new();
+    let primary_section_indices = select_primary_section_indices(&sections);
+    let mut primary_content_hashes: HashMap<String, String> = HashMap::new();
+    for idx in &primary_section_indices {
+        if let Some(draft) = sections.get(*idx) {
+            primary_content_hashes.insert(draft.citation.clone(), section_content_hash(draft));
+        }
+    }
+
+    let mut selected_section_order = 0usize;
 
     for (section_order, draft) in sections.iter().enumerate() {
+        let canonical_id = format!("or:ors:{}", draft.citation);
+        let version_id = format!("{}@{}", canonical_id, edition_year);
+
+        if !primary_section_indices.contains(&section_order) {
+            let primary_hash = primary_content_hashes
+                .get(&draft.citation)
+                .map(String::as_str);
+            source_notes.push(build_duplicate_section_source_note(
+                draft,
+                &canonical_id,
+                &version_id,
+                &source_document_id,
+                primary_hash,
+            ));
+            continue;
+        }
+
         // Extract heading from draft.heading if present
         if let Some(h) = &draft.heading {
             if !heading_seen.contains_key(h) {
@@ -232,24 +257,7 @@ pub fn parse_ors_chapter_html(
             }
         }
 
-        let count = citation_seen_count
-            .entry(draft.citation.clone())
-            .or_insert(0);
-        *count += 1;
-
-        let mut canonical_id = format!("or:ors:{}", draft.citation);
-        if *count > 1 {
-            canonical_id = format!("{}_v{}", canonical_id, count);
-        }
-        let version_id = format!("{}@{}", canonical_id, edition_year);
-
-        let original_full_text = draft
-            .paragraphs
-            .iter()
-            .filter(|p| matches!(p.kind, SectionParaKind::Content))
-            .map(|p| p.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n");
+        let original_full_text = section_content_text(draft);
         let (full_text, history_items) = extract_legislative_history(&original_full_text);
         let status = classify_status(&full_text, draft.status_text.as_deref());
 
@@ -331,8 +339,9 @@ pub fn parse_ors_chapter_html(
             &canonical_id,
             &version_id,
             edition_year,
-            section_order,
+            selected_section_order,
         );
+        selected_section_order += 1;
 
         let mut root_provision_id: Option<String> = None;
         for p in section_provisions {
@@ -976,6 +985,51 @@ fn parse_body_sections(
     })
 }
 
+fn select_primary_section_indices(sections: &[SectionDraft]) -> HashSet<usize> {
+    let mut best_by_citation: HashMap<&str, (usize, i64)> = HashMap::new();
+
+    for (idx, draft) in sections.iter().enumerate() {
+        let score = section_primary_score(draft);
+        best_by_citation
+            .entry(draft.citation.as_str())
+            .and_modify(|current| {
+                if score > current.1 {
+                    *current = (idx, score);
+                }
+            })
+            .or_insert((idx, score));
+    }
+
+    best_by_citation.into_values().map(|(idx, _)| idx).collect()
+}
+
+fn section_primary_score(draft: &SectionDraft) -> i64 {
+    let text = section_content_text(draft);
+    let status = classify_status(&text, draft.status_text.as_deref());
+    let status_score = match status.as_str() {
+        "active" => 1_000_000,
+        "formerly" => 500_000,
+        "renumbered" | "repealed" => 100_000,
+        _ => 0,
+    };
+
+    status_score + normalize_for_hash(&text).len() as i64
+}
+
+fn section_content_text(draft: &SectionDraft) -> String {
+    draft
+        .paragraphs
+        .iter()
+        .filter(|p| matches!(p.kind, SectionParaKind::Content))
+        .map(|p| p.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn section_content_hash(draft: &SectionDraft) -> String {
+    sha256_hex(normalize_for_hash(&section_content_text(draft)).as_bytes())
+}
+
 fn is_structural_heading_text(text: &str, has_underline: bool) -> bool {
     ARTICLE_HEADING_RE.is_match(text)
         || is_all_caps_heading(text)
@@ -1395,6 +1449,57 @@ fn build_source_notes_for_section(
             })
         })
         .collect()
+}
+
+fn build_duplicate_section_source_note(
+    draft: &SectionDraft,
+    canonical_id: &str,
+    version_id: &str,
+    source_document_id: &str,
+    primary_hash: Option<&str>,
+) -> SourceNote {
+    let text = section_content_text(draft);
+    let normalized_text = normalize_ws(&text);
+    let duplicate_hash = sha256_hex(normalize_for_hash(&text).as_bytes());
+    let note_type = if primary_hash == Some(duplicate_hash.as_str()) {
+        "duplicate_section_text"
+    } else {
+        "duplicate_section_variant"
+    };
+    let paragraph_ids = draft
+        .paragraphs
+        .iter()
+        .filter(|p| matches!(p.kind, SectionParaKind::Content))
+        .map(|p| p.paragraph_id.clone())
+        .collect::<Vec<_>>();
+
+    SourceNote {
+        source_note_id: format!(
+            "source_note:{}",
+            stable_id(&format!(
+                "{version_id}::duplicate-section::{}::{}::{}",
+                draft.paragraph_start_order, draft.paragraph_end_order, duplicate_hash
+            ))
+        ),
+        note_type: note_type.to_string(),
+        normalized_text: normalized_text.to_lowercase(),
+        text: if normalized_text.is_empty() {
+            format!("Duplicate source section header for ORS {}", draft.citation)
+        } else {
+            normalized_text
+        },
+        source_document_id: source_document_id.to_string(),
+        canonical_id: canonical_id.to_string(),
+        version_id: Some(version_id.to_string()),
+        provision_id: None,
+        citation: format!("ORS {}", draft.citation),
+        paragraph_start_order: draft.paragraph_start_order,
+        paragraph_end_order: draft.paragraph_end_order,
+        source_paragraph_order: draft.paragraph_start_order,
+        source_paragraph_ids: paragraph_ids,
+        confidence: 0.7,
+        extraction_method: "ors_dom_duplicate_section_parser_v1".to_string(),
+    }
 }
 
 fn classify_source_note_type(text: &str) -> &'static str {

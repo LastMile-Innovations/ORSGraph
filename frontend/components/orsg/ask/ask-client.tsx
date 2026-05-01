@@ -3,8 +3,10 @@
 import { useState } from "react"
 import Link from "next/link"
 import type { AskAnswer } from "@/lib/types"
-import { askWithFallback } from "@/lib/api"
+import type { DataSource } from "@/lib/data-state"
+import { askWithFallbackState } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { DataStateBanner } from "@/components/orsg/data-state-banner"
 import {
   Sparkles,
   Send,
@@ -30,12 +32,21 @@ const MODES = [
 interface Props {
   initialQuery: string
   initialAnswer: AskAnswer
+  initialDataSource?: DataSource
+  initialDataError?: string
 }
 
-export function AskClient({ initialQuery, initialAnswer }: Props) {
+export function AskClient({
+  initialQuery,
+  initialAnswer,
+  initialDataSource = "live",
+  initialDataError,
+}: Props) {
   const [q, setQ] = useState(initialQuery)
   const [mode, setMode] = useState("research")
   const [answer, setAnswer] = useState(initialAnswer)
+  const [dataSource, setDataSource] = useState<DataSource>(initialDataSource)
+  const [dataError, setDataError] = useState<string | undefined>(initialDataError)
   const [loading, setLoading] = useState(false)
 
   async function submitQuestion() {
@@ -43,7 +54,10 @@ export function AskClient({ initialQuery, initialAnswer }: Props) {
     if (!question || loading) return
     setLoading(true)
     try {
-      setAnswer(await askWithFallback(question, mode))
+      const next = await askWithFallbackState(question, mode)
+      setAnswer(next.data)
+      setDataSource(next.source)
+      setDataError(next.error)
     } finally {
       setLoading(false)
     }
@@ -51,6 +65,7 @@ export function AskClient({ initialQuery, initialAnswer }: Props) {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
+      <DataStateBanner source={dataSource} error={dataError} label="Ask response" />
       {/* Question bar */}
       <header className="border-b border-border bg-card px-6 py-4">
         <div className="mx-auto max-w-5xl">

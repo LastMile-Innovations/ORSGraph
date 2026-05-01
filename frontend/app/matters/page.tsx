@@ -1,6 +1,8 @@
 import Link from "next/link"
 import { Shell } from "@/components/orsg/shell"
-import { matters } from "@/lib/casebuilder/mock-matters"
+import { DataStateBanner } from "@/components/casebuilder/data-state-banner"
+import { getMatterSummariesState } from "@/lib/casebuilder/api"
+import { matterHref, newMatterHref } from "@/lib/casebuilder/routes"
 import {
   AlertTriangle,
   ArrowRight,
@@ -25,7 +27,9 @@ const STATUS_CLS: Record<MatterStatus, string> = {
   appeal: "bg-accent/20 text-accent",
 }
 
-export default function MattersPage() {
+export default async function MattersPage() {
+  const matterState = await getMatterSummariesState()
+  const matters = matterState.data
   const totals = matters.reduce(
     (acc, m) => ({
       documents: acc.documents + m.document_count,
@@ -39,6 +43,7 @@ export default function MattersPage() {
   return (
     <Shell hideLeftRail>
       <div className="flex flex-1 flex-col overflow-y-auto scrollbar-thin">
+        <DataStateBanner source={matterState.source} error={matterState.error} />
         {/* Hero */}
         <section className="border-b border-border bg-card px-6 py-10">
           <div className="mx-auto max-w-6xl">
@@ -59,21 +64,21 @@ export default function MattersPage() {
 
             <div className="mt-6 flex flex-wrap gap-2">
               <Link
-                href="/matters/new"
+                href={newMatterHref()}
                 className="flex items-center gap-1.5 rounded bg-primary px-3 py-2 font-mono text-xs uppercase tracking-wider text-primary-foreground hover:bg-primary/90"
               >
                 <Plus className="h-3.5 w-3.5" />
                 new matter
               </Link>
               <Link
-                href="/matters/new?intent=fight"
+                href={newMatterHref("fight")}
                 className="flex items-center gap-1.5 rounded border border-border bg-background px-3 py-2 font-mono text-xs uppercase tracking-wider hover:border-primary hover:text-primary"
               >
                 <Upload className="h-3.5 w-3.5" />
                 fight a complaint
               </Link>
               <Link
-                href="/matters/new?intent=build"
+                href={newMatterHref("build")}
                 className="flex items-center gap-1.5 rounded border border-border bg-background px-3 py-2 font-mono text-xs uppercase tracking-wider hover:border-primary hover:text-primary"
               >
                 <GavelIcon className="h-3.5 w-3.5" />
@@ -111,7 +116,7 @@ export default function MattersPage() {
               {matters.map((m) => (
                 <Link
                   key={m.matter_id}
-                  href={`/matters/${m.matter_id}`}
+                  href={matterHref(m.matter_id)}
                   className="group flex flex-col gap-3 rounded border border-border bg-card p-4 transition-colors hover:border-primary/40"
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -190,7 +195,7 @@ export default function MattersPage() {
 
               {/* New matter card */}
               <Link
-                href="/matters/new"
+                href={newMatterHref()}
                 className="group flex flex-col items-center justify-center gap-2 rounded border-2 border-dashed border-border bg-background p-6 text-center hover:border-primary/40 hover:text-primary"
               >
                 <Plus className="h-6 w-6 text-muted-foreground group-hover:text-primary" />
@@ -222,7 +227,7 @@ export default function MattersPage() {
               <Workflow
                 title="Build my complaint"
                 steps={["Tell what happened", "Upload evidence", "Map elements to facts", "Find authority", "Draft + fact-check"]}
-                href="/matters/new?intent=build"
+                href={newMatterHref("build")}
                 icon={FileText}
               />
               <Workflow

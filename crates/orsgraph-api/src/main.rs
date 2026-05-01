@@ -31,14 +31,21 @@ async fn main() -> anyhow::Result<()> {
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
-        .allow_methods([Method::GET, Method::POST])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
         .allow_headers(Any);
 
     let app = Router::new()
         .route("/", get(|| async { "ORSGraph API v0.1.0" }))
         .nest("/api/v1", routes::create_routes())
         .layer(cors)
-        .layer(axum::middleware::from_fn(
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
             middleware::optional_api_key_middleware,
         ))
         .with_state(state);

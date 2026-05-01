@@ -22,19 +22,39 @@ import type {
 } from "./types"
 
 export const corpusStatus: CorpusStatus = {
-  corpus_loaded: true,
-  sections: 1284,
-  versions: 1842,
-  provisions: 8417,
-  chunks: 19238,
-  citation_mentions: 4612,
-  resolved_citations: 4187,
-  unresolved_citations: 425,
-  neo4j_nodes: 31802,
-  neo4j_relationships: 67934,
-  embed_primary_coverage: 0.873,
-  last_qc_run: "2026-04-28T14:22:18Z",
-  last_qc_status: "warning",
+  editionYear: 2025,
+  source: "Oregon Revised Statutes",
+  lastUpdated: "2026-04-28T14:22:18Z",
+  lastQcRun: "2026-04-28T14:22:18Z",
+  qcStatus: "warning",
+  counts: {
+    sections: 1284,
+    versions: 1842,
+    provisions: 8417,
+    retrievalChunks: 19238,
+    citationMentions: 4612,
+    citesEdges: 4187,
+    semanticNodes: 0,
+    sourceNotes: 0,
+    amendments: 0,
+    sessionLaws: 0,
+    neo4jNodes: 31802,
+    neo4jRelationships: 67934,
+  },
+  citations: {
+    total: 4612,
+    resolved: 4187,
+    unresolved: 425,
+    citesEdges: 4187,
+    coveragePercent: 90.79,
+  },
+  embeddings: {
+    profile: "legal_chunk_primary_v1",
+    embedded: 16802,
+    totalEligible: 19238,
+    coveragePercent: 87.33,
+    status: "partial",
+  },
 }
 
 // ---------------- Statute index ----------------
