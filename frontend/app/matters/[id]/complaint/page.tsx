@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
-import { ComplaintBuilderPanel } from "@/components/casebuilder/complaint-builder-panel"
+import { ComplaintEditorWorkbench } from "@/components/casebuilder/complaint-editor-workbench"
 import { MatterShell } from "@/components/casebuilder/matter-shell"
-import { getMatterState } from "@/lib/casebuilder/api"
+import { getComplaintState, getMatterState } from "@/lib/casebuilder/api"
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -13,11 +13,11 @@ export default async function ComplaintBuilderPage({ params }: PageProps) {
   const matter = matterState.data
   if (!matter) notFound()
 
-  const complaintDraft = matter.drafts.find((draft) => draft.kind === "complaint")
+  const complaintState = await getComplaintState(matter.id)
 
   return (
     <MatterShell matter={matter} activeSection="complaint" dataState={matterState}>
-      <ComplaintBuilderPanel matter={matter} complaintDraft={complaintDraft} />
+      <ComplaintEditorWorkbench matter={matter} complaint={complaintState.data} mode="home" />
     </MatterShell>
   )
 }

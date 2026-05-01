@@ -6,6 +6,7 @@ pub mod health;
 pub mod home;
 pub mod qc;
 pub mod search;
+pub mod sidebar;
 pub mod stats;
 pub mod statutes;
 
@@ -14,6 +15,7 @@ use axum::Router;
 
 pub fn create_routes() -> Router<AppState> {
     Router::new()
+        .merge(sidebar::routes())
         .merge(casebuilder::routes())
         .route("/home", axum::routing::get(home::get_home))
         .route(

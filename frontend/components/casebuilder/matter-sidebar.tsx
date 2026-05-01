@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { useState } from "react"
 import {
   Activity,
   AlertTriangle,
@@ -14,6 +15,7 @@ import {
   GavelIcon,
   GitGraphIcon,
   ListChecks,
+  Menu,
   Microscope,
   PackageCheck,
   Scale,
@@ -23,12 +25,21 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { casebuilderHomeHref, matterHref } from "@/lib/casebuilder/routes"
-import type { MatterSummary } from "@/lib/casebuilder/types"
+import type { Matter, MatterSummary } from "@/lib/casebuilder/types"
+import { Button } from "@/components/ui/button"
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
 
 interface MatterSidebarProps {
   matter: MatterSummary
   counts?: {
     documents?: number
+    parties?: number
     facts?: number
     events?: number
     evidence?: number
@@ -38,11 +49,16 @@ interface MatterSidebarProps {
     deadlines?: number
     tasks?: number
   }
+  className?: string
+  onNavigate?: () => void
 }
 
-export function MatterSidebar({ matter, counts = {} }: MatterSidebarProps) {
+type MatterSidebarMatter = MatterSummary & Partial<Matter>
+
+export function MatterSidebar({ matter, counts = {}, className, onNavigate }: MatterSidebarProps) {
   const pathname = usePathname()
   const base = matterHref(matter.matter_id)
+  const resolvedCounts = resolveMatterCounts(matter as MatterSidebarMatter, counts)
 
   const groups: { title: string; items: { href: string; label: string; icon: typeof Folder; count?: number; accent?: boolean }[] }[] = [
     {
@@ -55,18 +71,18 @@ export function MatterSidebar({ matter, counts = {} }: MatterSidebarProps) {
     {
       title: "evidence layer",
       items: [
-        { href: `${base}/documents`, label: "Documents", icon: Folder, count: counts.documents ?? matter.document_count },
-        { href: `${base}/parties`, label: "Parties", icon: Users },
-        { href: `${base}/facts`, label: "Facts", icon: ListChecks, count: counts.facts ?? matter.fact_count },
-        { href: `${base}/timeline`, label: "Timeline", icon: Calendar, count: counts.events },
-        { href: `${base}/evidence`, label: "Evidence matrix", icon: Microscope, count: counts.evidence ?? matter.evidence_count },
+        { href: `${base}/documents`, label: "Documents", icon: Folder, count: resolvedCounts.documents },
+        { href: `${base}/parties`, label: "Parties", icon: Users, count: resolvedCounts.parties },
+        { href: `${base}/facts`, label: "Facts", icon: ListChecks, count: resolvedCounts.facts },
+        { href: `${base}/timeline`, label: "Timeline", icon: Calendar, count: resolvedCounts.events },
+        { href: `${base}/evidence`, label: "Evidence matrix", icon: Microscope, count: resolvedCounts.evidence },
       ],
     },
     {
       title: "legal layer",
       items: [
-        { href: `${base}/claims`, label: "Claims & defenses", icon: Scale, count: counts.claims ?? matter.claim_count },
-        { href: `${base}/deadlines`, label: "Deadlines", icon: AlertTriangle, count: counts.deadlines },
+        { href: `${base}/claims`, label: "Claims & defenses", icon: Scale, count: resolvedCounts.claims + resolvedCounts.defenses },
+        { href: `${base}/deadlines`, label: "Deadlines", icon: AlertTriangle, count: resolvedCounts.deadlines },
         { href: `${base}/authorities`, label: "Authorities", icon: BookOpen },
         { href: `${base}/graph`, label: "Graph", icon: GitGraphIcon },
         { href: `${base}/qc`, label: "QC", icon: ShieldCheck },
@@ -75,19 +91,20 @@ export function MatterSidebar({ matter, counts = {} }: MatterSidebarProps) {
     {
       title: "work product",
       items: [
-        { href: `${base}/complaint`, label: "Complaint builder", icon: GavelIcon },
-        { href: `${base}/drafts`, label: "Drafts", icon: FileText, count: counts.drafts ?? matter.draft_count },
-        { href: `${base}/tasks`, label: "Tasks", icon: CheckSquare, count: counts.tasks ?? matter.open_task_count },
+        { href: `${base}/complaint`, label: "Complaint editor", icon: GavelIcon },
+        { href: `${base}/drafts`, label: "Drafts", icon: FileText, count: resolvedCounts.drafts },
+        { href: `${base}/tasks`, label: "Tasks", icon: CheckSquare, count: resolvedCounts.tasks },
         { href: `${base}/export`, label: "Exports", icon: PackageCheck },
       ],
     },
   ]
 
   return (
-    <aside className="flex h-full w-60 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+    <aside className={cn("flex h-full w-64 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground", className)}>
       <div className="border-b border-sidebar-border px-3 py-3">
         <Link
           href={casebuilderHomeHref()}
+          onClick={onNavigate}
           className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="h-3 w-3" />
@@ -126,7 +143,7 @@ export function MatterSidebar({ matter, counts = {} }: MatterSidebarProps) {
         </div>
       </div>
 
-      <nav className="flex-1 overflow-y-auto scrollbar-thin py-2">
+      <nav aria-label="Matter navigation" className="flex-1 overflow-y-auto scrollbar-thin py-2">
         {groups.map((group) => (
           <div key={group.title} className="mb-2">
             <div className="px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
@@ -141,20 +158,25 @@ export function MatterSidebar({ matter, counts = {} }: MatterSidebarProps) {
                   <Link
                     key={item.href}
                     href={item.href}
+                    aria-current={active ? "page" : undefined}
+                    onClick={onNavigate}
                     className={cn(
-                      "flex items-center justify-between px-3 py-1.5 text-xs transition-colors",
+                      "mx-2 flex items-center justify-between rounded-md px-2.5 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
                       active
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                        ? "bg-primary/10 text-primary"
                         : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
                       item.accent && !active && "text-primary",
                     )}
                   >
-                    <span className="flex items-center gap-2">
-                      <Icon className="h-3.5 w-3.5" />
-                      {item.label}
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{item.label}</span>
                     </span>
                     {typeof item.count === "number" && item.count > 0 && (
-                      <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+                      <span className={cn(
+                        "ml-2 rounded bg-background px-1.5 py-0.5 font-mono text-[10px] tabular-nums",
+                        active ? "text-primary" : "text-muted-foreground",
+                      )}>
                         {item.count}
                       </span>
                     )}
@@ -190,4 +212,55 @@ export function MatterSidebar({ matter, counts = {} }: MatterSidebarProps) {
       )}
     </aside>
   )
+}
+
+export function MatterSidebarSheet({ matter, counts }: Pick<MatterSidebarProps, "matter" | "counts">) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div className="flex items-center gap-2 border-b border-border bg-background px-3 py-2 md:hidden">
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetTrigger asChild>
+          <Button variant="outline" size="sm" className="h-8 gap-2">
+            <Menu className="h-3.5 w-3.5" />
+            Matter
+          </Button>
+        </SheetTrigger>
+        <SheetContent side="left" className="w-[20rem] max-w-[88vw] gap-0 border-sidebar-border bg-sidebar p-0 text-sidebar-foreground">
+          <SheetHeader className="sr-only">
+            <SheetTitle>Matter navigation</SheetTitle>
+          </SheetHeader>
+          <MatterSidebar
+            matter={matter}
+            counts={counts}
+            className="w-full border-r-0"
+            onNavigate={() => setOpen(false)}
+          />
+        </SheetContent>
+      </Sheet>
+      <div className="min-w-0">
+        <div className="truncate text-sm font-medium text-foreground">{matter.name}</div>
+        <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+          {matter.status}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function resolveMatterCounts(matter: MatterSidebarMatter, counts: NonNullable<MatterSidebarProps["counts"]>) {
+  const claims = matter.claims?.filter((claim) => claim.kind !== "defense") ?? []
+
+  return {
+    documents: counts.documents ?? matter.documents?.length ?? matter.document_count,
+    parties: counts.parties ?? matter.parties?.length ?? 0,
+    facts: counts.facts ?? matter.facts?.length ?? matter.fact_count,
+    events: counts.events ?? matter.timeline?.length ?? 0,
+    evidence: counts.evidence ?? matter.evidence?.length ?? matter.evidence_count,
+    claims: counts.claims ?? (claims.length || matter.claim_count),
+    defenses: counts.defenses ?? matter.defenses?.length ?? 0,
+    drafts: counts.drafts ?? matter.drafts?.length ?? matter.draft_count,
+    deadlines: counts.deadlines ?? matter.deadlines?.filter((deadline) => deadline.status === "open").length ?? 0,
+    tasks: counts.tasks ?? matter.tasks?.filter((task) => task.status !== "done").length ?? matter.open_task_count,
+  }
 }

@@ -87,6 +87,16 @@ async fn live_golden_search_suite() {
         );
 
         let body: serde_json::Value = response.json().await.expect("search JSON response");
+        assert!(
+            body["analysis"]["normalized_query"].is_string(),
+            "{} response should include required analysis.normalized_query",
+            case.name
+        );
+        assert!(
+            body["analysis"]["timings"]["total_ms"].is_number(),
+            "{} response should include analysis timings",
+            case.name
+        );
         let results = body["results"]
             .as_array()
             .unwrap_or_else(|| panic!("{} response should include results", case.name));
@@ -136,6 +146,47 @@ async fn live_golden_search_suite() {
             );
         }
     }
+
+    let direct: serde_json::Value = client
+        .get(format!("{base_url}/search/open"))
+        .query(&[("q", "ORS 90.300")])
+        .send()
+        .await
+        .expect("direct-open request succeeds")
+        .json()
+        .await
+        .expect("direct-open JSON response");
+    assert_eq!(direct["matched"].as_bool(), Some(true));
+    assert!(
+        matches!(
+            direct["match_type"].as_str(),
+            Some("exact_statute" | "exact_provision")
+        ),
+        "direct-open should return a structured exact match"
+    );
+
+    let suggestions: serde_json::Value = client
+        .get(format!("{base_url}/search/suggest"))
+        .query(&[("q", "90.3"), ("limit", "5")])
+        .send()
+        .await
+        .expect("suggest request succeeds")
+        .json()
+        .await
+        .expect("suggest JSON response");
+    let suggestions = suggestions
+        .as_array()
+        .expect("suggest response should be an array");
+    assert!(
+        suggestions.iter().any(|suggestion| {
+            suggestion["href"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("/statutes/")
+                && suggestion["match_type"].as_str().is_some()
+        }),
+        "suggest should include direct-open-ready authority suggestions"
+    );
 }
 
 fn parse_golden_cases(suite: &str) -> Vec<GoldenCase> {

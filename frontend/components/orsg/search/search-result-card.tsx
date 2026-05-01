@@ -1,10 +1,12 @@
 "use client"
 
 import Link from "next/link"
+import { useState } from "react"
 import {
   AlertTriangle,
+  Check,
+  Copy,
   ExternalLink,
-  FolderPlus,
   GitBranch,
   MessageSquare,
   Quote,
@@ -19,6 +21,7 @@ interface SearchResultCardProps {
 }
 
 export function SearchResultCard({ result }: SearchResultCardProps) {
+  const [copied, setCopied] = useState(false)
   const identity = result.citation ?? result.id ?? result.source_id ?? result.source_provision ?? "result"
   const href = result.href || `/statutes/${encodeURIComponent(identity)}`
   const kind = result.kind ?? result.result_type ?? "result"
@@ -29,8 +32,20 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
     ["text", result.fulltext_score ?? result.score_breakdown?.keyword],
     ["vector", result.vector_score ?? result.score_breakdown?.vector],
     ["graph", result.graph_score ?? result.score_breakdown?.graph],
+    ["expand", result.score_breakdown?.expansion],
     ["rerank", result.rerank_score ?? result.score_breakdown?.rerank],
   ] as const
+  const copyValue = result.citation ?? identity
+
+  const copyCitation = async () => {
+    try {
+      await navigator.clipboard.writeText(copyValue)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch (error) {
+      console.info("Copy citation failed", error)
+    }
+  }
 
   return (
     <article className="group border-b border-border px-6 py-4 transition-colors hover:bg-muted/30">
@@ -123,8 +138,14 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
               <Link href={href} className="flex items-center gap-1 transition-colors hover:text-primary">
                 <ExternalLink className="h-3 w-3" /> open
               </Link>
-              <button className="flex items-center gap-1 transition-colors hover:text-primary">
-                <FolderPlus className="h-3 w-3" /> add
+              <button
+                type="button"
+                onClick={copyCitation}
+                className="flex items-center gap-1 transition-colors hover:text-primary"
+                title="Copy citation"
+              >
+                {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                {copied ? "copied" : "copy"}
               </button>
               <Link
                 href={`/ask?q=${encodeURIComponent(`${identity} ${result.title || ""}`)}`}

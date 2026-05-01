@@ -18,32 +18,34 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Problem: Backend upload contract exists, but the frontend document library is still not a real uploader.
 - Expected behavior: User can select/drop files, set document type/folder/confidentiality, upload, see progress, and see failure states.
 - Implementation notes: Start with text/plain and pasted text, then add multipart binary support.
-- Acceptance checks: Uploading text creates a `CaseDocument` and displays it in the library.
+- Acceptance checks: Uploading text or binary creates a `CaseDocument` and displays it in the library with truthful processing state.
 - Dependencies: `CB-V0F-011`.
 - Status: Partial
-- Progress: New Matter and Document Library can upload pasted narrative/text-like files through the JSON text upload endpoint; Document Library supports browse and drag/drop, refreshes after upload, and labels metadata-only queued files.
-- Still needed: Dedicated document-library upload UI, drag/drop progress, binary multipart, duplicate detection, extraction status, and retry/failure states.
+- Progress: New Matter and Document Library can upload selected files through the binary multipart endpoint. Text-like files can auto-extract; PDFs/images/other unsupported binaries are stored privately and shown as queued/unsupported rather than processed.
+- Still needed: Drag/drop progress, duplicate-detection UX, richer extraction status, retry/failure actions, and batch upload polish.
 
 ## CB-V0-003 - Binary upload endpoint
 - Priority: P0
 - Area: File ingestion
 - Problem: JSON text upload is not enough for PDFs, DOCX, images, and spreadsheets.
-- Expected behavior: API accepts multipart uploads and stores binaries locally with metadata and hash.
+- Expected behavior: API accepts multipart uploads and stores binaries locally with metadata, provenance, and hash.
 - Implementation notes: Add size limits, MIME sniffing, extension validation, and safe filenames.
 - Acceptance checks: PDF/DOCX/CSV/XLSX/image files create queued or processed document records without exposing unsafe paths.
 - Dependencies: `CB-V0F-006`.
-- Status: Todo
+- Status: Done
+- Completed: Added `POST /api/v1/matters/:matter_id/files/binary` with matter-scoped multipart handling, max body limit, MIME/filename validation, local private byte storage, SHA-256 hashing, `ObjectBlob`/`DocumentVersion`/`IngestionRun` provenance, extractable UTF-8 text handling, and explicit unsupported state for non-text binaries.
+- Verification: `cargo test -p orsgraph-api casebuilder`, `cargo test -p orsgraph-api casebuilder_routes_cover_v0_contracts`, and `node --check scripts/smoke-casebuilder.mjs`.
 
 ## CB-V0-004 - Text extraction service
 - Priority: P1
 - Area: Document understanding
-- Problem: V0 only chunks supplied text.
-- Expected behavior: Extract text from TXT, HTML, CSV, XLSX, DOCX, and PDF where practical.
+- Problem: V0 only extracts supplied text and text-like UTF-8 uploads.
+- Expected behavior: Extract text from TXT, Markdown, and HTML-like UTF-8 uploads in V0; keep PDF/DOCX/XLSX/OCR parsing deferred.
 - Implementation notes: Keep extraction deterministic and provider-free before adding OCR.
 - Acceptance checks: Fixture files produce extracted text chunks and document summaries.
 - Dependencies: `CB-V0-003`.
 - Status: Partial
-- Progress: Text-backed documents can be chunked deterministically, stored as `ExtractedText`, summarized, and re-extracted from the document viewer.
+- Progress: Text-backed documents and text-like UTF-8 binary uploads can be chunked deterministically, stored as `ExtractedText`, summarized, and re-extracted from the document viewer.
 - Still needed: PDF, DOCX, XLSX, richer CSV/HTML parsing fixtures, extraction contract tests, and provider-free metadata extraction for dates/parties/money/citations.
 
 ## CB-V0-005 - OCR deferred state
@@ -54,9 +56,9 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Implementation notes: Do not fabricate text from images without OCR provider.
 - Acceptance checks: Image upload does not claim text extraction succeeded.
 - Dependencies: `CB-V0-003`.
-- Status: Partial
-- Progress: Non-text selected files are not treated as extracted; the UI labels them as metadata-only queued uploads because binary storage/OCR is not implemented.
-- Still needed: Persist binary uploads, mark image/scanned documents as `unsupported` or `queued_for_ocr`, and expose a clearer next action once OCR configuration exists.
+- Status: Done
+- Completed: Non-text binary uploads are persisted but marked queued/unsupported rather than extracted. Frontend upload/document views expose unsupported status so OCR and scanned-PDF limitations are explicit.
+- Still needed: OCR provider configuration and `queued_for_ocr` processing belong to the V0.1/V0.2 ingestion lanes.
 
 ## CB-V0-006 - Proposed fact extraction
 - Priority: P1
@@ -67,8 +69,8 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Acceptance checks: User can review proposed facts and see source support.
 - Dependencies: `CB-V0-004`.
 - Status: Partial
-- Progress: Deterministic extraction now creates `proposed` fact nodes from document sentences, links them to the source document, returns them in extraction responses, and updates `facts_extracted`.
-- Still needed: Source spans/quotes, duplicate detection, richer confidence scoring, entity/date extraction, contradiction detection, and provider-gated AI extraction.
+- Progress: Deterministic extraction now creates `proposed` fact nodes from document sentences, links them to the source document, returns them in extraction responses, records source spans/quotes, and updates `facts_extracted`.
+- Still needed: Duplicate detection, richer confidence scoring, entity/date extraction, contradiction detection, and provider-gated AI extraction.
 
 ## CB-V0-007 - Fact review and approval
 - Priority: P1
@@ -79,8 +81,8 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Acceptance checks: Approved fact persists and dashboard/fact board updates.
 - Dependencies: `CB-V0F-011`, `CB-V0-006`.
 - Status: Partial
-- Progress: Facts board can approve proposed facts, edit statements, mark facts disputed, reject facts, and refresh from the live API. Backend approval now raises confidence and clears `needs_verification`.
-- Still needed: Merge duplicates, attach evidence from the review panel, batch review, source-span display, and regression tests for fact mutations.
+- Progress: Facts board can approve proposed facts, edit statements, mark facts disputed, reject facts, show source spans/quotes, and refresh from the live API. Backend approval now raises confidence and clears `needs_verification`.
+- Still needed: Merge duplicates, attach evidence from the review panel, batch review, deep-link opening to exact document spans, and regression tests for fact mutations.
 
 ## CB-V0-008 - Timeline builder
 - Priority: P1
@@ -115,8 +117,8 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Acceptance checks: Claim persists, element statuses update, and evidence matrix reflects mappings.
 - Dependencies: `CB-V0F-011`, `CB-V0-007`.
 - Status: Partial
-- Progress: Claims page can create live claims/counterclaims/defense-labeled theories with elements and an initial supporting fact, and can call live element mapping.
-- Still needed: Edit/delete claims and elements, richer element templates, evidence mapping controls, authority attachment, strength scoring, and evidence matrix synchronization polish.
+- Progress: Claims page can create live claims/counterclaims/defense-labeled theories with elements and an initial supporting fact, call live element mapping, and receive synced evidence IDs when evidence is linked to satisfying facts. Authority can be attached to claim and element targets.
+- Still needed: Edit/delete claims and elements, richer element templates, evidence mapping controls, strength scoring, and evidence matrix synchronization polish.
 
 ## CB-V0-011 - Evidence matrix live persistence
 - Priority: P1
@@ -127,32 +129,32 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Acceptance checks: Support/contradiction edges persist and fact/detail pages update.
 - Dependencies: `CB-V0F-011`, `CB-V0-002`.
 - Status: Partial
-- Progress: Evidence matrix can create evidence quotes/descriptions from a selected document, link them as support or contradiction to facts, and show linked evidence in the element detail panel.
-- Still needed: Create evidence directly from document spans, attach evidence during fact review, edit/delete evidence, exhibit numbering, admissibility notes, and claim/element edge synchronization.
+- Progress: Evidence matrix can create evidence quotes/descriptions from a selected document, link them as support or contradiction to facts, show linked evidence in the element detail panel, and trigger backend synchronization across evidence, facts, claims, and claim elements.
+- Still needed: Create evidence directly from document spans, attach evidence during fact review, edit/delete evidence, exhibit numbering, admissibility notes, and richer claim/element edge editing.
 
 ## CB-V0-012 - Authority search panel
 - Priority: P1
 - Area: ORS authority
 - Problem: Backend authority search exists, but the frontend does not expose live matter-scoped search/recommend.
-- Expected behavior: User can search ORSGraph from within a matter and attach authorities to claims/elements/drafts.
+- Expected behavior: User can search ORSGraph from within a matter and attach authorities to claims/elements/draft paragraphs.
 - Implementation notes: Use `/authority/search` first, `/authority/recommend` for selected text later.
 - Acceptance checks: Search results show citation, canonical ID, currentness/status, snippet, and link to statute/provision.
 - Dependencies: `CB-V0F-011`.
 - Status: Partial
-- Progress: Authorities page now has a live ORSGraph search panel with query input, result snippets, citations/canonical IDs, scores, warnings, and error state.
-- Still needed: Attach authority results to claims/elements/drafts, currentness panels, definitions/deadlines/remedies/penalties grouping, and recommendation workflow from selected text.
+- Progress: Authorities page now has a live ORSGraph search panel with query input, result snippets, citations/canonical IDs, scores, warnings, error state, target selectors, and attach controls for claims, elements, and draft paragraphs.
+- Still needed: Currentness panels, definitions/deadlines/remedies/penalties grouping, recommendation workflow from selected text, and richer attached-authority management.
 
-## CB-V0-013 - Complaint Builder V0
+## CB-V0-013 - Complaint Builder entry point
 - Priority: P1
 - Area: Complaint workflow
 - Problem: Complaint route is currently a workflow hub, not a full builder.
-- Expected behavior: Guides court/caption, parties, jurisdiction/venue, facts, counts, elements, authority, damages, prayer, exhibits, verification, QC, and draft.
-- Implementation notes: Use the `Draft kind=complaint` model rather than separate filing persistence.
+- Expected behavior: Provides the V0 entry point into complaint work, creates or regenerates a complaint scaffold, and routes users toward the dedicated Complaint Editor once the structured editor lands.
+- Implementation notes: Keep this as the bridge from current `Draft kind=complaint` behavior into the full Complaint Editor program tracked in `10-complaint-editor-backlog.md`; do not expand the generic Draft model into the complaint AST here.
 - Acceptance checks: User can produce a complaint draft scaffold from approved facts and selected claims.
 - Dependencies: `CB-V0-007`, `CB-V0-010`, `CB-V0-012`, `CB-V0-014`.
 - Status: Partial
 - Progress: Complaint Builder now has a live create/regenerate complaint draft action backed by `Draft kind=complaint`, plus the V0 workflow checklist and safety framing.
-- Still needed: Structured caption/court/party/jurisdiction/prayer/exhibit inputs, damages/remedies builder, count-by-count wizard, complaint-specific QC, and export checklist.
+- Still needed: Full structured editor work moves to `CB-CE-001` through `CB-CE-027`, beginning with AST, routes, guided setup, caption/outline, counts, paragraph numbering, save/load, return paths, and basic complaint QC.
 
 ## CB-V0-014 - Drafting Studio live save
 - Priority: P1
@@ -187,8 +189,8 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Acceptance checks: Unsupported fact and missing citation findings display and link to draft paragraphs and sources.
 - Dependencies: `CB-V0-014`, `CB-V0-015`.
 - Status: Partial
-- Progress: Draft editor can run backend deterministic fact-check and citation-check actions and surface action messages.
-- Still needed: Render findings by paragraph/sentence, link each finding to evidence/authority, resolve/ignore statuses, and sentence node support.
+- Progress: Draft editor can run backend deterministic fact-check and citation-check actions, surface action messages, and render persisted fact/citation findings alongside the draft. QC also renders persisted findings from the matter.
+- Still needed: Sentence-level anchors, link each finding to remediation evidence/authority, resolve/ignore statuses, and sentence node support.
 
 ## CB-V0-017 - Safety copy and no-legal-advice framing
 - Priority: P0
@@ -210,7 +212,9 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Implementation notes: Backend integration tests may need Neo4j test fixture or mocked service boundary.
 - Acceptance checks: CI/dev script fails on broken V0 path.
 - Dependencies: `CB-V0F-012`, `CB-V0-002` through `CB-V0-016`.
-- Status: Todo
+- Status: Partial
+- Progress: Added `pnpm run smoke:casebuilder`, which creates a temp live matter, uploads a text file, extracts/reviews facts, creates timeline/claim/evidence records, attaches authority, creates/generates a draft, runs deterministic checks, verifies export-deferred response, and cleans up.
+- Still needed: Run against a live local/API environment and wire into CI once the Neo4j/API fixture is dependable.
 
 ## CB-V0-019 - Ingestion job and status pipeline
 - Priority: P0
@@ -221,8 +225,8 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Acceptance checks: Uploading a document shows deterministic progress and ends in either review-ready, processed, failed, or unsupported without silent success.
 - Dependencies: `CB-V0F-017`, `CB-V0-002`, `CB-V0-003`, `CB-V0-004`.
 - Status: Partial
-- Progress: Backend and frontend DTOs now include `IngestionRun`; text uploads and completed object uploads create initial ingestion run records, deterministic extraction updates runs to `review_ready`, empty/unextractable text updates runs to `failed`, and extraction responses return the run metadata.
-- Still needed: Pollable multi-stage job endpoint, parser/artifact stage timestamps, async queue integration, retry actions, user-facing progress UI, unsupported/quarantine states, and manifest-backed reruns.
+- Progress: Backend and frontend DTOs now include `IngestionRun`; text uploads and binary uploads create initial ingestion run records, deterministic extraction updates runs to `review_ready`, empty/unextractable text updates runs to `failed`, unsupported binary formats remain explicit, and extraction responses return the run metadata.
+- Still needed: Pollable multi-stage job endpoint, parser/artifact stage timestamps, async queue integration, retry actions, user-facing progress UI, quarantine states, and manifest-backed reruns.
 
 ## CB-V0-020 - Source span and provenance model
 - Priority: P0
@@ -233,8 +237,8 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Acceptance checks: Every proposed fact and evidence item can open the source document at the supporting span or show an explicit unavailable-source reason.
 - Dependencies: `CB-V0F-014`, `CB-V0F-015`, `CB-V0-004`, `CB-V0-006`, `CB-V0-011`.
 - Status: Partial
-- Progress: Backend and frontend DTOs now include `SourceSpan`; deterministic text extraction emits chunk and proposed-fact spans with document version, blob, ingestion run, page, byte/character offsets, quote, method, confidence, and review status. Manual evidence creation also stores structured span provenance when document provenance is available.
-- Still needed: Viewer deep-linking to spans, fact-review span UI, evidence capture from selected document text, sentence-level draft support spans, unavailable-source reasons for legacy/user-entered facts, and R2/page/chunk coordinates for binary-derived artifacts.
+- Progress: Backend and frontend DTOs now include `SourceSpan`; deterministic text extraction emits chunk and proposed-fact spans with document version, blob, ingestion run, page, byte/character offsets, quote, method, confidence, and review status. Fact review and document detail render available spans/quotes, and manual evidence creation stores structured span provenance when document provenance is available.
+- Still needed: Viewer deep-linking to spans, evidence capture from selected document text, sentence-level draft support spans, unavailable-source reasons for legacy/user-entered facts, and R2/page/chunk coordinates for binary-derived artifacts.
 
 ## CB-V0-021 - Binary extraction fixture coverage
 - Priority: P1
@@ -274,26 +278,30 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Implementation notes: Persist edges for `Fact SATISFIES_ELEMENT`, `Evidence SUPPORTS_ELEMENT`, and claim/evidence support with matter-scoped writes.
 - Acceptance checks: Linking evidence to a fact that satisfies an element updates the claim builder and evidence matrix after refresh.
 - Dependencies: `CB-V0-010`, `CB-V0-011`, `CB-V0-020`.
-- Status: Todo
+- Status: Done
+- Completed: Evidence creation/linking now updates `CaseEvidence`, referenced `CaseFact` support/contradiction lists, claim evidence IDs, and claim-element evidence IDs when linked facts satisfy elements.
+- Verification: `cargo test -p orsgraph-api casebuilder`.
 
 ## CB-V0-025 - Authority attachment endpoints
 - Priority: P1
 - Area: ORS authority
 - Problem: Authority search can find provisions, but users cannot attach results to claims, elements, or draft paragraphs as durable graph support.
-- Expected behavior: Add authority attach/detach endpoints for claims, defenses, elements, draft paragraphs, and later draft sentences.
+- Expected behavior: Add authority attach/detach endpoints for claims, elements, and draft paragraphs; add defense and sentence targets later.
 - Implementation notes: Store `AuthorityRef` plus relationship edges to ORSGraph nodes when canonical IDs resolve; preserve unresolved citations as findings.
 - Acceptance checks: Attached authority survives refresh, appears in authorities page, claim builder, draft editor, QC, and graph inputs.
 - Dependencies: `CB-V0-012`, `CB-X-006`.
-- Status: Todo
+- Status: Done
+- Completed: Added `POST /api/v1/matters/:matter_id/authority/attach` and `/detach`, frontend typed helpers, authority attach controls, persistence on claims/elements/draft paragraphs, and graph materialization for resolved canonical IDs.
+- Verification: `cargo test -p orsgraph-api casebuilder_routes_cover_v0_contracts`, `cargo test -p orsgraph-api casebuilder`, and `./node_modules/.bin/tsc --noEmit --incremental false`.
 
 ## CB-V0-026 - Sentence-level draft support model
 - Priority: P1
 - Area: Drafting/fact-checking
 - Problem: Current checks are paragraph-level, but the product promise requires every draft sentence to be support-checkable.
 - Expected behavior: Add `DraftSentence` records with text, role, source fact IDs, evidence IDs, authority refs, support status, and finding anchors.
-- Implementation notes: Derive sentences from paragraphs in V0, then make the editor sentence-aware once the model is stable.
+- Implementation notes: Derive sentences from paragraphs in V0, then make the editor sentence-aware once the model is stable. This is a shared dependency for Complaint Editor paragraph/sentence checks, AI drafting, and citation anchors.
 - Acceptance checks: Fact-check and citation-check findings can target a sentence or paragraph, and the editor can display each finding at the exact text anchor.
-- Dependencies: `CB-V0-014`, `CB-V0-015`, `CB-V0-016`, `CB-V0-020`.
+- Dependencies: `CB-V0-014`, `CB-V0-015`, `CB-V0-016`, `CB-V0-020`, `CB-CE-006`, `CB-CE-011`, `CB-CE-016`.
 - Status: Todo
 
 ## CB-V0-027 - Graph upserts from ingestion manifests

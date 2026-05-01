@@ -2,19 +2,26 @@
 
 import { useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
-import { AlertTriangle, ChevronLeft, ChevronRight, Database, GitBranch, Sparkles } from "lucide-react"
-import type { SearchResponse } from "@/lib/types"
+import { AlertTriangle, ChevronLeft, ChevronRight, Database, GitBranch, Sparkles, X } from "lucide-react"
+import type { SearchResponse, SuggestResult } from "@/lib/types"
 import type { DataSource } from "@/lib/data-state"
 import { SearchInput } from "./search-input"
-import { DEFAULT_FILTERS, SearchFilters, type SearchFiltersState } from "./search-filters"
+import {
+  DEFAULT_FILTERS,
+  RESULT_TYPES,
+  SEMANTIC_FILTERS,
+  SearchFilters,
+  type SearchFiltersState,
+} from "./search-filters"
 import { SearchResultCard } from "./search-result-card"
 import { SearchEmptyState } from "./search-empty-state"
 import { SearchLoadingState } from "./search-loading-state"
-import { searchWithParamsState } from "@/lib/api"
+import { directOpen, searchWithParamsState } from "@/lib/api"
 import { DataStateBanner } from "@/components/orsg/data-state-banner"
 import { cn } from "@/lib/utils"
 
 const MODES = [
+  { id: "auto", label: "Auto" },
   { id: "hybrid", label: "Hybrid" },
   { id: "keyword", label: "Keyword" },
   { id: "semantic", label: "Semantic" },
@@ -33,7 +40,7 @@ interface Props {
 
 export function SearchClient({
   initialQuery = "",
-  initialMode = "hybrid",
+  initialMode = "auto",
   initialType = "all",
   initialFilters = DEFAULT_FILTERS,
   response: initialResponse,
@@ -142,9 +149,40 @@ export function SearchClient({
     if (q) performSearch({ nextLimit, nextOffset: 0 })
   }
 
-  const handleSuggestionSelect = (suggestion: string) => {
-    setQ(suggestion)
-    performSearch({ query: suggestion, nextOffset: 0 })
+  const submitSearch = async (query = q) => {
+    const trimmed = query.trim()
+    if (!trimmed) {
+      await performSearch({ query: trimmed, nextOffset: 0 })
+      return
+    }
+
+    if (isDirectOpenCandidate(trimmed, mode)) {
+      setIsLoading(true)
+      setHasSearched(true)
+      setError(undefined)
+      try {
+        const opened = await directOpen(trimmed)
+        if (opened.matched && opened.href) {
+          router.push(opened.href)
+          return
+        }
+      } catch (openError) {
+        console.info("Direct open failed; falling back to search", openError)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    await performSearch({ query: trimmed, nextOffset: 0 })
+  }
+
+  const handleSuggestionSelect = (suggestion: SuggestResult) => {
+    setQ(suggestion.label)
+    if (suggestion.href && !suggestion.href.startsWith("/search")) {
+      router.push(suggestion.href)
+      return
+    }
+    performSearch({ query: suggestion.label, nextOffset: 0 })
   }
 
   const results = useMemo(() => response?.results ?? [], [response?.results])
@@ -169,6 +207,30 @@ export function SearchClient({
   const pageEnd = response ? Math.min(responseOffset + response.results.length, response.total) : 0
   const canPageBack = !!response && responseOffset > 0
   const canPageForward = !!response && responseOffset + responseLimit < response.total
+  const activeFilterChips = useMemo(
+    () => buildActiveFilterChips(resultTypeFilter, filters),
+    [resultTypeFilter, filters],
+  )
+
+  const clearActiveFilter = (filterId: string) => {
+    if (filterId === "type") {
+      setResultTypeFilter("all")
+      if (q) performSearch({ typeFilter: "all", nextOffset: 0 })
+      return
+    }
+
+    if (!(filterId in DEFAULT_FILTERS)) return
+    const key = filterId as keyof SearchFiltersState
+    const nextFilters = { ...filters, [key]: DEFAULT_FILTERS[key] } as SearchFiltersState
+    setFilters(nextFilters)
+    if (q) performSearch({ nextFilters, nextOffset: 0 })
+  }
+
+  const clearAllFilters = () => {
+    setResultTypeFilter("all")
+    setFilters(DEFAULT_FILTERS)
+    if (q) performSearch({ typeFilter: "all", nextFilters: DEFAULT_FILTERS, nextOffset: 0 })
+  }
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -178,9 +240,10 @@ export function SearchClient({
           value={q}
           onChange={setQ}
           onKeyDown={(event) => {
-            if (event.key === "Enter") performSearch({ nextOffset: 0 })
+            if (event.key === "Enter" && !event.defaultPrevented) submitSearch()
           }}
           onSelectSuggestion={handleSuggestionSelect}
+          tookMs={response?.analysis?.timings.total_ms}
           totalResults={hasSearched && !isLoading ? response?.total : undefined}
         />
 
@@ -202,17 +265,54 @@ export function SearchClient({
             ))}
           </div>
 
-          <select
-            value={limit}
-            onChange={(event) => handleLimitChange(Number(event.target.value))}
-            className="ml-auto h-7 rounded border border-border bg-background px-2 font-mono text-[11px] uppercase tracking-wide text-muted-foreground"
-          >
-            <option value={10}>10 results</option>
-            <option value={20}>20 results</option>
-            <option value={50}>50 results</option>
-            <option value={100}>100 results</option>
-          </select>
+          <div className="ml-auto flex items-center gap-2">
+            <select
+              value={resultTypeFilter}
+              onChange={(event) => handleTypeFilterChange(event.target.value)}
+              className="h-7 rounded border border-border bg-background px-2 font-mono text-[11px] uppercase tracking-wide text-muted-foreground lg:hidden"
+              aria-label="Candidate type"
+            >
+              {RESULT_TYPES.map((type) => (
+                <option key={type.id} value={type.id}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={limit}
+              onChange={(event) => handleLimitChange(Number(event.target.value))}
+              className="h-7 rounded border border-border bg-background px-2 font-mono text-[11px] uppercase tracking-wide text-muted-foreground"
+            >
+              <option value={10}>10 results</option>
+              <option value={20}>20 results</option>
+              <option value={50}>50 results</option>
+              <option value={100}>100 results</option>
+            </select>
+          </div>
         </div>
+
+        {activeFilterChips.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            {activeFilterChips.map((filter) => (
+              <button
+                key={filter.id}
+                onClick={() => clearActiveFilter(filter.id)}
+                className="inline-flex h-7 items-center gap-1 rounded border border-border bg-background px-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground hover:border-primary/40 hover:text-primary"
+                title={`Clear ${filter.label}`}
+              >
+                {filter.label}
+                <X className="h-3 w-3" />
+              </button>
+            ))}
+            <button
+              onClick={clearAllFilters}
+              className="h-7 rounded px-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              clear all
+            </button>
+          </div>
+        )}
       </header>
 
       <div className="flex flex-1 overflow-hidden">
@@ -229,7 +329,17 @@ export function SearchClient({
 
         <div className="flex flex-1 flex-col overflow-hidden bg-background">
           {!hasSearched ? (
-            <SearchEmptyState onSelectSuggestion={handleSuggestionSelect} />
+            <SearchEmptyState
+              onSelectSuggestion={(suggestion) =>
+                handleSuggestionSelect({
+                  label: suggestion,
+                  kind: "query",
+                  href: `/search?q=${encodeURIComponent(suggestion)}`,
+                  match_type: "none",
+                  score: 0,
+                })
+              }
+            />
           ) : isLoading ? (
             <SearchLoadingState />
           ) : error ? (
@@ -306,10 +416,17 @@ function SearchRunSummary({
         <span>
           {pageStart}-{pageEnd} of {response?.total || 0} for &quot;{query}&quot;
         </span>
-        {response?.took_ms !== undefined && <span>{response.took_ms}ms</span>}
-        {response?.intent && <span>intent {response.intent}</span>}
-        {response?.applied_filters && response.applied_filters.length > 0 && (
-          <span>filters {response.applied_filters.join(", ")}</span>
+        {response?.analysis?.timings && <span>{response.analysis.timings.total_ms}ms</span>}
+        {response?.analysis?.intent && <span>intent {response.analysis.intent}</span>}
+        {response?.analysis?.inferred_chapter && <span>chapter {response.analysis.inferred_chapter}</span>}
+        {response?.analysis?.applied_filters && response.analysis.applied_filters.length > 0 && (
+          <span>filters {response.analysis.applied_filters.join(", ")}</span>
+        )}
+        {response?.analysis?.expansion_count ? (
+          <span>expanded {response.analysis.expansion_count}</span>
+        ) : null}
+        {response?.analysis?.residual_text && (
+          <span>topic {response.analysis.residual_text}</span>
         )}
         {response?.embeddings && (
           <span className="inline-flex items-center gap-1">
@@ -373,6 +490,34 @@ function normalizeFilters(filters: SearchFiltersState) {
     has_penalties: filters.has_penalties || undefined,
     needs_review: filters.needs_review || undefined,
   }
+}
+
+function buildActiveFilterChips(resultType: string, filters: SearchFiltersState) {
+  const chips: { id: string; label: string }[] = []
+  if (resultType !== "all") {
+    const type = RESULT_TYPES.find((item) => item.id === resultType)
+    chips.push({ id: "type", label: type?.label ?? resultType })
+  }
+  if (filters.chapter) chips.push({ id: "chapter", label: `Chapter ${filters.chapter}` })
+  if (filters.status !== "all") chips.push({ id: "status", label: `Status ${filters.status}` })
+  if (filters.semantic_type !== "all") {
+    const semantic = SEMANTIC_FILTERS.find((item) => item.id === filters.semantic_type)
+    chips.push({ id: "semantic_type", label: semantic?.label ?? filters.semantic_type })
+  }
+  if (filters.current_only) chips.push({ id: "current_only", label: "Current" })
+  if (filters.source_backed) chips.push({ id: "source_backed", label: "Source-backed" })
+  if (filters.has_citations) chips.push({ id: "has_citations", label: "Citations" })
+  if (filters.has_deadlines) chips.push({ id: "has_deadlines", label: "Deadlines" })
+  if (filters.has_penalties) chips.push({ id: "has_penalties", label: "Penalties" })
+  if (filters.needs_review) chips.push({ id: "needs_review", label: "Needs review" })
+  return chips
+}
+
+function isDirectOpenCandidate(query: string, mode: string) {
+  if (mode !== "auto" && mode !== "citation") return false
+  const trimmed = query.trim()
+  if (/\s+(to|through)\s+|[–—-]/i.test(trimmed)) return false
+  return /^(?:ORS\s*)?\d{1,3}[A-Z]?\.\d{3}(?:\([A-Za-z0-9]+\))*$/i.test(trimmed)
 }
 
 function toSearchParams(params: Record<string, string | number | boolean | undefined>) {

@@ -57,9 +57,9 @@ V1 turns CaseBuilder from a single-user internal workbench into a reviewable leg
 - Area: Legal authority
 - Problem: ORS authority alone is insufficient for filings and deadlines.
 - Expected behavior: Integrate ORCP, UTCR/local rules, court forms, formatting, service, and filing requirements.
-- Implementation notes: Treat rules as source-backed legal graph material with currentness.
+- Implementation notes: Treat rules as source-backed legal graph material with currentness. The Oregon Circuit Civil Complaint ORCP/UTCR seed pack is tracked in `CB-CE-010`; this V1 item remains the broader court-rule corpus and product integration.
 - Acceptance checks: Deadline and filing checklist can cite court-rule authority.
-- Dependencies: Court-rule corpus ingestion.
+- Dependencies: Court-rule corpus ingestion, `CB-CE-010`.
 - Status: Deferred
 
 ## CB-V1-007 - Case-law integration
@@ -129,5 +129,5 @@ V1 turns CaseBuilder from a single-user internal workbench into a reviewable leg
 - Expected behavior: Filing workflow distinguishes generated packet, review-needed packet, and user-final packet, with explicit manual filing checklist.
 - Implementation notes: No court e-filing automation until jurisdiction-specific rules and safety checks are available.
 - Acceptance checks: User cannot confuse an unchecked generated packet with an electronically filed court submission.
-- Dependencies: `CB-V02-005`, `CB-V1-006`, `CB-V1-008`.
+- Dependencies: `CB-V02-005`, `CB-CE-018`, `CB-V1-006`, `CB-V1-008`.
 - Status: Deferred

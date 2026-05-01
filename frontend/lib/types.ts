@@ -201,6 +201,7 @@ export interface ScoreBreakdown {
   rerank?: number
   graph?: number
   authority?: number
+  expansion?: number
   penalties?: number
 }
 
@@ -244,7 +245,7 @@ export interface SearchResult {
   graph_score?: number
   rerank_score?: number
   pre_rerank_score?: number
-  rank_source?: "exact" | "keyword" | "keyword-fallback" | "vector" | "graph" | "rerank"
+  rank_source?: "exact" | "parent" | "keyword" | "keyword-fallback" | "graph-expanded" | "vector" | "graph" | "rerank"
   score_breakdown?: ScoreBreakdown
   semantic_types?: string[]
   source_backed?: boolean
@@ -267,10 +268,56 @@ export interface SearchResult {
   graph?: GraphInfo
 }
 
+export type DirectMatchType = "exact_provision" | "exact_statute" | "parent_statute" | "none"
+
+export interface QueryCitation {
+  raw: string
+  normalized: string
+  base: string
+  chapter: string
+  section: string
+  subsections: string[]
+  parent?: string
+}
+
+export interface QueryCitationRange {
+  raw: string
+  start: string
+  end: string
+  chapter: string
+}
+
+export interface QueryExpansionTerm {
+  term: string
+  normalized_term?: string | null
+  kind: string
+  source_id?: string | null
+  source_citation?: string | null
+  score: number
+}
+
+export interface SearchTimingInfo {
+  total_ms: number
+  retrieval_ms: number
+  graph_ms: number
+  rerank_ms: number
+}
+
+export interface SearchAnalysis {
+  normalized_query: string
+  intent: string
+  citations: QueryCitation[]
+  ranges: QueryCitationRange[]
+  inferred_chapter?: string | null
+  residual_text?: string | null
+  expansion_terms: QueryExpansionTerm[]
+  expansion_count: number
+  applied_filters: string[]
+  timings: SearchTimingInfo
+}
+
 export interface SearchResponse {
   query: string
-  normalized_query?: string
-  intent?: string
   mode: string
   total: number
   limit?: number
@@ -278,11 +325,10 @@ export interface SearchResponse {
   results: SearchResult[]
   facets?: SearchFacets
   warnings?: string[]
+  analysis: SearchAnalysis
   retrieval?: RetrievalInfo
   embeddings?: EmbeddingsInfo
   rerank?: RerankInfo
-  took_ms?: number
-  applied_filters?: string[]
 }
 
 export interface SearchFacets {
@@ -301,14 +347,24 @@ export interface SuggestResult {
   label: string
   kind: string
   href: string
+  citation?: string | null
+  canonical_id?: string | null
+  match_type: DirectMatchType
+  score: number
 }
 
 export interface DirectOpenResponse {
   matched: boolean
-  kind: string
+  match_type: DirectMatchType
+  normalized_query: string
   citation: string
   canonical_id: string
   href: string
+  parent?: {
+    citation: string
+    canonical_id: string
+    href: string
+  } | null
 }
 
 export interface AskAnswer {

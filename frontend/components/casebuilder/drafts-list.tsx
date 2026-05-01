@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { useState } from "react"
 import { Plus, Sparkles, FileText, Search, Clock, CheckCircle2 } from "lucide-react"
 import type { Matter } from "@/lib/casebuilder/types"
-import { matterDraftHref } from "@/lib/casebuilder/routes"
+import { matterComplaintHref, matterDraftHref } from "@/lib/casebuilder/routes"
 import { createDraft, generateDraft } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -19,12 +19,6 @@ interface DraftsListProps {
 }
 
 const DRAFT_TEMPLATES = [
-  {
-    id: "tpl-complaint",
-    label: "Complaint",
-    draftType: "complaint",
-    description: "Civil complaint with claims, parties, jurisdiction, prayer for relief.",
-  },
   {
     id: "tpl-motion-summary",
     label: "Motion for Summary Judgment",
@@ -62,12 +56,12 @@ export function DraftsList({ matter }: DraftsListProps) {
   const [query, setQuery] = useState("")
   const [showCreate, setShowCreate] = useState(false)
   const [title, setTitle] = useState("")
-  const [draftType, setDraftType] = useState("complaint")
+  const [draftType, setDraftType] = useState("motion")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const filtered = matter.drafts.filter((d) =>
-    !query || d.title.toLowerCase().includes(query.toLowerCase()),
+  const filtered = matter.drafts.filter(
+    (d) => d.kind !== "complaint" && (!query || d.title.toLowerCase().includes(query.toLowerCase())),
   )
 
   async function createAndOpen(input: { title: string; draft_type: string; description?: string }, shouldGenerate = false) {
@@ -106,24 +100,11 @@ export function DraftsList({ matter }: DraftsListProps) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5 bg-transparent"
-              disabled={saving}
-              onClick={() =>
-                createAndOpen(
-                  {
-                    title: `${matter.shortName || matter.name} complaint draft`,
-                    draft_type: "complaint",
-                    description: "Template complaint scaffold generated from current facts and claims.",
-                  },
-                  true,
-                )
-              }
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              Generate from claims
+            <Button asChild variant="outline" size="sm" className="gap-1.5 bg-transparent">
+              <Link href={matterComplaintHref(matter.id, "editor")}>
+                <Sparkles className="h-3.5 w-3.5" />
+                Complaint editor
+              </Link>
             </Button>
             <Button size="sm" className="gap-1.5" onClick={() => setShowCreate((value) => !value)}>
               <Plus className="h-3.5 w-3.5" />
@@ -155,7 +136,7 @@ export function DraftsList({ matter }: DraftsListProps) {
               onChange={(event) => setDraftType(event.target.value)}
               className="rounded border border-border bg-background px-3 py-2 font-mono text-xs"
             >
-              {["complaint", "answer", "motion", "declaration", "demand_letter", "legal_memo", "exhibit_list"].map((value) => (
+              {["answer", "motion", "declaration", "demand_letter", "legal_memo", "exhibit_list"].map((value) => (
                 <option key={value} value={value}>
                   {value}
                 </option>
@@ -234,7 +215,7 @@ export function DraftsList({ matter }: DraftsListProps) {
                           draft_type: tpl.draftType,
                           description: tpl.description,
                         },
-                        tpl.draftType === "complaint",
+                        false,
                       )
                     }
                   >

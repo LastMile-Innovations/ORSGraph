@@ -97,7 +97,15 @@ export type DocumentKind =
 
 export type DocumentType = DocumentKind
 
-export type ProcessingStatus = "queued" | "processing" | "processed" | "failed" | "unsupported"
+export type ProcessingStatus =
+  | "queued"
+  | "processing"
+  | "processed"
+  | "review_ready"
+  | "failed"
+  | "unsupported"
+  | "ocr_required"
+  | "transcription_deferred"
 export type StorageStatus = "pending" | "stored" | "metadata_only" | "failed" | "deleted" | string
 
 export interface ObjectBlob {
@@ -153,6 +161,43 @@ export interface IngestionRun {
   retryable: boolean
   produced_node_ids: string[]
   produced_object_keys: string[]
+  parser_id?: string | null
+  parser_version?: string | null
+  chunker_version?: string | null
+  citation_resolver_version?: string | null
+  index_version?: string | null
+}
+
+export interface ComplaintImportProvenance {
+  document_id: string
+  document_version_id?: string | null
+  object_blob_id?: string | null
+  ingestion_run_id?: string | null
+  source_span_id?: string | null
+  parser_id: string
+  parser_version: string
+  byte_start?: number | null
+  byte_end?: number | null
+  char_start?: number | null
+  char_end?: number | null
+}
+
+export interface ComplaintImportResult {
+  document_id: string
+  complaint_id?: string | null
+  status: string
+  message: string
+  parser_id: string
+  likely_complaint: boolean
+  complaint?: ComplaintDraft | null
+}
+
+export interface ComplaintImportResponse {
+  matter_id: string
+  mode: string
+  imported: ComplaintImportResult[]
+  skipped: ComplaintImportResult[]
+  warnings: string[]
 }
 
 export interface SourceSpan {
@@ -662,7 +707,17 @@ export interface CaseAuthoritySearchResponse {
   warnings: string[]
 }
 
-export type AuthorityTargetType = "claim" | "element" | "draft_paragraph"
+export type AuthorityTargetType =
+  | "claim"
+  | "element"
+  | "draft_paragraph"
+  | "complaint_count"
+  | "complaint_paragraph"
+  | "complaint_sentence"
+  | "citation_use"
+  | "work_product"
+  | "work_product_block"
+  | "work_product_anchor"
 
 export interface AuthorityAttachmentResponse {
   matter_id: string
@@ -670,6 +725,763 @@ export interface AuthorityAttachmentResponse {
   target_id: string
   authority: { citation: string; canonical_id: string; reason?: string; pinpoint?: string }
   attached: boolean
+}
+
+// ===== Shared Work Product Editor =====
+
+export type WorkProductType =
+  | "complaint"
+  | "motion"
+  | "answer"
+  | "declaration"
+  | "brief"
+  | "demand_letter"
+  | "legal_memo"
+  | "exhibit_list"
+  | "notice"
+  | "proposed_order"
+
+export interface WorkProduct {
+  work_product_id: string
+  id: string
+  matter_id: string
+  title: string
+  product_type: WorkProductType | string
+  status: string
+  review_status: string
+  setup_stage: string
+  source_draft_id?: string | null
+  source_complaint_id?: string | null
+  created_at: string
+  updated_at: string
+  profile: WorkProductProfile
+  blocks: WorkProductBlock[]
+  marks: WorkProductMark[]
+  anchors: WorkProductAnchor[]
+  findings: WorkProductFinding[]
+  artifacts: WorkProductArtifact[]
+  history: ChangeSet[]
+  ai_commands: WorkProductAiCommandState[]
+  formatting_profile: FormattingProfile
+  rule_pack: RulePack
+}
+
+export interface LegalImpactSummary {
+  affected_counts: string[]
+  affected_elements: string[]
+  affected_facts: string[]
+  affected_evidence: string[]
+  affected_authorities: string[]
+  affected_exhibits: string[]
+  support_status_before?: string | null
+  support_status_after?: string | null
+  qc_warnings_added: string[]
+  qc_warnings_resolved: string[]
+  blocking_issues_added: string[]
+  blocking_issues_resolved: string[]
+}
+
+export interface VersionTargetSummary {
+  target_type: string
+  target_id: string
+  label?: string | null
+}
+
+export interface VersionChangeSummary {
+  text_changes: number
+  support_changes: number
+  citation_changes: number
+  authority_changes: number
+  qc_changes: number
+  export_changes: number
+  ai_changes: number
+  targets_changed: VersionTargetSummary[]
+  risk_level: string
+  user_summary: string
+}
+
+export interface ChangeSet {
+  change_set_id: string
+  id: string
+  matter_id: string
+  subject_id: string
+  branch_id: string
+  snapshot_id: string
+  parent_snapshot_id?: string | null
+  title: string
+  summary: string
+  reason?: string | null
+  actor_type: string
+  actor_id?: string | null
+  source: string
+  created_at: string
+  change_ids: string[]
+  legal_impact: LegalImpactSummary
+}
+
+export interface VersionSnapshot {
+  snapshot_id: string
+  id: string
+  matter_id: string
+  subject_type: string
+  subject_id: string
+  product_type: string
+  profile_id: string
+  branch_id: string
+  sequence_number: number
+  title: string
+  message?: string | null
+  created_at: string
+  created_by: string
+  actor_id?: string | null
+  snapshot_type: string
+  parent_snapshot_ids: string[]
+  document_hash: string
+  support_graph_hash: string
+  qc_state_hash: string
+  formatting_hash: string
+  manifest_hash: string
+  manifest_ref?: string | null
+  full_state_ref?: string | null
+  full_state_inline?: WorkProduct | Record<string, unknown> | null
+  summary: VersionChangeSummary
+}
+
+export interface SnapshotManifest {
+  manifest_id: string
+  id: string
+  snapshot_id: string
+  matter_id: string
+  subject_id: string
+  manifest_hash: string
+  entry_count: number
+  storage_ref?: string | null
+  created_at: string
+}
+
+export interface SnapshotEntityState {
+  entity_state_id: string
+  id: string
+  manifest_id: string
+  snapshot_id: string
+  matter_id: string
+  subject_id: string
+  entity_type: string
+  entity_id: string
+  entity_hash: string
+  state_ref?: string | null
+  state_inline?: Record<string, unknown> | null
+}
+
+export interface VersionChange {
+  change_id: string
+  id: string
+  change_set_id: string
+  snapshot_id: string
+  matter_id: string
+  subject_type: string
+  subject_id: string
+  branch_id: string
+  target_type: string
+  target_id: string
+  operation: string
+  before?: Record<string, unknown> | string | null
+  after?: Record<string, unknown> | string | null
+  before_hash?: string | null
+  after_hash?: string | null
+  summary: string
+  legal_impact: LegalImpactSummary
+  ai_audit_id?: string | null
+  created_at: string
+  created_by: string
+  actor_id?: string | null
+}
+
+export interface VersionBranch {
+  branch_id: string
+  id: string
+  matter_id: string
+  subject_type: string
+  subject_id: string
+  name: string
+  description?: string | null
+  created_from_snapshot_id: string
+  current_snapshot_id: string
+  branch_type: string
+  created_at: string
+  updated_at: string
+  archived_at?: string | null
+}
+
+export interface LegalSupportUse {
+  support_use_id: string
+  id: string
+  matter_id: string
+  subject_id: string
+  branch_id: string
+  target_type: string
+  target_id: string
+  source_type: string
+  source_id: string
+  relation: string
+  status: string
+  quote?: string | null
+  pinpoint?: string | null
+  confidence?: number | null
+  created_snapshot_id: string
+  retired_snapshot_id?: string | null
+}
+
+export interface AIEditAudit {
+  ai_audit_id: string
+  id: string
+  matter_id: string
+  subject_type: string
+  subject_id: string
+  target_type: string
+  target_id: string
+  command: string
+  prompt_template_id?: string | null
+  model?: string | null
+  provider_mode: string
+  input_fact_ids: string[]
+  input_evidence_ids: string[]
+  input_authority_ids: string[]
+  input_snapshot_id: string
+  output_text?: string | null
+  inserted_text?: string | null
+  user_action: string
+  warnings: string[]
+  created_at: string
+}
+
+export interface CaseHistoryMilestone {
+  milestone_id: string
+  id: string
+  matter_id: string
+  subject_id: string
+  snapshot_id: string
+  label: string
+  notes?: string | null
+  created_at: string
+}
+
+export interface RestoreVersionResponse {
+  restored: boolean
+  dry_run: boolean
+  warnings: string[]
+  snapshot_id: string
+  change_set?: ChangeSet | null
+  result?: WorkProduct | null
+}
+
+export interface VersionTextDiff {
+  target_type: string
+  target_id: string
+  title: string
+  status: string
+  before?: string | null
+  after?: string | null
+}
+
+export interface CompareVersionsResponse {
+  matter_id: string
+  subject_id: string
+  from_snapshot_id: string
+  to_snapshot_id: string
+  layers: string[]
+  summary: VersionChangeSummary
+  text_diffs: VersionTextDiff[]
+}
+
+export interface WorkProductProfile {
+  profile_id: string
+  product_type: string
+  name: string
+  jurisdiction: string
+  version: string
+  route_slug: string
+  required_block_roles: string[]
+  optional_block_roles: string[]
+  supports_rich_text: boolean
+}
+
+export interface WorkProductBlock {
+  block_id: string
+  id: string
+  matter_id: string
+  work_product_id: string
+  block_type: string
+  role: string
+  title: string
+  text: string
+  ordinal: number
+  parent_block_id?: string | null
+  fact_ids: string[]
+  evidence_ids: string[]
+  authorities: { citation: string; canonical_id: string; reason?: string; pinpoint?: string }[]
+  mark_ids: string[]
+  locked: boolean
+  review_status: string
+  prosemirror_json?: Record<string, unknown> | null
+}
+
+export interface WorkProductMark {
+  mark_id: string
+  id: string
+  matter_id: string
+  work_product_id: string
+  block_id: string
+  mark_type: string
+  from_offset: number
+  to_offset: number
+  label: string
+  target_type: string
+  target_id: string
+  status: string
+}
+
+export interface WorkProductAnchor {
+  anchor_id: string
+  id: string
+  matter_id: string
+  work_product_id: string
+  block_id: string
+  anchor_type: string
+  target_type: string
+  target_id: string
+  relation: string
+  citation?: string | null
+  canonical_id?: string | null
+  pinpoint?: string | null
+  quote?: string | null
+  status: string
+}
+
+export interface WorkProductFinding {
+  finding_id: string
+  id: string
+  matter_id: string
+  work_product_id: string
+  rule_id: string
+  category: string
+  severity: "info" | "warning" | "serious" | "blocking" | string
+  target_type: string
+  target_id: string
+  message: string
+  explanation: string
+  suggested_fix: string
+  primary_action: WorkProductAction
+  status: "open" | "resolved" | "ignored" | string
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkProductAction {
+  action_id: string
+  label: string
+  action_type: string
+  href?: string | null
+  target_type: string
+  target_id: string
+}
+
+export interface WorkProductArtifact {
+  artifact_id: string
+  id: string
+  matter_id: string
+  work_product_id: string
+  format: string
+  profile: string
+  mode: string
+  status: string
+  download_url: string
+  page_count: number
+  generated_at: string
+  warnings: string[]
+  content_preview: string
+  snapshot_id?: string | null
+  artifact_hash?: string | null
+  render_profile_hash?: string | null
+  qc_status_at_export?: string | null
+  changed_since_export?: boolean | null
+  immutable?: boolean | null
+}
+
+export interface WorkProductHistoryEvent {
+  event_id: string
+  id: string
+  matter_id: string
+  work_product_id: string
+  event_type: string
+  target_type: string
+  target_id: string
+  summary: string
+  timestamp: string
+}
+
+export interface WorkProductAiCommandState {
+  command_id: string
+  label: string
+  status: string
+  mode: string
+  description: string
+  last_message?: string | null
+}
+
+export interface WorkProductPreviewResponse {
+  work_product_id: string
+  matter_id: string
+  html: string
+  plain_text: string
+  page_count: number
+  warnings: string[]
+  generated_at: string
+  review_label: string
+}
+
+// ===== Structured Complaint Editor =====
+
+export interface ComplaintDraft {
+  complaint_id: string
+  id: string
+  matter_id: string
+  title: string
+  status: string
+  review_status: string
+  setup_stage: string
+  active_profile_id: string
+  created_at: string
+  updated_at: string
+  caption: ComplaintCaption
+  parties: ComplaintParty[]
+  sections: ComplaintSection[]
+  counts: ComplaintCount[]
+  paragraphs: PleadingParagraph[]
+  relief: ReliefRequest[]
+  signature: SignatureBlock
+  certificate_of_service?: CertificateOfService | null
+  formatting_profile: FormattingProfile
+  rule_pack: RulePack
+  findings: RuleCheckFinding[]
+  export_artifacts: ExportArtifact[]
+  history: ComplaintHistoryEvent[]
+  next_actions: ComplaintNextAction[]
+  ai_commands: ComplaintAiCommandState[]
+  filing_packet: FilingPacket
+  import_provenance?: ComplaintImportProvenance | null
+}
+
+export interface ComplaintCaption {
+  court_name: string
+  county: string
+  case_number?: string | null
+  document_title: string
+  plaintiff_names: string[]
+  defendant_names: string[]
+  jury_demand: boolean
+  jurisdiction: string
+  venue: string
+}
+
+export interface ComplaintParty {
+  party_id: string
+  matter_party_id?: string | null
+  name: string
+  role: string
+  party_type: string
+  represented_by?: string | null
+}
+
+export interface ComplaintSection {
+  section_id: string
+  id: string
+  matter_id: string
+  complaint_id: string
+  title: string
+  section_type: string
+  ordinal: number
+  paragraph_ids: string[]
+  count_ids: string[]
+  review_status: string
+}
+
+export interface ComplaintCount {
+  count_id: string
+  id: string
+  matter_id: string
+  complaint_id: string
+  ordinal: number
+  title: string
+  claim_id?: string | null
+  legal_theory: string
+  against_party_ids: string[]
+  element_ids: string[]
+  fact_ids: string[]
+  evidence_ids: string[]
+  authorities: { citation: string; canonical_id: string; reason?: string; pinpoint?: string }[]
+  relief_ids: string[]
+  paragraph_ids: string[]
+  incorporation_range?: string | null
+  health: string
+  weaknesses: string[]
+}
+
+export interface PleadingParagraph {
+  paragraph_id: string
+  id: string
+  matter_id: string
+  complaint_id: string
+  section_id?: string | null
+  count_id?: string | null
+  number: number
+  ordinal: number
+  display_number?: string | null
+  original_label?: string | null
+  source_span_id?: string | null
+  import_provenance?: ComplaintImportProvenance | null
+  role: string
+  text: string
+  sentences: PleadingSentence[]
+  fact_ids: string[]
+  evidence_uses: EvidenceUse[]
+  citation_uses: CitationUse[]
+  exhibit_references: ExhibitReference[]
+  rule_finding_ids: string[]
+  locked: boolean
+  review_status: string
+}
+
+export interface PleadingSentence {
+  sentence_id: string
+  id: string
+  matter_id: string
+  complaint_id: string
+  paragraph_id: string
+  ordinal: number
+  text: string
+  fact_ids: string[]
+  evidence_use_ids: string[]
+  citation_use_ids: string[]
+  review_status: string
+}
+
+export interface CitationUse {
+  citation_use_id: string
+  id: string
+  matter_id: string
+  complaint_id: string
+  target_type: string
+  target_id: string
+  citation: string
+  canonical_id?: string | null
+  pinpoint?: string | null
+  quote?: string | null
+  status: string
+  currentness: string
+  scope_warning?: string | null
+}
+
+export interface EvidenceUse {
+  evidence_use_id: string
+  id: string
+  matter_id: string
+  complaint_id: string
+  target_type: string
+  target_id: string
+  fact_id?: string | null
+  evidence_id?: string | null
+  document_id?: string | null
+  source_span_id?: string | null
+  relation: string
+  quote?: string | null
+  status: string
+}
+
+export interface ExhibitReference {
+  exhibit_reference_id: string
+  id: string
+  matter_id: string
+  complaint_id: string
+  target_type: string
+  target_id: string
+  exhibit_label: string
+  document_id?: string | null
+  evidence_id?: string | null
+  status: string
+}
+
+export interface ReliefRequest {
+  relief_id: string
+  id: string
+  matter_id: string
+  complaint_id: string
+  category: string
+  text: string
+  amount?: string | null
+  authority_ids: string[]
+  supported: boolean
+}
+
+export interface SignatureBlock {
+  name: string
+  bar_number?: string | null
+  firm?: string | null
+  address: string
+  phone: string
+  email: string
+  signature_date?: string | null
+}
+
+export interface CertificateOfService {
+  certificate_id: string
+  method: string
+  served_parties: string[]
+  service_date?: string | null
+  text: string
+  review_status: string
+}
+
+export interface FormattingProfile {
+  profile_id: string
+  name: string
+  jurisdiction: string
+  line_numbers: boolean
+  double_spaced: boolean
+  first_page_top_blank_inches: number
+  margin_top_inches: number
+  margin_bottom_inches: number
+  margin_left_inches: number
+  margin_right_inches: number
+  font_family: string
+  font_size_pt: number
+}
+
+export interface RulePack {
+  rule_pack_id: string
+  name: string
+  jurisdiction: string
+  version: string
+  effective_date: string
+  rules: RuleDefinition[]
+}
+
+export interface RuleDefinition {
+  rule_id: string
+  source_citation: string
+  source_url: string
+  severity: string
+  target_type: string
+  category: string
+  message: string
+  explanation: string
+  suggested_fix: string
+  auto_fix_available: boolean
+}
+
+export interface RuleCheckFinding {
+  finding_id: string
+  id: string
+  matter_id: string
+  complaint_id: string
+  rule_id: string
+  category: string
+  severity: "info" | "warning" | "serious" | "blocking" | string
+  target_type: string
+  target_id: string
+  message: string
+  explanation: string
+  suggested_fix: string
+  primary_action: ComplaintAction
+  status: "open" | "resolved" | "ignored" | string
+  created_at: string
+  updated_at: string
+}
+
+export interface ComplaintAction {
+  action_id: string
+  label: string
+  action_type: string
+  href?: string | null
+  target_type: string
+  target_id: string
+}
+
+export interface ComplaintNextAction {
+  action_id: string
+  priority: string
+  label: string
+  detail: string
+  action_type: string
+  target_type: string
+  target_id: string
+  href?: string | null
+}
+
+export interface ExportArtifact {
+  artifact_id: string
+  id: string
+  matter_id: string
+  complaint_id: string
+  format: string
+  profile: string
+  mode: string
+  status: string
+  download_url: string
+  page_count: number
+  generated_at: string
+  warnings: string[]
+  content_preview: string
+}
+
+export interface ComplaintHistoryEvent {
+  event_id: string
+  id: string
+  matter_id: string
+  complaint_id: string
+  event_type: string
+  target_type: string
+  target_id: string
+  summary: string
+  timestamp: string
+}
+
+export interface ComplaintAiCommandState {
+  command_id: string
+  label: string
+  status: string
+  mode: string
+  description: string
+  last_message?: string | null
+}
+
+export interface FilingPacket {
+  packet_id: string
+  matter_id: string
+  complaint_id: string
+  status: string
+  items: FilingPacketItem[]
+  warnings: string[]
+}
+
+export interface FilingPacketItem {
+  item_id: string
+  label: string
+  item_type: string
+  status: string
+  artifact_id?: string | null
+  warning?: string | null
+}
+
+export interface ComplaintPreviewResponse {
+  complaint_id: string
+  matter_id: string
+  html: string
+  plain_text: string
+  page_count: number
+  warnings: string[]
+  generated_at: string
+  review_label: string
 }
 
 // ===== Ask Matter (chat) =====
@@ -749,6 +1561,7 @@ export interface Matter extends MatterSummary {
   deadlines: Deadline[]
   tasks: CaseTask[]
   drafts: Draft[]
+  work_products: WorkProduct[]
   fact_check_findings: CaseFactCheckFinding[]
   citation_check_findings: CaseCitationCheckFinding[]
   chatHistory: MatterChatMessage[]

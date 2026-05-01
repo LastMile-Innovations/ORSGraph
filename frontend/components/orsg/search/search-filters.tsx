@@ -148,8 +148,11 @@ export function SearchFilters({
             </span>
             <Input
               value={filters.chapter}
-              onChange={(event) => setFilter("chapter", event.target.value.replace(/[^\d]/g, ""))}
-              placeholder="90"
+              onChange={(event) =>
+                setFilter("chapter", event.target.value.replace(/[^0-9A-Za-z]/g, "").toUpperCase())
+              }
+              placeholder="90 or 419B"
+              maxLength={4}
               className="h-8 font-mono text-xs"
             />
           </label>

@@ -11,6 +11,14 @@ use axum::{
     routing::{get, patch, post},
     Json, Router,
 };
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct CompareWorkProductParams {
+    from: String,
+    to: Option<String>,
+    layers: Option<String>,
+}
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -47,6 +55,10 @@ pub fn routes() -> Router<AppState> {
             post(extract_document),
         )
         .route(
+            "/matters/:matter_id/documents/:document_id/import-complaint",
+            post(import_document_complaint),
+        )
+        .route(
             "/matters/:matter_id/facts",
             get(list_facts).post(create_fact),
         )
@@ -81,6 +93,198 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/matters/:matter_id/deadlines", get(list_deadlines))
         .route("/matters/:matter_id/tasks", get(list_tasks))
+        .route(
+            "/matters/:matter_id/work-products",
+            get(list_work_products).post(create_work_product),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id",
+            get(get_work_product).patch(patch_work_product),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/blocks",
+            post(create_work_product_block),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/blocks/:block_id",
+            patch(patch_work_product_block),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/links",
+            post(link_work_product_support),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/qc/run",
+            post(run_work_product_qc),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/qc/findings",
+            get(list_work_product_findings),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/qc/findings/:finding_id",
+            patch(patch_work_product_finding),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/preview",
+            get(preview_work_product),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/export",
+            post(export_work_product),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/artifacts/:artifact_id",
+            get(get_work_product_artifact),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/artifacts/:artifact_id/download",
+            get(download_work_product_artifact),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/ai/commands",
+            post(run_work_product_ai_command),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/history",
+            get(work_product_history),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/change-sets/:change_set_id",
+            get(get_work_product_change_set),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/snapshots",
+            get(list_work_product_snapshots).post(create_work_product_snapshot),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/snapshots/:snapshot_id",
+            get(get_work_product_snapshot),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/compare",
+            get(compare_work_product_snapshots),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/restore",
+            post(restore_work_product_version),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/export-history",
+            get(work_product_export_history),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/ai-audit",
+            get(work_product_ai_audit),
+        )
+        .route(
+            "/matters/:matter_id/complaints",
+            get(list_complaints).post(create_complaint),
+        )
+        .route(
+            "/matters/:matter_id/complaints/import",
+            post(import_complaints),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id",
+            get(get_complaint).patch(patch_complaint),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/setup",
+            patch(update_complaint_setup),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/sections",
+            post(create_complaint_section),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/counts",
+            post(create_complaint_count),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/paragraphs",
+            post(create_complaint_paragraph),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/paragraphs/renumber",
+            post(renumber_complaint_paragraphs),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/paragraphs/:paragraph_id",
+            patch(patch_complaint_paragraph),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/links",
+            post(link_complaint_support),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/qc/run",
+            post(run_complaint_qc),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/qc/findings",
+            get(list_complaint_findings),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/qc/findings/:finding_id",
+            patch(patch_complaint_finding),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/preview",
+            get(preview_complaint),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/export",
+            post(export_complaint),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/artifacts/:artifact_id",
+            get(get_complaint_artifact),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/artifacts/:artifact_id/download",
+            get(download_complaint_artifact),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/ai/commands",
+            post(run_complaint_ai_command),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/history",
+            get(work_product_history),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/change-sets/:change_set_id",
+            get(get_work_product_change_set),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/snapshots",
+            get(list_work_product_snapshots).post(create_work_product_snapshot),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/snapshots/:snapshot_id",
+            get(get_work_product_snapshot),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/compare",
+            get(compare_work_product_snapshots),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/restore",
+            post(restore_work_product_version),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/export-history",
+            get(work_product_export_history),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/ai-audit",
+            get(work_product_ai_audit),
+        )
+        .route(
+            "/matters/:matter_id/complaints/:complaint_id/filing-packet",
+            get(filing_packet),
+        )
         .route(
             "/matters/:matter_id/drafts",
             get(list_drafts).post(create_draft),
@@ -274,6 +478,20 @@ async fn extract_document(
         state
             .casebuilder_service
             .extract_document(&matter_id, &document_id)
+            .await?,
+    ))
+}
+
+async fn import_document_complaint(
+    State(state): State<AppState>,
+    Path((matter_id, document_id)): Path<(String, String)>,
+    Json(mut request): Json<ComplaintImportRequest>,
+) -> ApiResult<Json<ComplaintImportResponse>> {
+    request.document_id = Some(document_id.clone());
+    Ok(Json(
+        state
+            .casebuilder_service
+            .import_complaint_from_document(&matter_id, &document_id, request)
             .await?,
     ))
 }
@@ -480,6 +698,584 @@ async fn list_tasks(
     ))
 }
 
+async fn list_complaints(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+) -> ApiResult<Json<Vec<ComplaintDraft>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .list_complaints(&matter_id)
+            .await?,
+    ))
+}
+
+async fn create_complaint(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+    Json(request): Json<CreateComplaintRequest>,
+) -> ApiResult<Json<ComplaintDraft>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_complaint(&matter_id, request)
+            .await?,
+    ))
+}
+
+async fn import_complaints(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+    Json(request): Json<ComplaintImportRequest>,
+) -> ApiResult<Json<ComplaintImportResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .import_complaints(&matter_id, request)
+            .await?,
+    ))
+}
+
+async fn get_complaint(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id)): Path<(String, String)>,
+) -> ApiResult<Json<ComplaintDraft>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .get_complaint(&matter_id, &complaint_id)
+            .await?,
+    ))
+}
+
+async fn patch_complaint(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id)): Path<(String, String)>,
+    Json(request): Json<PatchComplaintRequest>,
+) -> ApiResult<Json<ComplaintDraft>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_complaint(&matter_id, &complaint_id, request)
+            .await?,
+    ))
+}
+
+async fn update_complaint_setup(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id)): Path<(String, String)>,
+    Json(request): Json<PatchComplaintRequest>,
+) -> ApiResult<Json<ComplaintDraft>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .update_complaint_setup(&matter_id, &complaint_id, request)
+            .await?,
+    ))
+}
+
+async fn create_complaint_section(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id)): Path<(String, String)>,
+    Json(request): Json<CreateComplaintSectionRequest>,
+) -> ApiResult<Json<ComplaintDraft>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_complaint_section(&matter_id, &complaint_id, request)
+            .await?,
+    ))
+}
+
+async fn create_complaint_count(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id)): Path<(String, String)>,
+    Json(request): Json<CreateComplaintCountRequest>,
+) -> ApiResult<Json<ComplaintDraft>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_complaint_count(&matter_id, &complaint_id, request)
+            .await?,
+    ))
+}
+
+async fn create_complaint_paragraph(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id)): Path<(String, String)>,
+    Json(request): Json<CreateComplaintParagraphRequest>,
+) -> ApiResult<Json<ComplaintDraft>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_complaint_paragraph(&matter_id, &complaint_id, request)
+            .await?,
+    ))
+}
+
+async fn patch_complaint_paragraph(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id, paragraph_id)): Path<(String, String, String)>,
+    Json(request): Json<PatchComplaintParagraphRequest>,
+) -> ApiResult<Json<ComplaintDraft>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_complaint_paragraph(&matter_id, &complaint_id, &paragraph_id, request)
+            .await?,
+    ))
+}
+
+async fn renumber_complaint_paragraphs(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id)): Path<(String, String)>,
+) -> ApiResult<Json<ComplaintDraft>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .renumber_complaint_paragraphs(&matter_id, &complaint_id)
+            .await?,
+    ))
+}
+
+async fn link_complaint_support(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id)): Path<(String, String)>,
+    Json(request): Json<ComplaintLinkRequest>,
+) -> ApiResult<Json<ComplaintDraft>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .link_complaint_support(&matter_id, &complaint_id, request)
+            .await?,
+    ))
+}
+
+async fn run_complaint_qc(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id)): Path<(String, String)>,
+) -> ApiResult<Json<AiActionResponse<Vec<RuleCheckFinding>>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .run_complaint_qc(&matter_id, &complaint_id)
+            .await?,
+    ))
+}
+
+async fn list_complaint_findings(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id)): Path<(String, String)>,
+) -> ApiResult<Json<Vec<RuleCheckFinding>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .list_complaint_findings(&matter_id, &complaint_id)
+            .await?,
+    ))
+}
+
+async fn patch_complaint_finding(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id, finding_id)): Path<(String, String, String)>,
+    Json(request): Json<PatchRuleFindingRequest>,
+) -> ApiResult<Json<ComplaintDraft>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_complaint_finding(&matter_id, &complaint_id, &finding_id, request)
+            .await?,
+    ))
+}
+
+async fn preview_complaint(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id)): Path<(String, String)>,
+) -> ApiResult<Json<ComplaintPreviewResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .preview_complaint(&matter_id, &complaint_id)
+            .await?,
+    ))
+}
+
+async fn export_complaint(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id)): Path<(String, String)>,
+    Json(request): Json<ExportComplaintRequest>,
+) -> ApiResult<Json<ExportArtifact>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .export_complaint(&matter_id, &complaint_id, request)
+            .await?,
+    ))
+}
+
+async fn get_complaint_artifact(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id, artifact_id)): Path<(String, String, String)>,
+) -> ApiResult<Json<ExportArtifact>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .get_complaint_artifact(&matter_id, &complaint_id, &artifact_id)
+            .await?,
+    ))
+}
+
+async fn download_complaint_artifact(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id, artifact_id)): Path<(String, String, String)>,
+) -> ApiResult<Json<ComplaintDownloadResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .download_complaint_artifact(&matter_id, &complaint_id, &artifact_id)
+            .await?,
+    ))
+}
+
+async fn run_complaint_ai_command(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id)): Path<(String, String)>,
+    Json(request): Json<ComplaintAiCommandRequest>,
+) -> ApiResult<Json<AiActionResponse<ComplaintDraft>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .run_complaint_ai_command(&matter_id, &complaint_id, request)
+            .await?,
+    ))
+}
+
+async fn filing_packet(
+    State(state): State<AppState>,
+    Path((matter_id, complaint_id)): Path<(String, String)>,
+) -> ApiResult<Json<FilingPacket>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .filing_packet(&matter_id, &complaint_id)
+            .await?,
+    ))
+}
+
+async fn list_work_products(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+) -> ApiResult<Json<Vec<WorkProduct>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .list_work_products(&matter_id)
+            .await?,
+    ))
+}
+
+async fn create_work_product(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+    Json(request): Json<CreateWorkProductRequest>,
+) -> ApiResult<Json<WorkProduct>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_work_product(&matter_id, request)
+            .await?,
+    ))
+}
+
+async fn get_work_product(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+) -> ApiResult<Json<WorkProduct>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .get_work_product(&matter_id, &work_product_id)
+            .await?,
+    ))
+}
+
+async fn patch_work_product(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+    Json(request): Json<PatchWorkProductRequest>,
+) -> ApiResult<Json<WorkProduct>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_work_product(&matter_id, &work_product_id, request)
+            .await?,
+    ))
+}
+
+async fn create_work_product_block(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+    Json(request): Json<CreateWorkProductBlockRequest>,
+) -> ApiResult<Json<WorkProduct>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_work_product_block(&matter_id, &work_product_id, request)
+            .await?,
+    ))
+}
+
+async fn patch_work_product_block(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id, block_id)): Path<(String, String, String)>,
+    Json(request): Json<PatchWorkProductBlockRequest>,
+) -> ApiResult<Json<WorkProduct>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_work_product_block(&matter_id, &work_product_id, &block_id, request)
+            .await?,
+    ))
+}
+
+async fn link_work_product_support(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+    Json(request): Json<WorkProductLinkRequest>,
+) -> ApiResult<Json<WorkProduct>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .link_work_product_support(&matter_id, &work_product_id, request)
+            .await?,
+    ))
+}
+
+async fn run_work_product_qc(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+) -> ApiResult<Json<AiActionResponse<Vec<WorkProductFinding>>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .run_work_product_qc(&matter_id, &work_product_id)
+            .await?,
+    ))
+}
+
+async fn list_work_product_findings(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+) -> ApiResult<Json<Vec<WorkProductFinding>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .list_work_product_findings(&matter_id, &work_product_id)
+            .await?,
+    ))
+}
+
+async fn patch_work_product_finding(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id, finding_id)): Path<(String, String, String)>,
+    Json(request): Json<PatchWorkProductFindingRequest>,
+) -> ApiResult<Json<WorkProduct>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_work_product_finding(&matter_id, &work_product_id, &finding_id, request)
+            .await?,
+    ))
+}
+
+async fn preview_work_product(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+) -> ApiResult<Json<WorkProductPreviewResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .preview_work_product(&matter_id, &work_product_id)
+            .await?,
+    ))
+}
+
+async fn export_work_product(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+    Json(request): Json<ExportWorkProductRequest>,
+) -> ApiResult<Json<WorkProductArtifact>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .export_work_product(&matter_id, &work_product_id, request)
+            .await?,
+    ))
+}
+
+async fn get_work_product_artifact(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id, artifact_id)): Path<(String, String, String)>,
+) -> ApiResult<Json<WorkProductArtifact>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .get_work_product_artifact(&matter_id, &work_product_id, &artifact_id)
+            .await?,
+    ))
+}
+
+async fn download_work_product_artifact(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id, artifact_id)): Path<(String, String, String)>,
+) -> ApiResult<Json<WorkProductDownloadResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .download_work_product_artifact(&matter_id, &work_product_id, &artifact_id)
+            .await?,
+    ))
+}
+
+async fn run_work_product_ai_command(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+    Json(request): Json<WorkProductAiCommandRequest>,
+) -> ApiResult<Json<AiActionResponse<WorkProduct>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .run_work_product_ai_command(&matter_id, &work_product_id, request)
+            .await?,
+    ))
+}
+
+async fn work_product_history(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+) -> ApiResult<Json<Vec<ChangeSet>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .work_product_history(&matter_id, &work_product_id)
+            .await?,
+    ))
+}
+
+async fn get_work_product_change_set(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id, change_set_id)): Path<(String, String, String)>,
+) -> ApiResult<Json<ChangeSet>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .get_work_product_change_set(&matter_id, &work_product_id, &change_set_id)
+            .await?,
+    ))
+}
+
+async fn list_work_product_snapshots(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+) -> ApiResult<Json<Vec<VersionSnapshot>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .list_work_product_snapshots(&matter_id, &work_product_id)
+            .await?,
+    ))
+}
+
+async fn get_work_product_snapshot(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id, snapshot_id)): Path<(String, String, String)>,
+) -> ApiResult<Json<VersionSnapshot>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .get_work_product_snapshot(&matter_id, &work_product_id, &snapshot_id)
+            .await?,
+    ))
+}
+
+async fn create_work_product_snapshot(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+    Json(request): Json<CreateVersionSnapshotRequest>,
+) -> ApiResult<Json<VersionSnapshot>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_work_product_snapshot(&matter_id, &work_product_id, request)
+            .await?,
+    ))
+}
+
+async fn compare_work_product_snapshots(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+    Query(params): Query<CompareWorkProductParams>,
+) -> ApiResult<Json<CompareVersionsResponse>> {
+    let layers = params
+        .layers
+        .as_deref()
+        .unwrap_or("text")
+        .split(',')
+        .map(str::trim)
+        .filter(|layer| !layer.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    Ok(Json(
+        state
+            .casebuilder_service
+            .compare_work_product_snapshots(
+                &matter_id,
+                &work_product_id,
+                &params.from,
+                params.to.as_deref(),
+                layers,
+            )
+            .await?,
+    ))
+}
+
+async fn restore_work_product_version(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+    Json(request): Json<RestoreVersionRequest>,
+) -> ApiResult<Json<RestoreVersionResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .restore_work_product_version(&matter_id, &work_product_id, request)
+            .await?,
+    ))
+}
+
+async fn work_product_export_history(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+) -> ApiResult<Json<Vec<WorkProductArtifact>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .work_product_export_history(&matter_id, &work_product_id)
+            .await?,
+    ))
+}
+
+async fn work_product_ai_audit(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+) -> ApiResult<Json<Vec<AIEditAudit>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .work_product_ai_audit(&matter_id, &work_product_id)
+            .await?,
+    ))
+}
+
 async fn list_drafts(
     State(state): State<AppState>,
     Path(matter_id): Path<String>,
@@ -575,7 +1371,7 @@ async fn authority_search(
             r#type: Some("all".to_string()),
             chapter: None,
             status: None,
-            mode: Some(SearchMode::Hybrid),
+            mode: Some(SearchMode::Auto),
             limit: params.limit.or(Some(10)),
             offset: Some(0),
             include: None,

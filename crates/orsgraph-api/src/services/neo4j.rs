@@ -43,6 +43,10 @@ impl Neo4jService {
             "CREATE INDEX source_note_version_id IF NOT EXISTS FOR (n:SourceNote) ON (n.version_id)",
             "CREATE INDEX source_note_provision_id IF NOT EXISTS FOR (n:SourceNote) ON (n.provision_id)",
             "CREATE INDEX source_note_canonical_id IF NOT EXISTS FOR (n:SourceNote) ON (n.canonical_id)",
+            "CREATE INDEX sidebar_saved_search_scope IF NOT EXISTS FOR (n:SavedSearch) ON (n.scope)",
+            "CREATE INDEX sidebar_saved_search_id IF NOT EXISTS FOR (n:SavedSearch) ON (n.saved_search_id)",
+            "CREATE INDEX sidebar_saved_statute_scope IF NOT EXISTS FOR (n:SavedStatute) ON (n.scope)",
+            "CREATE INDEX sidebar_recent_statute_scope IF NOT EXISTS FOR (n:RecentStatute) ON (n.scope)",
             "CREATE INDEX status_event_canonical_id IF NOT EXISTS FOR (n:StatusEvent) ON (n.canonical_id)",
             "CREATE INDEX status_event_version_id IF NOT EXISTS FOR (n:StatusEvent) ON (n.version_id)",
             "CREATE INDEX temporal_effect_canonical_id IF NOT EXISTS FOR (n:TemporalEffect) ON (n.canonical_id)",
@@ -107,6 +111,66 @@ impl Neo4jService {
             .await
             .map_err(ApiError::Neo4jConnection)?
             .is_some())
+    }
+
+    pub async fn search_exact_statute(
+        &self,
+        citation: &str,
+    ) -> ApiResult<Option<SearchResultModel>> {
+        let citation_upper = citation.to_ascii_uppercase();
+        let mut result = self
+            .graph
+            .execute(
+                query(
+                    "MATCH (n:LegalTextIdentity)
+                     WHERE n.citation = $c OR n.citation = $c_upper OR n.canonical_id = $c
+                     RETURN n.canonical_id as id, n.citation as citation, n.title as title,
+                            n.chapter as chapter, n.status as status, 'statute' as kind,
+                            coalesce(n.text, n.title) as text
+                     LIMIT 1",
+                )
+                .param("c", citation)
+                .param("c_upper", citation_upper),
+            )
+            .await
+            .map_err(ApiError::Neo4jConnection)?;
+
+        result
+            .next()
+            .await
+            .map_err(ApiError::Neo4jConnection)?
+            .map(|row| self.row_to_search_result(row, 4.0))
+            .transpose()
+    }
+
+    pub async fn search_exact_provision(
+        &self,
+        citation: &str,
+    ) -> ApiResult<Option<SearchResultModel>> {
+        let citation_upper = citation.to_ascii_uppercase();
+        let mut result = self
+            .graph
+            .execute(
+                query(
+                    "MATCH (n:Provision)
+                     WHERE n.display_citation = $c OR n.display_citation = $c_upper
+                     RETURN n.provision_id as id, n.display_citation as citation, null as title,
+                            n.chapter as chapter, n.status as status, 'provision' as kind,
+                            n.text as text
+                     LIMIT 1",
+                )
+                .param("c", citation)
+                .param("c_upper", citation_upper),
+            )
+            .await
+            .map_err(ApiError::Neo4jConnection)?;
+
+        result
+            .next()
+            .await
+            .map_err(ApiError::Neo4jConnection)?
+            .map(|row| self.row_to_search_result(row, 4.0))
+            .transpose()
     }
 
     pub async fn get_stats(&self) -> ApiResult<StatsResponse> {
@@ -245,6 +309,52 @@ impl Neo4jService {
             }
         }
 
+        Ok(results)
+    }
+
+    pub async fn search_citation_range(
+        &self,
+        range: &QueryCitationRange,
+        limit: u32,
+    ) -> ApiResult<Vec<SearchResultModel>> {
+        let upper_end = format!("{}~", range.end);
+        let mut result = self
+            .graph
+            .execute(
+                query(
+                    "CALL {
+                       MATCH (n:LegalTextIdentity)
+                       WHERE n.chapter = $chapter
+                         AND n.citation >= $start
+                         AND n.citation <= $upper_end
+                       RETURN n.canonical_id as id, n.citation as citation, n.title as title,
+                              n.chapter as chapter, n.status as status, 'statute' as kind,
+                              coalesce(n.text, n.title) as text
+                       UNION
+                       MATCH (n:Provision)
+                       WHERE n.chapter = $chapter
+                         AND n.display_citation >= $start
+                         AND n.display_citation <= $upper_end
+                       RETURN n.provision_id as id, n.display_citation as citation, null as title,
+                              n.chapter as chapter, n.status as status, 'provision' as kind,
+                              n.text as text
+                     }
+                     RETURN id, citation, title, chapter, status, kind, text
+                     ORDER BY citation
+                     LIMIT $limit",
+                )
+                .param("chapter", range.chapter.clone())
+                .param("start", range.start.clone())
+                .param("upper_end", upper_end)
+                .param("limit", limit.max(1) as i64),
+            )
+            .await
+            .map_err(ApiError::Neo4jConnection)?;
+
+        let mut results = Vec::new();
+        while let Some(row) = result.next().await.map_err(ApiError::Neo4jConnection)? {
+            results.push(self.row_to_search_result(row, 3.0)?);
+        }
         Ok(results)
     }
 
@@ -401,6 +511,7 @@ impl Neo4jService {
                     rerank: None,
                     graph: None,
                     authority: None,
+                    expansion: None,
                     penalties: None,
                 });
                 results.push(result);
@@ -527,6 +638,7 @@ impl Neo4jService {
                 rerank: None,
                 graph: None,
                 authority: None,
+                expansion: None,
                 penalties: None,
             });
             results.push(search_result);
@@ -698,6 +810,7 @@ impl Neo4jService {
                             rerank: result.rerank_score,
                             graph: Some(*graph_score),
                             authority: None,
+                            expansion: None,
                             penalties: None,
                         });
                     }
@@ -2015,27 +2128,176 @@ impl Neo4jService {
             .unwrap_or(0) as u64)
     }
 
-    pub async fn suggest(&self, q: &str, limit: u32) -> ApiResult<Vec<SuggestResult>> {
+    pub async fn expand_query_terms(
+        &self,
+        q: &str,
+        filters: &SearchRetrievalFilters,
+        limit: u32,
+    ) -> ApiResult<Vec<QueryExpansionTerm>> {
+        let q_norm = q.trim().to_ascii_lowercase();
+        if q_norm.len() < 3 {
+            return Ok(Vec::new());
+        }
+
         let mut result = self.graph.execute(
-            query("MATCH (n:LegalTextIdentity) WHERE toUpper(n.citation) STARTS WITH toUpper($q) OR toUpper(n.title) CONTAINS toUpper($q)
-                   RETURN n.citation as label, 'statute' as kind, '/statutes/' + n.citation as href
-                   UNION
-                   MATCH (n:DefinedTerm) WHERE toUpper(n.term) STARTS WITH toUpper($q)
-                   RETURN n.term as label, 'definition' as kind, '/search?q=' + n.term as href
-                   UNION
-                   MATCH (n:SourceDocument) WHERE toUpper(n.title) CONTAINS toUpper($q)
-                   RETURN n.title as label, 'chapter' as kind, '/statutes/' + n.source_document_id as href
+            query("CALL {
+                     MATCH (n:DefinedTerm)
+                     WHERE coalesce(n.term, '') <> ''
+                       AND (
+                         toLower(n.term) CONTAINS $q
+                         OR toLower(coalesce(n.normalized_term, '')) CONTAINS $q
+                         OR $q CONTAINS toLower(n.term)
+                       )
+                     RETURN n.term AS term,
+                            n.normalized_term AS normalized_term,
+                            'defined_term' AS kind,
+                            n.defined_term_id AS source_id,
+                            null AS source_citation,
+                            0.9 AS score
+                     UNION
+                     MATCH (n:Definition)
+                     WHERE coalesce(n.term, '') <> ''
+                       AND ($chapter = '' OR coalesce(n.scope_citation, n.source_provision_id, '') CONTAINS $chapter)
+                       AND (
+                         toLower(n.term) CONTAINS $q
+                         OR toLower(coalesce(n.normalized_term, '')) CONTAINS $q
+                         OR toLower(coalesce(n.definition_text, '')) CONTAINS $q
+                         OR $q CONTAINS toLower(n.term)
+                       )
+                     RETURN n.term AS term,
+                            n.normalized_term AS normalized_term,
+                            'definition' AS kind,
+                            n.definition_id AS source_id,
+                            n.source_provision_id AS source_citation,
+                            0.82 AS score
+                     UNION
+                     MATCH (n:LegalActor)
+                     WITH n, coalesce(n.name, n.actor_text, n.normalized_actor, n.normalized_name, '') AS term
+                     WHERE term <> '' AND (toLower(term) CONTAINS $q OR $q CONTAINS toLower(term))
+                     RETURN term AS term,
+                            coalesce(n.normalized_actor, n.normalized_name) AS normalized_term,
+                            'legal_actor' AS kind,
+                            n.actor_id AS source_id,
+                            n.citation AS source_citation,
+                            0.72 AS score
+                     UNION
+                     MATCH (n:LegalAction)
+                     WITH n, coalesce(n.normalized_action, n.action_text, n.verb, n.object_text, '') AS term
+                     WHERE term <> '' AND (toLower(term) CONTAINS $q OR $q CONTAINS toLower(term))
+                     RETURN term AS term,
+                            n.normalized_action AS normalized_term,
+                            'legal_action' AS kind,
+                            n.action_id AS source_id,
+                            n.citation AS source_citation,
+                            0.68 AS score
+                   }
+                   WITH term, normalized_term, kind, source_id, source_citation, max(score) AS score
+                   RETURN term, normalized_term, kind, source_id, source_citation, score
+                   ORDER BY score DESC, size(term) ASC
+                   LIMIT $limit")
+            .param("q", q_norm)
+            .param("chapter", filters.chapter.clone().unwrap_or_default())
+            .param("limit", limit.max(1) as i64)
+        ).await.map_err(ApiError::Neo4jConnection)?;
+
+        let mut terms = Vec::new();
+        while let Some(row) = result.next().await.map_err(ApiError::Neo4jConnection)? {
+            terms.push(QueryExpansionTerm {
+                term: row.get("term").unwrap_or_default(),
+                normalized_term: row.get("normalized_term").ok(),
+                kind: row.get("kind").unwrap_or_default(),
+                source_id: row.get("source_id").ok(),
+                source_citation: row.get("source_citation").ok(),
+                score: row.get::<f64>("score").unwrap_or(0.0) as f32,
+            });
+        }
+        Ok(terms)
+    }
+
+    pub async fn suggest(&self, q: &str, limit: u32) -> ApiResult<Vec<SuggestResult>> {
+        let q = q.trim();
+        let bare_citation_re = regex::Regex::new(r"^\d{1,3}[A-Za-z]?\.\d*").unwrap();
+        let normalized_q = if bare_citation_re.is_match(q) {
+            format!("ORS {q}")
+        } else {
+            q.to_string()
+        };
+
+        let mut result = self.graph.execute(
+            query("CALL {
+                     MATCH (n:Provision)
+                     WHERE toUpper(n.display_citation) STARTS WITH toUpper($normalized_q)
+                        OR toUpper(n.display_citation) STARTS WITH toUpper($q)
+                     RETURN n.display_citation as label,
+                            'provision' as kind,
+                            '/statutes/' + coalesce(n.canonical_id, n.display_citation) + '?provision=' + n.provision_id as href,
+                            n.display_citation as citation,
+                            coalesce(n.canonical_id, n.provision_id) as canonical_id,
+                            'exact_provision' as match_type,
+                            100.0 as score
+                     UNION
+                     MATCH (n:LegalTextIdentity)
+                     WHERE toUpper(n.citation) STARTS WITH toUpper($normalized_q)
+                        OR toUpper(n.citation) STARTS WITH toUpper($q)
+                        OR toUpper(n.title) CONTAINS toUpper($q)
+                     RETURN n.citation as label,
+                            'statute' as kind,
+                            '/statutes/' + n.canonical_id as href,
+                            n.citation as citation,
+                            n.canonical_id as canonical_id,
+                            'exact_statute' as match_type,
+                            CASE WHEN toUpper(n.citation) STARTS WITH toUpper($normalized_q) THEN 95.0 ELSE 65.0 END as score
+                     UNION
+                     MATCH (n:DefinedTerm)
+                     WHERE toUpper(n.term) STARTS WITH toUpper($q)
+                        OR toUpper(coalesce(n.normalized_term, '')) STARTS WITH toUpper($q)
+                     RETURN n.term as label,
+                            'definition' as kind,
+                            '/search?q=' + n.term as href,
+                            null as citation,
+                            n.defined_term_id as canonical_id,
+                            'none' as match_type,
+                            45.0 as score
+                     UNION
+                     MATCH (n:SourceDocument)
+                     WHERE toUpper(n.title) CONTAINS toUpper($q)
+                     RETURN n.title as label,
+                            'chapter' as kind,
+                            '/statutes/' + n.source_document_id as href,
+                            null as citation,
+                            n.source_document_id as canonical_id,
+                            'none' as match_type,
+                            35.0 as score
+                   }
+                   WITH label, kind, href, citation, canonical_id, match_type, max(score) AS score
+                   RETURN label, kind, href, citation, canonical_id, match_type, score
+                   ORDER BY score DESC, label
                    LIMIT $limit")
             .param("q", q)
-            .param("limit", limit as i64)
+            .param("normalized_q", normalized_q)
+            .param("limit", limit.max(1) as i64)
         ).await.map_err(ApiError::Neo4jConnection)?;
 
         let mut suggestions = Vec::new();
         while let Some(row) = result.next().await.map_err(ApiError::Neo4jConnection)? {
+            let match_type = match row
+                .get::<String>("match_type")
+                .unwrap_or_else(|_| "none".to_string())
+                .as_str()
+            {
+                "exact_provision" => DirectMatchType::ExactProvision,
+                "exact_statute" => DirectMatchType::ExactStatute,
+                "parent_statute" => DirectMatchType::ParentStatute,
+                _ => DirectMatchType::None,
+            };
             suggestions.push(SuggestResult {
                 label: row.get("label").unwrap_or_default(),
                 kind: row.get("kind").unwrap_or_default(),
                 href: row.get("href").unwrap_or_default(),
+                citation: row.get("citation").ok(),
+                canonical_id: row.get("canonical_id").ok(),
+                match_type,
+                score: row.get::<f64>("score").unwrap_or(0.0) as f32,
             });
         }
         Ok(suggestions)

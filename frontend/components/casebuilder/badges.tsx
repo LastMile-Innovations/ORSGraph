@@ -104,8 +104,11 @@ export function ProcessingBadge({
     queued: { label: "queued", cls: "bg-muted text-muted-foreground" },
     processing: { label: "processing", cls: "bg-primary/15 text-primary" },
     processed: { label: "processed", cls: "bg-success/15 text-success" },
+    review_ready: { label: "review ready", cls: "bg-success/15 text-success" },
     failed: { label: "failed", cls: "bg-destructive/15 text-destructive" },
     unsupported: { label: "unsupported", cls: "bg-warning/15 text-warning" },
+    ocr_required: { label: "ocr needed", cls: "bg-warning/15 text-warning" },
+    transcription_deferred: { label: "transcribe", cls: "bg-warning/15 text-warning" },
   }
   return <span className={cn(BASE, map[status].cls, className)}>{map[status].label}</span>
 }

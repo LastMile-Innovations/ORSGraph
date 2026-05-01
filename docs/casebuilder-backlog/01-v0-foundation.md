@@ -102,7 +102,7 @@ V0 foundation makes CaseBuilder trustworthy: canonical routing, durable data, pr
 - Acceptance checks: Creating a matter produces a persisted Neo4j `Matter` and opens the new dashboard.
 - Dependencies: `CB-V0F-004`, `CB-V0F-008`.
 - Status: Partial
-- Progress: New Matter now calls `POST /api/v1/matters`, preserves an explicit demo entry point, uploads pasted narrative/text-like files when available, and routes to canonical `/casebuilder/matters/:id`.
+- Progress: New Matter now calls `POST /api/v1/matters`, preserves an explicit demo entry point, uploads selected files through the binary upload endpoint when available, and routes to canonical `/casebuilder/matters/:id`.
 - Still needed: Smoke against a live Neo4j-backed API and add regression coverage for error/pending/success states.
 
 ## CB-V0F-011 - Frontend mutation API client
@@ -114,7 +114,7 @@ V0 foundation makes CaseBuilder trustworthy: canonical routing, durable data, pr
 - Acceptance checks: Matter creation, upload, fact approve, evidence link, draft save, generate, fact-check, and citation-check all call the API.
 - Dependencies: `CB-V0F-008`, `CB-V0F-010`.
 - Status: Done
-- Completed: `frontend/lib/casebuilder/api.ts` now exposes typed action wrappers for matter creation/update, text upload, extraction, parties, facts, fact approval, timeline events, claims, element mapping, defenses, evidence links, drafts, generation, fact-check, citation-check, and authority search/recommend.
+- Completed: `frontend/lib/casebuilder/api.ts` now exposes typed action wrappers for matter creation/update, text and binary upload, extraction, parties, facts, fact approval, timeline events, claims, element mapping, defenses, evidence links, drafts, generation, fact-check, citation-check, authority search/recommend, and authority attach/detach.
 
 ## CB-V0F-012 - Route smoke test script
 - Priority: P1
@@ -147,7 +147,7 @@ V0 foundation makes CaseBuilder trustworthy: canonical routing, durable data, pr
 - Acceptance checks: Uploading duplicate bytes detects the existing blob, avoids unnecessary storage duplication when policy allows, and preserves matter-scoped document records and audit/provenance.
 - Dependencies: `CB-V0F-013`, `CB-X-002`, `CB-X-017`.
 - Status: Partial
-- Progress: Backend and frontend DTOs now include `ObjectBlob`; CaseBuilder creates content-addressed blob identities keyed by normalized SHA-256 when available, stores provider/bucket/key/hash metadata, links blobs from original document versions, and covers duplicate hash identity/no raw filename leakage in tests.
+- Progress: Backend and frontend DTOs now include `ObjectBlob`; CaseBuilder creates content-addressed blob identities keyed by normalized SHA-256 for text and binary uploads, stores provider/bucket/key/hash metadata, links blobs from original document versions, and covers duplicate hash identity/no raw filename leakage in tests.
 - Still needed: User-facing duplicate group workflow, storage reuse policy for browser/R2 uploads, retention/legal-hold lifecycle, and full matter-isolation coverage for blob reuse across matters.
 
 ## CB-V0F-015 - DocumentVersion provenance model
@@ -159,7 +159,7 @@ V0 foundation makes CaseBuilder trustworthy: canonical routing, durable data, pr
 - Acceptance checks: Document viewer, extraction, redaction, OCR, and export workflows can identify the exact version and object blob they used.
 - Dependencies: `CB-V0F-014`, `CB-V0-020`.
 - Status: Partial
-- Progress: Backend and frontend DTOs now include `DocumentVersion`; text and completed object uploads create an `original` version linked to the `CaseDocument` and `ObjectBlob`, and extraction responses expose the current document version.
+- Progress: Backend and frontend DTOs now include `DocumentVersion`; text and binary uploads create an `original` version linked to the `CaseDocument` and `ObjectBlob`, and extraction responses expose the current document version.
 - Still needed: Normalized-text, OCR, redacted, exhibit, and export versions; version history UI; manifest-backed reruns; and migration/compat handling for legacy document records without versions.
 
 ## CB-V0F-016 - Opaque object key and ID policy

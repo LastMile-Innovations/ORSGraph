@@ -2894,6 +2894,7 @@ dependencies = [
  "axum",
  "bytes",
  "config",
+ "flate2",
  "neo4rs",
  "regex",
  "reqwest 0.12.28",

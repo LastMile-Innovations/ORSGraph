@@ -114,6 +114,74 @@ pub struct StatuteIndexItem {
 }
 
 #[derive(Debug, Serialize)]
+pub struct SidebarResponse {
+    pub corpus: SidebarCorpus,
+    pub saved_searches: Vec<SidebarSavedSearch>,
+    pub saved_statutes: Vec<SidebarStatute>,
+    pub recent_statutes: Vec<SidebarStatute>,
+    pub active_matter: Option<SidebarMatter>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SidebarCorpus {
+    pub jurisdiction: String,
+    pub corpus: String,
+    pub edition_year: i32,
+    pub total_statutes: u64,
+    pub chapters: Vec<SidebarChapter>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SidebarChapter {
+    pub chapter: String,
+    pub label: String,
+    pub count: u64,
+    pub items: Vec<StatuteIndexItem>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct SidebarSavedSearch {
+    pub saved_search_id: String,
+    pub query: String,
+    pub results: u64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct SidebarStatute {
+    pub canonical_id: String,
+    pub citation: String,
+    pub title: Option<String>,
+    pub chapter: String,
+    pub status: String,
+    pub edition_year: i32,
+    pub saved_at: Option<String>,
+    pub opened_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SidebarMatter {
+    pub matter_id: String,
+    pub name: String,
+    pub status: String,
+    pub updated_at: String,
+    pub open_task_count: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveSidebarSearchRequest {
+    pub query: String,
+    pub results: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SidebarStatuteRequest {
+    pub canonical_id: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct CitationCounts {
     pub outbound: u64,
     pub inbound: u64,

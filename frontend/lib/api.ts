@@ -19,6 +19,8 @@ import {
   mockGraphInsights, 
   mockFeaturedStatutes,
   statuteIndex,
+  recentItems,
+  savedSearches,
   getStatuteByCanonicalId,
   getProvisionById,
   askAnswer as mockAskAnswer,
@@ -34,7 +36,7 @@ import {
 const API_BASE_URL = process.env.NEXT_PUBLIC_ORS_API_BASE_URL || 'http://localhost:8080/api/v1';
 const reportedFallbacks = new Set<string>();
 
-export type SearchMode = 'hybrid' | 'keyword' | 'semantic' | 'citation'
+export type SearchMode = 'auto' | 'hybrid' | 'keyword' | 'semantic' | 'citation'
 
 export interface SearchParams {
   q: string
@@ -59,6 +61,7 @@ async function fetchApi<T>(
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
   const response = await fetch(url, {
+    cache: 'no-store',
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -204,6 +207,55 @@ interface StatuteIndexApiResponse {
   offset: number
 }
 
+export interface SidebarStatute {
+  canonical_id: string
+  citation: string
+  title: string
+  chapter: string
+  status: StatuteIdentity["status"]
+  edition_year: number
+  saved_at?: string | null
+  opened_at?: string | null
+}
+
+export interface SidebarChapter {
+  chapter: string
+  label: string
+  count: number
+  items: SidebarStatute[]
+}
+
+export interface SidebarSavedSearch {
+  saved_search_id: string
+  query: string
+  results: number
+  created_at: string
+  updated_at: string
+}
+
+export interface SidebarMatter {
+  matter_id: string
+  name: string
+  status: string
+  updated_at: string
+  open_task_count: number
+}
+
+export interface SidebarData {
+  corpus: {
+    jurisdiction: string
+    corpus: string
+    edition_year: number
+    total_statutes: number
+    chapters: SidebarChapter[]
+  }
+  saved_searches: SidebarSavedSearch[]
+  saved_statutes: SidebarStatute[]
+  recent_statutes: SidebarStatute[]
+  active_matter?: SidebarMatter | null
+  updated_at: string
+}
+
 export async function getStatuteIndex(paramsInput: { limit?: number; offset?: number; chapter?: string } = {}): Promise<StatuteIdentity[]> {
   return (await getStatuteIndexState(paramsInput)).data;
 }
@@ -232,11 +284,53 @@ export async function getStatuteIndexState(paramsInput: { limit?: number; offset
   }
 }
 
+export async function getSidebarState(): Promise<DataState<SidebarData>> {
+  try {
+    const response = await fetchApi<SidebarData>("/sidebar")
+    return { source: "live", data: normalizeSidebarData(response) }
+  } catch (error) {
+    return fallbackState("/sidebar", buildFallbackSidebarData(), error)
+  }
+}
+
+export async function saveSidebarSearch(input: { query: string; results?: number }): Promise<SidebarSavedSearch> {
+  return fetchApi<SidebarSavedSearch>("/sidebar/saved-searches", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+}
+
+export async function deleteSidebarSearch(savedSearchId: string): Promise<{ deleted: boolean }> {
+  return fetchApi<{ deleted: boolean }>(`/sidebar/saved-searches/${encodeURIComponent(savedSearchId)}`, {
+    method: "DELETE",
+  })
+}
+
+export async function saveSidebarStatute(canonicalId: string): Promise<SidebarStatute> {
+  return fetchApi<SidebarStatute>("/sidebar/saved-statutes", {
+    method: "POST",
+    body: JSON.stringify({ canonical_id: canonicalId }),
+  }).then(normalizeSidebarStatute)
+}
+
+export async function deleteSidebarStatute(statuteId: string): Promise<{ deleted: boolean }> {
+  return fetchApi<{ deleted: boolean }>(`/sidebar/saved-statutes/${encodeURIComponent(statuteId)}`, {
+    method: "DELETE",
+  })
+}
+
+export async function recordSidebarRecentStatute(canonicalId: string): Promise<SidebarStatute> {
+  return fetchApi<SidebarStatute>("/sidebar/recent-statutes", {
+    method: "POST",
+    body: JSON.stringify({ canonical_id: canonicalId }),
+  }).then(normalizeSidebarStatute)
+}
+
 // Search
 export async function search(
   query: string, 
   type: string = 'all', 
-  mode: string = 'hybrid',
+  mode: string = 'auto',
   limit: number = 20, 
   offset: number = 0
 ): Promise<SearchResponse> {
@@ -247,7 +341,7 @@ export async function searchWithParams(paramsInput: SearchParams): Promise<Searc
   const params = new URLSearchParams({ 
     q: paramsInput.q,
     type: paramsInput.type || 'all',
-    mode: paramsInput.mode || 'hybrid',
+    mode: paramsInput.mode || 'auto',
     limit: String(paramsInput.limit ?? 20),
     offset: String(paramsInput.offset ?? 0),
   });
@@ -635,6 +729,103 @@ function mapProvisionDetail(p: any): Provision {
     qc_status: p.qc_status ?? "pass",
     status: normalizeLegalStatus(p.status),
     children: [],
+  }
+}
+
+function normalizeSidebarData(data: SidebarData): SidebarData {
+  return {
+    ...data,
+    corpus: {
+      ...data.corpus,
+      chapters: (data.corpus?.chapters ?? []).map((chapter) => ({
+        ...chapter,
+        count: Number(chapter.count ?? chapter.items?.length ?? 0),
+        items: (chapter.items ?? []).map(normalizeSidebarStatute),
+      })),
+    },
+    saved_searches: (data.saved_searches ?? []).map((search) => ({
+      ...search,
+      results: Number(search.results ?? 0),
+    })),
+    saved_statutes: (data.saved_statutes ?? []).map(normalizeSidebarStatute),
+    recent_statutes: (data.recent_statutes ?? []).map(normalizeSidebarStatute),
+    active_matter: data.active_matter ?? null,
+  }
+}
+
+function normalizeSidebarStatute(item: SidebarStatute): SidebarStatute {
+  return {
+    canonical_id: item.canonical_id,
+    citation: item.citation,
+    title: item.title || item.citation,
+    chapter: item.chapter,
+    status: normalizeLegalStatus(item.status),
+    edition_year: Number(item.edition_year ?? 2025),
+    saved_at: item.saved_at ?? null,
+    opened_at: item.opened_at ?? null,
+  }
+}
+
+function buildFallbackSidebarData(): SidebarData {
+  const chapters = statuteIndex.reduce<Map<string, SidebarChapter>>((acc, statute) => {
+    const chapter = acc.get(statute.chapter) ?? {
+      chapter: statute.chapter,
+      label: `Chapter ${statute.chapter}`,
+      count: 0,
+      items: [],
+    }
+    chapter.count += 1
+    if (chapter.items.length < 8) {
+      chapter.items.push(sidebarStatuteFromIdentity(statute))
+    }
+    acc.set(statute.chapter, chapter)
+    return acc
+  }, new Map())
+
+  return {
+    corpus: {
+      jurisdiction: "Oregon",
+      corpus: "ORS",
+      edition_year: 2025,
+      total_statutes: statuteIndex.length,
+      chapters: Array.from(chapters.values()),
+    },
+    saved_searches: savedSearches.map((search) => ({
+      saved_search_id: search.id,
+      query: search.query,
+      results: search.results,
+      created_at: "",
+      updated_at: "",
+    })),
+    saved_statutes: recentItems.slice(0, 3).map(sidebarStatuteFromRecent),
+    recent_statutes: recentItems.map(sidebarStatuteFromRecent),
+    active_matter: null,
+    updated_at: new Date().toISOString(),
+  }
+}
+
+function sidebarStatuteFromRecent(item: { canonical_id: string; citation: string; title: string }): SidebarStatute {
+  const identity = statuteIndex.find((statute) => statute.canonical_id === item.canonical_id)
+  return identity
+    ? sidebarStatuteFromIdentity(identity)
+    : {
+        canonical_id: item.canonical_id,
+        citation: item.citation,
+        title: item.title,
+        chapter: "",
+        status: "active",
+        edition_year: 2025,
+      }
+}
+
+function sidebarStatuteFromIdentity(item: StatuteIdentity): SidebarStatute {
+  return {
+    canonical_id: item.canonical_id,
+    citation: item.citation,
+    title: item.title,
+    chapter: item.chapter,
+    status: normalizeLegalStatus(item.status),
+    edition_year: item.edition,
   }
 }
 

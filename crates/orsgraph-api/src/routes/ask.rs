@@ -16,7 +16,7 @@ pub async fn ask(
             r#type: Some("all".to_string()),
             chapter: None,
             status: None,
-            mode: Some(SearchMode::Hybrid),
+            mode: Some(SearchMode::Auto),
             limit: Some(8),
             offset: Some(0),
             include: None,

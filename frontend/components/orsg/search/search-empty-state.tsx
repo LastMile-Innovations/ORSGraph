@@ -4,11 +4,11 @@ import { Search, ArrowRight } from "lucide-react"
 
 const SUGGESTED_SEARCHES = [
   "ORS 90.300",
-  "landlord notice",
+  "chapter 90 habitability",
+  "ORS 90.320 to 90.330",
+  "definition of dwelling unit",
   "security deposit deadline",
-  "civil penalty",
-  "operative date",
-  "Department of Revenue tax",
+  "landlord notice",
 ]
 
 interface SearchEmptyStateProps {

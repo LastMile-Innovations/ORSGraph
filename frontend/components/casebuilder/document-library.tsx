@@ -17,8 +17,8 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { CaseDocument, DocumentType, MatterSummary } from "@/lib/casebuilder/types"
-import { extractDocument, uploadBinaryFile } from "@/lib/casebuilder/api"
-import { matterDocumentHref } from "@/lib/casebuilder/routes"
+import { extractDocument, importDocumentComplaint, uploadBinaryFile } from "@/lib/casebuilder/api"
+import { matterComplaintHref, matterDocumentHref } from "@/lib/casebuilder/routes"
 import { ProcessingBadge } from "./badges"
 
 const FOLDERS = [
@@ -73,12 +73,22 @@ export function DocumentLibrary({ matter, documents }: Props) {
   const [uploading, setUploading] = useState(false)
   const [uploadMessage, setUploadMessage] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [importedComplaints, setImportedComplaints] = useState<Array<{ title: string; href: string }>>([])
 
   const folderCounts = useMemo(() => {
     const map: Record<string, number> = { All: documents.length }
     for (const f of FOLDERS) map[f] = 0
     for (const d of documents) map[d.folder] = (map[d.folder] ?? 0) + 1
     return map
+  }, [documents])
+
+  const duplicateGroups = useMemo(() => {
+    const byHash = new Map<string, number>()
+    for (const document of documents) {
+      if (!document.file_hash) continue
+      byHash.set(document.file_hash, (byHash.get(document.file_hash) ?? 0) + 1)
+    }
+    return Array.from(byHash.values()).filter((count) => count > 1).length
   }, [documents])
 
   const filtered = useMemo(() => {
@@ -104,6 +114,8 @@ export function DocumentLibrary({ matter, documents }: Props) {
     let stored = 0
     let extracted = 0
     let binaryStored = 0
+    let imported = 0
+    const importedLinks: Array<{ title: string; href: string }> = []
     const failures: string[] = []
 
     for (const file of selected) {
@@ -129,17 +141,39 @@ export function DocumentLibrary({ matter, documents }: Props) {
         } else if (result.data.storage_status === "stored") {
           binaryStored += 1
         }
+        if (shouldImportAsComplaint(file.name, documentType)) {
+          const importedComplaint = await importDocumentComplaint(matter.matter_id, result.data.document_id, {
+            force: true,
+            mode: "structured_import",
+          })
+          const complaint = importedComplaint.data?.imported[0]?.complaint
+	          if (complaint) {
+	            imported += 1
+	            importedLinks.push({
+	              title: complaint.title || file.name,
+	              href: matterComplaintHref(matter.matter_id, "editor", {
+	                type: "complaint",
+	                id: complaint.complaint_id,
+	              }),
+	            })
+	          } else if (importedComplaint.data?.skipped[0]) {
+	            failures.push(`${file.name}: ${importedComplaint.data.skipped[0].message}`)
+	          } else if (importedComplaint.error) {
+	            failures.push(`${file.name}: ${importedComplaint.error}`)
+	          }
+	        }
       } catch (error) {
         failures.push(`${file.name}: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
 
     setUploading(false)
+    setImportedComplaints(importedLinks)
     if (failures.length > 0) {
       setUploadError(failures.join(" | "))
     }
     setUploadMessage(
-      `${stored} uploaded${extracted ? `, ${extracted} extracted` : ""}${binaryStored ? `, ${binaryStored} stored privately` : ""}.`,
+      `${stored} uploaded${extracted ? `, ${extracted} extracted` : ""}${binaryStored ? `, ${binaryStored} stored privately` : ""}${imported ? `, ${imported} opened as structured complaint` : ""}.`,
     )
     router.refresh()
   }
@@ -188,6 +222,21 @@ export function DocumentLibrary({ matter, documents }: Props) {
             )}
           >
             {uploadError || uploadMessage}
+            {importedComplaints.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {importedComplaints.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    title={item.title}
+                    className="inline-flex items-center gap-1 rounded border border-primary/25 bg-background px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-primary hover:bg-primary/10"
+                  >
+                    <FileText className="h-3 w-3" />
+                    opened as structured complaint
+                  </Link>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -254,6 +303,8 @@ export function DocumentLibrary({ matter, documents }: Props) {
             <KV label="processed" value={documents.filter((d) => d.processing_status === "processed").length} cls="text-success" />
             <KV label="processing" value={documents.filter((d) => d.processing_status === "processing").length} cls="text-primary" />
             <KV label="queued" value={documents.filter((d) => d.processing_status === "queued").length} cls="text-muted-foreground" />
+            <KV label="ocr needed" value={documents.filter((d) => d.processing_status === "ocr_required").length} cls="text-warning" />
+            <KV label="transcribe" value={documents.filter((d) => d.processing_status === "transcription_deferred").length} cls="text-warning" />
             <KV label="unsupported" value={documents.filter((d) => d.processing_status === "unsupported").length} cls="text-warning" />
             <KV label="failed" value={documents.filter((d) => d.processing_status === "failed").length} cls="text-destructive" />
           </div>
@@ -265,6 +316,12 @@ export function DocumentLibrary({ matter, documents }: Props) {
             <KV label="pending" value={documents.filter((d) => d.storage_status === "pending").length} cls="text-primary" />
             <KV label="metadata" value={documents.filter((d) => d.storage_status === "metadata_only").length} cls="text-muted-foreground" />
             <KV label="failed" value={documents.filter((d) => d.storage_status === "failed").length} cls="text-destructive" />
+          </div>
+          <div className="border-t border-border px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            duplicate groups
+          </div>
+          <div className="space-y-1 px-3 pb-3 font-mono text-[11px]">
+            <KV label="exact hash" value={duplicateGroups} cls={duplicateGroups ? "text-warning" : "text-muted-foreground"} />
           </div>
         </aside>
 
@@ -531,4 +588,8 @@ function guessDocumentType(filename: string, mimeType: string): DocumentType {
   if (/\.csv$/i.test(filename)) return "spreadsheet"
   if (mimeType.startsWith("image/") || /\.(png|jpe?g|gif|webp|heic)$/i.test(filename)) return "photo"
   return "evidence"
+}
+
+function shouldImportAsComplaint(filename: string, documentType: DocumentType) {
+  return documentType === "complaint" || /complaint|pleading|petition/i.test(filename)
 }

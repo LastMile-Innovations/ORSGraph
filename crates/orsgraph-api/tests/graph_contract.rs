@@ -63,9 +63,58 @@ fn casebuilder_routes_cover_v0_contracts() {
         "/matters/:matter_id/files/uploads/:upload_id/complete",
         "/matters/:matter_id/documents/:document_id/download-url",
         "/matters/:matter_id/documents/:document_id/extract",
+        "/matters/:matter_id/documents/:document_id/import-complaint",
         "/matters/:matter_id/facts/:fact_id/approve",
         "/matters/:matter_id/claims/:claim_id/map-elements",
         "/matters/:matter_id/evidence/:evidence_id/link-fact",
+        "/matters/:matter_id/work-products",
+        "/matters/:matter_id/work-products/:work_product_id",
+        "/matters/:matter_id/work-products/:work_product_id/blocks",
+        "/matters/:matter_id/work-products/:work_product_id/blocks/:block_id",
+        "/matters/:matter_id/work-products/:work_product_id/links",
+        "/matters/:matter_id/work-products/:work_product_id/qc/run",
+        "/matters/:matter_id/work-products/:work_product_id/qc/findings",
+        "/matters/:matter_id/work-products/:work_product_id/qc/findings/:finding_id",
+        "/matters/:matter_id/work-products/:work_product_id/preview",
+        "/matters/:matter_id/work-products/:work_product_id/export",
+        "/matters/:matter_id/work-products/:work_product_id/artifacts/:artifact_id",
+        "/matters/:matter_id/work-products/:work_product_id/artifacts/:artifact_id/download",
+        "/matters/:matter_id/work-products/:work_product_id/ai/commands",
+        "/matters/:matter_id/work-products/:work_product_id/history",
+        "/matters/:matter_id/work-products/:work_product_id/change-sets/:change_set_id",
+        "/matters/:matter_id/work-products/:work_product_id/snapshots",
+        "/matters/:matter_id/work-products/:work_product_id/snapshots/:snapshot_id",
+        "/matters/:matter_id/work-products/:work_product_id/compare",
+        "/matters/:matter_id/work-products/:work_product_id/restore",
+        "/matters/:matter_id/work-products/:work_product_id/export-history",
+        "/matters/:matter_id/work-products/:work_product_id/ai-audit",
+        "/matters/:matter_id/complaints",
+        "/matters/:matter_id/complaints/import",
+        "/matters/:matter_id/complaints/:complaint_id",
+        "/matters/:matter_id/complaints/:complaint_id/setup",
+        "/matters/:matter_id/complaints/:complaint_id/sections",
+        "/matters/:matter_id/complaints/:complaint_id/counts",
+        "/matters/:matter_id/complaints/:complaint_id/paragraphs",
+        "/matters/:matter_id/complaints/:complaint_id/paragraphs/renumber",
+        "/matters/:matter_id/complaints/:complaint_id/paragraphs/:paragraph_id",
+        "/matters/:matter_id/complaints/:complaint_id/links",
+        "/matters/:matter_id/complaints/:complaint_id/qc/run",
+        "/matters/:matter_id/complaints/:complaint_id/qc/findings",
+        "/matters/:matter_id/complaints/:complaint_id/qc/findings/:finding_id",
+        "/matters/:matter_id/complaints/:complaint_id/preview",
+        "/matters/:matter_id/complaints/:complaint_id/export",
+        "/matters/:matter_id/complaints/:complaint_id/artifacts/:artifact_id",
+        "/matters/:matter_id/complaints/:complaint_id/artifacts/:artifact_id/download",
+        "/matters/:matter_id/complaints/:complaint_id/ai/commands",
+        "/matters/:matter_id/complaints/:complaint_id/history",
+        "/matters/:matter_id/complaints/:complaint_id/change-sets/:change_set_id",
+        "/matters/:matter_id/complaints/:complaint_id/snapshots",
+        "/matters/:matter_id/complaints/:complaint_id/snapshots/:snapshot_id",
+        "/matters/:matter_id/complaints/:complaint_id/compare",
+        "/matters/:matter_id/complaints/:complaint_id/restore",
+        "/matters/:matter_id/complaints/:complaint_id/export-history",
+        "/matters/:matter_id/complaints/:complaint_id/ai-audit",
+        "/matters/:matter_id/complaints/:complaint_id/filing-packet",
         "/matters/:matter_id/drafts/:draft_id/generate",
         "/matters/:matter_id/drafts/:draft_id/fact-check",
         "/matters/:matter_id/drafts/:draft_id/citation-check",
@@ -103,12 +152,208 @@ fn casebuilder_constraints_cover_core_graph_nodes() {
         "casebuilder_document_version_id",
         "casebuilder_ingestion_run_id",
         "casebuilder_source_span_id",
+        "casebuilder_external_authority_id",
+        "casebuilder_complaint_id",
+        "casebuilder_complaint_section_id",
+        "casebuilder_complaint_count_id",
+        "casebuilder_pleading_paragraph_id",
+        "casebuilder_pleading_sentence_id",
+        "casebuilder_citation_use_id",
+        "casebuilder_evidence_use_id",
+        "casebuilder_exhibit_reference_id",
+        "casebuilder_relief_request_id",
+        "casebuilder_rule_check_finding_id",
+        "casebuilder_export_artifact_id",
+        "casebuilder_work_product_id",
+        "casebuilder_work_product_block_id",
+        "casebuilder_work_product_mark_id",
+        "casebuilder_work_product_anchor_id",
+        "casebuilder_work_product_finding_id",
+        "casebuilder_work_product_artifact_id",
+        "casebuilder_work_product_history_event_id",
+        "casebuilder_change_set_id",
+        "casebuilder_version_snapshot_id",
+        "casebuilder_snapshot_manifest_id",
+        "casebuilder_snapshot_entity_state_id",
+        "casebuilder_version_change_id",
+        "casebuilder_version_branch_id",
+        "casebuilder_legal_support_use_id",
+        "casebuilder_fact_use_id",
+        "casebuilder_authority_use_id",
+        "casebuilder_element_support_id",
+        "casebuilder_ai_edit_audit_id",
+        "casebuilder_milestone_id",
+        "casebuilder_complaint_fulltext",
+        "casebuilder_work_product_fulltext",
     ] {
         assert!(
             service.contains(expected),
             "missing CaseBuilder constraint/index {expected}"
         );
     }
+}
+
+#[test]
+fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
+    let backend_models = include_str!("../src/models/casebuilder.rs");
+    let backend_service = include_str!("../src/services/casebuilder.rs");
+    let frontend_types = include_str!("../../../frontend/lib/casebuilder/types.ts");
+    let frontend_api = include_str!("../../../frontend/lib/casebuilder/api.ts");
+    let frontend_routes = include_str!("../../../frontend/lib/casebuilder/routes.ts");
+
+    for expected in [
+        "struct ComplaintDraft",
+        "struct ComplaintImportProvenance",
+        "struct ComplaintImportRequest",
+        "struct ComplaintImportResponse",
+        "struct ComplaintSection",
+        "struct ComplaintCount",
+        "struct PleadingParagraph",
+        "struct PleadingSentence",
+        "struct CitationUse",
+        "struct EvidenceUse",
+        "struct ExhibitReference",
+        "struct ReliefRequest",
+        "struct SignatureBlock",
+        "struct CertificateOfService",
+        "struct FormattingProfile",
+        "struct RulePack",
+        "struct RuleCheckFinding",
+        "struct ExportArtifact",
+    ] {
+        assert!(
+            backend_models.contains(expected),
+            "missing backend complaint DTO {expected}"
+        );
+    }
+
+    for expected in [
+        "struct ChangeSet",
+        "struct VersionChange",
+        "struct VersionSnapshot",
+        "struct SnapshotManifest",
+        "struct SnapshotEntityState",
+        "struct VersionBranch",
+        "struct LegalImpactSummary",
+        "struct VersionChangeSummary",
+        "struct AIEditAudit",
+        "struct Milestone",
+        "struct LegalSupportUse",
+    ] {
+        assert!(
+            backend_models.contains(expected),
+            "missing backend Case History DTO {expected}"
+        );
+    }
+
+    for expected in [
+        "interface ComplaintDraft",
+        "interface ComplaintImportProvenance",
+        "interface ComplaintImportResponse",
+        "interface ComplaintSection",
+        "interface ComplaintCount",
+        "interface PleadingParagraph",
+        "interface PleadingSentence",
+        "interface CitationUse",
+        "interface EvidenceUse",
+        "interface ExhibitReference",
+        "interface ReliefRequest",
+        "interface SignatureBlock",
+        "interface CertificateOfService",
+        "interface FormattingProfile",
+        "interface RulePack",
+        "interface RuleCheckFinding",
+        "interface ExportArtifact",
+    ] {
+        assert!(
+            frontend_types.contains(expected),
+            "missing frontend complaint DTO {expected}"
+        );
+    }
+
+    for expected in [
+        "interface ChangeSet",
+        "interface VersionChange",
+        "interface VersionSnapshot",
+        "interface SnapshotManifest",
+        "interface SnapshotEntityState",
+        "interface VersionBranch",
+        "interface LegalImpactSummary",
+        "interface VersionChangeSummary",
+        "interface AIEditAudit",
+        "interface CaseHistoryMilestone",
+        "interface LegalSupportUse",
+    ] {
+        assert!(
+            frontend_types.contains(expected),
+            "missing frontend Case History DTO {expected}"
+        );
+    }
+
+    for expected in [
+        "createComplaint",
+        "importComplaints",
+        "importDocumentComplaint",
+        "patchComplaint",
+        "createComplaintParagraph",
+        "renumberComplaintParagraphs",
+        "linkComplaintSupport",
+        "runComplaintQc",
+        "previewComplaint",
+        "exportComplaint",
+        "runComplaintAiCommand",
+        "getWorkProductHistory",
+        "getWorkProductSnapshots",
+        "getWorkProductSnapshot",
+        "createWorkProductSnapshot",
+        "compareWorkProductVersions",
+        "restoreWorkProductVersion",
+        "getWorkProductExportHistory",
+        "getWorkProductAiAudit",
+        "normalizeComplaint",
+        "buildDemoComplaint",
+    ] {
+        assert!(
+            frontend_api.contains(expected),
+            "missing frontend complaint API {expected}"
+        );
+    }
+
+    for expected in ["matterComplaintHref", "ComplaintWorkspaceSection"] {
+        assert!(
+            frontend_routes.contains(expected),
+            "missing complaint route helper {expected}"
+        );
+    }
+
+    for expected in [
+        "HAS_COMPLAINT",
+        "HAS_SECTION",
+        "HAS_COUNT",
+        "HAS_PARAGRAPH",
+        "HAS_SENTENCE",
+        "HAS_EVIDENCE_USE",
+        "HAS_CITATION_USE",
+        "HAS_EXHIBIT_REFERENCE",
+        "REQUESTS_RELIEF",
+        "SUPPORTED_BY_FACT",
+        "SUPPORTED_BY_EVIDENCE",
+        "SUPPORTED_BY_AUTHORITY",
+        "RESOLVES_TO",
+        "DERIVED_FROM",
+        "ExternalAuthority",
+    ] {
+        assert!(
+            backend_service.contains(expected),
+            "missing complaint graph edge {expected}"
+        );
+    }
+
+    assert!(
+        backend_service.contains("unwrap_or_default()")
+            && backend_service.contains("default_complaint_from_matter"),
+        "complaint creation should tolerate matters without seeded graph children"
+    );
 }
 
 #[test]
@@ -122,6 +367,9 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "struct DocumentVersion",
         "struct IngestionRun",
         "struct SourceSpan",
+        "parser_version",
+        "citation_resolver_version",
+        "index_version",
     ] {
         assert!(
             backend_models.contains(expected),
@@ -134,6 +382,9 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "interface DocumentVersion",
         "interface IngestionRun",
         "interface SourceSpan",
+        "parser_version",
+        "citation_resolver_version",
+        "index_version",
     ] {
         assert!(
             frontend_types.contains(expected),
@@ -209,6 +460,11 @@ fn casebuilder_provenance_dtos_serialize_with_matter_safe_ids() {
         retryable: false,
         produced_node_ids: Vec::new(),
         produced_object_keys: vec![blob.storage_key.clone()],
+        parser_id: Some("casebuilder-parser-registry".to_string()),
+        parser_version: Some("casebuilder-parser-registry-v1".to_string()),
+        chunker_version: Some("casebuilder-line-chunker-v1".to_string()),
+        citation_resolver_version: Some("casebuilder-citation-resolver-v1".to_string()),
+        index_version: Some("casebuilder-case-graph-index-v1".to_string()),
     };
     let span = SourceSpan {
         source_span_id: "span:doc_opaque:fact:1".to_string(),

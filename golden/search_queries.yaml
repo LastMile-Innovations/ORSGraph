@@ -27,6 +27,36 @@ tests:
     expected_top_result:
       citation: "ORS 90.300"
 
+  - name: exact_security_deposit_bare
+    query: "90.300"
+    intent: citation
+    expected_top_result:
+      citation: "ORS 90.300"
+
+  - name: habitability_subsection
+    query: "ORS 90.320(1)(a)"
+    intent: citation
+    expected_any:
+      citations:
+        - "ORS 90.320"
+
+  - name: landlord_tenant_range
+    query: "ORS 90.320 to 90.330"
+    intent: citation_range
+    expected_any:
+      citations:
+        - "ORS 90.320"
+        - "ORS 90.330"
+
+  - name: chapter_topic_habitability
+    query: "chapter 90 habitability"
+    intent: chapter_topic
+    expected_any:
+      citations:
+        - "ORS 90.320"
+      semantic_types:
+        - Obligation
+
   - name: security_deposit_deadline
     query: "security deposit deadline"
     intent: deadline
@@ -59,6 +89,13 @@ tests:
       semantic_types:
         - Definition
         - DefinedTerm
+
+  - name: dwelling_unit_definition_scope
+    query: "chapter 90 definition of dwelling unit"
+    intent: definition
+    expected_any:
+      semantic_types:
+        - Definition
 
   - name: operative_2027
     query: "operative January 1 2027"

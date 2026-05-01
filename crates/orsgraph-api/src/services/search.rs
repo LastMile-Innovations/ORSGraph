@@ -14,6 +14,14 @@ pub struct SearchService {
     rerank: Option<Arc<RerankService>>,
 }
 
+#[derive(Debug, Clone)]
+struct QueryPlan {
+    analysis: SearchAnalysis,
+    intent: SearchIntent,
+    retrieval_query: String,
+    chapter_filter: Option<String>,
+}
+
 impl SearchService {
     pub fn new(
         neo4j: Arc<Neo4jService>,
@@ -29,24 +37,30 @@ impl SearchService {
         }
     }
 
-    fn resolve_mode(requested_mode: SearchMode, intent: SearchIntent) -> SearchMode {
-        match (requested_mode, intent) {
-            (SearchMode::Auto, SearchIntent::Citation | SearchIntent::Chapter) => {
+    fn resolve_mode(requested_mode: SearchMode, plan: &QueryPlan) -> SearchMode {
+        match requested_mode {
+            SearchMode::Auto
+                if matches!(plan.intent, SearchIntent::Citation | SearchIntent::Chapter)
+                    && plan.analysis.residual_text.is_none() =>
+            {
                 SearchMode::Citation
             }
-            (SearchMode::Auto, _) => SearchMode::Hybrid,
-            (mode, _) => mode,
+            SearchMode::Auto => SearchMode::Hybrid,
+            mode => mode,
         }
     }
 
     pub async fn search(&self, query: SearchQuery) -> ApiResult<SearchResponse> {
         let started_at = Instant::now();
-        let normalized = self.normalize_query(&query.q);
-        let intent = self.detect_intent(&normalized);
+        let raw_query = query.q.clone();
+        let mut plan = analyze_search_query(&raw_query);
         let requested_mode = query.mode.unwrap_or_default();
-        let mode = Self::resolve_mode(requested_mode, intent);
-        let filters = SearchRetrievalFilters::from_query(&query);
-        let applied_filters = filters.applied_filter_names();
+        let mode = Self::resolve_mode(requested_mode, &plan);
+        let mut filters = SearchRetrievalFilters::from_query(&query);
+        if filters.chapter.is_none() {
+            filters.chapter = plan.chapter_filter.clone();
+        }
+        plan.analysis.applied_filters = filters.applied_filter_names();
 
         let limit = query.limit.unwrap_or(20).clamp(1, 100);
         let offset = query.offset.unwrap_or(0);
@@ -63,11 +77,10 @@ impl SearchService {
         let mut retrieval = RetrievalInfo::default();
         let mut results = Vec::new();
 
-        if normalized.is_empty() {
+        if plan.analysis.normalized_query.is_empty() {
+            plan.analysis.timings.total_ms = started_at.elapsed().as_millis() as u64;
             return Ok(SearchResponse {
-                query: query.q,
-                normalized_query: normalized,
-                intent: format!("{:?}", intent),
+                query: raw_query,
                 mode,
                 total: 0,
                 limit,
@@ -75,61 +88,101 @@ impl SearchService {
                 results,
                 facets: Some(self.neo4j.aggregate_facets(&[])),
                 warnings,
+                analysis: plan.analysis,
                 retrieval,
-                embeddings: Some(EmbeddingsInfo {
-                    enabled: self.vector.is_some(),
-                    model: self.vector.as_ref().map(|v| v.model().to_string()),
-                    profile: self.vector.as_ref().map(|v| v.profile().to_string()),
-                    dimension: self.vector.as_ref().map(|v| v.dimension()),
-                }),
-                rerank: Some(RerankInfo {
-                    enabled: self.rerank.is_some(),
-                    model: self.rerank.as_ref().map(|r| r.model().to_string()),
-                    candidate_count: None,
-                    returned_count: None,
-                    total_tokens: None,
-                }),
-                took_ms: started_at.elapsed().as_millis() as u64,
-                applied_filters,
+                embeddings: Some(self.embeddings_info()),
+                rerank: Some(self.default_rerank_info()),
             });
         }
 
-        let should_run_exact = matches!(mode, SearchMode::Citation | SearchMode::Hybrid)
-            || matches!(intent, SearchIntent::Citation | SearchIntent::Chapter);
-        let should_run_keyword = matches!(mode, SearchMode::Keyword | SearchMode::Hybrid);
-        let should_run_vector = matches!(mode, SearchMode::Semantic | SearchMode::Hybrid);
+        if !plan.retrieval_query.is_empty() && mode != SearchMode::Citation {
+            match self
+                .neo4j
+                .expand_query_terms(&plan.retrieval_query, &filters, 8)
+                .await
+            {
+                Ok(expansion_terms) => {
+                    plan.analysis.expansion_count = expansion_terms.len();
+                    plan.analysis.expansion_terms = expansion_terms;
+                }
+                Err(e) => warnings.push(format!("Graph term expansion failed: {}", e)),
+            }
+        }
+
+        let expanded_query =
+            build_expanded_retrieval_query(&plan.retrieval_query, &plan.analysis.expansion_terms);
+        let has_exact_signal = !plan.analysis.citations.is_empty()
+            || !plan.analysis.ranges.is_empty()
+            || (matches!(plan.intent, SearchIntent::Chapter)
+                && plan.analysis.residual_text.is_none());
+        let should_run_exact =
+            matches!(mode, SearchMode::Citation | SearchMode::Hybrid) && has_exact_signal;
+        let should_run_keyword = matches!(mode, SearchMode::Keyword | SearchMode::Hybrid)
+            && !plan.retrieval_query.is_empty();
+        let should_run_vector = matches!(mode, SearchMode::Semantic | SearchMode::Hybrid)
+            && !plan.retrieval_query.is_empty();
+
+        let retrieval_started = Instant::now();
 
         if should_run_exact {
-            match self.neo4j.search_exact(&normalized).await {
-                Ok(exact_results) => {
-                    retrieval.exact_candidates = exact_results.len();
-                    for mut res in exact_results {
-                        res.rank_source = Some("exact".to_string());
-                        res.score = 100.0 + res.score;
-                        res.score_breakdown = Some(ScoreBreakdown {
-                            exact: Some(100.0),
-                            keyword: None,
-                            vector: None,
-                            rerank: None,
-                            graph: None,
-                            authority: None,
-                            penalties: None,
-                        });
-                        results.push(res);
+            for range in &plan.analysis.ranges {
+                match self
+                    .neo4j
+                    .search_citation_range(range, candidate_limit as u32)
+                    .await
+                {
+                    Ok(range_results) => {
+                        retrieval.exact_candidates += range_results.len();
+                        for mut res in range_results {
+                            mark_exact_result(&mut res, 85.0, "exact");
+                            results.push(res);
+                        }
                     }
+                    Err(e) => warnings.push(format!("Citation range lookup failed: {}", e)),
                 }
-                Err(e) => warnings.push(format!("Exact citation lookup failed: {}", e)),
+            }
+
+            for exact_query in exact_queries_for_plan(&plan) {
+                match self.neo4j.search_exact(&exact_query).await {
+                    Ok(mut exact_results) => {
+                        if exact_results.is_empty() {
+                            if let Some(parent_query) =
+                                parent_query_for_exact(&exact_query, &plan.analysis.citations)
+                            {
+                                match self.neo4j.search_exact(&parent_query).await {
+                                    Ok(parent_results) => {
+                                        exact_results = parent_results;
+                                        for res in &mut exact_results {
+                                            mark_exact_result(res, 80.0, "parent");
+                                        }
+                                    }
+                                    Err(e) => warnings
+                                        .push(format!("Parent citation lookup failed: {}", e)),
+                                }
+                            }
+                        }
+
+                        retrieval.exact_candidates += exact_results.len();
+                        for mut res in exact_results {
+                            if res.rank_source.as_deref() != Some("parent") {
+                                mark_exact_result(&mut res, 100.0, "exact");
+                            }
+                            results.push(res);
+                        }
+                    }
+                    Err(e) => warnings.push(format!("Exact citation lookup failed: {}", e)),
+                }
             }
         }
 
         if should_run_keyword {
             match self
                 .neo4j
-                .search_fulltext(&normalized, &filters, candidate_limit as u32)
+                .search_fulltext(&plan.retrieval_query, &filters, candidate_limit as u32)
                 .await
             {
                 Ok(mut keyword_results) => {
-                    retrieval.fulltext_candidates = keyword_results.len();
+                    retrieval.fulltext_candidates += keyword_results.len();
                     for res in &mut keyword_results {
                         if res.rank_source.is_none() {
                             res.rank_source = Some("keyword".to_string());
@@ -139,12 +192,39 @@ impl SearchService {
                 }
                 Err(e) => warnings.push(format!("Full-text search failed: {}", e)),
             }
+
+            if expanded_query != plan.retrieval_query {
+                match self
+                    .neo4j
+                    .search_fulltext(
+                        &expanded_query,
+                        &filters,
+                        (candidate_limit / 2).max(5) as u32,
+                    )
+                    .await
+                {
+                    Ok(mut expanded_results) => {
+                        retrieval.fulltext_candidates += expanded_results.len();
+                        for res in &mut expanded_results {
+                            res.score *= 0.72;
+                            res.fulltext_score = res.fulltext_score.map(|score| score * 0.72);
+                            res.rank_source = Some("graph-expanded".to_string());
+                            if let Some(breakdown) = &mut res.score_breakdown {
+                                breakdown.keyword = res.fulltext_score;
+                                breakdown.expansion = Some(0.25);
+                            }
+                        }
+                        results.extend(expanded_results);
+                    }
+                    Err(e) => warnings.push(format!("Expanded full-text search failed: {}", e)),
+                }
+            }
         }
 
         if should_run_vector {
             if let Some(vector) = &self.vector {
                 match vector
-                    .search_chunks(&normalized, candidate_limit, &filters)
+                    .search_chunks(&plan.retrieval_query, candidate_limit, &filters)
                     .await
                 {
                     Ok(vector_results) => {
@@ -159,7 +239,11 @@ impl SearchService {
                         if mode == SearchMode::Semantic {
                             match self
                                 .neo4j
-                                .search_fulltext(&normalized, &filters, candidate_limit as u32)
+                                .search_fulltext(
+                                    &plan.retrieval_query,
+                                    &filters,
+                                    candidate_limit as u32,
+                                )
                                 .await
                             {
                                 Ok(mut keyword_results) => {
@@ -181,7 +265,7 @@ impl SearchService {
                 if mode == SearchMode::Semantic {
                     match self
                         .neo4j
-                        .search_fulltext(&normalized, &filters, candidate_limit as u32)
+                        .search_fulltext(&plan.retrieval_query, &filters, candidate_limit as u32)
                         .await
                     {
                         Ok(mut keyword_results) => {
@@ -196,8 +280,9 @@ impl SearchService {
                 }
             }
         }
+        plan.analysis.timings.retrieval_ms = retrieval_started.elapsed().as_millis() as u64;
 
-        let mut candidates = self.rank_and_dedupe(results, intent);
+        let mut candidates = self.rank_and_dedupe(results, plan.intent);
         self.apply_filters(&mut candidates, &filters, FilterStage::Early);
         retrieval.filtered_candidates = candidates.len();
         if candidates.len() > pre_expand_limit {
@@ -205,6 +290,7 @@ impl SearchService {
         }
         retrieval.capped_candidates = candidates.len();
 
+        let graph_started = Instant::now();
         retrieval.graph_expanded_candidates =
             match self.graph_expand.expand_candidates(&mut candidates).await {
                 Ok(count) => count,
@@ -213,10 +299,12 @@ impl SearchService {
                     0
                 }
             };
+        plan.analysis.timings.graph_ms = graph_started.elapsed().as_millis() as u64;
         self.apply_filters(&mut candidates, &filters, FilterStage::Late);
+        self.apply_expansion_boosts(&mut candidates, &plan.analysis.expansion_terms);
 
         for candidate in &mut candidates {
-            let boosts = self.calculate_legal_boosts(candidate, intent);
+            let boosts = self.calculate_legal_boosts(candidate, plan.intent);
             candidate.score += boosts;
             match &mut candidate.score_breakdown {
                 Some(breakdown) => breakdown.authority = Some(boosts),
@@ -228,6 +316,7 @@ impl SearchService {
                         rerank: None,
                         graph: candidate.graph_score,
                         authority: Some(boosts),
+                        expansion: None,
                         penalties: None,
                     });
                 }
@@ -247,8 +336,9 @@ impl SearchService {
             let candidate_count = candidates.len().min(reranker.candidates_limit());
             if candidate_count > 0 && mode != SearchMode::Citation {
                 let rerank_slice = candidate_count;
+                let rerank_started = Instant::now();
                 match reranker
-                    .rerank(&normalized, &candidates[..rerank_slice])
+                    .rerank(&plan.retrieval_query, &candidates[..rerank_slice])
                     .await
                 {
                     Ok(output) => {
@@ -264,10 +354,12 @@ impl SearchService {
                             &mut candidates,
                             rerank_slice,
                             &reranked,
-                            intent,
+                            plan.intent,
                         );
                         rerank_applied = !reranked.is_empty();
                         retrieval.reranked_candidates = output.results.len();
+                        plan.analysis.timings.rerank_ms =
+                            rerank_started.elapsed().as_millis() as u64;
 
                         rerank_info = Some(RerankInfo {
                             enabled: true,
@@ -282,6 +374,8 @@ impl SearchService {
                             "Rerank failed; using internal legal ranking. {}",
                             e
                         ));
+                        plan.analysis.timings.rerank_ms =
+                            rerank_started.elapsed().as_millis() as u64;
                         rerank_info = Some(RerankInfo {
                             enabled: true,
                             model: Some(reranker.model().to_string()),
@@ -304,13 +398,7 @@ impl SearchService {
         }
 
         if rerank_info.is_none() {
-            rerank_info = Some(RerankInfo {
-                enabled: self.rerank.is_some(),
-                model: self.rerank.as_ref().map(|r| r.model().to_string()),
-                candidate_count: None,
-                returned_count: None,
-                total_tokens: None,
-            });
+            rerank_info = Some(self.default_rerank_info());
         }
 
         let total = candidates.len();
@@ -320,10 +408,10 @@ impl SearchService {
             .take(limit as usize)
             .collect();
 
+        plan.analysis.timings.total_ms = started_at.elapsed().as_millis() as u64;
+
         Ok(SearchResponse {
-            query: query.q.clone(),
-            normalized_query: normalized,
-            intent: format!("{:?}", intent),
+            query: raw_query,
             mode,
             total,
             limit,
@@ -331,17 +419,95 @@ impl SearchService {
             results: final_results,
             facets,
             warnings,
+            analysis: plan.analysis,
             retrieval,
-            embeddings: Some(EmbeddingsInfo {
-                enabled: self.vector.is_some(),
-                model: self.vector.as_ref().map(|v| v.model().to_string()),
-                profile: self.vector.as_ref().map(|v| v.profile().to_string()),
-                dimension: self.vector.as_ref().map(|v| v.dimension()),
-            }),
+            embeddings: Some(self.embeddings_info()),
             rerank: rerank_info,
-            took_ms: started_at.elapsed().as_millis() as u64,
-            applied_filters,
         })
+    }
+
+    fn embeddings_info(&self) -> EmbeddingsInfo {
+        EmbeddingsInfo {
+            enabled: self.vector.is_some(),
+            model: self.vector.as_ref().map(|v| v.model().to_string()),
+            profile: self.vector.as_ref().map(|v| v.profile().to_string()),
+            dimension: self.vector.as_ref().map(|v| v.dimension()),
+        }
+    }
+
+    fn default_rerank_info(&self) -> RerankInfo {
+        RerankInfo {
+            enabled: self.rerank.is_some(),
+            model: self.rerank.as_ref().map(|r| r.model().to_string()),
+            candidate_count: None,
+            returned_count: None,
+            total_tokens: None,
+        }
+    }
+
+    fn apply_expansion_boosts(
+        &self,
+        candidates: &mut [SearchResult],
+        terms: &[QueryExpansionTerm],
+    ) {
+        if terms.is_empty() {
+            return;
+        }
+
+        let needles = terms
+            .iter()
+            .flat_map(|term| {
+                [
+                    term.term.to_ascii_lowercase(),
+                    term.normalized_term.clone().unwrap_or_default(),
+                ]
+            })
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+
+        for candidate in candidates {
+            if self.is_exact_candidate(candidate) {
+                continue;
+            }
+
+            let mut haystack = candidate.snippet.to_ascii_lowercase();
+            if let Some(title) = &candidate.title {
+                haystack.push(' ');
+                haystack.push_str(&title.to_ascii_lowercase());
+            }
+            if let Some(citation) = &candidate.citation {
+                haystack.push(' ');
+                haystack.push_str(&citation.to_ascii_lowercase());
+            }
+
+            let matches = needles
+                .iter()
+                .filter(|needle| haystack.contains(needle.as_str()))
+                .count();
+            if matches == 0 {
+                continue;
+            }
+
+            let boost = (matches as f32 * 0.2).min(0.8);
+            candidate.score += boost;
+            match &mut candidate.score_breakdown {
+                Some(breakdown) => {
+                    breakdown.expansion = Some(breakdown.expansion.unwrap_or(0.0) + boost)
+                }
+                None => {
+                    candidate.score_breakdown = Some(ScoreBreakdown {
+                        exact: None,
+                        keyword: candidate.fulltext_score,
+                        vector: candidate.vector_score,
+                        rerank: candidate.rerank_score,
+                        graph: candidate.graph_score,
+                        authority: None,
+                        expansion: Some(boost),
+                        penalties: None,
+                    });
+                }
+            }
+        }
     }
 
     fn calculate_legal_boosts(&self, res: &SearchResult, intent: SearchIntent) -> f32 {
@@ -572,6 +738,7 @@ impl SearchService {
                             rerank: Some(*rerank_score),
                             graph: candidate.graph_score,
                             authority: Some(authority),
+                            expansion: None,
                             penalties: None,
                         });
                     }
@@ -648,39 +815,74 @@ impl SearchService {
     }
 
     pub async fn direct_open(&self, q: &str) -> ApiResult<DirectOpenResponse> {
-        let normalized = self.normalize_query(q);
-        let results = self.neo4j.search_exact(&normalized).await?;
+        let plan = analyze_search_query(q);
+        let normalized = plan.analysis.normalized_query.clone();
+        let citation = plan
+            .analysis
+            .citations
+            .first()
+            .map(|citation| citation.normalized.as_str())
+            .unwrap_or(normalized.as_str());
 
-        if let Some(first) = results.into_iter().next() {
-            Ok(DirectOpenResponse {
-                matched: true,
-                kind: first.kind,
-                citation: first.citation.unwrap_or_default(),
-                canonical_id: first.id,
-                href: first.href,
-            })
-        } else {
-            Ok(DirectOpenResponse {
-                matched: false,
-                kind: "".to_string(),
-                citation: q.to_string(),
-                canonical_id: "".to_string(),
-                href: "".to_string(),
-            })
+        if let Some(result) = self.neo4j.search_exact_provision(citation).await? {
+            return Ok(direct_response_from_result(
+                true,
+                DirectMatchType::ExactProvision,
+                normalized,
+                result,
+                None,
+            ));
         }
+
+        if let Some(result) = self.neo4j.search_exact_statute(citation).await? {
+            return Ok(direct_response_from_result(
+                true,
+                DirectMatchType::ExactStatute,
+                normalized,
+                result,
+                None,
+            ));
+        }
+
+        if let Some(parent_citation) = plan
+            .analysis
+            .citations
+            .first()
+            .and_then(|citation| citation.parent.as_deref())
+        {
+            if let Some(result) = self.neo4j.search_exact_statute(parent_citation).await? {
+                let parent = DirectOpenParent {
+                    citation: result
+                        .citation
+                        .clone()
+                        .unwrap_or_else(|| parent_citation.to_string()),
+                    canonical_id: result.id.clone(),
+                    href: result.href.clone(),
+                };
+                return Ok(direct_response_from_result(
+                    true,
+                    DirectMatchType::ParentStatute,
+                    normalized,
+                    result,
+                    Some(parent),
+                ));
+            }
+        }
+
+        Ok(DirectOpenResponse {
+            matched: false,
+            match_type: DirectMatchType::None,
+            normalized_query: normalized,
+            citation: q.to_string(),
+            canonical_id: String::new(),
+            href: String::new(),
+            parent: None,
+        })
     }
 
     pub async fn suggest(&self, q: &str, limit: Option<u32>) -> ApiResult<Vec<SuggestResult>> {
         let limit = limit.unwrap_or(10);
         self.neo4j.suggest(q, limit).await
-    }
-
-    fn normalize_query(&self, q: &str) -> String {
-        normalize_search_query(q)
-    }
-
-    fn detect_intent(&self, q: &str) -> SearchIntent {
-        detect_search_intent(q)
     }
 
     fn rank_and_dedupe(
@@ -795,6 +997,145 @@ impl SearchService {
     }
 }
 
+fn direct_response_from_result(
+    matched: bool,
+    match_type: DirectMatchType,
+    normalized_query: String,
+    result: SearchResult,
+    parent: Option<DirectOpenParent>,
+) -> DirectOpenResponse {
+    DirectOpenResponse {
+        matched,
+        match_type,
+        normalized_query,
+        citation: result.citation.unwrap_or_default(),
+        canonical_id: result.id,
+        href: result.href,
+        parent,
+    }
+}
+
+fn mark_exact_result(result: &mut SearchResult, score: f32, rank_source: &str) {
+    result.rank_source = Some(rank_source.to_string());
+    result.score = score + result.score;
+    result.score_breakdown = Some(ScoreBreakdown {
+        exact: Some(score),
+        keyword: None,
+        vector: None,
+        rerank: None,
+        graph: None,
+        authority: None,
+        expansion: None,
+        penalties: None,
+    });
+}
+
+fn analyze_search_query(q: &str) -> QueryPlan {
+    let normalized = normalize_search_query(q);
+    let ranges = parse_citation_ranges(&normalized);
+    let citations = parse_query_citations(&normalized);
+    let (chapter_prefix, chapter_residual) = parse_chapter_query(&normalized);
+
+    let residual_text = if let Some(residual) = chapter_residual {
+        Some(residual)
+    } else if !ranges.is_empty() {
+        clean_residual_text(remove_ranges_from_query(&normalized, &ranges))
+    } else if !citations.is_empty() {
+        clean_residual_text(remove_citations_from_query(&normalized, &citations))
+    } else {
+        None
+    };
+
+    let inferred_chapter = chapter_prefix
+        .clone()
+        .or_else(|| ranges.first().map(|range| range.chapter.clone()))
+        .or_else(|| citations.first().map(|citation| citation.chapter.clone()));
+
+    let chapter_filter = chapter_prefix.clone().or_else(|| {
+        residual_text
+            .as_ref()
+            .and_then(|_| inferred_chapter.clone())
+    });
+
+    let intent = if !ranges.is_empty() && residual_text.is_none() {
+        SearchIntent::Citation
+    } else if !citations.is_empty() && residual_text.is_none() {
+        SearchIntent::Citation
+    } else if chapter_prefix.is_some() && residual_text.is_none() {
+        SearchIntent::Chapter
+    } else {
+        detect_search_intent(residual_text.as_deref().unwrap_or(&normalized))
+    };
+
+    let retrieval_query = residual_text.clone().unwrap_or_else(|| normalized.clone());
+
+    QueryPlan {
+        analysis: SearchAnalysis {
+            normalized_query: normalized,
+            intent: intent.as_str().to_string(),
+            citations,
+            ranges,
+            inferred_chapter,
+            residual_text,
+            expansion_terms: Vec::new(),
+            expansion_count: 0,
+            applied_filters: Vec::new(),
+            timings: SearchTimingInfo::default(),
+        },
+        intent,
+        retrieval_query,
+        chapter_filter,
+    }
+}
+
+fn exact_queries_for_plan(plan: &QueryPlan) -> Vec<String> {
+    let mut queries = Vec::new();
+    if plan.analysis.ranges.is_empty() {
+        for citation in &plan.analysis.citations {
+            push_unique(&mut queries, citation.normalized.clone());
+        }
+    }
+
+    if queries.is_empty()
+        && matches!(plan.intent, SearchIntent::Chapter)
+        && plan.analysis.residual_text.is_none()
+    {
+        push_unique(&mut queries, plan.analysis.normalized_query.clone());
+    }
+
+    queries
+}
+
+fn parent_query_for_exact(exact_query: &str, citations: &[QueryCitation]) -> Option<String> {
+    citations
+        .iter()
+        .find(|citation| citation.normalized == exact_query)
+        .and_then(|citation| citation.parent.clone())
+}
+
+fn build_expanded_retrieval_query(base: &str, terms: &[QueryExpansionTerm]) -> String {
+    let mut parts = vec![base.trim().to_string()];
+    for term in terms.iter().take(5) {
+        if !parts
+            .iter()
+            .any(|part| part.eq_ignore_ascii_case(&term.term))
+        {
+            parts.push(term.term.clone());
+        }
+    }
+    parts
+        .into_iter()
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn push_unique(values: &mut Vec<String>, value: String) {
+    if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
+}
+
 fn normalize_search_query(q: &str) -> String {
     let mut normalized = q.trim().to_string();
 
@@ -804,24 +1145,140 @@ fn normalize_search_query(q: &str) -> String {
         .replace('‘', "'")
         .replace('’', "'");
 
-    let bare_ors_re = Regex::new(r"(?i)^\s*(\d{1,3}\.\d{3}(?:\([^)]+\))?)\s*$").unwrap();
-    if let Some(caps) = bare_ors_re.captures(&normalized) {
-        return format!("ORS {}", &caps[1]);
+    let range_re = Regex::new(
+        r"(?i)^\s*(?:ORS\s+)?(\d{1,3}[A-Z]?\.\d{3}(?:\([^)]+\))?)\s+(?:to|through|thru|-|–)\s+(?:ORS\s+)?(\d{1,3}[A-Z]?\.\d{3}(?:\([^)]+\))?)\s*$",
+    )
+    .unwrap();
+    if let Some(caps) = range_re.captures(&normalized) {
+        return format!(
+            "ORS {} to ORS {}",
+            &caps[1].to_ascii_uppercase(),
+            &caps[2].to_ascii_uppercase()
+        );
     }
 
-    let ors_re = Regex::new(r"(?i)\bors\s+(\d{1,3}\.\d{3}(?:\([^)]+\))?)").unwrap();
+    let bare_ors_re = Regex::new(r"(?i)^\s*(\d{1,3}[A-Z]?\.\d{3}(?:\([^)]+\))?)\s*$").unwrap();
+    if let Some(caps) = bare_ors_re.captures(&normalized) {
+        return format!("ORS {}", &caps[1].to_ascii_uppercase());
+    }
+
+    let ors_re = Regex::new(r"(?i)\bors\s+(\d{1,3}[A-Z]?\.\d{3}(?:\([^)]+\))?)").unwrap();
     normalized = ors_re
         .replace_all(&normalized, |caps: &regex::Captures| {
-            format!("ORS {}", &caps[1])
+            format!("ORS {}", &caps[1].to_ascii_uppercase())
         })
         .to_string();
 
-    let chapter_re = Regex::new(r"(?i)^\s*chapter\s+(\d{1,3})\s*$").unwrap();
+    let chapter_re = Regex::new(r"(?i)^\s*chapter\s+(\d{1,3}[A-Z]?)\s*$").unwrap();
     if let Some(caps) = chapter_re.captures(&normalized) {
-        return format!("Chapter {}", &caps[1]);
+        return format!("Chapter {}", &caps[1].to_ascii_uppercase());
     }
 
     normalized
+}
+
+fn parse_query_citations(q: &str) -> Vec<QueryCitation> {
+    let citation_re =
+        Regex::new(r"(?i)\b(?:ORS\s+)?(\d{1,3}[A-Z]?)\.(\d{3})((?:\([A-Za-z0-9]+\))*)").unwrap();
+    citation_re
+        .captures_iter(q)
+        .filter_map(|caps| {
+            let raw = caps.get(0)?.as_str().trim().to_string();
+            let chapter = caps.get(1)?.as_str().to_ascii_uppercase();
+            let section = caps.get(2)?.as_str().to_string();
+            let subsection_text = caps.get(3).map(|m| m.as_str()).unwrap_or_default();
+            let subsections = parse_subsections(subsection_text);
+            let base = format!("ORS {chapter}.{section}");
+            let normalized = format!("{base}{subsection_text}");
+            let parent = (!subsections.is_empty()).then(|| base.clone());
+
+            Some(QueryCitation {
+                raw,
+                normalized,
+                base,
+                chapter,
+                section,
+                subsections,
+                parent,
+            })
+        })
+        .collect()
+}
+
+fn parse_citation_ranges(q: &str) -> Vec<QueryCitationRange> {
+    let range_re = Regex::new(
+        r"(?i)\b(?:ORS\s+)?(\d{1,3}[A-Z]?)\.(\d{3})(?:\([^)]+\))*\s+(?:to|through|thru|-|–)\s+(?:ORS\s+)?(\d{1,3}[A-Z]?)\.(\d{3})(?:\([^)]+\))*",
+    )
+    .unwrap();
+    range_re
+        .captures_iter(q)
+        .filter_map(|caps| {
+            let start_chapter = caps.get(1)?.as_str().to_ascii_uppercase();
+            let end_chapter = caps.get(3)?.as_str().to_ascii_uppercase();
+            if start_chapter != end_chapter {
+                return None;
+            }
+            let start = format!("ORS {}.{}", start_chapter, caps.get(2)?.as_str());
+            let end = format!("ORS {}.{}", end_chapter, caps.get(4)?.as_str());
+            Some(QueryCitationRange {
+                raw: caps.get(0)?.as_str().trim().to_string(),
+                start,
+                end,
+                chapter: start_chapter,
+            })
+        })
+        .collect()
+}
+
+fn parse_subsections(value: &str) -> Vec<String> {
+    let subsection_re = Regex::new(r"\(([A-Za-z0-9]+)\)").unwrap();
+    subsection_re
+        .captures_iter(value)
+        .filter_map(|caps| caps.get(1).map(|m| m.as_str().to_string()))
+        .collect()
+}
+
+fn parse_chapter_query(q: &str) -> (Option<String>, Option<String>) {
+    let chapter_re = Regex::new(r"(?i)^\s*(?:ORS\s+)?chapter\s+(\d{1,3}[A-Z]?)\b\s*(.*)$").unwrap();
+    if let Some(caps) = chapter_re.captures(q) {
+        let chapter = caps
+            .get(1)
+            .map(|m| m.as_str().to_ascii_uppercase())
+            .unwrap_or_default();
+        let residual = caps
+            .get(2)
+            .map(|m| clean_query_spacing(m.as_str()))
+            .filter(|value| !value.is_empty());
+        return (Some(chapter), residual);
+    }
+    (None, None)
+}
+
+fn remove_ranges_from_query(q: &str, ranges: &[QueryCitationRange]) -> String {
+    ranges.iter().fold(q.to_string(), |current, range| {
+        current.replace(&range.raw, " ")
+    })
+}
+
+fn remove_citations_from_query(q: &str, citations: &[QueryCitation]) -> String {
+    citations.iter().fold(q.to_string(), |current, citation| {
+        current.replace(&citation.raw, " ")
+    })
+}
+
+fn clean_residual_text(value: String) -> Option<String> {
+    let cleaned = clean_query_spacing(&value);
+    (!cleaned.is_empty()).then_some(cleaned)
+}
+
+fn clean_query_spacing(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(|ch: char| matches!(ch, ',' | ';' | ':' | '-' | '–'))
+        .trim()
+        .to_string()
 }
 
 fn is_exact_candidate(candidate: &SearchResult) -> bool {
@@ -925,6 +1382,22 @@ enum SearchIntent {
     General,
 }
 
+impl SearchIntent {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Citation => "citation",
+            Self::Chapter => "chapter",
+            Self::Definition => "definition",
+            Self::Deadline => "deadline",
+            Self::Penalty => "penalty",
+            Self::Notice => "notice",
+            Self::Actor => "actor",
+            Self::History => "history",
+            Self::General => "general",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FilterStage {
     Early,
@@ -969,6 +1442,7 @@ mod tests {
                     rerank: None,
                     graph: None,
                     authority: None,
+                    expansion: None,
                     penalties: None,
                 })
             }),
@@ -985,6 +1459,10 @@ mod tests {
     fn normalizes_common_ors_and_chapter_queries() {
         assert_eq!(normalize_search_query("90.300"), "ORS 90.300");
         assert_eq!(normalize_search_query("ors 90.300(1)"), "ORS 90.300(1)");
+        assert_eq!(
+            normalize_search_query("90.320 to 90.330"),
+            "ORS 90.320 to ORS 90.330"
+        );
         assert_eq!(normalize_search_query(" chapter 90 "), "Chapter 90");
         assert_eq!(
             normalize_search_query("“landlord” notice"),
@@ -1009,14 +1487,58 @@ mod tests {
 
     #[test]
     fn auto_mode_routes_citation_like_queries_to_citation_mode() {
+        let citation_plan = analyze_search_query("ORS 90.300");
+        let chapter_topic_plan = analyze_search_query("chapter 90 habitability");
+        let general_plan = analyze_search_query("security deposit deadline");
+
         assert_eq!(
-            SearchService::resolve_mode(SearchMode::Auto, SearchIntent::Citation),
+            SearchService::resolve_mode(SearchMode::Auto, &citation_plan),
             SearchMode::Citation
         );
         assert_eq!(
-            SearchService::resolve_mode(SearchMode::Auto, SearchIntent::General),
+            SearchService::resolve_mode(SearchMode::Auto, &chapter_topic_plan),
             SearchMode::Hybrid
         );
+        assert_eq!(
+            SearchService::resolve_mode(SearchMode::Auto, &general_plan),
+            SearchMode::Hybrid
+        );
+    }
+
+    #[test]
+    fn analyzes_citations_ranges_and_chapter_topics() {
+        let bare = analyze_search_query("90.300");
+        assert_eq!(bare.analysis.normalized_query, "ORS 90.300");
+        assert_eq!(bare.analysis.intent, "citation");
+        assert_eq!(bare.analysis.citations[0].normalized, "ORS 90.300");
+
+        let subsection = analyze_search_query("ORS 90.320(1)(a)");
+        assert_eq!(subsection.analysis.citations[0].base, "ORS 90.320");
+        assert_eq!(
+            subsection.analysis.citations[0].subsections,
+            vec!["1".to_string(), "a".to_string()]
+        );
+        assert_eq!(
+            subsection.analysis.citations[0].parent.as_deref(),
+            Some("ORS 90.320")
+        );
+
+        let range = analyze_search_query("ORS 90.320 to 90.330");
+        assert_eq!(range.analysis.ranges[0].start, "ORS 90.320");
+        assert_eq!(range.analysis.ranges[0].end, "ORS 90.330");
+        assert_eq!(range.analysis.ranges[0].chapter, "90");
+
+        let chapter_topic = analyze_search_query("chapter 90 habitability");
+        assert_eq!(
+            chapter_topic.analysis.inferred_chapter.as_deref(),
+            Some("90")
+        );
+        assert_eq!(
+            chapter_topic.analysis.residual_text.as_deref(),
+            Some("habitability")
+        );
+        assert_eq!(chapter_topic.chapter_filter.as_deref(), Some("90"));
+        assert_eq!(chapter_topic.retrieval_query, "habitability");
     }
 
     #[test]
@@ -1069,5 +1591,32 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(ids, vec!["300", "302", "301", "303"]);
+    }
+
+    #[test]
+    fn exact_marking_beats_graph_expanded_candidates() {
+        let mut exact = result("300", 2.0, None);
+        let mut expanded = result("301", 40.0, Some("keyword"));
+        expanded.rank_source = Some("graph-expanded".to_string());
+
+        mark_exact_result(&mut exact, 100.0, "exact");
+
+        assert!(exact.score > expanded.score);
+        assert_eq!(exact.rank_source.as_deref(), Some("exact"));
+    }
+
+    #[test]
+    fn direct_response_uses_structured_match_type() {
+        let response = direct_response_from_result(
+            true,
+            DirectMatchType::ExactProvision,
+            "ORS 90.320(1)(a)".to_string(),
+            result("320", 4.0, Some("exact")),
+            None,
+        );
+
+        assert!(response.matched);
+        assert_eq!(response.match_type, DirectMatchType::ExactProvision);
+        assert_eq!(response.normalized_query, "ORS 90.320(1)(a)");
     }
 }

@@ -35,7 +35,7 @@ export default async function SearchPage({
 }) {
   const params = await searchParams
   const q = params.q || ""
-  const initialMode = params.mode || "hybrid"
+  const initialMode = params.mode || "auto"
   const initialType = params.type || "all"
   const initialLimit = numberParam(params.limit, 20)
   const initialOffset = Math.max(0, Number(params.offset || 0) || 0)

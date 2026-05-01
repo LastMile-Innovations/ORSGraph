@@ -23,6 +23,30 @@ export function matterDraftHref(matterId: string, draftId?: string) {
   return draftId ? `${base}/${encodeMatterId(draftId)}` : base
 }
 
+export type ComplaintWorkspaceSection =
+  | "editor"
+  | "outline"
+  | "claims"
+  | "evidence"
+  | "qc"
+  | "preview"
+  | "export"
+  | "history"
+
+export function matterComplaintHref(
+  matterId: string,
+  section?: ComplaintWorkspaceSection,
+  target?: { type?: string; id?: string; returnTo?: string },
+) {
+  const base = matterHref(matterId, "complaint")
+  const href = section ? `${base}/${section}` : base
+  const params = new URLSearchParams()
+  if (target?.type) params.set("targetType", target.type)
+  if (target?.returnTo) params.set("returnTo", target.returnTo)
+  const query = params.toString()
+  return withHash(query ? `${href}?${query}` : href, target?.id)
+}
+
 export function matterFactsHref(matterId: string, factId?: string) {
   return withHash(matterHref(matterId, "facts"), factId)
 }

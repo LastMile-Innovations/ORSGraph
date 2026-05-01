@@ -132,17 +132,19 @@ These tasks cut across phases and should be worked whenever they unblock trust, 
 - Dependencies: `CB-X-001`.
 - Status: Partial
 - Progress: Backend and frontend DTO registries now include `ObjectBlob`, `DocumentVersion`, `IngestionRun`, and `SourceSpan`; contract tests cover backend/frontend registry presence, serialization, frontend normalization references, matter ownership fields, and filename-safe IDs/object keys for the first provenance slice.
-- Still needed: Add the remaining production DTOs: `IssueSuggestion`, `DraftSentence`, `CaseGraphNode`, `CaseGraphEdge`, `QcRun`, `EvidenceGap`, `AuthorityGap`, `Contradiction`, `ExportPackage`, and `AuditEvent`.
+- Still needed: Add the remaining production DTOs: `IssueSuggestion`, `DraftSentence`, `CaseGraphNode`, `CaseGraphEdge`, `QcRun`, `EvidenceGap`, `AuthorityGap`, `Contradiction`, `ExportPackage`, and `AuditEvent`; complaint-specific DTOs are tracked in `CB-CE-001`.
 
 ## CB-X-014 - Production route contract coverage
 - Priority: P0
 - Area: API/routing
 - Problem: New production wiring routes need explicit contract coverage like the existing V0 route test.
-- Expected behavior: Contract tests cover `/issues/spot`, `/graph`, `/qc/run`, finding lifecycle routes, task/deadline CRUD, authority attach routes, and export package status/download routes.
+- Expected behavior: Contract tests cover `/issues/spot`, `/graph`, `/qc/run`, finding lifecycle routes, task/deadline CRUD, export package status/download routes, complaint routes, and any new authority target routes beyond the V0 claim/element/draft-paragraph attach contract.
 - Implementation notes: Start with route registration tests, then add handler-level fixtures as services become real.
 - Acceptance checks: CI fails if any production backlog route is removed or renamed without updating the contract.
 - Dependencies: `CB-X-013`, current route contract tests.
-- Status: Todo
+- Status: Partial
+- Progress: V0 route contract coverage now includes binary upload, authority attach/detach, complaint routes, work-product routes, and Case History history/snapshot/compare/restore/export-history/AI-audit routes with complaint aliases.
+- Still needed: Contract coverage for issue spotting, graph, matter-level QC run, richer finding lifecycle, task/deadline CRUD, export package status/download, and future authority target routes.
 
 ## CB-X-015 - V0 end-to-end workflow smoke
 - Priority: P0
@@ -152,7 +154,9 @@ These tasks cut across phases and should be worked whenever they unblock trust, 
 - Implementation notes: Use a test Neo4j fixture or mocked service boundary; keep it deterministic and safe for local dev.
 - Acceptance checks: Smoke fails on broken matter isolation, missing graph links, missing source support, or broken draft/check handoff.
 - Dependencies: `CB-V0-018`, `CB-V0-019`, `CB-V0-025`, `CB-V01-015`, `CB-V02-011`.
-- Status: Todo
+- Status: Partial
+- Progress: Added `pnpm run smoke:casebuilder` covering the V0 workflow and export-deferred status; script syntax is verified.
+- Still needed: Run it against a live local/API fixture and decide whether it belongs in CI as a required or optional smoke.
 
 ## CB-X-016 - Matter isolation and authorization query audit
 - Priority: P0

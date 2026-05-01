@@ -2171,6 +2171,7 @@ function buildMatter(summary: MatterSummary): Matter {
     deadlines,
     tasks,
     drafts,
+    work_products: [],
     fact_check_findings: [],
     citation_check_findings: [],
     chatHistory,

@@ -140,8 +140,6 @@ impl Default for SearchMode {
 #[derive(Debug, Serialize)]
 pub struct SearchResponse {
     pub query: String,
-    pub normalized_query: String,
-    pub intent: String,
     pub mode: SearchMode,
     pub total: usize,
     pub limit: u32,
@@ -149,11 +147,61 @@ pub struct SearchResponse {
     pub results: Vec<SearchResult>,
     pub facets: Option<SearchFacets>,
     pub warnings: Vec<String>,
+    pub analysis: SearchAnalysis,
     pub retrieval: RetrievalInfo,
     pub embeddings: Option<EmbeddingsInfo>,
     pub rerank: Option<RerankInfo>,
-    pub took_ms: u64,
+}
+
+#[derive(Debug, Serialize, Clone, Default)]
+pub struct SearchAnalysis {
+    pub normalized_query: String,
+    pub intent: String,
+    pub citations: Vec<QueryCitation>,
+    pub ranges: Vec<QueryCitationRange>,
+    pub inferred_chapter: Option<String>,
+    pub residual_text: Option<String>,
+    pub expansion_terms: Vec<QueryExpansionTerm>,
+    pub expansion_count: usize,
     pub applied_filters: Vec<String>,
+    pub timings: SearchTimingInfo,
+}
+
+#[derive(Debug, Serialize, Clone, Default)]
+pub struct SearchTimingInfo {
+    pub total_ms: u64,
+    pub retrieval_ms: u64,
+    pub graph_ms: u64,
+    pub rerank_ms: u64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct QueryCitation {
+    pub raw: String,
+    pub normalized: String,
+    pub base: String,
+    pub chapter: String,
+    pub section: String,
+    pub subsections: Vec<String>,
+    pub parent: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct QueryCitationRange {
+    pub raw: String,
+    pub start: String,
+    pub end: String,
+    pub chapter: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct QueryExpansionTerm {
+    pub term: String,
+    pub normalized_term: Option<String>,
+    pub kind: String,
+    pub source_id: Option<String>,
+    pub source_citation: Option<String>,
+    pub score: f32,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -217,6 +265,7 @@ pub struct ScoreBreakdown {
     pub rerank: Option<f32>,
     pub graph: Option<f32>,
     pub authority: Option<f32>,
+    pub expansion: Option<f32>,
     pub penalties: Option<f32>,
 }
 
@@ -260,12 +309,34 @@ pub struct SuggestResult {
     pub label: String,
     pub kind: String,
     pub href: String,
+    pub citation: Option<String>,
+    pub canonical_id: Option<String>,
+    pub match_type: DirectMatchType,
+    pub score: f32,
 }
 
 #[derive(Debug, Serialize)]
 pub struct DirectOpenResponse {
     pub matched: bool,
-    pub kind: String,
+    pub match_type: DirectMatchType,
+    pub normalized_query: String,
+    pub citation: String,
+    pub canonical_id: String,
+    pub href: String,
+    pub parent: Option<DirectOpenParent>,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DirectMatchType {
+    ExactProvision,
+    ExactStatute,
+    ParentStatute,
+    None,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DirectOpenParent {
     pub citation: String,
     pub canonical_id: String,
     pub href: String,

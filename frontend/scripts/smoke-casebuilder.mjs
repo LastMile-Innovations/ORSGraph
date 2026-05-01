@@ -37,6 +37,13 @@ async function main() {
   matterId = matter.matter_id || matter.id
   assert(matterId, "matter id returned")
 
+  const emptyComplaint = await request(`/matters/${encodeURIComponent(matterId)}/complaints`, {
+    method: "POST",
+    body: JSON.stringify({ title: "Empty graph complaint" }),
+  })
+  assert(emptyComplaint.paragraphs?.length > 0, "empty matter complaint still has a usable paragraph")
+  assert(emptyComplaint.next_actions?.length > 0, "empty matter complaint has next actions")
+
   const form = new FormData()
   form.append(
     "file",
@@ -101,7 +108,7 @@ async function main() {
     { method: "POST" },
   )
 
-  await request(`/matters/${encodeURIComponent(matterId)}/evidence`, {
+  const evidence = await request(`/matters/${encodeURIComponent(matterId)}/evidence`, {
     method: "POST",
     body: JSON.stringify({
       document_id: document.document_id,
@@ -122,22 +129,66 @@ async function main() {
     }),
   })
 
-  const draft = await request(`/matters/${encodeURIComponent(matterId)}/drafts`, {
+  const complaint = await request(`/matters/${encodeURIComponent(matterId)}/complaints`, {
     method: "POST",
-    body: JSON.stringify({ title: "Smoke complaint", draft_type: "complaint" }),
+    body: JSON.stringify({ title: "Smoke complaint" }),
   })
+  assert(complaint.complaint_id, "complaint id returned")
+  assert(complaint.paragraphs?.length > 0, "complaint seeded paragraphs")
+  assert(complaint.counts?.length > 0, "complaint seeded counts from claim")
+
+  const paragraph = await request(
+    `/matters/${encodeURIComponent(matterId)}/complaints/${encodeURIComponent(complaint.complaint_id)}/paragraphs`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        text: "Defendant failed to make repairs after written notice.",
+        role: "factual_allegation",
+        fact_ids: [approvedFact.fact_id || approvedFact.id],
+        evidence_ids: [evidence.evidence_id || evidence.id],
+      }),
+    },
+  )
+  const paragraphId = paragraph.paragraphs.at(-1).paragraph_id
   await request(
-    `/matters/${encodeURIComponent(matterId)}/drafts/${encodeURIComponent(draft.draft_id || draft.id)}/generate`,
+    `/matters/${encodeURIComponent(matterId)}/complaints/${encodeURIComponent(complaint.complaint_id)}/links`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        target_type: "paragraph",
+        target_id: paragraphId,
+        citation: "ORS 90.320",
+        canonical_id: "ORS 90.320",
+      }),
+    },
+  )
+  const qc = await request(
+    `/matters/${encodeURIComponent(matterId)}/complaints/${encodeURIComponent(complaint.complaint_id)}/qc/run`,
     { method: "POST" },
   )
-  await request(
-    `/matters/${encodeURIComponent(matterId)}/drafts/${encodeURIComponent(draft.draft_id || draft.id)}/fact-check`,
-    { method: "POST" },
+  assert(qc.mode === "deterministic", "complaint qc is deterministic")
+  const findings = qc.result || []
+  if (findings[0]) {
+    await request(
+      `/matters/${encodeURIComponent(matterId)}/complaints/${encodeURIComponent(complaint.complaint_id)}/qc/findings/${encodeURIComponent(findings[0].finding_id)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ status: "ignored" }),
+      },
+    )
+  }
+  const preview = await request(
+    `/matters/${encodeURIComponent(matterId)}/complaints/${encodeURIComponent(complaint.complaint_id)}/preview`,
   )
-  await request(
-    `/matters/${encodeURIComponent(matterId)}/drafts/${encodeURIComponent(draft.draft_id || draft.id)}/citation-check`,
-    { method: "POST" },
+  assert(preview.html?.includes("court-paper"), "complaint preview generated")
+  const artifact = await request(
+    `/matters/${encodeURIComponent(matterId)}/complaints/${encodeURIComponent(complaint.complaint_id)}/export`,
+    {
+      method: "POST",
+      body: JSON.stringify({ format: "html", include_exhibits: true, include_qc_report: true }),
+    },
   )
+  assert(artifact.artifact_id, "complaint export artifact returned")
 
   try {
     await request(`/matters/${encodeURIComponent(matterId)}/export/docx`, { method: "POST" })

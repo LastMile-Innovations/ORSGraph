@@ -534,7 +534,7 @@ export const statutePage_3_130: StatutePageResponse = {
 
 export const searchResponse: SearchResponse = {
   query: "district attorney duties",
-  mode: "hybrid",
+  mode: "auto",
   results: [
     {
       result_type: "statute",
@@ -668,7 +668,23 @@ export const searchResponse: SearchResponse = {
       source_backed: true,
     },
   ],
-  took_ms: 142,
+  analysis: {
+    normalized_query: "district attorney duties",
+    intent: "actor",
+    citations: [],
+    ranges: [],
+    inferred_chapter: null,
+    residual_text: null,
+    expansion_terms: [],
+    expansion_count: 0,
+    applied_filters: [],
+    timings: {
+      total_ms: 142,
+      retrieval_ms: 84,
+      graph_ms: 22,
+      rerank_ms: 0,
+    },
+  },
   total: 7,
 }
 
