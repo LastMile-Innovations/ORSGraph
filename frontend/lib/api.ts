@@ -7,13 +7,22 @@ import {
   SystemHealth,
   GraphInsightCard,
   FeaturedStatute,
+  StatutePageResponse,
+  Provision,
+  ProvisionInspectorData,
+  AskAnswer,
+  StatuteIdentity,
 } from './types';
 
 import { 
   mockHomePageData, 
   mockSystemHealth, 
   mockGraphInsights, 
-  mockFeaturedStatutes 
+  mockFeaturedStatutes,
+  statuteIndex,
+  getStatuteByCanonicalId,
+  getProvisionById,
+  askAnswer as mockAskAnswer,
 } from './mock-data';
 import type { GraphNeighborhoodParams, GraphViewerResponse } from '@/components/graph/types';
 
@@ -119,6 +128,47 @@ export async function getStats() {
   }>('/stats');
 }
 
+interface StatuteIndexApiItem {
+  canonical_id: string
+  citation: string
+  title: string | null
+  chapter: string
+  status: string
+  edition_year: number
+}
+
+interface StatuteIndexApiResponse {
+  items: StatuteIndexApiItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export async function getStatuteIndex(paramsInput: { limit?: number; offset?: number; chapter?: string } = {}): Promise<StatuteIdentity[]> {
+  try {
+    const params = new URLSearchParams({
+      limit: String(paramsInput.limit ?? 1000),
+      offset: String(paramsInput.offset ?? 0),
+    })
+    if (paramsInput.chapter) params.set("chapter", paramsInput.chapter)
+
+    const response = await fetchApi<StatuteIndexApiResponse>(`/statutes?${params}`)
+    return response.items.map((item) => ({
+      canonical_id: item.canonical_id,
+      citation: item.citation,
+      title: item.title ?? item.citation,
+      jurisdiction: "Oregon",
+      corpus: "ORS",
+      chapter: item.chapter,
+      status: normalizeLegalStatus(item.status),
+      edition: item.edition_year,
+    }))
+  } catch (error) {
+    console.warn("Failed to fetch /statutes, falling back to mock index", error)
+    return statuteIndex
+  }
+}
+
 // Search
 export async function search(
   query: string, 
@@ -181,6 +231,23 @@ export async function directOpen(query: string): Promise<DirectOpenResponse> {
 // Statute
 export async function getStatute(citation: string) {
   return fetchApi<any>(`/statutes/${encodeURIComponent(citation)}`);
+}
+
+export async function getStatutePageData(citationOrCanonicalId: string): Promise<StatutePageResponse | null> {
+  try {
+    const [detail, provisions, citations, semantics, history] = await Promise.all([
+      getStatute(citationOrCanonicalId),
+      getProvisions(citationOrCanonicalId),
+      getCitations(citationOrCanonicalId),
+      getSemantics(citationOrCanonicalId),
+      getHistory(citationOrCanonicalId),
+    ])
+
+    return mapStatutePage(detail, provisions, citations, semantics, history)
+  } catch (error) {
+    console.warn("Failed to fetch statute detail, falling back to mock statute", error)
+    return getStatuteByCanonicalId(citationOrCanonicalId)
+  }
 }
 
 export async function getProvisions(citation: string) {
@@ -296,18 +363,216 @@ export async function getQCSummary() {
   return fetchApi<{
     node_counts_by_label: Array<{ label: string; count: number }>;
     relationship_counts_by_type: Array<{ rel_type: string; count: number }>;
-    orphan_counts: { chunks: number; citations: number };
-    duplicate_counts: { provisions: number };
+    orphan_counts: { provisions: number; chunks: number; citations: number };
+    duplicate_counts: { legal_text_identities: number; provisions: number; cites_relationships: number };
     embedding_readiness: { total_chunks: number; embedded_chunks: number; coverage: number };
     cites_coverage: { total_citations: number; resolved_citations: number; coverage: number };
     last_qc_status: string | null;
   }>('/qc/summary');
 }
 
-// Ask (stub)
-export async function ask(question: string) {
-  return fetchApi<{ error: string }>('/ask', {
+export async function ask(question: string, mode: string = "research"): Promise<AskAnswer> {
+  return fetchApi<AskAnswer>('/ask', {
     method: 'POST',
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, mode }),
   });
+}
+
+export async function askWithFallback(question: string, mode: string = "research"): Promise<AskAnswer> {
+  try {
+    return await ask(question, mode)
+  } catch (error) {
+    console.warn("Failed to fetch /ask, falling back to mock answer", error)
+    return { ...mockAskAnswer, question }
+  }
+}
+
+export async function getProvisionInspectorData(provisionId: string): Promise<ProvisionInspectorData | null> {
+  try {
+    const response = await fetchApi<any>(`/provisions/${encodeURIComponent(provisionId)}`)
+    return mapProvisionInspector(response)
+  } catch (error) {
+    console.warn("Failed to fetch provision detail, falling back to mock provision", error)
+    return getProvisionById(provisionId)
+  }
+}
+
+function mapStatutePage(detail: any, provisionsResponse: any, citations: any, semantics: any, history: any): StatutePageResponse {
+  const identity = {
+    canonical_id: detail.identity.canonical_id,
+    citation: detail.identity.citation,
+    title: detail.identity.title ?? detail.identity.citation,
+    jurisdiction: "Oregon",
+    corpus: "ORS",
+    chapter: detail.identity.chapter,
+    status: normalizeLegalStatus(detail.identity.status),
+    edition: detail.source_document?.edition_year ?? 2025,
+  }
+
+  const currentVersion = {
+    ...detail.current_version,
+    source_documents: [detail.source_document?.source_id].filter(Boolean),
+  }
+
+  const provisions: Provision[] = (provisionsResponse.provisions ?? []).map((p: any) => mapProvision(p))
+  const outbound = (citations.outbound ?? []).map((c: any) => ({
+    target_canonical_id: c.target_canonical_id,
+    target_citation: c.target_citation,
+    context_snippet: c.context_snippet,
+    source_provision: c.source_provision,
+    resolved: Boolean(c.resolved),
+  }))
+  const inbound = (citations.inbound ?? []).map((c: any) => ({
+    source_canonical_id: c.target_canonical_id ?? "",
+    source_citation: c.target_citation,
+    source_title: c.target_citation,
+    source_provision: c.source_provision,
+    context_snippet: c.context_snippet,
+  }))
+
+  return {
+    identity,
+    current_version: currentVersion,
+    versions: [currentVersion],
+    provisions,
+    chunks: [],
+    definitions: (semantics.definitions ?? []).map((d: any, index: number) => ({
+      definition_id: `definition:${index}`,
+      term: d.term,
+      text: d.text,
+      source_provision: d.source_provision,
+      scope: d.scope ?? identity.citation,
+    })),
+    exceptions: (semantics.exceptions ?? []).map((e: any, index: number) => ({
+      exception_id: `exception:${index}`,
+      text: e.text,
+      applies_to_provision: e.source_provision,
+      source_provision: e.source_provision,
+    })),
+    deadlines: (semantics.deadlines ?? []).map((d: any, index: number) => ({
+      deadline_id: `deadline:${index}`,
+      description: d.description,
+      duration: d.duration,
+      trigger: d.trigger,
+      source_provision: d.source_provision,
+    })),
+    penalties: (semantics.penalties ?? []).map((p: any, index: number) => ({
+      penalty_id: `penalty:${index}`,
+      description: p.text,
+      category: "administrative",
+      source_provision: p.source_provision,
+    })),
+    outbound_citations: outbound,
+    inbound_citations: inbound,
+    source_documents: [{
+      source_id: detail.source_document?.source_id ?? "",
+      url: detail.source_document?.url ?? "",
+      retrieved_at: "",
+      raw_hash: "",
+      normalized_hash: "",
+      edition_year: detail.source_document?.edition_year ?? 2025,
+      parser_profile: "orsgraph-api",
+      parser_warnings: [],
+    }],
+    qc: {
+      status: history.source_notes?.length ? "warning" : "pass",
+      passed_checks: history.source_notes?.length ? 1 : 2,
+      total_checks: 2,
+      notes: (history.source_notes ?? []).map((message: string, index: number) => ({
+        note_id: `source-note:${index}`,
+        level: "info",
+        category: "source",
+        message,
+        related_id: detail.identity.canonical_id,
+      })),
+    },
+  }
+}
+
+function mapProvision(p: any): Provision {
+  return {
+    provision_id: p.provision_id,
+    display_citation: p.display_citation,
+    provision_type: provisionTypeForDepth(p.depth),
+    parent_id: null,
+    text: p.text ?? "",
+    text_preview: previewText(p.text ?? "", 180),
+    signals: [],
+    cites_count: 0,
+    cited_by_count: 0,
+    chunk_count: 0,
+    qc_status: "pass",
+    status: "active",
+    children: (p.children ?? []).map((child: any) => mapProvision(child)),
+  }
+}
+
+function mapProvisionInspector(response: any): ProvisionInspectorData {
+  return {
+    parent_statute: {
+      canonical_id: response.parent_statute.canonical_id,
+      citation: response.parent_statute.citation,
+      title: response.parent_statute.title ?? response.parent_statute.citation,
+      chapter: response.parent_statute.chapter,
+      status: normalizeLegalStatus(response.parent_statute.status),
+      edition: response.parent_statute.edition_year ?? 2025,
+    },
+    provision: mapProvisionDetail(response.provision),
+    ancestors: response.ancestors ?? [],
+    children: (response.children ?? []).map((p: any) => mapProvisionDetail(p)),
+    siblings: response.siblings ?? [],
+    chunks: response.chunks ?? [],
+    outbound_citations: response.outbound_citations ?? [],
+    inbound_citations: (response.inbound_citations ?? []).map((c: any) => ({
+      source_canonical_id: c.target_canonical_id ?? "",
+      source_citation: c.target_citation,
+      source_title: c.target_citation,
+      source_provision: c.source_provision,
+      context_snippet: c.context_snippet,
+    })),
+    definitions: response.definitions ?? [],
+    exceptions: response.exceptions ?? [],
+    deadlines: response.deadlines ?? [],
+    qc_notes: response.qc_notes ?? [],
+  }
+}
+
+function mapProvisionDetail(p: any): Provision {
+  return {
+    provision_id: p.provision_id,
+    display_citation: p.display_citation,
+    provision_type: normalizeProvisionType(p.provision_type),
+    parent_id: p.parent_id ?? null,
+    text: p.text ?? "",
+    text_preview: p.text_preview ?? previewText(p.text ?? "", 180),
+    signals: p.signals ?? [],
+    cites_count: p.cites_count ?? 0,
+    cited_by_count: p.cited_by_count ?? 0,
+    chunk_count: p.chunk_count ?? 0,
+    qc_status: p.qc_status ?? "pass",
+    status: normalizeLegalStatus(p.status),
+    children: [],
+  }
+}
+
+function normalizeLegalStatus(status?: string) {
+  const value = (status ?? "active").toLowerCase()
+  return ["active", "repealed", "renumbered", "amended"].includes(value) ? value as any : "active"
+}
+
+function normalizeProvisionType(type?: string) {
+  const value = (type ?? "section").toLowerCase()
+  return ["section", "subsection", "paragraph", "subparagraph", "clause"].includes(value) ? value as any : "section"
+}
+
+function provisionTypeForDepth(depth?: number) {
+  if ((depth ?? 0) <= 0) return "section"
+  if (depth === 1) return "subsection"
+  if (depth === 2) return "paragraph"
+  if (depth === 3) return "subparagraph"
+  return "clause"
+}
+
+function previewText(text: string, max: number) {
+  return text.length > max ? `${text.slice(0, max).trim()}...` : text
 }

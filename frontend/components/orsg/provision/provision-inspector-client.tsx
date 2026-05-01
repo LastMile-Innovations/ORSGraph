@@ -5,7 +5,7 @@ import { useState } from "react"
 import { ArrowLeft, ChevronRight, FileText, GitBranch, Hash, ScrollText, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { StatusBadge, QCBadge, SignalBadge, ChunkTypeBadge } from "@/components/orsg/badges"
-import type { ProvisionInspectorData } from "@/lib/mock-data"
+import type { ProvisionInspectorData } from "@/lib/types"
 
 const TABS = [
   { id: "text", label: "Text" },

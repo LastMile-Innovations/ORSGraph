@@ -3,6 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 import type { AskAnswer } from "@/lib/types"
+import { askWithFallback } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import {
   Sparkles,
@@ -28,12 +29,25 @@ const MODES = [
 
 interface Props {
   initialQuery: string
-  answer: AskAnswer
+  initialAnswer: AskAnswer
 }
 
-export function AskClient({ initialQuery, answer }: Props) {
+export function AskClient({ initialQuery, initialAnswer }: Props) {
   const [q, setQ] = useState(initialQuery)
   const [mode, setMode] = useState("research")
+  const [answer, setAnswer] = useState(initialAnswer)
+  const [loading, setLoading] = useState(false)
+
+  async function submitQuestion() {
+    const question = q.trim()
+    if (!question || loading) return
+    setLoading(true)
+    try {
+      setAnswer(await askWithFallback(question, mode))
+    } finally {
+      setLoading(false)
+    }
+  }
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -51,13 +65,23 @@ export function AskClient({ initialQuery, answer }: Props) {
             <textarea
               value={q}
               onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                  event.preventDefault()
+                  submitQuestion()
+                }
+              }}
               rows={2}
               placeholder="Ask anything grounded in Oregon Revised Statutes…"
               className="flex-1 resize-none bg-transparent py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
             />
-            <button className="mt-1 flex h-7 items-center gap-1 rounded bg-primary px-2.5 font-mono text-[10px] uppercase tracking-wide text-primary-foreground hover:opacity-90">
+            <button
+              onClick={submitQuestion}
+              disabled={loading || q.trim().length === 0}
+              className="mt-1 flex h-7 items-center gap-1 rounded bg-primary px-2.5 font-mono text-[10px] uppercase tracking-wide text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
               <Send className="h-3 w-3" />
-              answer
+              {loading ? "asking" : "answer"}
             </button>
           </div>
 

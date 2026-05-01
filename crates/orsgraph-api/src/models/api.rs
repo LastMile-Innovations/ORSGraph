@@ -96,6 +96,24 @@ pub struct SourceDocument {
 }
 
 #[derive(Debug, Serialize)]
+pub struct StatuteIndexResponse {
+    pub items: Vec<StatuteIndexItem>,
+    pub total: u64,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct StatuteIndexItem {
+    pub canonical_id: String,
+    pub citation: String,
+    pub title: Option<String>,
+    pub chapter: String,
+    pub status: String,
+    pub edition_year: i32,
+}
+
+#[derive(Debug, Serialize)]
 pub struct CitationCounts {
     pub outbound: u64,
     pub inbound: u64,
@@ -124,6 +142,75 @@ pub struct ProvisionNode {
     pub depth: usize,
     pub text: String,
     pub children: Vec<ProvisionNode>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProvisionDetailResponse {
+    pub parent_statute: StatuteIndexItem,
+    pub provision: ProvisionDetail,
+    pub ancestors: Vec<ProvisionLink>,
+    pub children: Vec<ProvisionDetail>,
+    pub siblings: Vec<ProvisionLink>,
+    pub chunks: Vec<ProvisionChunk>,
+    pub outbound_citations: Vec<Citation>,
+    pub inbound_citations: Vec<Citation>,
+    pub definitions: Vec<DefinitionItem>,
+    pub exceptions: Vec<ProvisionException>,
+    pub deadlines: Vec<DeadlineItem>,
+    pub qc_notes: Vec<QCNoteItem>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ProvisionDetail {
+    pub provision_id: String,
+    pub display_citation: String,
+    pub provision_type: String,
+    pub parent_id: Option<String>,
+    pub text: String,
+    pub text_preview: String,
+    pub signals: Vec<String>,
+    pub cites_count: u64,
+    pub cited_by_count: u64,
+    pub chunk_count: u64,
+    pub qc_status: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProvisionLink {
+    pub provision_id: String,
+    pub citation: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProvisionChunk {
+    pub chunk_id: String,
+    pub chunk_type: String,
+    pub source_kind: String,
+    pub source_id: String,
+    pub text: String,
+    pub embedding_policy: String,
+    pub answer_policy: String,
+    pub search_weight: f64,
+    pub embedded: bool,
+    pub parser_confidence: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProvisionException {
+    pub exception_id: String,
+    pub text: String,
+    pub applies_to_provision: String,
+    pub source_provision: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct QCNoteItem {
+    pub note_id: String,
+    pub level: String,
+    pub category: String,
+    pub message: String,
+    pub related_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -356,13 +443,16 @@ pub struct RelationshipCount {
 
 #[derive(Debug, Serialize)]
 pub struct OrphanCounts {
+    pub provisions: u64,
     pub chunks: u64,
     pub citations: u64,
 }
 
 #[derive(Debug, Serialize)]
 pub struct DuplicateCounts {
+    pub legal_text_identities: u64,
     pub provisions: u64,
+    pub cites_relationships: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -377,4 +467,62 @@ pub struct CitesCoverage {
     pub total_citations: u64,
     pub resolved_citations: u64,
     pub coverage: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AskRequest {
+    pub question: String,
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AskAnswerResponse {
+    pub question: String,
+    pub mode: String,
+    pub short_answer: String,
+    pub controlling_law: Vec<AskControllingLaw>,
+    pub relevant_provisions: Vec<AskRelevantProvision>,
+    pub definitions: Vec<AskSourceText>,
+    pub exceptions: Vec<AskSourceText>,
+    pub deadlines: Vec<AskDeadline>,
+    pub citations: Vec<String>,
+    pub caveats: Vec<String>,
+    pub retrieved_chunks: Vec<AskRetrievedChunk>,
+    pub qc_notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AskControllingLaw {
+    pub citation: String,
+    pub canonical_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AskRelevantProvision {
+    pub citation: String,
+    pub provision_id: String,
+    pub text_preview: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AskSourceText {
+    pub term: Option<String>,
+    pub text: String,
+    pub source: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AskDeadline {
+    pub description: String,
+    pub duration: String,
+    pub source: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AskRetrievedChunk {
+    pub chunk_id: String,
+    pub chunk_type: String,
+    pub score: f32,
+    pub preview: String,
 }

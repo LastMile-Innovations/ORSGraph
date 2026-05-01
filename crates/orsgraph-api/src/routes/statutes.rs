@@ -1,8 +1,26 @@
 use crate::error::ApiResult;
 use crate::models::api::*;
 use crate::state::AppState;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::Json;
+
+#[derive(serde::Deserialize)]
+pub struct StatuteListParams {
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+    pub chapter: Option<String>,
+}
+
+pub async fn list_statutes(
+    Query(params): Query<StatuteListParams>,
+    State(state): State<AppState>,
+) -> ApiResult<Json<StatuteIndexResponse>> {
+    let statutes = state
+        .neo4j_service
+        .list_statutes(params.limit, params.offset, params.chapter.as_deref())
+        .await?;
+    Ok(Json(statutes))
+}
 
 pub async fn get_statute(
     Path(citation): Path<String>,
@@ -42,4 +60,12 @@ pub async fn get_history(
 ) -> ApiResult<Json<HistoryResponse>> {
     let history = state.neo4j_service.get_history(&citation).await?;
     Ok(Json(history))
+}
+
+pub async fn get_provision(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> ApiResult<Json<ProvisionDetailResponse>> {
+    let provision = state.neo4j_service.get_provision_detail(&id).await?;
+    Ok(Json(provision))
 }

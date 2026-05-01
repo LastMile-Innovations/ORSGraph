@@ -163,6 +163,28 @@ export interface StatutePageResponse {
   qc: QCSummary
 }
 
+export interface ProvisionInspectorData {
+  parent_statute: {
+    canonical_id: string
+    citation: string
+    title: string
+    chapter: string
+    status: LegalStatus
+    edition: number
+  }
+  provision: Provision
+  ancestors: { provision_id: string; citation: string }[]
+  children: Provision[]
+  siblings: { provision_id: string; citation: string }[]
+  chunks: Chunk[]
+  outbound_citations: OutboundCitation[]
+  inbound_citations: InboundCitation[]
+  definitions: Definition[]
+  exceptions: Exception[]
+  deadlines: Deadline[]
+  qc_notes: QCNote[]
+}
+
 export interface GraphInfo {
   canonical_id?: string
   version_id?: string

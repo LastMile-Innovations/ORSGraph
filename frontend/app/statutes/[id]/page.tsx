@@ -3,7 +3,7 @@ import { Shell } from "@/components/orsg/shell"
 import { StatuteHeader } from "@/components/orsg/statute/statute-header"
 import { StatuteTabs } from "@/components/orsg/statute/statute-tabs"
 import { StatuteRightInspector } from "@/components/orsg/statute/statute-right-inspector"
-import { getStatuteByCanonicalId } from "@/lib/mock-data"
+import { getStatutePageData } from "@/lib/api"
 
 export default async function StatutePage({
   params,
@@ -12,7 +12,7 @@ export default async function StatutePage({
 }) {
   const { id } = await params
   const decoded = decodeURIComponent(id)
-  const data = getStatuteByCanonicalId(decoded)
+  const data = await getStatutePageData(decoded)
   if (!data) notFound()
 
   return (

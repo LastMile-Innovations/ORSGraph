@@ -5,10 +5,15 @@ use std::net::SocketAddr;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ApiConfig {
+    #[serde(default = "default_api_host")]
     pub api_host: String,
+    #[serde(default = "default_api_port")]
     pub api_port: u16,
+    #[serde(default = "default_neo4j_uri")]
     pub neo4j_uri: String,
+    #[serde(default = "default_neo4j_user")]
     pub neo4j_user: String,
+    #[serde(default = "default_neo4j_password")]
     pub neo4j_password: String,
     #[serde(default)]
     pub api_key: Option<String>,
@@ -54,6 +59,26 @@ pub struct ApiConfig {
 
 fn default_log_level() -> String {
     "info".to_string()
+}
+
+fn default_api_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_api_port() -> u16 {
+    8080
+}
+
+fn default_neo4j_uri() -> String {
+    "bolt://localhost:7687".to_string()
+}
+
+fn default_neo4j_user() -> String {
+    "neo4j".to_string()
+}
+
+fn default_neo4j_password() -> String {
+    "neo4j".to_string()
 }
 
 fn default_rerank_model() -> String {
@@ -129,6 +154,24 @@ impl ApiConfig {
     }
 
     fn apply_explicit_env_overrides(&mut self) {
+        if let Some(value) = read_string("ORS_API_HOST") {
+            self.api_host = value;
+        }
+        if let Some(value) = read_u16("ORS_API_PORT") {
+            self.api_port = value;
+        }
+        if let Some(value) = read_string("NEO4J_URI").or_else(|| read_string("ORS_NEO4J_URI")) {
+            self.neo4j_uri = value;
+        }
+        if let Some(value) = read_string("NEO4J_USER").or_else(|| read_string("ORS_NEO4J_USER")) {
+            self.neo4j_user = value;
+        }
+        if let Some(value) =
+            read_string("NEO4J_PASSWORD").or_else(|| read_string("ORS_NEO4J_PASSWORD"))
+        {
+            self.neo4j_password = value;
+        }
+
         if let Ok(value) = env::var("VOYAGE_API_KEY") {
             if !value.trim().is_empty() {
                 self.voyage_api_key = Some(value);
@@ -190,6 +233,10 @@ fn read_bool(name: &str) -> Option<bool> {
 }
 
 fn read_usize(name: &str) -> Option<usize> {
+    read_string(name).and_then(|value| value.parse().ok())
+}
+
+fn read_u16(name: &str) -> Option<u16> {
     read_string(name).and_then(|value| value.parse().ok())
 }
 

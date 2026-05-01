@@ -742,12 +742,75 @@ impl Neo4jService {
         })
     }
 
+    pub async fn list_statutes(
+        &self,
+        limit: Option<u32>,
+        offset: Option<u32>,
+        chapter: Option<&str>,
+    ) -> ApiResult<StatuteIndexResponse> {
+        let limit = limit.unwrap_or(250).clamp(1, 1000);
+        let offset = offset.unwrap_or(0);
+        let mut result = self
+            .graph
+            .execute(
+                query(
+                    "MATCH (i:LegalTextIdentity)
+                     WHERE $chapter IS NULL OR i.chapter = $chapter
+                     WITH i
+                     ORDER BY i.chapter, i.citation
+                     SKIP $offset
+                     LIMIT $limit
+                     RETURN collect({
+                       canonical_id: i.canonical_id,
+                       citation: i.citation,
+                       title: i.title,
+                       chapter: i.chapter,
+                       status: coalesce(i.status, 'active'),
+                       edition_year: coalesce(i.edition_year, 2025)
+                     }) as items,
+                     count(*) as page_count",
+                )
+                .param("chapter", chapter.map(|value| value.to_string()))
+                .param("offset", offset as i64)
+                .param("limit", limit as i64),
+            )
+            .await
+            .map_err(ApiError::Neo4jConnection)?;
+
+        let row = result
+            .next()
+            .await
+            .map_err(ApiError::Neo4jConnection)?
+            .ok_or_else(|| ApiError::NotFound("No statutes found".to_string()))?;
+
+        let items_json: Vec<serde_json::Value> = row.get("items").ok().unwrap_or_default();
+        let items = items_json
+            .into_iter()
+            .map(|item| StatuteIndexItem {
+                canonical_id: item["canonical_id"].as_str().unwrap_or("").to_string(),
+                citation: item["citation"].as_str().unwrap_or("").to_string(),
+                title: item["title"].as_str().map(|value| value.to_string()),
+                chapter: item["chapter"].as_str().unwrap_or("").to_string(),
+                status: item["status"].as_str().unwrap_or("active").to_string(),
+                edition_year: item["edition_year"].as_i64().unwrap_or(2025) as i32,
+            })
+            .collect::<Vec<_>>();
+
+        Ok(StatuteIndexResponse {
+            total: items.len() as u64,
+            items,
+            limit,
+            offset,
+        })
+    }
+
     pub async fn get_statute(&self, citation: &str) -> ApiResult<StatuteDetailResponse> {
         let mut result = self
             .graph
             .execute(
                 query(
-                    "MATCH (i:LegalTextIdentity {citation: $citation})
+                    "MATCH (i:LegalTextIdentity)
+                     WHERE i.citation = $citation OR i.canonical_id = $citation
                      OPTIONAL MATCH (i)-[:HAS_CURRENT_VERSION]->(v:LegalTextVersion)
                      OPTIONAL MATCH (v)-[:FROM_SOURCE]->(s:SourceDocument)
                      OPTIONAL MATCH (i)<-[:BELONGS_TO]-(p:Provision)
@@ -817,7 +880,8 @@ impl Neo4jService {
             .graph
             .execute(
                 query(
-                    "MATCH (i:LegalTextIdentity {citation: $citation})<-[:BELONGS_TO]-(p:Provision)
+                    "MATCH (i:LegalTextIdentity)<-[:BELONGS_TO]-(p:Provision)
+                     WHERE i.citation = $citation OR i.canonical_id = $citation
                      RETURN p.provision_id as provision_id, p.display_citation as display_citation,
                             p.local_path as local_path, p.depth as depth, p.text as text
                      ORDER BY p.order_index",
@@ -851,7 +915,8 @@ impl Neo4jService {
             .graph
             .execute(
                 query(
-                    "MATCH (i:LegalTextIdentity {citation: $citation})
+                    "MATCH (i:LegalTextIdentity)
+                     WHERE i.citation = $citation OR i.canonical_id = $citation
                      OPTIONAL MATCH (i)-[:CITES]->(t:LegalTextIdentity)
                      OPTIONAL MATCH (s:LegalTextIdentity)-[:CITES]->(i)
                      RETURN i.citation as citation,
@@ -921,6 +986,177 @@ impl Neo4jService {
             amendments: vec![],
             session_laws: vec![],
             status_events: vec![],
+        })
+    }
+
+    pub async fn get_provision_detail(
+        &self,
+        provision_id: &str,
+    ) -> ApiResult<ProvisionDetailResponse> {
+        let mut result = self
+            .graph
+            .execute(
+                query(
+                    "MATCH (p:Provision)
+                     WHERE p.provision_id = $provision_id OR p.display_citation = $provision_id
+                     MATCH (p)-[:BELONGS_TO]->(i:LegalTextIdentity)
+                     OPTIONAL MATCH (p)<-[:DERIVED_FROM]-(chunk:RetrievalChunk)
+                     OPTIONAL MATCH (p)-[:CITES]->(target:LegalTextIdentity)
+                     OPTIONAL MATCH (source:LegalTextIdentity)-[:CITES]->(p)
+                     OPTIONAL MATCH (p)<-[:PARENT_OF]-(child:Provision)
+                     WITH p, i,
+                       collect(DISTINCT {
+                         chunk_id: chunk.chunk_id,
+                         chunk_type: chunk.chunk_type,
+                         source_kind: chunk.source_kind,
+                         source_id: chunk.source_id,
+                         text: chunk.text,
+                         embedding_policy: chunk.embedding_policy,
+                         answer_policy: chunk.answer_policy,
+                         search_weight: chunk.search_weight,
+                         embedded: chunk.embedded,
+                         parser_confidence: chunk.parser_confidence
+                       })[0..25] as chunks,
+                       collect(DISTINCT {
+                         canonical_id: target.canonical_id,
+                         citation: target.citation
+                       })[0..50] as outbound_nodes,
+                       collect(DISTINCT {
+                         canonical_id: source.canonical_id,
+                         citation: source.citation
+                       })[0..50] as inbound_nodes,
+                       collect(DISTINCT {
+                         provision_id: child.provision_id,
+                         display_citation: child.display_citation,
+                         provision_type: coalesce(child.provision_type, child.kind, 'section'),
+                         parent_id: child.parent_id,
+                         text: child.text,
+                         qc_status: coalesce(child.qc_status, 'pass'),
+                         status: coalesce(child.status, i.status, 'active')
+                       })[0..50] as children
+                     RETURN i.canonical_id as canonical_id,
+                            i.citation as statute_citation,
+                            i.title as statute_title,
+                            i.chapter as chapter,
+                            coalesce(i.status, 'active') as statute_status,
+                            coalesce(i.edition_year, 2025) as edition_year,
+                            p.provision_id as provision_id,
+                            p.display_citation as display_citation,
+                            coalesce(p.provision_type, p.kind, 'section') as provision_type,
+                            p.parent_id as parent_id,
+                            p.text as text,
+                            coalesce(p.signals, []) as signals,
+                            coalesce(p.status, i.status, 'active') as status,
+                            coalesce(p.qc_status, 'pass') as qc_status,
+                            chunks,
+                            outbound_nodes,
+                            inbound_nodes,
+                            children",
+                )
+                .param("provision_id", provision_id),
+            )
+            .await
+            .map_err(ApiError::Neo4jConnection)?;
+
+        let row = result
+            .next()
+            .await
+            .map_err(ApiError::Neo4jConnection)?
+            .ok_or_else(|| ApiError::NotFound(format!("Provision not found: {}", provision_id)))?;
+
+        let text: String = row.get("text").unwrap_or_default();
+        let provision = ProvisionDetail {
+            provision_id: row.get("provision_id").unwrap_or_default(),
+            display_citation: row.get("display_citation").unwrap_or_default(),
+            provision_type: row
+                .get("provision_type")
+                .unwrap_or_else(|_| "section".to_string()),
+            parent_id: row.get("parent_id").ok(),
+            text_preview: preview_text(&text, 220),
+            text,
+            signals: row.get("signals").unwrap_or_default(),
+            cites_count: 0,
+            cited_by_count: 0,
+            chunk_count: row
+                .get::<Vec<serde_json::Value>>("chunks")
+                .ok()
+                .map(|chunks| chunks.len() as u64)
+                .unwrap_or(0),
+            qc_status: row.get("qc_status").unwrap_or_else(|_| "pass".to_string()),
+            status: row.get("status").unwrap_or_else(|_| "active".to_string()),
+        };
+
+        let chunks_json: Vec<serde_json::Value> = row.get("chunks").ok().unwrap_or_default();
+        let chunks = chunks_json
+            .into_iter()
+            .map(|chunk| ProvisionChunk {
+                chunk_id: json_string(&chunk, "chunk_id"),
+                chunk_type: json_string_or(&chunk, "chunk_type", "contextual_provision"),
+                source_kind: json_string_or(&chunk, "source_kind", "provision"),
+                source_id: json_string_or(&chunk, "source_id", &provision.provision_id),
+                text: json_string(&chunk, "text"),
+                embedding_policy: json_string_or(&chunk, "embedding_policy", "primary"),
+                answer_policy: json_string_or(&chunk, "answer_policy", "supporting"),
+                search_weight: chunk["search_weight"].as_f64().unwrap_or(1.0),
+                embedded: chunk["embedding"].is_array()
+                    || chunk["embedded"].as_bool().unwrap_or(false),
+                parser_confidence: chunk["parser_confidence"].as_f64().unwrap_or(1.0),
+            })
+            .collect::<Vec<_>>();
+
+        let children_json: Vec<serde_json::Value> = row.get("children").ok().unwrap_or_default();
+        let children = children_json
+            .into_iter()
+            .map(|child| {
+                let text = json_string(&child, "text");
+                ProvisionDetail {
+                    provision_id: json_string(&child, "provision_id"),
+                    display_citation: json_string(&child, "display_citation"),
+                    provision_type: json_string_or(&child, "provision_type", "section"),
+                    parent_id: child["parent_id"].as_str().map(|value| value.to_string()),
+                    text_preview: preview_text(&text, 180),
+                    text,
+                    signals: Vec::new(),
+                    cites_count: 0,
+                    cited_by_count: 0,
+                    chunk_count: 0,
+                    qc_status: json_string_or(&child, "qc_status", "pass"),
+                    status: json_string_or(&child, "status", "active"),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let outbound = nodes_to_citations(
+            row.get("outbound_nodes").ok().unwrap_or_default(),
+            &provision.display_citation,
+        );
+        let inbound = nodes_to_citations(
+            row.get("inbound_nodes").ok().unwrap_or_default(),
+            &provision.display_citation,
+        );
+
+        Ok(ProvisionDetailResponse {
+            parent_statute: StatuteIndexItem {
+                canonical_id: row.get("canonical_id").unwrap_or_default(),
+                citation: row.get("statute_citation").unwrap_or_default(),
+                title: row.get("statute_title").ok(),
+                chapter: row.get("chapter").unwrap_or_default(),
+                status: row
+                    .get("statute_status")
+                    .unwrap_or_else(|_| "active".to_string()),
+                edition_year: row.get("edition_year").unwrap_or(2025),
+            },
+            provision,
+            ancestors: Vec::new(),
+            children,
+            siblings: Vec::new(),
+            chunks,
+            outbound_citations: outbound,
+            inbound_citations: inbound,
+            definitions: Vec::new(),
+            exceptions: Vec::new(),
+            deadlines: Vec::new(),
+            qc_notes: Vec::new(),
         })
     }
 
@@ -1191,9 +1427,9 @@ impl Neo4jService {
         let mut result = self
             .graph
             .execute(query(
-                "MATCH (n) RETURN labels(n)[0] as label, count(n) as count
-                 UNION ALL
-                 MATCH ()-[r]->() RETURN type(r) as label, count(r) as count",
+                "MATCH (n)
+                 RETURN labels(n)[0] as label, count(n) as count
+                 ORDER BY count DESC",
             ))
             .await
             .map_err(ApiError::Neo4jConnection)?;
@@ -1214,26 +1450,142 @@ impl Neo4jService {
             }
         }
 
+        let mut result = self
+            .graph
+            .execute(query(
+                "MATCH ()-[r]->()
+                 RETURN type(r) as rel_type, count(r) as count
+                 ORDER BY count DESC",
+            ))
+            .await
+            .map_err(ApiError::Neo4jConnection)?;
+
+        let mut relationship_counts = Vec::new();
+
+        while let Some(row) = result.next().await.map_err(ApiError::Neo4jConnection)? {
+            if let Ok(rel_type) = row.get::<String>("rel_type") {
+                relationship_counts.push(RelationshipCount {
+                    rel_type,
+                    count: row
+                        .get("count")
+                        .ok()
+                        .and_then(|v: i64| Some(v as u64))
+                        .unwrap_or(0),
+                });
+            }
+        }
+
+        let orphan_provisions = self
+            .query_count(
+                "MATCH (p:Provision)
+                 WHERE NOT (p)-[:PART_OF_VERSION]->()
+                 RETURN count(p) as count",
+            )
+            .await?;
+        let orphan_chunks = self
+            .query_count(
+                "MATCH (c:RetrievalChunk)
+                 WHERE NOT (c)-[:DERIVED_FROM]->()
+                 RETURN count(c) as count",
+            )
+            .await?;
+        let orphan_citations = self
+            .query_count(
+                "MATCH (cm:CitationMention)
+                 WHERE NOT ()-[:MENTIONS_CITATION]->(cm)
+                 RETURN count(cm) as count",
+            )
+            .await?;
+        let duplicate_legal_text_identities = self
+            .query_count(
+                "MATCH (n:LegalTextIdentity)
+                 WITH n.citation as citation, count(n) as cnt
+                 WHERE cnt > 1
+                 RETURN count(*) as count",
+            )
+            .await?;
+        let duplicate_provisions = self
+            .query_count(
+                "MATCH (n:Provision)
+                 WITH n.provision_id as pid, count(n) as cnt
+                 WHERE cnt > 1
+                 RETURN count(*) as count",
+            )
+            .await?;
+        let duplicate_cites_relationships = self
+            .query_count(
+                "MATCH ()-[r:CITES]->()
+                 WITH count(r) as total
+                 MATCH ()-[r:CITES]->()
+                 WITH total, count(DISTINCT {
+                     s: startNode(r).provision_id,
+                     e: coalesce(endNode(r).canonical_id, endNode(r).provision_id)
+                 }) as unique
+                 RETURN total - unique as count",
+            )
+            .await?;
+
+        let total_chunks = self
+            .query_count("MATCH (c:RetrievalChunk) RETURN count(c) as count")
+            .await?;
+        let embedded_chunks = self
+            .query_count(
+                "MATCH (c:RetrievalChunk)
+                 WHERE c.embedding IS NOT NULL
+                 RETURN count(c) as count",
+            )
+            .await?;
+        let total_citations = self
+            .query_count("MATCH (cm:CitationMention) RETURN count(cm) as count")
+            .await?;
+        let resolved_citations = self
+            .query_count(
+                "MATCH (cm:CitationMention)
+                 WHERE (cm)-[:RESOLVES_TO]->() OR (cm)-[:RESOLVES_TO_VERSION]->() OR (cm)-[:RESOLVES_TO_CHAPTER]->()
+                 RETURN count(DISTINCT cm) as count",
+            )
+            .await?;
+
         Ok(QCSummaryResponse {
             node_counts_by_label: node_counts,
-            relationship_counts_by_type: vec![],
+            relationship_counts_by_type: relationship_counts,
             orphan_counts: OrphanCounts {
-                chunks: 0,
-                citations: 0,
+                provisions: orphan_provisions,
+                chunks: orphan_chunks,
+                citations: orphan_citations,
             },
-            duplicate_counts: DuplicateCounts { provisions: 0 },
+            duplicate_counts: DuplicateCounts {
+                legal_text_identities: duplicate_legal_text_identities,
+                provisions: duplicate_provisions,
+                cites_relationships: duplicate_cites_relationships,
+            },
             embedding_readiness: EmbeddingReadiness {
-                total_chunks: 0,
-                embedded_chunks: 0,
-                coverage: 0.0,
+                total_chunks,
+                embedded_chunks,
+                coverage: percentage(embedded_chunks, total_chunks),
             },
             cites_coverage: CitesCoverage {
-                total_citations: 0,
-                resolved_citations: 0,
-                coverage: 0.0,
+                total_citations,
+                resolved_citations,
+                coverage: percentage(resolved_citations, total_citations),
             },
             last_qc_status: None,
         })
+    }
+
+    async fn query_count(&self, statement: &str) -> ApiResult<u64> {
+        let mut result = self
+            .graph
+            .execute(query(statement))
+            .await
+            .map_err(ApiError::Neo4jConnection)?;
+
+        Ok(result
+            .next()
+            .await
+            .map_err(ApiError::Neo4jConnection)?
+            .and_then(|row| row.get::<i64>("count").ok())
+            .unwrap_or(0) as u64)
     }
 
     pub async fn suggest(&self, q: &str, limit: u32) -> ApiResult<Vec<SuggestResult>> {
@@ -1414,5 +1766,52 @@ fn graph_node_href(id: &str, node_type: &str) -> Option<String> {
         "LegalTextIdentity" => Some(format!("/statutes/{id}")),
         "Provision" => Some(format!("/provisions/{id}")),
         _ => None,
+    }
+}
+
+fn preview_text(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+
+    let mut preview = trimmed.chars().take(max_chars).collect::<String>();
+    preview.push_str("...");
+    preview
+}
+
+fn json_string(value: &serde_json::Value, key: &str) -> String {
+    value[key].as_str().unwrap_or("").to_string()
+}
+
+fn json_string_or(value: &serde_json::Value, key: &str, fallback: &str) -> String {
+    value[key].as_str().unwrap_or(fallback).to_string()
+}
+
+fn nodes_to_citations(nodes: Vec<serde_json::Value>, source_provision: &str) -> Vec<Citation> {
+    nodes
+        .into_iter()
+        .filter_map(|node| {
+            let citation = json_string(&node, "citation");
+            if citation.is_empty() {
+                return None;
+            }
+
+            Some(Citation {
+                target_canonical_id: node["canonical_id"].as_str().map(|value| value.to_string()),
+                target_citation: citation,
+                context_snippet: String::new(),
+                source_provision: source_provision.to_string(),
+                resolved: true,
+            })
+        })
+        .collect()
+}
+
+fn percentage(part: u64, total: u64) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        (part as f64 / total as f64) * 100.0
     }
 }

@@ -1,13 +1,14 @@
 import Link from "next/link"
 import { Shell } from "@/components/orsg/shell"
-import { statuteIndex } from "@/lib/mock-data"
+import { getStatuteIndex } from "@/lib/api"
 import { StatusBadge } from "@/components/orsg/badges"
 import { ChevronRight, BookOpen } from "lucide-react"
 
-export default function StatuteIndexPage() {
+export default async function StatuteIndexPage() {
+  const statutes = await getStatuteIndex()
   // Group by chapter for a corpus directory listing
-  const grouped: Record<string, typeof statuteIndex> = {}
-  for (const s of statuteIndex) {
+  const grouped: Record<string, typeof statutes> = {}
+  for (const s of statutes) {
     if (!grouped[s.chapter]) grouped[s.chapter] = []
     grouped[s.chapter].push(s)
   }
@@ -20,7 +21,7 @@ export default function StatuteIndexPage() {
             <BookOpen className="h-5 w-5 text-primary" />
             <h1 className="font-mono text-lg font-semibold">Oregon Revised Statutes</h1>
             <span className="font-mono text-xs uppercase tracking-wide text-muted-foreground">
-              edition 2025 / {statuteIndex.length} indexed sections
+              edition 2025 / {statutes.length} indexed sections
             </span>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">

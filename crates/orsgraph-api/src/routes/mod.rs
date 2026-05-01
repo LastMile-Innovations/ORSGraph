@@ -27,6 +27,7 @@ pub fn create_routes() -> Router<AppState> {
         .route("/search", axum::routing::get(search::search))
         .route("/search/open", axum::routing::get(search::open))
         .route("/search/suggest", axum::routing::get(search::suggest))
+        .route("/statutes", axum::routing::get(statutes::list_statutes))
         .route(
             "/statutes/:citation",
             axum::routing::get(statutes::get_statute),
@@ -46,6 +47,10 @@ pub fn create_routes() -> Router<AppState> {
         .route(
             "/statutes/:citation/history",
             axum::routing::get(statutes::get_history),
+        )
+        .route(
+            "/provisions/:id",
+            axum::routing::get(statutes::get_provision),
         )
         .route(
             "/graph/neighborhood",
