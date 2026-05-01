@@ -3,6 +3,8 @@ import { Analytics } from "@vercel/analytics/next"
 import { ThemeProvider } from "@/components/theme-provider"
 import "./globals.css"
 
+const enableVercelAnalytics = process.env.VERCEL === "1"
+
 export const metadata: Metadata = {
   title: "ORSGraph — Legal Operating Environment",
   description:
@@ -21,7 +23,7 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
           {children}
         </ThemeProvider>
-        {process.env.NODE_ENV === "production" && <Analytics />}
+        {enableVercelAnalytics && <Analytics />}
       </body>
     </html>
   )

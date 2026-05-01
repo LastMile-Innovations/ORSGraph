@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { classifyFallbackSource, dataErrorMessage, isFallbackSource } from "./data-state"
+import { classifyApiFailureSource, classifyFallbackSource, dataErrorMessage, isFallbackSource } from "./data-state"
 
 describe("data-state helpers", () => {
   it("normalizes unknown thrown values into user-facing messages", () => {
@@ -19,5 +19,10 @@ describe("data-state helpers", () => {
     expect(isFallbackSource("live")).toBe(false)
     expect(isFallbackSource("mock")).toBe(true)
     expect(isFallbackSource(undefined)).toBe(false)
+  })
+
+  it("classifies live-only API failures without producing mock source states", () => {
+    expect(classifyApiFailureSource(new Error("fetch failed"))).toBe("offline")
+    expect(classifyApiFailureSource(new Error("schema mismatch"))).toBe("error")
   })
 })

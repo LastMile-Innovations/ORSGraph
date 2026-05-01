@@ -30,6 +30,10 @@ export function classifyFallbackSource(error: unknown): DataSource {
   return "mock"
 }
 
+export function classifyApiFailureSource(error: unknown): DataSource {
+  return classifyFallbackSource(error) === "offline" ? "offline" : "error"
+}
+
 export function isFallbackSource(source?: DataSource): boolean {
   return Boolean(source && source !== "live")
 }

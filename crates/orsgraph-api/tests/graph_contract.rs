@@ -90,6 +90,62 @@ fn graph_routes_and_frontend_are_wired_end_to_end() {
 }
 
 #[test]
+fn statute_sidebar_routes_use_live_api_contracts_without_mock_fallbacks() {
+    let routes = include_str!("../src/routes/mod.rs");
+    let sidebar_routes = include_str!("../src/routes/sidebar.rs");
+    let service = include_str!("../src/services/neo4j.rs");
+    let frontend_api = include_str!("../../../frontend/lib/api.ts");
+    let statute_page = include_str!("../../../frontend/app/statutes/[id]/page.tsx");
+
+    for expected in [
+        "/statutes",
+        "/statutes/:citation/page",
+        "/statutes/:citation/provisions",
+        "/statutes/:citation/citations",
+        "/statutes/:citation/semantics",
+        "/statutes/:citation/history",
+        "/statutes/:citation/chunks",
+    ] {
+        assert!(routes.contains(expected), "missing statute route {expected}");
+    }
+
+    for expected in [
+        "/sidebar",
+        "/sidebar/saved-searches",
+        "/sidebar/saved-statutes",
+        "/sidebar/recent-statutes",
+    ] {
+        assert!(
+            sidebar_routes.contains(expected),
+            "missing sidebar route {expected}"
+        );
+    }
+
+    assert!(
+        service.contains("RETURN size(matched) AS total, matched[$offset..$end] AS items"),
+        "statute index API should return an empty live result set instead of 404 for no matches"
+    );
+    assert!(frontend_api.contains("fetchApi<StatuteIndexApiResponse>(`/statutes?${params}`)"));
+    assert!(frontend_api.contains("fetchApi<SidebarData>(\"/sidebar\")"));
+    assert!(frontend_api.contains("fetchApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)"));
+    assert!(frontend_api.contains("apiFailureState(\"/statutes\""));
+    assert!(frontend_api.contains("apiFailureState(\"/sidebar\", null"));
+    assert!(statute_page.contains("state.source === \"empty\""));
+
+    for forbidden in [
+        "filterFallbackStatuteIndex",
+        "buildFallbackSidebarData",
+        "getStatuteByCanonicalId(citationOrCanonicalId)",
+        "getStatutePageDataLegacyState",
+    ] {
+        assert!(
+            !frontend_api.contains(forbidden),
+            "statute/sidebar frontend should not use fallback helper {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn graph_similarity_and_citation_contracts_are_supported() {
     let service = include_str!("../src/services/neo4j.rs");
     let frontend_constants = include_str!("../../../frontend/components/graph/constants.ts");

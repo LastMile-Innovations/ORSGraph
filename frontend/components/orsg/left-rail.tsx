@@ -47,7 +47,7 @@ const DEFAULT_OPEN: Record<string, boolean> = {
 }
 
 interface LeftRailProps {
-  initialState: DataState<SidebarData> | null
+  initialState: DataState<SidebarData | null> | null
 }
 
 export function LeftRail({ initialState }: LeftRailProps) {
@@ -537,10 +537,10 @@ function RailUnavailable() {
 }
 
 function updateSidebarData(
-  previous: DataState<SidebarData> | null,
+  previous: DataState<SidebarData | null> | null,
   updater: (data: SidebarData) => SidebarData,
-): DataState<SidebarData> | null {
-  if (!previous) return previous
+): DataState<SidebarData | null> | null {
+  if (!previous?.data) return previous
   return { ...previous, data: updater(previous.data) }
 }
 
