@@ -15,6 +15,34 @@ A Rust-first crawler/parser, legal graph loader, and CaseBuilder rules backend f
 
 Public.Law is used for discovery and outline hints. Oregon Legislature is treated as the canonical online source for ORS chapter HTML.
 
+## Test And Coverage
+
+Run the full local non-live suite from the repo root:
+
+```bash
+bash scripts/test-all.sh
+```
+
+Rust coverage uses `cargo-llvm-cov`:
+
+```bash
+bash scripts/rust-coverage.sh
+```
+
+Frontend unit/component coverage runs from `frontend/`:
+
+```bash
+pnpm run coverage
+pnpm run coverage:all
+```
+
+`pnpm run coverage` is the enforced baseline for covered client foundations.
+`pnpm run coverage:all` is an audit report for the broader frontend surface and
+is intentionally not threshold-gated yet.
+
+Route, live API, Neo4j, Docker, and provider-backed smoke checks are separate
+because they require a running service, local graph database, or credentials.
+
 ## Run
 
 ### Crawler

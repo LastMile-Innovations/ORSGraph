@@ -191,10 +191,18 @@ Minimum local checks for crawler/API changes:
 cargo fmt --check
 cargo check -p ors-crawler-v0
 cargo check -p orsgraph-api
+cargo test --workspace
 cargo test -p ors-crawler-v0 source_registry
 cargo test -p ors-crawler-v0 oregon_leg_odata
 cargo test -p orsgraph-api services::admin::tests
 cargo test -p orsgraph-api assemblyai
+```
+
+Current Rust coverage:
+
+```sh
+bash scripts/rust-coverage.sh
+cargo llvm-cov --workspace --lcov --output-path reports/coverage/rust-lcov.info
 ```
 
 CLI smoke checks:
@@ -211,9 +219,16 @@ Frontend checks from `frontend/`:
 ```sh
 pnpm run lint
 pnpm run typecheck
+pnpm run test
+pnpm run coverage
+pnpm run coverage:all
 pnpm run build
 pnpm run smoke:routes
 ```
+
+`coverage` is the threshold-gated baseline for the tested client foundations;
+`coverage:all` produces a full frontend audit report for prioritizing the next
+component and browser-flow tests.
 
 Docker checks:
 
