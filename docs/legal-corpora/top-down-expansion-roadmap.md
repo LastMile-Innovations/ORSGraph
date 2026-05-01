@@ -28,6 +28,7 @@ Current Oregon pieces:
 - Linn SLR/CJO/PJO registry snapshot.
 - Linn 2026 SLR PDF corpus.
 - Rule applicability API and CaseBuilder rule profile integration.
+- Oregon Legislature OData ingestion contract for sessions, measures, documents, sponsors, votes, committees, legislators, and session-law enrichment.
 
 Oregon next sources:
 
@@ -35,6 +36,7 @@ Oregon next sources:
 ORCP
 ORAP
 OAR
+Oregon Legislature OData implementation
 Oregon session laws
 Oregon Tax Court rules
 Oregon appellate rules/orders
@@ -226,4 +228,3 @@ Before any jurisdiction can power filing/export compliance:
 - rule findings must cite source authority;
 - exports must show unresolved/currentness warnings;
 - no automated filing should run without explicit court-specific safety checks.
-

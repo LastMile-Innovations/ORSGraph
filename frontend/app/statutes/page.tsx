@@ -1,73 +1,47 @@
-import Link from "next/link"
 import { Shell } from "@/components/orsg/shell"
-import { DataStateBanner } from "@/components/orsg/data-state-banner"
+import { StatuteIndexClient } from "@/components/orsg/statute/statute-index-client"
 import { getStatuteIndexState } from "@/lib/api"
-import { StatusBadge } from "@/components/orsg/badges"
-import { ChevronRight, BookOpen } from "lucide-react"
 
-export default async function StatuteIndexPage() {
-  const state = await getStatuteIndexState()
-  const statutes = state.data
-  // Group by chapter for a corpus directory listing
-  const grouped: Record<string, typeof statutes> = {}
-  for (const s of statutes) {
-    if (!grouped[s.chapter]) grouped[s.chapter] = []
-    grouped[s.chapter].push(s)
-  }
+type StatuteIndexPageParams = {
+  q?: string
+  chapter?: string
+  status?: string
+  limit?: string
+  offset?: string
+}
+
+function numberParam(value: string | undefined, fallback: number, max: number) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  return Math.min(Math.floor(parsed), max)
+}
+
+export default async function StatuteIndexPage({
+  searchParams,
+}: {
+  searchParams: Promise<StatuteIndexPageParams>
+}) {
+  const params = await searchParams
+  const q = params.q?.trim() ?? ""
+  const chapter = params.chapter?.trim() ?? ""
+  const status = params.status?.trim() || "all"
+  const limit = numberParam(params.limit, 60, 120)
+  const offset = Math.max(0, Number(params.offset || 0) || 0)
+  const state = await getStatuteIndexState({ q, chapter, status, limit, offset })
 
   return (
     <Shell>
-      <div className="flex flex-1 flex-col overflow-y-auto scrollbar-thin">
-        <DataStateBanner source={state.source} error={state.error} label="Statute index data" />
-        <header className="border-b border-border bg-card px-6 py-5">
-          <div className="flex items-baseline gap-3">
-            <BookOpen className="h-5 w-5 text-primary" />
-            <h1 className="font-mono text-lg font-semibold">Oregon Revised Statutes</h1>
-            <span className="font-mono text-xs uppercase tracking-wide text-muted-foreground">
-              edition 2025 / {statutes.length} indexed sections
-            </span>
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Browse the corpus by chapter. Click a section to open its statute intelligence page.
-          </p>
-        </header>
-
-        <div className="grid flex-1 grid-cols-1 gap-px overflow-y-auto bg-border md:grid-cols-2 lg:grid-cols-3">
-          {Object.entries(grouped).map(([chapter, items]) => (
-            <section key={chapter} className="bg-card">
-              <div className="flex items-center justify-between border-b border-border px-4 py-2">
-                <h2 className="font-mono text-xs uppercase tracking-wider text-muted-foreground">
-                  Chapter {chapter}
-                </h2>
-                <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
-                  {items.length} sections
-                </span>
-              </div>
-              <ul className="divide-y divide-border">
-                {items.map((s) => (
-                  <li key={s.canonical_id}>
-                    <Link
-                      href={`/statutes/${s.canonical_id}`}
-                      className="flex items-center justify-between px-4 py-2.5 hover:bg-muted"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-sm font-medium text-primary">
-                            {s.citation}
-                          </span>
-                          <StatusBadge status={s.status} />
-                        </div>
-                        <p className="mt-0.5 truncate text-sm text-foreground">{s.title}</p>
-                      </div>
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
-      </div>
+      <StatuteIndexClient
+        statutes={state.data.items}
+        total={state.data.total}
+        limit={state.data.limit}
+        offset={state.data.offset}
+        query={q}
+        chapter={chapter}
+        status={status}
+        dataSource={state.source}
+        dataError={state.error}
+      />
     </Shell>
   )
 }

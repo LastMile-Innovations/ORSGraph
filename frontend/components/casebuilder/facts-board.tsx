@@ -16,7 +16,7 @@ import {
 } from "lucide-react"
 import type { Matter, ExtractedFact } from "@/lib/casebuilder/types"
 import { matterClaimsHref, matterDocumentHref } from "@/lib/casebuilder/routes"
-import { approveFact, patchFact } from "@/lib/casebuilder/api"
+import { approveFact, createFact, patchFact } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -32,12 +32,14 @@ interface FactsBoardProps {
 type FilterMode = "all" | "disputed" | "supported" | "needs-review"
 
 export function FactsBoard({ matter }: FactsBoardProps) {
+  const [facts, setFacts] = useState(matter.facts)
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<FilterMode>("all")
-  const [selected, setSelected] = useState<string | null>(matter.facts[0]?.id ?? null)
+  const [selected, setSelected] = useState<string | null>(facts[0]?.id ?? null)
+  const [message, setMessage] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
-    return matter.facts.filter((f) => {
+    return facts.filter((f) => {
       const matchesQuery =
         !query ||
         f.statement.toLowerCase().includes(query.toLowerCase()) ||
@@ -49,9 +51,28 @@ export function FactsBoard({ matter }: FactsBoardProps) {
         (filter === "needs-review" && (f.status === "proposed" || f.needs_verification || f.confidence < 0.7))
       return matchesQuery && matchesFilter
     })
-  }, [matter.facts, query, filter])
+  }, [facts, query, filter])
 
-  const selectedFact = matter.facts.find((f) => f.id === selected) ?? filtered[0]
+  const selectedFact = facts.find((f) => f.id === selected) ?? filtered[0]
+
+  async function addFact() {
+    const statement = window.prompt("Fact statement")
+    if (!statement) return
+    const result = await createFact(matter.id, {
+      statement,
+      status: "proposed",
+      confidence: 0.6,
+      source_document_ids: [],
+      source_evidence_ids: [],
+    })
+    if (result.data) {
+      setFacts((current) => [result.data!, ...current])
+      setSelected(result.data.id)
+      setMessage("Fact added.")
+    } else {
+      setMessage(result.error || "Fact could not be added.")
+    }
+  }
 
   return (
     <div className="flex flex-col">
@@ -61,15 +82,15 @@ export function FactsBoard({ matter }: FactsBoardProps) {
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-foreground">Facts</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {matter.facts.length} facts extracted from {matter.documents.length} documents
+              {facts.length} facts extracted from {matter.documents.length} documents
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
+            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent" disabled title="Use the Documents page extraction action for live extraction.">
               <Sparkles className="h-3.5 w-3.5" />
               Auto-extract
             </Button>
-            <Button size="sm" className="gap-1.5">
+            <Button size="sm" className="gap-1.5" onClick={addFact}>
               <Plus className="h-3.5 w-3.5" />
               Add fact
             </Button>
@@ -87,21 +108,22 @@ export function FactsBoard({ matter }: FactsBoardProps) {
             />
           </div>
           <FilterPill active={filter === "all"} onClick={() => setFilter("all")}>
-            All ({matter.facts.length})
+            All ({facts.length})
           </FilterPill>
           <FilterPill active={filter === "supported"} onClick={() => setFilter("supported")}>
-            Supported ({matter.facts.filter((f) => f.status === "supported").length})
+            Supported ({facts.filter((f) => f.status === "supported").length})
           </FilterPill>
           <FilterPill active={filter === "disputed"} onClick={() => setFilter("disputed")}>
-            Disputed ({matter.facts.filter((f) => f.disputed).length})
+            Disputed ({facts.filter((f) => f.disputed).length})
           </FilterPill>
           <FilterPill
             active={filter === "needs-review"}
             onClick={() => setFilter("needs-review")}
           >
-            Needs review ({matter.facts.filter((f) => f.status === "proposed" || f.needs_verification || f.confidence < 0.7).length})
+            Needs review ({facts.filter((f) => f.status === "proposed" || f.needs_verification || f.confidence < 0.7).length})
           </FilterPill>
         </div>
+        {message && <div className="mt-3 rounded border border-border bg-card px-3 py-2 text-xs text-muted-foreground">{message}</div>}
       </div>
 
       {/* Two-pane: list + detail */}

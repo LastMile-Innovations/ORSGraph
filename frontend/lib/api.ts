@@ -11,6 +11,7 @@ import {
   ProvisionInspectorData,
   AskAnswer,
   StatuteIdentity,
+  SourceIndexEntry,
 } from './types';
 
 import { 
@@ -25,10 +26,12 @@ import {
   getProvisionById,
   askAnswer as mockAskAnswer,
 } from './mock-data';
+import { getSourceById as getDemoSourceById, sourceIndex as demoSourceIndex } from "./mock-sources";
 import type { GraphNeighborhoodParams, GraphViewerResponse } from '@/components/graph/types';
 import {
   classifyFallbackSource,
   dataErrorMessage,
+  DEMO_MODE,
   type DataSource,
   type DataState,
 } from "./data-state";
@@ -207,6 +210,41 @@ interface StatuteIndexApiResponse {
   offset: number
 }
 
+export interface StatuteIndexParams {
+  q?: string
+  limit?: number
+  offset?: number
+  chapter?: string
+  status?: string
+}
+
+export interface StatuteIndexResult {
+  items: StatuteIdentity[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface SourceIndexParams {
+  q?: string
+  status?: string
+  edition_year?: number
+  limit?: number
+  offset?: number
+}
+
+export interface SourceIndexResult {
+  items: SourceIndexEntry[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface SourceDetailResult {
+  source: SourceIndexEntry
+  related_sources: SourceIndexEntry[]
+}
+
 export interface SidebarStatute {
   canonical_id: string
   citation: string
@@ -256,31 +294,129 @@ export interface SidebarData {
   updated_at: string
 }
 
-export async function getStatuteIndex(paramsInput: { limit?: number; offset?: number; chapter?: string } = {}): Promise<StatuteIdentity[]> {
-  return (await getStatuteIndexState(paramsInput)).data;
+export async function getStatuteIndex(paramsInput: StatuteIndexParams = {}): Promise<StatuteIdentity[]> {
+  return (await getStatuteIndexState(paramsInput)).data.items;
 }
 
-export async function getStatuteIndexState(paramsInput: { limit?: number; offset?: number; chapter?: string } = {}): Promise<DataState<StatuteIdentity[]>> {
+export async function getStatuteIndexState(paramsInput: StatuteIndexParams = {}): Promise<DataState<StatuteIndexResult>> {
   try {
     const params = new URLSearchParams({
-      limit: String(paramsInput.limit ?? 1000),
+      limit: String(paramsInput.limit ?? 60),
       offset: String(paramsInput.offset ?? 0),
     })
+    if (paramsInput.q) params.set("q", paramsInput.q)
     if (paramsInput.chapter) params.set("chapter", paramsInput.chapter)
+    if (paramsInput.status && paramsInput.status !== "all") params.set("status", paramsInput.status)
 
     const response = await fetchApi<StatuteIndexApiResponse>(`/statutes?${params}`)
-    return { source: "live", data: response.items.map((item) => ({
-      canonical_id: item.canonical_id,
-      citation: item.citation,
-      title: item.title ?? item.citation,
-      jurisdiction: "Oregon",
-      corpus: "ORS",
-      chapter: item.chapter,
-      status: normalizeLegalStatus(item.status),
-      edition: item.edition_year,
-    })) }
+    return {
+      source: "live",
+      data: {
+        items: response.items.map(mapStatuteIndexItem),
+        total: Number(response.total ?? response.items.length),
+        limit: Number(response.limit ?? paramsInput.limit ?? 60),
+        offset: Number(response.offset ?? paramsInput.offset ?? 0),
+      },
+    }
   } catch (error) {
-    return fallbackState("/statutes", statuteIndex, error)
+    return fallbackState("/statutes", filterFallbackStatuteIndex(paramsInput), error)
+  }
+}
+
+export async function getSourcesState(paramsInput: SourceIndexParams = {}): Promise<DataState<SourceIndexResult>> {
+  try {
+    const params = new URLSearchParams({
+      limit: String(paramsInput.limit ?? 50),
+      offset: String(paramsInput.offset ?? 0),
+    })
+    if (paramsInput.q) params.set("q", paramsInput.q)
+    if (paramsInput.status && paramsInput.status !== "all") params.set("status", paramsInput.status)
+    if (paramsInput.edition_year) params.set("edition_year", String(paramsInput.edition_year))
+
+    const response = await fetchApi<SourceIndexResult>(`/sources?${params}`)
+    return { source: response.items.length > 0 ? "live" : "empty", data: response }
+  } catch (error) {
+    if (DEMO_MODE) {
+      return fallbackState(
+        "/sources",
+        {
+          items: demoSourceIndex,
+          total: demoSourceIndex.length,
+          limit: paramsInput.limit ?? demoSourceIndex.length,
+          offset: paramsInput.offset ?? 0,
+        },
+        error,
+        "demo",
+      )
+    }
+    return {
+      source: classifyFallbackSource(error) === "offline" ? "offline" : "error",
+      data: { items: [], total: 0, limit: paramsInput.limit ?? 50, offset: paramsInput.offset ?? 0 },
+      error: dataErrorMessage(error),
+    }
+  }
+}
+
+export async function getSourceDetailState(sourceId: string): Promise<DataState<SourceDetailResult | null>> {
+  try {
+    return { source: "live", data: await fetchApi<SourceDetailResult>(`/sources/${encodeURIComponent(sourceId)}`) }
+  } catch (error) {
+    if (DEMO_MODE) {
+      const source = getDemoSourceById(sourceId)
+      return fallbackState(
+        `/sources/${sourceId}`,
+        source
+          ? {
+              source,
+              related_sources: demoSourceIndex.filter((item) => item.source_id !== source.source_id).slice(0, 6),
+            }
+          : null,
+        error,
+        source ? "demo" : "error",
+      )
+    }
+    return {
+      source: classifyFallbackSource(error) === "offline" ? "offline" : "error",
+      data: null,
+      error: dataErrorMessage(error),
+    }
+  }
+}
+
+function mapStatuteIndexItem(item: StatuteIndexApiItem): StatuteIdentity {
+  return {
+    canonical_id: item.canonical_id,
+    citation: item.citation,
+    title: item.title ?? item.citation,
+    jurisdiction: "Oregon",
+    corpus: "ORS",
+    chapter: item.chapter,
+    status: normalizeLegalStatus(item.status),
+    edition: item.edition_year,
+  }
+}
+
+function filterFallbackStatuteIndex(paramsInput: StatuteIndexParams): StatuteIndexResult {
+  const q = paramsInput.q?.trim().toLowerCase()
+  const chapter = paramsInput.chapter?.trim()
+  const status = paramsInput.status && paramsInput.status !== "all" ? paramsInput.status : undefined
+  const limit = paramsInput.limit ?? 60
+  const offset = paramsInput.offset ?? 0
+  const filtered = statuteIndex.filter((statute) => {
+    const matchesQuery = !q
+      || statute.citation.toLowerCase().includes(q)
+      || statute.canonical_id.toLowerCase().includes(q)
+      || statute.title.toLowerCase().includes(q)
+    const matchesChapter = !chapter || statute.chapter === chapter
+    const matchesStatus = !status || statute.status === status
+    return matchesQuery && matchesChapter && matchesStatus
+  })
+
+  return {
+    items: filtered.slice(offset, offset + limit),
+    total: filtered.length,
+    limit,
+    offset,
   }
 }
 
@@ -384,9 +520,13 @@ export async function searchWithParamsState(paramsInput: SearchParams): Promise<
   }
 }
 
-export async function searchSuggest(query: string, limit: number = 10): Promise<SuggestResult[]> {
+export async function searchSuggest(
+  query: string,
+  limit: number = 10,
+  signal?: AbortSignal,
+): Promise<SuggestResult[]> {
   const params = new URLSearchParams({ q: query, limit: limit.toString() });
-  return fetchApi<SuggestResult[]>(`/search/suggest?${params}`);
+  return fetchApi<SuggestResult[]>(`/search/suggest?${params}`, { signal });
 }
 
 export async function directOpen(query: string): Promise<DirectOpenResponse> {
@@ -404,6 +544,33 @@ export async function getStatutePageData(citationOrCanonicalId: string): Promise
 }
 
 export async function getStatutePageDataState(citationOrCanonicalId: string): Promise<DataState<StatutePageResponse | null>> {
+  try {
+    const page = await fetchApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)
+    return { source: "live", data: mapStatuteCompactPage(page) }
+  } catch (pageError) {
+    try {
+      const [detail, provisions, citations, semantics, history] = await Promise.all([
+        getStatute(citationOrCanonicalId),
+        getProvisions(citationOrCanonicalId),
+        getCitations(citationOrCanonicalId),
+        getSemantics(citationOrCanonicalId),
+        getHistory(citationOrCanonicalId),
+      ])
+
+      return { source: "live", data: mapStatutePage(detail, provisions, citations, semantics, history) }
+    } catch (legacyError) {
+      const fallback = getStatuteByCanonicalId(citationOrCanonicalId)
+      return fallbackState(
+        `/statutes/${citationOrCanonicalId}`,
+        fallback,
+        legacyError,
+        fallback ? classifyFallbackSource(pageError) : "error",
+      )
+    }
+  }
+}
+
+export async function getStatutePageDataLegacyState(citationOrCanonicalId: string): Promise<DataState<StatutePageResponse | null>> {
   try {
     const [detail, provisions, citations, semantics, history] = await Promise.all([
       getStatute(citationOrCanonicalId),
@@ -505,6 +672,24 @@ export async function getHistory(citation: string) {
   }>(`/statutes/${encodeURIComponent(citation)}/history`);
 }
 
+export async function getChunks(citation: string) {
+  return fetchApi<{
+    citation: string;
+    chunks: Array<{
+      chunk_id: string;
+      chunk_type: string;
+      source_kind: "statute" | "provision";
+      source_id: string;
+      text: string;
+      embedding_policy: "primary" | "secondary" | "none";
+      answer_policy: "preferred" | "supporting" | "context_only";
+      search_weight: number;
+      embedded: boolean;
+      parser_confidence: number;
+    }>;
+  }>(`/statutes/${encodeURIComponent(citation)}/chunks`);
+}
+
 // Graph
 export async function getNeighborhood(id: string, depth: number = 1, limit: number = 100) {
   return getGraphNeighborhood({ id, depth, limit });
@@ -528,6 +713,25 @@ export async function getGraphNeighborhood(input: GraphNeighborhoodParams): Prom
   return fetchApi<GraphViewerResponse>(`/graph/neighborhood?${params}`);
 }
 
+export interface GraphPathResponse {
+  from: string
+  to: string
+  paths: Array<{ node_ids: string[]; edge_ids: string[]; length: number }>
+  nodes: GraphViewerResponse["nodes"]
+  edges: GraphViewerResponse["edges"]
+  stats: GraphViewerResponse["stats"]
+}
+
+export async function getGraphPath(input: { from: string; to: string; mode?: string; limit?: number }): Promise<GraphPathResponse> {
+  const params = new URLSearchParams({
+    from: input.from,
+    to: input.to,
+    mode: input.mode ?? "legal",
+    limit: String(input.limit ?? 3),
+  })
+  return fetchApi<GraphPathResponse>(`/graph/path?${params}`)
+}
+
 // QC
 export async function getQCSummary() {
   return fetchApi<{
@@ -539,6 +743,30 @@ export async function getQCSummary() {
     cites_coverage: { total_citations: number; resolved_citations: number; coverage: number };
     last_qc_status: string | null;
   }>('/qc/summary');
+}
+
+export type QCSummary = Awaited<ReturnType<typeof getQCSummary>>
+
+export async function runQCRun() {
+  return fetchApi<{
+    run_id: string
+    status: string
+    started_at: string
+    completed_at: string
+    summary: QCSummary
+    warnings: string[]
+  }>("/qc/runs", { method: "POST" })
+}
+
+export async function getQCReport(format: "json" | "csv" = "json") {
+  return fetchApi<{
+    report_id: string
+    format: string
+    mime_type: string
+    generated_at: string
+    summary: QCSummary
+    content: string
+  }>(`/qc/reports/latest?format=${encodeURIComponent(format)}`)
 }
 
 export async function ask(question: string, mode: string = "research"): Promise<AskAnswer> {
@@ -571,6 +799,83 @@ export async function getProvisionInspectorDataState(provisionId: string): Promi
   } catch (error) {
     const fallback = getProvisionById(provisionId)
     return fallbackState(`/provisions/${provisionId}`, fallback, error, fallback ? classifyFallbackSource(error) : "error")
+  }
+}
+
+function mapStatuteCompactPage(page: any): StatutePageResponse {
+  const sourceDocument = page.source_document ?? {}
+  const identity = {
+    canonical_id: page.identity?.canonical_id ?? "",
+    citation: page.identity?.citation ?? "",
+    title: page.identity?.title ?? page.identity?.citation ?? "",
+    jurisdiction: "Oregon",
+    corpus: "ORS",
+    chapter: page.identity?.chapter ?? "",
+    status: normalizeLegalStatus(page.identity?.status),
+    edition: sourceDocument.edition_year ?? 2025,
+  }
+  const currentVersion = {
+    version_id: page.current_version?.version_id ?? "",
+    effective_date: page.current_version?.effective_date ?? "",
+    end_date: page.current_version?.end_date ?? null,
+    is_current: Boolean(page.current_version?.is_current),
+    text: page.current_version?.text ?? "",
+    source_documents: [sourceDocument.source_id].filter(Boolean),
+  }
+  const source_documents = [{
+    source_id: sourceDocument.source_id ?? "",
+    url: sourceDocument.url ?? "",
+    retrieved_at: "",
+    raw_hash: "",
+    normalized_hash: "",
+    edition_year: sourceDocument.edition_year ?? 2025,
+    parser_profile: "orsgraph-api",
+    parser_warnings: [],
+  }]
+  const citation_counts = {
+    outbound: Number(page.citation_counts?.outbound ?? 0),
+    inbound: Number(page.citation_counts?.inbound ?? 0),
+  }
+  const semantic_counts = {
+    obligations: Number(page.semantic_counts?.obligations ?? 0),
+    exceptions: Number(page.semantic_counts?.exceptions ?? 0),
+    deadlines: Number(page.semantic_counts?.deadlines ?? 0),
+    penalties: Number(page.semantic_counts?.penalties ?? 0),
+    definitions: Number(page.semantic_counts?.definitions ?? 0),
+  }
+  const notes = (page.qc?.notes ?? []).map((note: any, index: number) => ({
+    note_id: note.note_id ?? `source-note:${index}`,
+    level: normalizeQCNoteLevel(note.level),
+    category: note.category ?? "source",
+    message: note.message ?? "",
+    related_id: note.related_id ?? identity.canonical_id,
+  }))
+
+  return {
+    identity,
+    current_version: currentVersion,
+    versions: [currentVersion],
+    provisions: (page.provisions ?? []).map((p: any) => mapProvision(p)),
+    chunks: [],
+    definitions: [],
+    exceptions: [],
+    deadlines: [],
+    penalties: [],
+    outbound_citations: [],
+    inbound_citations: [],
+    source_documents,
+    qc: {
+      status: normalizeQCStatus(page.qc?.status),
+      passed_checks: Number(page.qc?.passed_checks ?? (notes.length ? 1 : 2)),
+      total_checks: Number(page.qc?.total_checks ?? 2),
+      notes,
+    },
+    summary_counts: {
+      provision_count: Number(page.provision_count ?? 0),
+      citation_counts,
+      semantic_counts,
+    },
+    source_notes: page.source_notes ?? [],
   }
 }
 
@@ -663,6 +968,21 @@ function mapStatutePage(detail: any, provisionsResponse: any, citations: any, se
         related_id: detail.identity.canonical_id,
       })),
     },
+    summary_counts: {
+      provision_count: detail.provision_count ?? countMappedProvisions(provisions),
+      citation_counts: {
+        outbound: detail.citation_counts?.outbound ?? outbound.length,
+        inbound: detail.citation_counts?.inbound ?? inbound.length,
+      },
+      semantic_counts: {
+        obligations: detail.semantic_counts?.obligations ?? 0,
+        exceptions: detail.semantic_counts?.exceptions ?? semantics.exceptions?.length ?? 0,
+        deadlines: detail.semantic_counts?.deadlines ?? semantics.deadlines?.length ?? 0,
+        penalties: detail.semantic_counts?.penalties ?? semantics.penalties?.length ?? 0,
+        definitions: detail.semantic_counts?.definitions ?? semantics.definitions?.length ?? 0,
+      },
+    },
+    source_notes: history.source_notes ?? [],
   }
 }
 
@@ -834,6 +1154,16 @@ function normalizeLegalStatus(status?: string) {
   return ["active", "repealed", "renumbered", "amended"].includes(value) ? value as any : "active"
 }
 
+function normalizeQCStatus(status?: string) {
+  const value = (status ?? "pass").toLowerCase()
+  return ["pass", "warning", "fail"].includes(value) ? value as any : "pass"
+}
+
+function normalizeQCNoteLevel(level?: string) {
+  const value = (level ?? "info").toLowerCase()
+  return ["info", "warning", "fail"].includes(value) ? value as any : "info"
+}
+
 function normalizeProvisionType(type?: string) {
   const value = (type ?? "section").toLowerCase()
   return ["section", "subsection", "paragraph", "subparagraph", "clause"].includes(value) ? value as any : "section"
@@ -849,4 +1179,14 @@ function provisionTypeForDepth(depth?: number) {
 
 function previewText(text: string, max: number) {
   return text.length > max ? `${text.slice(0, max).trim()}...` : text
+}
+
+function countMappedProvisions(provisions: Provision[]) {
+  let count = 0
+  const walk = (provision: Provision) => {
+    count += 1
+    provision.children?.forEach(walk)
+  }
+  provisions.forEach(walk)
+  return count
 }

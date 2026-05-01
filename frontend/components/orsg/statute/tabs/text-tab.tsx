@@ -1,22 +1,20 @@
 import type { StatutePageResponse } from "@/lib/types"
 import { TrustBadge } from "@/components/orsg/badges"
+import Link from "next/link"
+import type { ReactNode } from "react"
 
 export function TextTab({ data }: { data: StatutePageResponse }) {
-  // Highlight ORS citations in the body so users see graph edges inline.
-  const html = highlightCitations(data.current_version.text)
-
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
+    <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 lg:py-8">
       <div className="mb-4 flex items-center gap-2">
         <TrustBadge level="official" />
         <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
           version {data.current_version.version_id} · effective {data.current_version.effective_date}
         </span>
       </div>
-      <article
-        className="legal-text whitespace-pre-wrap text-[15px] leading-relaxed text-foreground"
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+      <article className="legal-text whitespace-pre-wrap text-[15px] leading-relaxed text-foreground sm:text-base">
+        <LinkedStatuteText text={data.current_version.text} />
+      </article>
       <div className="mt-8 border-t border-border pt-4 text-xs text-muted-foreground">
         Text shown is the official source as parsed from{" "}
         <a
@@ -33,15 +31,33 @@ export function TextTab({ data }: { data: StatutePageResponse }) {
   )
 }
 
-function highlightCitations(text: string): string {
-  // Simple regex highlight for ORS X.YYY references.
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(
-      /(ORS\s+\d+(?:[A-Z])?\.\d+(?:\([^)]+\))*)/g,
-      '<a class="font-mono text-primary underline decoration-dotted underline-offset-2 hover:decoration-solid" href="/statutes/or:ors:$1">$1</a>',
+function LinkedStatuteText({ text }: { text: string }) {
+  const citationPattern = /(ORS\s+\d{1,3}[A-Z]?\.\d{3}(?:\([A-Za-z0-9]+\))*)/g
+  const parts: ReactNode[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = citationPattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index))
+    }
+    const citation = match[1]
+    const canonical = `or:ors:${citation.replace(/^ORS\s+/i, "")}`
+    parts.push(
+      <Link
+        key={`${citation}-${match.index}`}
+        href={`/statutes/${encodeURIComponent(canonical)}`}
+        className="font-mono text-primary underline decoration-dotted underline-offset-2 hover:decoration-solid"
+      >
+        {citation}
+      </Link>,
     )
-    .replace(/href="\/statutes\/or:ors:ORS\s+/g, 'href="/statutes/or:ors:')
+    lastIndex = citationPattern.lastIndex
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex))
+  }
+
+  return <>{parts}</>
 }

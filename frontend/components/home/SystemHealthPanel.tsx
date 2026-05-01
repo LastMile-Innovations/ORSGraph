@@ -9,21 +9,23 @@ export function SystemHealthPanel({ health, corpus }: { health: SystemHealth; co
     { label: "Graph materialization", value: health.graphMaterialization },
     { label: "Embeddings", value: health.embeddings },
     { label: "Rerank status", value: health.rerank },
+    { label: "Last checked", value: formatDate(health.lastCheckedAt) },
+    { label: "Last QC run", value: formatDate(corpus.lastQcRun) },
   ]
 
   return (
-    <section className="mb-16">
-      <h2 className="text-xl font-semibold text-zinc-100 mb-6">System Health & Provenance</h2>
-      <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-6 font-mono text-sm">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+    <section className="mb-12">
+      <h2 className="mb-4 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">system health and provenance</h2>
+      <div className="rounded-md border border-border bg-card p-4 font-mono text-sm">
+        <div className="grid grid-cols-1 gap-x-8 gap-y-3 md:grid-cols-2">
           {items.map((item, idx) => (
-            <div key={idx} className="flex justify-between items-center border-b border-zinc-800/50 pb-2">
-              <span className="text-zinc-500">{item.label}</span>
+            <div key={idx} className="flex items-center justify-between gap-3 border-b border-border pb-2">
+              <span className="text-muted-foreground">{item.label}</span>
               <span className={`font-medium ${
-                item.state === "ok" ? "text-emerald-400" :
-                item.state === "warning" ? "text-amber-400" :
-                item.state === "error" ? "text-red-400" :
-                "text-zinc-300"
+                item.state === "ok" ? "text-success" :
+                item.state === "warning" ? "text-warning" :
+                item.state === "error" ? "text-destructive" :
+                "text-foreground"
               }`}>
                 {item.value}
               </span>
@@ -33,4 +35,15 @@ export function SystemHealthPanel({ health, corpus }: { health: SystemHealth; co
       </div>
     </section>
   )
+}
+
+function formatDate(value?: string) {
+  if (!value) return "not reported"
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value))
 }

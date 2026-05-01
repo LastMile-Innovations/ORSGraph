@@ -12,6 +12,7 @@ import {
   Sparkles,
 } from "lucide-react"
 import type { Matter, Deadline } from "@/lib/casebuilder/types"
+import { computeDeadlines, createDeadline, patchDeadline } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -26,11 +27,13 @@ interface DeadlinesViewProps {
 type Filter = "all" | "upcoming" | "overdue" | "complete"
 
 export function DeadlinesView({ matter }: DeadlinesViewProps) {
+  const [deadlines, setDeadlines] = useState(matter.deadlines)
   const [filter, setFilter] = useState<Filter>("upcoming")
+  const [message, setMessage] = useState<string | null>(null)
   const today = useMemo(() => new Date().toISOString().slice(0, 10), [])
 
   const filteredDeadlines = useMemo(() => {
-    return matter.deadlines
+    return deadlines
       .filter((d) => {
         if (filter === "all") return true
         if (filter === "complete") return d.status === "complete"
@@ -39,18 +42,60 @@ export function DeadlinesView({ matter }: DeadlinesViewProps) {
         return true
       })
       .sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1))
-  }, [matter.deadlines, filter, today])
+  }, [deadlines, filter, today])
 
   const counts = useMemo(() => {
-    const upcoming = matter.deadlines.filter(
+    const upcoming = deadlines.filter(
       (d) => d.status !== "complete" && d.dueDate >= today,
     ).length
-    const overdue = matter.deadlines.filter(
+    const overdue = deadlines.filter(
       (d) => d.status !== "complete" && d.dueDate < today,
     ).length
-    const complete = matter.deadlines.filter((d) => d.status === "complete").length
-    return { upcoming, overdue, complete, all: matter.deadlines.length }
-  }, [matter.deadlines, today])
+    const complete = deadlines.filter((d) => d.status === "complete").length
+    return { upcoming, overdue, complete, all: deadlines.length }
+  }, [deadlines, today])
+
+  async function autoCompute() {
+    const result = await computeDeadlines(matter.id)
+    if (result.data) {
+      setDeadlines((current) => [...result.data!.generated, ...current])
+      setMessage(result.data.warnings[0] ?? `${result.data.generated.length} deadlines computed.`)
+    } else {
+      setMessage(result.error || "Deadline compute failed.")
+    }
+  }
+
+  async function addDeadline() {
+    const title = window.prompt("Deadline title")
+    if (!title) return
+    const dueDate = window.prompt("Due date (YYYY-MM-DD)", today)
+    if (!dueDate) return
+    const result = await createDeadline(matter.id, {
+      title,
+      due_date: dueDate,
+      description: "",
+      category: "case",
+      kind: "manual",
+      severity: "info",
+      source: "manual",
+    })
+    if (result.data) {
+      setDeadlines((current) => [result.data!, ...current])
+      setMessage("Deadline added.")
+    } else {
+      setMessage(result.error || "Deadline could not be added.")
+    }
+  }
+
+  async function toggleDeadline(deadline: Deadline) {
+    const nextStatus = deadline.status === "complete" ? "open" : "complete"
+    const result = await patchDeadline(matter.id, deadline.id, { status: nextStatus })
+    if (result.data) {
+      setDeadlines((current) => current.map((item) => (item.id === deadline.id ? result.data! : item)))
+    } else {
+      setMessage(result.error || "Deadline update failed.")
+    }
+  }
 
   return (
     <div className="flex flex-col">
@@ -65,16 +110,17 @@ export function DeadlinesView({ matter }: DeadlinesViewProps) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
+            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent" onClick={autoCompute}>
               <Sparkles className="h-3.5 w-3.5" />
               Auto-compute
             </Button>
-            <Button size="sm" className="gap-1.5">
+            <Button size="sm" className="gap-1.5" onClick={addDeadline}>
               <Plus className="h-3.5 w-3.5" />
               Add deadline
             </Button>
           </div>
         </div>
+        {message && <div className="mt-3 rounded border border-border bg-card px-3 py-2 text-xs text-muted-foreground">{message}</div>}
 
         <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
           <SummaryCard label="Overdue" count={counts.overdue} tone="rose" />
@@ -113,7 +159,7 @@ export function DeadlinesView({ matter }: DeadlinesViewProps) {
           ) : (
             <ul className="space-y-2">
               {filteredDeadlines.map((d) => (
-                <DeadlineRow key={d.id} deadline={d} today={today} />
+                <DeadlineRow key={d.id} deadline={d} today={today} onToggle={() => toggleDeadline(d)} />
               ))}
             </ul>
           )}
@@ -170,7 +216,7 @@ function SummaryCard({
   )
 }
 
-function DeadlineRow({ deadline, today }: { deadline: Deadline; today: string }) {
+function DeadlineRow({ deadline, today, onToggle }: { deadline: Deadline; today: string; onToggle: () => void }) {
   const isComplete = deadline.status === "complete"
   const isOverdue = !isComplete && deadline.dueDate < today
   const daysUntil = useMemo(() => {
@@ -201,6 +247,7 @@ function DeadlineRow({ deadline, today }: { deadline: Deadline; today: string })
         className="mt-0.5"
         checked={isComplete}
         aria-label={`Mark ${deadline.title} complete`}
+        onCheckedChange={onToggle}
       />
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-3">

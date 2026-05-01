@@ -20,11 +20,6 @@ export function MiniGraph({
         selectedId={selectedId}
         layout="radial"
         forces={{
-          legal: 80,
-          embedding: 10,
-          citation: 70,
-          semantic: 40,
-          history: 25,
           repulsion: 25,
           cluster: 35,
           labelDensity: 12,

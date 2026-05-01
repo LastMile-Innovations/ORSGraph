@@ -1,6 +1,7 @@
 import { TopNav } from "./top-nav"
 import { LeftRail } from "./left-rail"
 import { getSidebarState } from "@/lib/api"
+import { Suspense } from "react"
 
 interface ShellProps {
   children: React.ReactNode
@@ -9,15 +10,15 @@ interface ShellProps {
 }
 
 export async function Shell({ children, rightPanel, hideLeftRail = false }: ShellProps) {
-  const sidebarState = hideLeftRail ? null : await getSidebarState()
-
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background">
       <TopNav />
       <div className="flex flex-1 overflow-hidden">
         {!hideLeftRail && (
           <div className="hidden shrink-0 lg:flex">
-            <LeftRail initialState={sidebarState} />
+            <Suspense fallback={<div className="w-72 border-r border-border bg-sidebar" />}>
+              <LeftRailSlot />
+            </Suspense>
           </div>
         )}
         <main id="app-main" className="flex min-w-0 flex-1 flex-col overflow-hidden" tabIndex={-1}>
@@ -31,4 +32,9 @@ export async function Shell({ children, rightPanel, hideLeftRail = false }: Shel
       </div>
     </div>
   )
+}
+
+async function LeftRailSlot() {
+  const sidebarState = await getSidebarState()
+  return <LeftRail initialState={sidebarState} />
 }

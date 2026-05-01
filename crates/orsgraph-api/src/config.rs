@@ -81,6 +81,20 @@ pub struct ApiConfig {
     pub vector_min_score: f32,
     #[serde(default = "default_vector_profile")]
     pub vector_profile: String,
+
+    // Internal Admin Operations
+    #[serde(default)]
+    pub admin_enabled: bool,
+    #[serde(default)]
+    pub admin_allow_kill: bool,
+    #[serde(default = "default_admin_jobs_dir")]
+    pub admin_jobs_dir: String,
+    #[serde(default = "default_admin_workdir")]
+    pub admin_workdir: String,
+    #[serde(default = "default_admin_crawler_bin")]
+    pub admin_crawler_bin: String,
+    #[serde(default = "default_admin_data_dir")]
+    pub admin_data_dir: String,
 }
 
 fn default_log_level() -> String {
@@ -185,6 +199,22 @@ fn default_vector_min_score() -> f32 {
 
 fn default_vector_profile() -> String {
     "legal_chunk_primary_v1".to_string()
+}
+
+fn default_admin_jobs_dir() -> String {
+    "data/admin/jobs".to_string()
+}
+
+fn default_admin_workdir() -> String {
+    ".".to_string()
+}
+
+fn default_admin_crawler_bin() -> String {
+    "cargo".to_string()
+}
+
+fn default_admin_data_dir() -> String {
+    "data".to_string()
 }
 
 impl ApiConfig {
@@ -318,6 +348,25 @@ impl ApiConfig {
         {
             self.embedding_model = value;
         }
+
+        if let Some(value) = read_bool("ORS_ADMIN_ENABLED") {
+            self.admin_enabled = value;
+        }
+        if let Some(value) = read_bool("ORS_ADMIN_ALLOW_KILL") {
+            self.admin_allow_kill = value;
+        }
+        if let Some(value) = read_string("ORS_ADMIN_JOBS_DIR") {
+            self.admin_jobs_dir = value;
+        }
+        if let Some(value) = read_string("ORS_ADMIN_WORKDIR") {
+            self.admin_workdir = value;
+        }
+        if let Some(value) = read_string("ORS_ADMIN_CRAWLER_BIN") {
+            self.admin_crawler_bin = value;
+        }
+        if let Some(value) = read_string("ORS_ADMIN_DATA_DIR") {
+            self.admin_data_dir = value;
+        }
     }
 
     fn normalize_and_validate(&mut self) -> Result<(), ConfigError> {
@@ -371,6 +420,21 @@ impl ApiConfig {
                     )));
                 }
             }
+        }
+        if self.admin_jobs_dir.trim().is_empty() {
+            return Err(ConfigError::Message(
+                "ORS_ADMIN_JOBS_DIR must not be empty".to_string(),
+            ));
+        }
+        if self.admin_workdir.trim().is_empty() {
+            return Err(ConfigError::Message(
+                "ORS_ADMIN_WORKDIR must not be empty".to_string(),
+            ));
+        }
+        if self.admin_crawler_bin.trim().is_empty() {
+            return Err(ConfigError::Message(
+                "ORS_ADMIN_CRAWLER_BIN must not be empty".to_string(),
+            ));
         }
         Ok(())
     }
@@ -443,6 +507,12 @@ mod tests {
             vector_top_k: 100,
             vector_min_score: 0.55,
             vector_profile: "legal_chunk_primary_v1".to_string(),
+            admin_enabled: false,
+            admin_allow_kill: false,
+            admin_jobs_dir: "data/admin/jobs".to_string(),
+            admin_workdir: ".".to_string(),
+            admin_crawler_bin: "cargo".to_string(),
+            admin_data_dir: "data".to_string(),
         };
 
         config.normalize_and_validate().unwrap();
@@ -488,6 +558,12 @@ mod tests {
             vector_top_k: 100,
             vector_min_score: 0.55,
             vector_profile: "legal_chunk_primary_v1".to_string(),
+            admin_enabled: false,
+            admin_allow_kill: false,
+            admin_jobs_dir: "data/admin/jobs".to_string(),
+            admin_workdir: ".".to_string(),
+            admin_crawler_bin: "cargo".to_string(),
+            admin_data_dir: "data".to_string(),
         };
 
         let error = config.normalize_and_validate().unwrap_err().to_string();

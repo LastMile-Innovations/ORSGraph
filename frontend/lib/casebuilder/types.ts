@@ -16,11 +16,13 @@ export type MatterType =
   | "appeal"
   | "landlord_tenant"
   | "employment"
+  | "fact_check"
+  | "complaint_analysis"
   | "other"
 
 export type MatterStatus = "active" | "intake" | "stayed" | "closed" | "appeal"
 
-export type MatterSide = "plaintiff" | "defendant" | "petitioner" | "respondent" | "neutral"
+export type MatterSide = "plaintiff" | "defendant" | "petitioner" | "respondent" | "neutral" | "researcher"
 export type FactStatus =
   | "proposed"
   | "supported"
@@ -510,8 +512,8 @@ export interface Deadline {
   matter_id?: string
   title: string
   description: string
-  category: "filing" | "service" | "discovery" | "trial" | "appeal" | "agency" | "other"
-  kind: "statutory" | "court_order" | "rule" | "agency" | "self"
+  category: "filing" | "service" | "discovery" | "trial" | "appeal" | "agency" | "case" | "other" | string
+  kind: "statutory" | "court_order" | "rule" | "agency" | "self" | "manual" | string
   dueDate: string
   due_date: string // alias
   daysRemaining: number
@@ -708,6 +710,7 @@ export interface CaseAuthoritySearchResponse {
 }
 
 export type AuthorityTargetType =
+  | "matter"
   | "claim"
   | "element"
   | "draft_paragraph"

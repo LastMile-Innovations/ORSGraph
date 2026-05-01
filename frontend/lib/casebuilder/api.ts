@@ -13,6 +13,7 @@ import type {
   CaseDocument,
   CaseDefense,
   CaseEvidence,
+  CaseTask,
   CaseFactCheckFinding,
   ChangeSet,
   ComplaintCaption,
@@ -66,6 +67,7 @@ import { decodeMatterRouteId } from "./routes"
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_ORS_API_BASE_URL || "http://localhost:8080/api/v1"
 const API_KEY = process.env.NEXT_PUBLIC_ORS_API_KEY
+const DEMO_MODE = process.env.NEXT_PUBLIC_ORS_DEMO_MODE === "true"
 
 export type LoadSource = "live" | "demo" | "offline" | "error"
 
@@ -241,6 +243,43 @@ export interface LinkEvidenceFactInput {
   fact_id: string
   relation?: "supports" | "contradicts"
 }
+
+export interface CreateDeadlineInput {
+  title: string
+  due_date: string
+  description?: string
+  category?: string
+  kind?: string
+  severity?: string
+  source?: string
+  source_citation?: string | null
+  source_canonical_id?: string | null
+  triggered_by_event_id?: string | null
+  status?: string
+  notes?: string | null
+}
+
+export type PatchDeadlineInput = Partial<CreateDeadlineInput>
+
+export interface ComputeDeadlinesResponse {
+  generated: Deadline[]
+  warnings: string[]
+}
+
+export interface CreateTaskInput {
+  title: string
+  status?: string
+  priority?: string
+  due_date?: string | null
+  assigned_to?: string | null
+  related_claim_ids?: string[]
+  related_document_ids?: string[]
+  related_deadline_id?: string | null
+  source?: string
+  description?: string | null
+}
+
+export type PatchTaskInput = Partial<CreateTaskInput>
 
 export interface AuthorityAttachmentInput {
   target_type: AuthorityTargetType
@@ -453,12 +492,36 @@ export interface ExportComplaintInput {
   include_qc_report?: boolean
 }
 
+export interface MatterAskInput {
+  question: string
+  scope?: "all" | "documents" | "facts" | "claims" | string
+  thread_id?: string
+}
+
+export interface MatterAskResponse {
+  answer: string
+  citations: Array<{
+    citation_id: string
+    kind: string
+    source_id: string
+    title: string
+    snippet?: string | null
+  }>
+  source_spans: SourceSpan[]
+  related_facts: ExtractedFact[]
+  related_documents: CaseDocument[]
+  warnings: string[]
+  mode: string
+  thread_id?: string | null
+}
+
 export async function getMatterSummariesState(): Promise<LoadState<MatterSummary[]>> {
   try {
     const live = await fetchCaseBuilder<MatterSummary[]>("/matters")
     return { source: "live", data: live.map(normalizeMatterSummary) }
   } catch (error) {
-    return { source: "demo", data: demoMatters, error: errorMessage(error) }
+    if (DEMO_MODE) return { source: "demo", data: demoMatters, error: errorMessage(error) }
+    return { source: "error", data: [], error: errorMessage(error) }
   }
 }
 
@@ -468,6 +531,9 @@ export async function getMatterState(id: string): Promise<LoadState<Matter | nul
     const live = await fetchCaseBuilder<unknown>(`/matters/${encodeURIComponent(matterId)}`)
     return { source: "live", data: normalizeMatter(live) }
   } catch (error) {
+    if (!DEMO_MODE) {
+      return { source: "error", data: null, error: errorMessage(error) }
+    }
     const demo = getDemoMatterById(matterId) ?? null
     return { source: demo ? "demo" : "error", data: demo, error: errorMessage(error) }
   }
@@ -720,6 +786,73 @@ export function linkEvidenceFact(
   )
 }
 
+export function createDeadline(
+  matterId: string,
+  input: CreateDeadlineInput,
+): Promise<ActionState<Deadline>> {
+  return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/deadlines`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    normalize: normalizeDeadline,
+  })
+}
+
+export function patchDeadline(
+  matterId: string,
+  deadlineId: string,
+  input: PatchDeadlineInput,
+): Promise<ActionState<Deadline>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/deadlines/${encodeURIComponent(deadlineId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+      normalize: normalizeDeadline,
+    },
+  )
+}
+
+export function computeDeadlines(
+  matterId: string,
+): Promise<ActionState<ComputeDeadlinesResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/deadlines/compute`,
+    {
+      method: "POST",
+      normalize: (raw) => {
+        const response = raw as any
+        return {
+          generated: array(response.generated).map(normalizeDeadline),
+          warnings: array(response.warnings),
+        }
+      },
+    },
+  )
+}
+
+export function createTask(matterId: string, input: CreateTaskInput): Promise<ActionState<CaseTask>> {
+  return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/tasks`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    normalize: normalizeTask,
+  })
+}
+
+export function patchTask(
+  matterId: string,
+  taskId: string,
+  input: PatchTaskInput,
+): Promise<ActionState<CaseTask>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/tasks/${encodeURIComponent(taskId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+      normalize: normalizeTask,
+    },
+  )
+}
+
 export function createDraft(matterId: string, input: CreateDraftInput): Promise<ActionState<Draft>> {
   return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/drafts`, {
     method: "POST",
@@ -741,6 +874,17 @@ export function patchDraft(
       normalize: normalizeDraft,
     },
   )
+}
+
+export function askMatter(
+  matterId: string,
+  input: MatterAskInput,
+): Promise<ActionState<MatterAskResponse>> {
+  return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/ask`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    normalize: normalizeMatterAskResponse,
+  })
 }
 
 export function generateDraft(
@@ -801,6 +945,9 @@ export async function getWorkProductsState(
     )
     return { source: "live", data: live.map(normalizeWorkProduct) }
   } catch (error) {
+    if (!DEMO_MODE) {
+      return { source: "error", data: [], error: errorMessage(error) }
+    }
     const demo = getDemoMatterById(decodedMatterId)
     return {
       source: demo ? "demo" : "error",
@@ -830,6 +977,9 @@ export async function getWorkProductState(
     const products = live.map(normalizeWorkProduct).filter((product) => product.product_type !== "complaint")
     return { source: "live", data: products[0] ?? null }
   } catch (error) {
+    if (!DEMO_MODE) {
+      return { source: "error", data: null, error: errorMessage(error) }
+    }
     const demo = getDemoMatterById(decodedMatterId)
     const products = demo ? buildDemoWorkProducts(demo) : []
     return {
@@ -1232,6 +1382,9 @@ export async function getComplaintState(
     const complaints = live.map(normalizeComplaint)
     return { source: "live", data: complaints[0] ?? null }
   } catch (error) {
+    if (!DEMO_MODE) {
+      return { source: "error", data: null, error: errorMessage(error) }
+    }
     const demo = getDemoMatterById(decodedMatterId)
     return {
       source: demo ? "demo" : "error",
@@ -1597,7 +1750,7 @@ function normalizeMatter(input: unknown): Matter {
     evidence: array(raw.evidence).map(normalizeEvidence),
     defenses: array(raw.defenses),
     deadlines: array(raw.deadlines).map(normalizeDeadline),
-    tasks: array(raw.tasks),
+    tasks: array(raw.tasks).map(normalizeTask),
     drafts: array(raw.drafts).map(normalizeDraft),
     work_products: array(raw.work_products, raw.workProducts).map(normalizeWorkProduct),
     fact_check_findings: array(raw.fact_check_findings, raw.factCheckFindings).map(
@@ -2255,6 +2408,44 @@ function normalizeDeadline(input: any): Deadline {
     sourceCanonicalId: input.sourceCanonicalId ?? input.source_canonical_id,
     source_canonical_id: input.source_canonical_id ?? input.sourceCanonicalId,
     tasks: array(input.tasks),
+  }
+}
+
+function normalizeTask(input: any): CaseTask {
+  return {
+    ...input,
+    task_id: string(input.task_id, input.id),
+    matter_id: string(input.matter_id),
+    title: string(input.title),
+    status: string(input.status, "todo") as CaseTask["status"],
+    priority: string(input.priority, "med") as CaseTask["priority"],
+    due_date: input.due_date ?? input.dueDate ?? null,
+    assigned_to: input.assigned_to ?? input.assignedTo ?? null,
+    related_claim_ids: array(input.related_claim_ids, input.relatedClaimIds),
+    related_document_ids: array(input.related_document_ids, input.relatedDocumentIds),
+    related_deadline_id: input.related_deadline_id ?? input.relatedDeadlineId ?? null,
+    source: string(input.source, "user"),
+    description: input.description ?? null,
+  }
+}
+
+function normalizeMatterAskResponse(input: unknown): MatterAskResponse {
+  const raw = input as any
+  return {
+    answer: string(raw.answer),
+    citations: array(raw.citations).map((citation: any, index: number) => ({
+      citation_id: string(citation.citation_id, citation.id, `citation-${index + 1}`),
+      kind: string(citation.kind, "source"),
+      source_id: string(citation.source_id, citation.sourceId),
+      title: string(citation.title, citation.source_id, "Source"),
+      snippet: citation.snippet ?? null,
+    })),
+    source_spans: array(raw.source_spans, raw.sourceSpans).map(normalizeSourceSpan),
+    related_facts: array(raw.related_facts, raw.relatedFacts).map(normalizeFact),
+    related_documents: array(raw.related_documents, raw.relatedDocuments).map(normalizeDocument),
+    warnings: array(raw.warnings),
+    mode: string(raw.mode, "retrieval"),
+    thread_id: raw.thread_id ?? raw.threadId ?? null,
   }
 }
 

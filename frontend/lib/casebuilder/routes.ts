@@ -23,6 +23,31 @@ export function matterDraftHref(matterId: string, draftId?: string) {
   return draftId ? `${base}/${encodeMatterId(draftId)}` : base
 }
 
+export type WorkProductWorkspaceSection = "editor" | "qc" | "preview" | "export" | "history"
+
+export function matterWorkProductsHref(matterId: string) {
+  return matterHref(matterId, "work-products")
+}
+
+export function newWorkProductHref(matterId: string, productType?: string) {
+  const href = `${matterWorkProductsHref(matterId)}/new`
+  return productType ? `${href}?type=${encodeURIComponent(productType)}` : href
+}
+
+export function matterWorkProductHref(
+  matterId: string,
+  workProductId: string,
+  section?: WorkProductWorkspaceSection,
+  target?: { type?: string; id?: string },
+) {
+  const base = `${matterWorkProductsHref(matterId)}/${encodeMatterId(workProductId)}`
+  const href = section ? `${base}/${section}` : base
+  const params = new URLSearchParams()
+  if (target?.type) params.set("targetType", target.type)
+  const query = params.toString()
+  return withHash(query ? `${href}?${query}` : href, target?.id)
+}
+
 export type ComplaintWorkspaceSection =
   | "editor"
   | "outline"

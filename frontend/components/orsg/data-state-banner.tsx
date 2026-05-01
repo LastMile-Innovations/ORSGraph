@@ -31,6 +31,12 @@ export function DataStateBanner({ source, label, error, className }: DataStateBa
       body: "The live API could not be reached. Any visible sample data is read-only.",
       cls: "border-destructive/30 bg-destructive/10 text-destructive",
     },
+    empty: {
+      icon: Database,
+      label: label ?? "No live data",
+      body: "The live API returned no records for this view.",
+      cls: "border-border bg-muted/40 text-muted-foreground",
+    },
     error: {
       icon: AlertTriangle,
       label: label ?? "Data error",

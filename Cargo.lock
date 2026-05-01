@@ -3034,6 +3034,7 @@ name = "ors-crawler-v0"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "clap",
  "encoding_rs",

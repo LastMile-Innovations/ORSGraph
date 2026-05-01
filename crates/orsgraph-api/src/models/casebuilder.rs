@@ -616,6 +616,44 @@ pub struct CaseDeadline {
     pub notes: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CreateDeadlineRequest {
+    pub title: String,
+    pub due_date: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub kind: Option<String>,
+    pub severity: Option<String>,
+    pub source: Option<String>,
+    pub source_citation: Option<String>,
+    pub source_canonical_id: Option<String>,
+    pub triggered_by_event_id: Option<String>,
+    pub status: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatchDeadlineRequest {
+    pub title: Option<String>,
+    pub due_date: Option<String>,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub kind: Option<String>,
+    pub severity: Option<String>,
+    pub source: Option<String>,
+    pub source_citation: Option<Option<String>>,
+    pub source_canonical_id: Option<Option<String>>,
+    pub triggered_by_event_id: Option<Option<String>>,
+    pub status: Option<String>,
+    pub notes: Option<Option<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ComputeDeadlinesResponse {
+    pub generated: Vec<CaseDeadline>,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CaseTask {
     pub task_id: String,
@@ -631,6 +669,34 @@ pub struct CaseTask {
     pub related_deadline_id: Option<String>,
     pub source: String,
     pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateTaskRequest {
+    pub title: String,
+    pub status: Option<String>,
+    pub priority: Option<String>,
+    pub due_date: Option<String>,
+    pub assigned_to: Option<String>,
+    pub related_claim_ids: Option<Vec<String>>,
+    pub related_document_ids: Option<Vec<String>>,
+    pub related_deadline_id: Option<String>,
+    pub source: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatchTaskRequest {
+    pub title: Option<String>,
+    pub status: Option<String>,
+    pub priority: Option<String>,
+    pub due_date: Option<Option<String>>,
+    pub assigned_to: Option<Option<String>>,
+    pub related_claim_ids: Option<Vec<String>>,
+    pub related_document_ids: Option<Vec<String>>,
+    pub related_deadline_id: Option<Option<String>>,
+    pub source: Option<String>,
+    pub description: Option<Option<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -2137,6 +2203,34 @@ pub struct AiActionResponse<T: Serialize> {
     pub mode: String,
     pub message: String,
     pub result: Option<T>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MatterAskRequest {
+    pub question: String,
+    pub scope: Option<String>,
+    pub thread_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MatterAskResponse {
+    pub answer: String,
+    pub citations: Vec<MatterAskCitation>,
+    pub source_spans: Vec<SourceSpan>,
+    pub related_facts: Vec<CaseFact>,
+    pub related_documents: Vec<CaseDocument>,
+    pub warnings: Vec<String>,
+    pub mode: String,
+    pub thread_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MatterAskCitation {
+    pub citation_id: String,
+    pub kind: String,
+    pub source_id: String,
+    pub title: String,
+    pub snippet: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

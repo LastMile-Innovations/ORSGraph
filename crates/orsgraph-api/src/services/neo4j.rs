@@ -4,6 +4,7 @@ use crate::models::search::{SearchResult as SearchResultModel, *};
 use neo4rs::{query, Graph, Row};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Neo4jService {
     graph: Arc<Graph>,
@@ -431,8 +432,41 @@ impl Neo4jService {
         }
 
         let limit = limit.max(1) as usize;
+        let semantic_kind = "CASE
+                   WHEN node:Definition OR toLower(coalesce(node.semantic_type, '')) = 'definition' THEN 'definition'
+                   WHEN node:Obligation OR toLower(coalesce(node.semantic_type, '')) = 'obligation' THEN 'obligation'
+                   WHEN node:Exception OR toLower(coalesce(node.semantic_type, '')) = 'exception' THEN 'exception'
+                   WHEN node:Deadline OR toLower(coalesce(node.semantic_type, '')) = 'deadline' THEN 'deadline'
+                   WHEN node:Penalty OR toLower(coalesce(node.semantic_type, '')) = 'penalty' THEN 'penalty'
+                   WHEN node:Remedy OR toLower(coalesce(node.semantic_type, '')) = 'remedy' THEN 'remedy'
+                   WHEN node:RequiredNotice OR toLower(coalesce(node.semantic_type, '')) IN ['requirednotice', 'required_notice', 'notice'] THEN 'requirednotice'
+                   WHEN node:ProceduralRequirement OR toLower(coalesce(node.semantic_type, '')) = 'proceduralrequirement' THEN 'proceduralrequirement'
+                   ELSE toLower(labels(node)[0])
+                 END";
+        let history_kind = "CASE
+                   WHEN node:SourceNote THEN 'sourcenote'
+                   WHEN node:StatusEvent THEN 'statusevent'
+                   WHEN node:TemporalEffect THEN 'temporaleffect'
+                   WHEN node:SessionLaw THEN 'sessionlaw'
+                   WHEN node:Amendment THEN 'amendment'
+                   WHEN node:LineageEvent THEN 'lineageevent'
+                   ELSE toLower(labels(node)[0])
+                 END";
+        let specialized_kind = "CASE
+                   WHEN node:TaxRule THEN 'taxrule'
+                   WHEN node:MoneyAmount THEN 'moneyamount'
+                   WHEN node:RateLimit THEN 'ratelimit'
+                   WHEN node:LegalActor THEN 'legalactor'
+                   WHEN node:LegalAction THEN 'legalaction'
+                   ELSE toLower(labels(node)[0])
+                 END";
+        let inferred_authority =
+            "CASE WHEN coalesce(node.authority_family, '') <> '' THEN node.authority_family
+                  WHEN coalesce(node.source_provision_id, node.citation, '') STARTS WITH 'UTCR ' THEN 'UTCR'
+                  ELSE 'ORS'
+             END";
 
-        let queries: Vec<(&str, &str, f32)> = match filters
+        let queries: Vec<(&str, String, f32)> = match filters
             .result_type
             .as_deref()
             .map(str::to_ascii_lowercase)
@@ -445,7 +479,11 @@ impl Neo4jService {
                  WITH coalesce(node, v) as n, score
                  RETURN n.canonical_id as id, n.citation as citation, n.title as title,
                         n.chapter as chapter, n.status as status, 'statute' as kind, score,
-                        coalesce(n.text, n.title) as text",
+                        coalesce(n.text, n.title) as text,
+                        coalesce(n.authority_family, 'ORS') as authority_family,
+                        n.authority_type as authority_type,
+                        n.corpus_id as corpus_id"
+                    .to_string(),
                 1.05,
             )],
             Some("provision") => vec![(
@@ -453,35 +491,48 @@ impl Neo4jService {
                 "MATCH (node)
                  RETURN node.provision_id as id, node.display_citation as citation, null as title,
                         node.chapter as chapter, node.status as status, 'provision' as kind, score,
-                        node.text as text",
+                        node.text as text,
+                        coalesce(node.authority_family, 'ORS') as authority_family,
+                        node.authority_type as authority_type,
+                        node.corpus_id as corpus_id"
+                    .to_string(),
                 1.15,
             )],
             Some("definition") | Some("definedterm") => vec![(
                 "definition_fulltext",
-                "MATCH (node)
+                format!("MATCH (node)
                  RETURN coalesce(node.term, node.definition_id) as id, node.term as citation, null as title,
                         null as chapter, null as status, 'definition' as kind, score,
-                        coalesce(node.definition_text, node.term) as text",
+                        coalesce(node.definition_text, node.term) as text,
+                        {inferred_authority} as authority_family,
+                        node.authority_type as authority_type,
+                        node.corpus_id as corpus_id"),
                 1.1,
             )],
             Some("semantic") | Some("obligation") | Some("exception") | Some("deadline")
             | Some("penalty") | Some("notice") | Some("requirednotice") | Some("remedy") => {
                 vec![(
                     "semantic_fulltext",
-                    "MATCH (node)
+                    format!("MATCH (node)
                      RETURN coalesce(node.semantic_id, node.provision_id) as id, node.citation as citation, null as title,
-                            node.chapter as chapter, null as status, labels(node)[0] as kind, score,
-                            node.text as text",
+                            node.chapter as chapter, null as status, {semantic_kind} as kind, score,
+                            node.text as text,
+                            {inferred_authority} as authority_family,
+                            node.authority_type as authority_type,
+                            node.corpus_id as corpus_id"),
                     1.0,
                 )]
             }
             Some("history") | Some("sourcenote") | Some("source_note") | Some("temporaleffect")
             | Some("temporal_effect") | Some("sessionlaw") | Some("amendment") => vec![(
                 "history_fulltext",
-                "MATCH (node)
+                format!("MATCH (node)
                  RETURN coalesce(node.source_note_id, node.version_id) as id, node.citation as citation, null as title,
-                        null as chapter, null as status, labels(node)[0] as kind, score,
-                        coalesce(node.text, node.raw_text) as text",
+                        null as chapter, null as status, {history_kind} as kind, score,
+                        coalesce(node.text, node.raw_text) as text,
+                        {inferred_authority} as authority_family,
+                        node.authority_type as authority_type,
+                        node.corpus_id as corpus_id"),
                 0.9,
             )],
             Some("chunk") => vec![(
@@ -489,35 +540,45 @@ impl Neo4jService {
                 "MATCH (node)
                  RETURN node.chunk_id as id, node.citation as citation, null as title,
                         null as chapter, null as status, 'chunk' as kind, score,
-                        node.text as text",
+                        node.text as text,
+                        coalesce(node.authority_family, 'ORS') as authority_family,
+                        node.authority_type as authority_type,
+                        node.corpus_id as corpus_id"
+                    .to_string(),
                 0.85,
             )],
             Some("actor") => vec![(
                 "actor_action_fulltext",
-                "MATCH (node)
+                format!("MATCH (node)
                  RETURN coalesce(node.actor_id, node.action_id) as id, null as citation, null as title,
-                        null as chapter, null as status, labels(node)[0] as kind, score,
-                        coalesce(node.actor_text, node.object_text) as text",
+                        null as chapter, null as status, {specialized_kind} as kind, score,
+                        coalesce(node.actor_text, node.object_text) as text,
+                        {inferred_authority} as authority_family,
+                        node.authority_type as authority_type,
+                        node.corpus_id as corpus_id"),
                 0.95,
             )],
             Some("taxrule") | Some("moneyamount") | Some("ratelimit") | Some("legalaction")
             | Some("legalactor") => vec![(
                 "specialized_legal_fulltext",
-                "MATCH (node)
+                format!("MATCH (node)
                  RETURN coalesce(node.tax_rule_id, node.money_amount_id, node.rate_limit_id, node.action_id, node.actor_id) as id,
                         node.citation as citation, null as title, node.chapter as chapter, null as status,
-                        labels(node)[0] as kind, score,
-                        coalesce(node.text, node.normalized_text, node.actor_text, node.action_text, node.object_text, node.tax_type, node.rate_type, node.amount_type) as text",
+                        {specialized_kind} as kind, score,
+                        coalesce(node.text, node.normalized_text, node.actor_text, node.action_text, node.object_text, node.tax_type, node.rate_type, node.amount_type) as text,
+                        {inferred_authority} as authority_family,
+                        node.authority_type as authority_type,
+                        node.corpus_id as corpus_id"),
                 0.95,
             )],
             _ => vec![
-                ("statute_fulltext", "MATCH (node) RETURN node.canonical_id as id, node.citation as citation, node.title as title, node.chapter as chapter, node.status as status, 'statute' as kind, score, coalesce(node.text, node.title) as text", 1.05),
-                ("provision_fulltext", "MATCH (node) RETURN node.provision_id as id, node.display_citation as citation, null as title, node.chapter as chapter, node.status as status, 'provision' as kind, score, node.text as text", 1.15),
-                ("definition_fulltext", "MATCH (node) RETURN coalesce(node.term, node.definition_id) as id, node.term as citation, null as title, null as chapter, null as status, 'definition' as kind, score, coalesce(node.definition_text, node.term) as text", 1.1),
-                ("semantic_fulltext", "MATCH (node) RETURN coalesce(node.semantic_id, node.provision_id) as id, node.citation as citation, null as title, node.chapter as chapter, null as status, labels(node)[0] as kind, score, node.text as text", 1.0),
-                ("specialized_legal_fulltext", "MATCH (node) RETURN coalesce(node.tax_rule_id, node.money_amount_id, node.rate_limit_id, node.action_id, node.actor_id) as id, node.citation as citation, null as title, node.chapter as chapter, null as status, labels(node)[0] as kind, score, coalesce(node.text, node.normalized_text, node.actor_text, node.action_text, node.object_text, node.tax_type, node.rate_type, node.amount_type) as text", 0.95),
-                ("history_fulltext", "MATCH (node) RETURN coalesce(node.source_note_id, node.version_id) as id, node.citation as citation, null as title, null as chapter, null as status, labels(node)[0] as kind, score, coalesce(node.text, node.raw_text) as text", 0.9),
-                ("chunk_fulltext", "MATCH (node) RETURN node.chunk_id as id, node.citation as citation, null as title, node.chapter as chapter, null as status, 'chunk' as kind, score, node.text as text", 0.85),
+                ("statute_fulltext", "MATCH (node) RETURN node.canonical_id as id, node.citation as citation, node.title as title, node.chapter as chapter, node.status as status, 'statute' as kind, score, coalesce(node.text, node.title) as text, coalesce(node.authority_family, 'ORS') as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id".to_string(), 1.05),
+                ("provision_fulltext", "MATCH (node) RETURN node.provision_id as id, node.display_citation as citation, null as title, node.chapter as chapter, node.status as status, 'provision' as kind, score, node.text as text, coalesce(node.authority_family, 'ORS') as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id".to_string(), 1.15),
+                ("definition_fulltext", format!("MATCH (node) RETURN coalesce(node.term, node.definition_id) as id, node.term as citation, null as title, null as chapter, null as status, 'definition' as kind, score, coalesce(node.definition_text, node.term) as text, {inferred_authority} as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id"), 1.1),
+                ("semantic_fulltext", format!("MATCH (node) RETURN coalesce(node.semantic_id, node.provision_id) as id, node.citation as citation, null as title, node.chapter as chapter, null as status, {semantic_kind} as kind, score, node.text as text, {inferred_authority} as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id"), 1.0),
+                ("specialized_legal_fulltext", format!("MATCH (node) RETURN coalesce(node.tax_rule_id, node.money_amount_id, node.rate_limit_id, node.action_id, node.actor_id) as id, node.citation as citation, null as title, node.chapter as chapter, null as status, {specialized_kind} as kind, score, coalesce(node.text, node.normalized_text, node.actor_text, node.action_text, node.object_text, node.tax_type, node.rate_type, node.amount_type) as text, {inferred_authority} as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id"), 0.95),
+                ("history_fulltext", format!("MATCH (node) RETURN coalesce(node.source_note_id, node.version_id) as id, node.citation as citation, null as title, null as chapter, null as status, {history_kind} as kind, score, coalesce(node.text, node.raw_text) as text, {inferred_authority} as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id"), 0.9),
+                ("chunk_fulltext", "MATCH (node) RETURN node.chunk_id as id, node.citation as citation, null as title, node.chapter as chapter, null as status, 'chunk' as kind, score, node.text as text, coalesce(node.authority_family, 'ORS') as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id".to_string(), 0.85),
             ],
         };
 
@@ -533,11 +594,12 @@ impl Neo4jService {
                    CALL db.index.fulltext.queryNodes($index, $q) YIELD node, score
                    {}
                  }}
-                 WITH id, citation, title, chapter, status, kind, score, text
+                 WITH id, citation, title, chapter, status, kind, score, text, authority_family, authority_type, corpus_id
                  WHERE ($chapter = '' OR chapter = $chapter)
                    AND ($status = '' OR status = $status)
                    AND ($current_only = false OR status IS NULL OR status = 'active')
-                 RETURN id, citation, title, chapter, status, kind, score, text
+                   AND ($authority_family = '' OR toUpper(coalesce(authority_family, 'ORS')) = $authority_family)
+                 RETURN id, citation, title, chapter, status, kind, score, text, authority_family, authority_type, corpus_id
                  ORDER BY score DESC
                  LIMIT $limit",
                 return_clause
@@ -552,6 +614,10 @@ impl Neo4jService {
                         .param("limit", per_index_limit as i64)
                         .param("chapter", filters.chapter.clone().unwrap_or_default())
                         .param("status", filters.status.clone().unwrap_or_default())
+                        .param(
+                            "authority_family",
+                            filters.authority_family.clone().unwrap_or_default(),
+                        )
                         .param("current_only", filters.current_only),
                 )
                 .await
@@ -1614,6 +1680,70 @@ impl Neo4jService {
         })
     }
 
+    pub async fn get_chunks(&self, citation: &str) -> ApiResult<StatuteChunksResponse> {
+        let mut result = self
+            .graph
+            .execute(
+                query(
+                    "MATCH (i:LegalTextIdentity)
+                     WHERE i.citation = $citation OR i.canonical_id = $citation
+                     CALL {
+                       WITH i
+                       OPTIONAL MATCH (i)-[:HAS_VERSION]->(candidate:LegalTextVersion)
+                       WITH candidate
+                       ORDER BY coalesce(candidate.current, candidate.is_current, false) DESC,
+                                coalesce(candidate.edition_year, 0) DESC,
+                                coalesce(candidate.effective_date, '') DESC
+                       RETURN candidate AS v
+                       LIMIT 1
+                     }
+                     OPTIONAL MATCH (v)<-[:DERIVED_FROM]-(version_chunk:RetrievalChunk)
+                     OPTIONAL MATCH (v)-[:CONTAINS]->(p:Provision)<-[:DERIVED_FROM]-(provision_chunk:RetrievalChunk)
+                     WITH i, v,
+                       collect(DISTINCT {
+                         chunk_id: version_chunk.chunk_id,
+                         chunk_type: version_chunk.chunk_type,
+                         source_kind: coalesce(version_chunk.source_kind, 'statute'),
+                         source_id: coalesce(version_chunk.source_id, v.version_id, i.canonical_id),
+                         text: version_chunk.text,
+                         embedding_policy: version_chunk.embedding_policy,
+                         answer_policy: version_chunk.answer_policy,
+                         search_weight: version_chunk.search_weight,
+                         embedded: version_chunk.embedded,
+                         parser_confidence: version_chunk.parser_confidence
+                       }) +
+                       collect(DISTINCT {
+                         chunk_id: provision_chunk.chunk_id,
+                         chunk_type: provision_chunk.chunk_type,
+                         source_kind: coalesce(provision_chunk.source_kind, 'provision'),
+                         source_id: coalesce(provision_chunk.source_id, p.provision_id),
+                         text: provision_chunk.text,
+                         embedding_policy: provision_chunk.embedding_policy,
+                         answer_policy: provision_chunk.answer_policy,
+                         search_weight: provision_chunk.search_weight,
+                         embedded: provision_chunk.embedded,
+                         parser_confidence: provision_chunk.parser_confidence
+                       }) AS raw_chunks
+                     RETURN i.citation AS citation,
+                            [chunk IN raw_chunks WHERE chunk.chunk_id IS NOT NULL][0..500] AS chunks",
+                )
+                .param("citation", citation),
+            )
+            .await
+            .map_err(ApiError::Neo4jConnection)?;
+
+        let row = result
+            .next()
+            .await
+            .map_err(ApiError::Neo4jConnection)?
+            .ok_or_else(|| ApiError::NotFound(format!("Statute not found: {}", citation)))?;
+
+        Ok(StatuteChunksResponse {
+            citation: row.get("citation").unwrap_or_else(|_| citation.to_string()),
+            chunks: json_to_chunks(row.get("chunks").ok().unwrap_or_default(), citation),
+        })
+    }
+
     pub async fn get_provision_detail(
         &self,
         provision_id: &str,
@@ -1881,8 +2011,15 @@ impl Neo4jService {
         let depth = params.depth.clamp(1, 2);
         let node_limit = params.limit.clamp(1, 500);
         let edge_limit = (node_limit * 3).min(1500);
-        let relationship_types =
+        let mut relationship_types =
             graph_relationship_types(&params.mode, params.relationship_types.as_deref());
+        if params.include_similarity.unwrap_or(false)
+            && !relationship_types
+                .iter()
+                .any(|rel_type| rel_type == "SIMILAR_TO")
+        {
+            relationship_types.push("SIMILAR_TO".to_string());
+        }
         let node_types = graph_csv(params.node_types.as_deref());
         let include_chunks = params.include_chunks.unwrap_or(false);
         let path_limit = edge_limit;
@@ -1914,7 +2051,9 @@ impl Neo4jService {
              CALL {{
                WITH center
                OPTIONAL MATCH path = (center)-[*1..{depth}]-(neighbor)
-               WHERE path IS NULL OR all(rel IN relationships(path) WHERE type(rel) IN $relationship_types)
+               WHERE path IS NULL OR all(rel IN relationships(path)
+                 WHERE type(rel) IN $relationship_types
+                   AND ($similarity_threshold < 0 OR type(rel) <> 'SIMILAR_TO' OR coalesce(rel.similarity_score, rel.score, rel.weight, 0.0) >= $similarity_threshold))
                WITH center, [p IN collect(path)[0..$path_limit] WHERE p IS NOT NULL] AS paths
                WITH [center] + reduce(all_nodes = [], p IN paths | all_nodes + nodes(p)) AS graph_nodes
                UNWIND graph_nodes AS node
@@ -1940,17 +2079,21 @@ impl Neo4jService {
                       null AS target_id,
                       null AS edge_type,
                       null AS edge_confidence,
-                      null AS edge_weight
+                      null AS edge_weight,
+                      null AS edge_similarity_score
                UNION ALL
                WITH center
                OPTIONAL MATCH path = (center)-[*1..{depth}]-(neighbor)
-               WHERE path IS NULL OR all(rel IN relationships(path) WHERE type(rel) IN $relationship_types)
+               WHERE path IS NULL OR all(rel IN relationships(path)
+                 WHERE type(rel) IN $relationship_types
+                   AND ($similarity_threshold < 0 OR type(rel) <> 'SIMILAR_TO' OR coalesce(rel.similarity_score, rel.score, rel.weight, 0.0) >= $similarity_threshold))
                WITH [p IN collect(path)[0..$path_limit] WHERE p IS NOT NULL] AS paths
                UNWIND paths AS path
                UNWIND relationships(path) AS rel
                WITH DISTINCT rel, startNode(rel) AS source, endNode(rel) AS target
                WHERE ($include_chunks = true OR (NOT 'RetrievalChunk' IN labels(source) AND NOT 'RetrievalChunk' IN labels(target)))
                  AND ($min_confidence < 0 OR coalesce(rel.confidence, 1.0) >= $min_confidence)
+                 AND ($similarity_threshold < 0 OR type(rel) <> 'SIMILAR_TO' OR coalesce(rel.similarity_score, rel.score, rel.weight, 0.0) >= $similarity_threshold)
                RETURN 'edge' AS record_kind,
                       null AS node_id,
                       null AS node_label,
@@ -1969,7 +2112,8 @@ impl Neo4jService {
                       {target_id_expr} AS target_id,
                       type(rel) AS edge_type,
                       rel.confidence AS edge_confidence,
-                      coalesce(rel.weight, rel.score, rel.similarity_score) AS edge_weight
+                      coalesce(rel.weight, rel.score, rel.similarity_score) AS edge_weight,
+                      coalesce(rel.similarity_score, rel.score, rel.weight) AS edge_similarity_score
              }}
              RETURN *
              LIMIT $row_limit",
@@ -1985,6 +2129,10 @@ impl Neo4jService {
                     .param("node_types", node_types)
                     .param("include_chunks", include_chunks)
                     .param("min_confidence", params.min_confidence.unwrap_or(-1.0))
+                    .param(
+                        "similarity_threshold",
+                        params.similarity_threshold.unwrap_or(-1.0),
+                    )
                     .param("path_limit", path_limit as i64)
                     .param("row_limit", row_limit),
             )
@@ -2048,7 +2196,7 @@ impl Neo4jService {
                         kind,
                         weight: row.get("edge_weight").ok(),
                         confidence: row.get("edge_confidence").ok(),
-                        similarity_score: None,
+                        similarity_score: row.get("edge_similarity_score").ok(),
                         source_backed: Some(true),
                         style: Some(graph_edge_style(&edge_type)),
                     }
@@ -2105,13 +2253,6 @@ impl Neo4jService {
                 node_limit, edge_limit
             ));
         }
-        if params.include_similarity.unwrap_or(false) {
-            warnings.push(format!(
-                "Similarity edges are not included by /graph/neighborhood; requested threshold was {:.2}. Use /graph/hybrid when enabled.",
-                params.similarity_threshold.unwrap_or(0.78)
-            ));
-        }
-
         Ok(GraphNeighborhoodResponse {
             center,
             stats: GraphStats {
@@ -2129,6 +2270,255 @@ impl Neo4jService {
                     _ => "force".to_string(),
                 },
             }),
+        })
+    }
+
+    pub async fn list_sources(
+        &self,
+        params: &SourceIndexRequest,
+    ) -> ApiResult<SourceIndexResponse> {
+        let limit = params.limit.unwrap_or(50).clamp(1, 200);
+        let offset = params.offset.unwrap_or(0);
+        let q = params.q.as_deref().unwrap_or("").trim().to_lowercase();
+        let status = normalized_filter(params.status.as_deref());
+
+        let rows = self
+            .run_rows(
+                query(
+                    "MATCH (sd:SourceDocument)
+                     WITH sd, coalesce(sd.source_document_id, sd.source_id, sd.id) AS source_id
+                     WHERE ($q = ''
+                         OR toLower(coalesce(sd.title, sd.chapter_title, sd.file_name, source_id, '')) CONTAINS $q
+                         OR toLower(coalesce(sd.chapter, sd.source_kind, sd.authority_family, '')) CONTAINS $q)
+                       AND ($edition_year < 0 OR coalesce(sd.edition_year, -1) = $edition_year)
+                     OPTIONAL MATCH (p:Provision)-[:DERIVED_FROM]->(sd)
+                     OPTIONAL MATCH (c:RetrievalChunk)-[:DERIVED_FROM]->(sd)
+                     OPTIONAL MATCH (cm:CitationMention)-[:DERIVED_FROM]->(sd)
+                     OPTIONAL MATCH (v:LegalTextVersion)-[:DERIVED_FROM]->(sd)
+                     RETURN source_id,
+                            coalesce(sd.title, sd.chapter_title, sd.file_name, source_id) AS title,
+                            coalesce(sd.jurisdiction, sd.jurisdiction_id, 'Oregon') AS jurisdiction,
+                            coalesce(sd.scope, sd.chapter_title, sd.chapter, sd.authority_family, sd.source_kind, 'source') AS scope,
+                            coalesce(sd.url, '') AS url,
+                            toString(coalesce(sd.retrieved_at, sd.updated_at, sd.created_at, '')) AS retrieved_at,
+                            coalesce(sd.raw_hash, '') AS raw_hash,
+                            coalesce(sd.normalized_hash, '') AS normalized_hash,
+                            coalesce(sd.edition_year, 0) AS edition_year,
+                            coalesce(sd.parser_profile, sd.source_system, 'unknown') AS parser_profile,
+                            coalesce(sd.parser_warnings, []) AS parser_warnings,
+                            coalesce(sd.byte_size, sd.size_bytes, sd.content_length, 0) AS byte_size,
+                            count(DISTINCT v) AS sections,
+                            count(DISTINCT p) AS provisions,
+                            count(DISTINCT c) AS chunks,
+                            count(DISTINCT cm) AS citation_mentions
+                     ORDER BY edition_year DESC, title ASC
+                     LIMIT 1000",
+                )
+                .param("q", q)
+                .param("edition_year", params.edition_year.unwrap_or(-1)),
+            )
+            .await?;
+
+        let mut items: Vec<SourceIndexItem> = rows
+            .iter()
+            .map(source_item_from_row)
+            .collect::<ApiResult<Vec<_>>>()?;
+
+        if let Some(status) = status {
+            items.retain(|item| item.ingestion_status == status);
+        }
+
+        let total = items.len() as u64;
+        let paged = items
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+
+        Ok(SourceIndexResponse {
+            items: paged,
+            total,
+            limit,
+            offset,
+        })
+    }
+
+    pub async fn get_source(&self, source_id: &str) -> ApiResult<SourceDetailResponse> {
+        let rows = self
+            .run_rows(
+                query(
+                    "MATCH (sd:SourceDocument)
+                     WITH sd, coalesce(sd.source_document_id, sd.source_id, sd.id) AS source_id
+                     WHERE source_id = $source_id
+                     OPTIONAL MATCH (p:Provision)-[:DERIVED_FROM]->(sd)
+                     OPTIONAL MATCH (c:RetrievalChunk)-[:DERIVED_FROM]->(sd)
+                     OPTIONAL MATCH (cm:CitationMention)-[:DERIVED_FROM]->(sd)
+                     OPTIONAL MATCH (v:LegalTextVersion)-[:DERIVED_FROM]->(sd)
+                     RETURN source_id,
+                            coalesce(sd.title, sd.chapter_title, sd.file_name, source_id) AS title,
+                            coalesce(sd.jurisdiction, sd.jurisdiction_id, 'Oregon') AS jurisdiction,
+                            coalesce(sd.scope, sd.chapter_title, sd.chapter, sd.authority_family, sd.source_kind, 'source') AS scope,
+                            coalesce(sd.url, '') AS url,
+                            toString(coalesce(sd.retrieved_at, sd.updated_at, sd.created_at, '')) AS retrieved_at,
+                            coalesce(sd.raw_hash, '') AS raw_hash,
+                            coalesce(sd.normalized_hash, '') AS normalized_hash,
+                            coalesce(sd.edition_year, 0) AS edition_year,
+                            coalesce(sd.parser_profile, sd.source_system, 'unknown') AS parser_profile,
+                            coalesce(sd.parser_warnings, []) AS parser_warnings,
+                            coalesce(sd.byte_size, sd.size_bytes, sd.content_length, 0) AS byte_size,
+                            count(DISTINCT v) AS sections,
+                            count(DISTINCT p) AS provisions,
+                            count(DISTINCT c) AS chunks,
+                            count(DISTINCT cm) AS citation_mentions",
+                )
+                .param("source_id", source_id),
+            )
+            .await?;
+
+        let source = rows
+            .first()
+            .map(source_item_from_row)
+            .transpose()?
+            .ok_or_else(|| ApiError::NotFound(format!("Source {source_id} not found")))?;
+
+        let related = self
+            .list_sources(&SourceIndexRequest {
+                q: Some(source.scope.clone()),
+                status: None,
+                edition_year: Some(source.edition_year),
+                limit: Some(7),
+                offset: Some(0),
+            })
+            .await?
+            .items
+            .into_iter()
+            .filter(|item| item.source_id != source.source_id)
+            .take(6)
+            .collect();
+
+        Ok(SourceDetailResponse {
+            source,
+            related_sources: related,
+        })
+    }
+
+    pub async fn get_graph_path(&self, params: &GraphPathRequest) -> ApiResult<GraphPathResponse> {
+        let limit = params.limit.unwrap_or(3).clamp(1, 10);
+        let relationship_types =
+            graph_relationship_types(params.mode.as_deref().unwrap_or("legal"), None);
+        let node_id_expr = "coalesce(node.canonical_id, node.version_id, node.provision_id, node.chunk_id, node.semantic_id, node.source_note_id, node.definition_id, node.defined_term_id, node.deadline_id, node.penalty_id, node.exception_id, node.remedy_id, node.required_notice_id, node.notice_id, node.form_text_id, node.actor_id, node.action_id, node.mention_id, node.citation_mention_id, node.external_citation_id, node.status_event_id, node.temporal_effect_id, node.lineage_event_id, node.session_law_id, node.amendment_id, node.chapter_id, elementId(node))";
+        let source_id_expr = node_id_expr
+            .replace("node.", "startNode(rel).")
+            .replace("elementId(node)", "elementId(startNode(rel))");
+        let target_id_expr = node_id_expr
+            .replace("node.", "endNode(rel).")
+            .replace("elementId(node)", "elementId(endNode(rel))");
+        let from_lookup_expr = node_id_expr
+            .replace("node.", "from.")
+            .replace("elementId(node)", "elementId(from)");
+        let to_lookup_expr = node_id_expr
+            .replace("node.", "to.")
+            .replace("elementId(node)", "elementId(to)");
+
+        let cypher = format!(
+            "MATCH (from), (to)
+             WHERE ({from_lookup_expr} = $from OR toUpper(coalesce(from.citation, from.display_citation, '')) = toUpper($from))
+               AND ({to_lookup_expr} = $to OR toUpper(coalesce(to.citation, to.display_citation, '')) = toUpper($to))
+             WITH from, to
+             LIMIT 1
+             MATCH path = shortestPath((from)-[*..6]-(to))
+             WHERE all(rel IN relationships(path) WHERE type(rel) IN $relationship_types)
+             WITH path
+             LIMIT $limit
+             RETURN
+               [node IN nodes(path) | {{
+                 id: {node_id_expr},
+                 label: coalesce(node.citation, node.display_citation, node.term, node.title, node.label, labels(node)[0], {node_id_expr}),
+                 type: labels(node)[0],
+                 labels: labels(node),
+                 citation: coalesce(node.citation, node.display_citation),
+                 title: node.title,
+                 chapter: node.chapter,
+                 status: node.status,
+                 textSnippet: left(coalesce(node.text, node.normalized_text, node.definition_text, node.raw_text, node.description, ''), 220),
+                 confidence: coalesce(node.confidence, node.parser_confidence),
+                 sourceBacked: coalesce(node.source_backed, node.sourceBacked),
+                 qcWarnings: coalesce(node.qc_warnings, node.parser_warnings, [])
+               }}] AS nodes,
+               [rel IN relationships(path) | {{
+                 id: elementId(rel),
+                 source: {source_id_expr},
+                 target: {target_id_expr},
+                 type: type(rel),
+                 label: type(rel),
+                 weight: coalesce(rel.weight, rel.score, rel.similarity_score),
+                 confidence: rel.confidence
+               }}] AS edges",
+        );
+
+        let rows = self
+            .run_rows(
+                query(&cypher)
+                    .param("from", params.from.clone())
+                    .param("to", params.to.clone())
+                    .param("relationship_types", relationship_types)
+                    .param("limit", limit as i64),
+            )
+            .await?;
+
+        let mut nodes_by_id: HashMap<String, GraphNode> = HashMap::new();
+        let mut edges_by_id: HashMap<String, GraphEdge> = HashMap::new();
+        let mut paths = Vec::new();
+
+        for row in rows {
+            let node_values: Vec<serde_json::Value> = row.get("nodes").unwrap_or_default();
+            let edge_values: Vec<serde_json::Value> = row.get("edges").unwrap_or_default();
+            let mut node_ids = Vec::new();
+            let mut edge_ids = Vec::new();
+
+            for value in node_values {
+                let node = graph_node_from_json(&value);
+                if !node.id.is_empty() {
+                    node_ids.push(node.id.clone());
+                    nodes_by_id.entry(node.id.clone()).or_insert(node);
+                }
+            }
+            for value in edge_values {
+                let edge = graph_edge_from_json(&value);
+                if !edge.id.is_empty() && !edge.source.is_empty() && !edge.target.is_empty() {
+                    edge_ids.push(edge.id.clone());
+                    edges_by_id.entry(edge.id.clone()).or_insert(edge);
+                }
+            }
+            paths.push(GraphPath {
+                length: edge_ids.len(),
+                node_ids,
+                edge_ids,
+            });
+        }
+
+        let mut nodes: Vec<GraphNode> = nodes_by_id.into_values().collect();
+        nodes.sort_by(|left, right| left.label.cmp(&right.label));
+        let mut edges: Vec<GraphEdge> = edges_by_id.into_values().collect();
+        edges.sort_by(|left, right| left.id.cmp(&right.id));
+        let warnings = if paths.is_empty() {
+            vec!["No path found within six graph hops for the selected nodes.".to_string()]
+        } else {
+            Vec::new()
+        };
+
+        Ok(GraphPathResponse {
+            from: params.from.clone(),
+            to: params.to.clone(),
+            stats: GraphStats {
+                node_count: nodes.len(),
+                edge_count: edges.len(),
+                truncated: false,
+                warnings,
+            },
+            paths,
+            nodes,
+            edges,
         })
     }
 
@@ -2279,6 +2669,59 @@ impl Neo4jService {
                 coverage: percentage(resolved_citations, total_citations),
             },
             last_qc_status: None,
+        })
+    }
+
+    pub async fn run_qc(&self) -> ApiResult<QCRunResponse> {
+        let started_at = unix_timestamp_string();
+        let summary = self.get_qc_summary().await?;
+        let completed_at = unix_timestamp_string();
+        let status = if summary.duplicate_counts.legal_text_identities > 0
+            || summary.duplicate_counts.provisions > 0
+            || summary.duplicate_counts.cites_relationships > 0
+        {
+            "warning"
+        } else {
+            "succeeded"
+        };
+
+        Ok(QCRunResponse {
+            run_id: format!("qc:run:{completed_at}"),
+            status: status.to_string(),
+            started_at,
+            completed_at,
+            summary,
+            warnings: Vec::new(),
+        })
+    }
+
+    pub async fn get_qc_report(&self, format: Option<&str>) -> ApiResult<QCReportResponse> {
+        let format = format.unwrap_or("json").trim().to_ascii_lowercase();
+        if format != "json" && format != "csv" {
+            return Err(ApiError::BadRequest(
+                "QC report format must be json or csv".to_string(),
+            ));
+        }
+        let summary = self.get_qc_summary().await?;
+        let generated_at = unix_timestamp_string();
+        let content = if format == "csv" {
+            qc_summary_csv(&summary)
+        } else {
+            serde_json::to_string_pretty(&summary)
+                .map_err(|error| ApiError::Internal(error.to_string()))?
+        };
+
+        Ok(QCReportResponse {
+            report_id: format!("qc:report:{generated_at}"),
+            mime_type: if format == "csv" {
+                "text/csv".to_string()
+            } else {
+                "application/json".to_string()
+            },
+            format,
+            generated_at,
+            summary,
+            content,
         })
     }
 
@@ -2509,6 +2952,170 @@ fn corpus_id_for_family(authority_family: Option<&str>) -> Option<&'static str> 
     }
 }
 
+fn source_item_from_row(row: &Row) -> ApiResult<SourceIndexItem> {
+    let raw_hash: String = row.get("raw_hash").unwrap_or_default();
+    let normalized_hash: String = row.get("normalized_hash").unwrap_or_default();
+    let parser_warnings: Vec<String> = row.get("parser_warnings").unwrap_or_default();
+    let ingestion_status = if raw_hash.is_empty() {
+        "queued"
+    } else if normalized_hash.is_empty() {
+        "failed"
+    } else {
+        "ingested"
+    };
+
+    Ok(SourceIndexItem {
+        source_id: row.get("source_id").unwrap_or_default(),
+        title: row.get("title").unwrap_or_default(),
+        jurisdiction: row.get("jurisdiction").unwrap_or_default(),
+        scope: row.get("scope").unwrap_or_default(),
+        url: row.get("url").unwrap_or_default(),
+        retrieved_at: row.get("retrieved_at").unwrap_or_default(),
+        raw_hash,
+        normalized_hash,
+        edition_year: row.get::<i64>("edition_year").unwrap_or(0) as i32,
+        parser_profile: row.get("parser_profile").unwrap_or_default(),
+        parser_warnings,
+        byte_size: row.get::<i64>("byte_size").unwrap_or(0).max(0) as u64,
+        ingestion_status: ingestion_status.to_string(),
+        produced: SourceProducedCounts {
+            sections: row.get::<i64>("sections").unwrap_or(0).max(0) as u64,
+            provisions: row.get::<i64>("provisions").unwrap_or(0).max(0) as u64,
+            chunks: row.get::<i64>("chunks").unwrap_or(0).max(0) as u64,
+            citation_mentions: row.get::<i64>("citation_mentions").unwrap_or(0).max(0) as u64,
+        },
+    })
+}
+
+fn graph_node_from_json(value: &serde_json::Value) -> GraphNode {
+    let id = json_string(value, "id");
+    let node_type = json_string_or(value, "type", "Unknown");
+    GraphNode {
+        href: graph_node_href(&id, &node_type),
+        id,
+        label: json_string_or(value, "label", &node_type),
+        node_type: node_type.clone(),
+        labels: json_string_array(value, "labels")
+            .into_iter()
+            .chain(std::iter::once(node_type.clone()))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect(),
+        citation: json_optional_string(value, "citation"),
+        title: json_optional_string(value, "title"),
+        chapter: json_optional_string(value, "chapter"),
+        status: json_optional_string(value, "status"),
+        text_snippet: json_optional_string(value, "textSnippet"),
+        size: None,
+        score: None,
+        similarity_score: None,
+        confidence: value["confidence"].as_f64(),
+        source_backed: value["sourceBacked"].as_bool(),
+        qc_warnings: json_string_array(value, "qcWarnings"),
+        metrics: None,
+    }
+}
+
+fn graph_edge_from_json(value: &serde_json::Value) -> GraphEdge {
+    let edge_type = json_string_or(value, "type", "RELATED");
+    GraphEdge {
+        id: json_string(value, "id"),
+        source: json_string(value, "source"),
+        target: json_string(value, "target"),
+        label: json_optional_string(value, "label").or_else(|| Some(edge_type.clone())),
+        kind: graph_edge_kind(&edge_type).to_string(),
+        weight: value["weight"].as_f64(),
+        confidence: value["confidence"].as_f64(),
+        similarity_score: None,
+        source_backed: Some(true),
+        style: Some(graph_edge_style(&edge_type)),
+        edge_type,
+    }
+}
+
+fn json_optional_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value[key]
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(ToString::to_string)
+}
+
+fn json_string_array(value: &serde_json::Value, key: &str) -> Vec<String> {
+    value[key]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn qc_summary_csv(summary: &QCSummaryResponse) -> String {
+    let mut lines = vec!["section,key,value".to_string()];
+    for item in &summary.node_counts_by_label {
+        lines.push(format!(
+            "node_count,{},{}",
+            csv_cell(&item.label),
+            item.count
+        ));
+    }
+    for item in &summary.relationship_counts_by_type {
+        lines.push(format!(
+            "relationship_count,{},{}",
+            csv_cell(&item.rel_type),
+            item.count
+        ));
+    }
+    lines.push(format!(
+        "orphan,provisions,{}",
+        summary.orphan_counts.provisions
+    ));
+    lines.push(format!("orphan,chunks,{}", summary.orphan_counts.chunks));
+    lines.push(format!(
+        "orphan,citations,{}",
+        summary.orphan_counts.citations
+    ));
+    lines.push(format!(
+        "duplicate,legal_text_identities,{}",
+        summary.duplicate_counts.legal_text_identities
+    ));
+    lines.push(format!(
+        "duplicate,provisions,{}",
+        summary.duplicate_counts.provisions
+    ));
+    lines.push(format!(
+        "duplicate,cites_relationships,{}",
+        summary.duplicate_counts.cites_relationships
+    ));
+    lines.push(format!(
+        "embedding,coverage,{:.2}",
+        summary.embedding_readiness.coverage
+    ));
+    lines.push(format!(
+        "citations,coverage,{:.2}",
+        summary.cites_coverage.coverage
+    ));
+    lines.join("\n")
+}
+
+fn csv_cell(value: &str) -> String {
+    if value.contains([',', '"', '\n']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+fn unix_timestamp_string() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "0".to_string())
+}
+
 fn graph_csv(value: Option<&str>) -> Vec<String> {
     value
         .unwrap_or_default()
@@ -2615,6 +3222,34 @@ mod search_support_tests {
         assert!(safe_vector_index_name("retrieval_chunk_embedding_1024").is_ok());
         assert!(safe_vector_index_name("retrieval`) MATCH (n) //").is_err());
     }
+
+    #[test]
+    fn graph_relationship_modes_cover_typed_citations_and_similarity() {
+        let citation = graph_relationship_types("citation", None);
+        for expected in [
+            "CITES",
+            "CITES_VERSION",
+            "CITES_PROVISION",
+            "CITES_CHAPTER",
+            "CITES_RANGE",
+            "RESOLVES_TO_CHAPTER",
+            "RESOLVES_TO_EXTERNAL",
+        ] {
+            assert!(
+                citation.iter().any(|value| value == expected),
+                "citation mode should include {expected}"
+            );
+        }
+
+        let hybrid = graph_relationship_types("hybrid", None);
+        assert!(
+            hybrid.iter().any(|value| value == "SIMILAR_TO"),
+            "hybrid mode should include similarity edges"
+        );
+
+        let similarity = graph_relationship_types("embedding_similarity", None);
+        assert_eq!(similarity, vec!["SIMILAR_TO".to_string()]);
+    }
 }
 
 fn graph_relationship_types(mode: &str, override_value: Option<&str>) -> Vec<String> {
@@ -2626,12 +3261,21 @@ fn graph_relationship_types(mode: &str, override_value: Option<&str>) -> Vec<Str
     let values: &[&str] = match mode {
         "citation" => &[
             "CITES",
+            "CITES_VERSION",
+            "CITES_PROVISION",
+            "CITES_CHAPTER",
+            "CITES_RANGE",
             "MENTIONS_CITATION",
             "RESOLVES_TO",
             "RESOLVES_TO_VERSION",
             "RESOLVES_TO_PROVISION",
+            "RESOLVES_TO_CHAPTER",
+            "RESOLVES_TO_EXTERNAL",
+            "RESOLVES_TO_RANGE_START",
+            "RESOLVES_TO_RANGE_END",
             "CITES_EXTERNAL",
         ],
+        "embedding_similarity" | "similarity" => &["SIMILAR_TO"],
         "semantic" => &[
             "EXPRESSES",
             "SUPPORTED_BY",
@@ -2660,11 +3304,20 @@ fn graph_relationship_types(mode: &str, override_value: Option<&str>) -> Vec<Str
         ],
         "hybrid" => &[
             "CITES",
+            "CITES_VERSION",
+            "CITES_PROVISION",
+            "CITES_CHAPTER",
+            "CITES_RANGE",
             "MENTIONS_CITATION",
             "RESOLVES_TO",
             "RESOLVES_TO_VERSION",
             "RESOLVES_TO_PROVISION",
+            "RESOLVES_TO_CHAPTER",
+            "RESOLVES_TO_EXTERNAL",
+            "RESOLVES_TO_RANGE_START",
+            "RESOLVES_TO_RANGE_END",
             "CITES_EXTERNAL",
+            "SIMILAR_TO",
             "HAS_VERSION",
             "VERSION_OF",
             "CONTAINS",
@@ -2685,6 +3338,11 @@ fn graph_relationship_types(mode: &str, override_value: Option<&str>) -> Vec<Str
         ],
         _ => &[
             "CITES",
+            "CITES_VERSION",
+            "CITES_PROVISION",
+            "CITES_CHAPTER",
+            "CITES_RANGE",
+            "CITES_EXTERNAL",
             "HAS_VERSION",
             "VERSION_OF",
             "CONTAINS",
@@ -2732,11 +3390,19 @@ fn graph_edge_style(edge_type: &str) -> GraphEdgeStyle {
     let (dashed, width, color) = match edge_type {
         "SIMILAR_TO" => (true, 1.4, "#22d3ee"),
         "CITES"
+        | "CITES_VERSION"
+        | "CITES_PROVISION"
+        | "CITES_CHAPTER"
+        | "CITES_RANGE"
+        | "CITES_EXTERNAL"
         | "MENTIONS_CITATION"
         | "RESOLVES_TO"
         | "RESOLVES_TO_VERSION"
         | "RESOLVES_TO_PROVISION"
-        | "CITES_EXTERNAL" => (false, 1.5, "#60a5fa"),
+        | "RESOLVES_TO_CHAPTER"
+        | "RESOLVES_TO_EXTERNAL"
+        | "RESOLVES_TO_RANGE_START"
+        | "RESOLVES_TO_RANGE_END" => (false, 1.5, "#60a5fa"),
         "EXPRESSES" | "SUPPORTED_BY" | "IMPOSED_ON" | "REQUIRES_ACTION" => (false, 1.35, "#34d399"),
         "DEFINES" | "HAS_SCOPE" => (false, 1.25, "#a78bfa"),
         "HAS_TEMPORAL_EFFECT" | "HAS_STATUS_EVENT" | "AFFECTS" | "AFFECTS_VERSION" => {
@@ -2900,6 +3566,25 @@ fn json_to_qc_notes(values: Vec<serde_json::Value>) -> Vec<QCNoteItem> {
                     .filter(|value| !value.is_empty())
                     .map(|value| value.to_string()),
             })
+        })
+        .collect()
+}
+
+fn json_to_chunks(values: Vec<serde_json::Value>, fallback_source_id: &str) -> Vec<ProvisionChunk> {
+    values
+        .into_iter()
+        .filter(|chunk| !json_string(chunk, "chunk_id").is_empty())
+        .map(|chunk| ProvisionChunk {
+            chunk_id: json_string(&chunk, "chunk_id"),
+            chunk_type: json_string_or(&chunk, "chunk_type", "contextual_provision"),
+            source_kind: json_string_or(&chunk, "source_kind", "provision"),
+            source_id: json_string_or(&chunk, "source_id", fallback_source_id),
+            text: json_string(&chunk, "text"),
+            embedding_policy: json_string_or(&chunk, "embedding_policy", "primary"),
+            answer_policy: json_string_or(&chunk, "answer_policy", "supporting"),
+            search_weight: chunk["search_weight"].as_f64().unwrap_or(1.0),
+            embedded: chunk["embedding"].is_array() || chunk["embedded"].as_bool().unwrap_or(false),
+            parser_confidence: chunk["parser_confidence"].as_f64().unwrap_or(1.0),
         })
         .collect()
 }
@@ -3131,7 +3816,10 @@ mod tests {
 
     #[test]
     fn normalized_filter_trims_all_and_lowercases() {
-        assert_eq!(normalized_filter(Some("  Active ")), Some("active".to_string()));
+        assert_eq!(
+            normalized_filter(Some("  Active ")),
+            Some("active".to_string())
+        );
         assert_eq!(normalized_filter(Some("all")), None);
         assert_eq!(normalized_filter(Some("  ")), None);
         assert_eq!(normalized_filter(None), None);

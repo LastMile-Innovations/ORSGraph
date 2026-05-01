@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { AlertTriangle, ChevronLeft, ChevronRight, Database, GitBranch, Sparkles, X } from "lucide-react"
 import type { SearchResponse, SuggestResult } from "@/lib/types"
@@ -49,7 +49,7 @@ export function SearchClient({
 }: Props) {
   const router = useRouter()
   const [q, setQ] = useState(initialQuery)
-  const [mode, setMode] = useState(initialResponse?.mode || initialMode)
+  const [mode, setMode] = useState(initialMode)
   const [resultTypeFilter, setResultTypeFilter] = useState(initialType)
   const [filters, setFilters] = useState<SearchFiltersState>(initialFilters)
   const [response, setResponse] = useState<SearchResponse | undefined>(initialResponse)
@@ -64,6 +64,7 @@ export function SearchClient({
       ? initialDataError ?? "Search API unavailable"
       : undefined,
   )
+  const searchRequestRef = useRef(0)
 
   const performSearch = async ({
     query = q,
@@ -80,6 +81,7 @@ export function SearchClient({
     nextLimit?: number
     nextOffset?: number
   } = {}) => {
+    const requestId = ++searchRequestRef.current
     const trimmed = query.trim()
     setOffset(nextOffset)
 
@@ -89,6 +91,7 @@ export function SearchClient({
       setError(undefined)
       setDataSource("live")
       setDataError(undefined)
+      setIsLoading(false)
       router.replace("/search", { scroll: false })
       return
     }
@@ -109,6 +112,7 @@ export function SearchClient({
 
     try {
       const res = await searchWithParamsState(params)
+      if (requestId !== searchRequestRef.current) return
       setDataSource(res.source)
       setDataError(res.error)
       if (!res.data) {
@@ -117,15 +121,18 @@ export function SearchClient({
         return
       }
       setResponse(res.data)
-      setMode(res.data.mode || searchMode)
+      setMode(searchMode)
       setLimit(res.data.limit || nextLimit)
       setOffset(res.data.offset || nextOffset)
     } catch (searchError) {
+      if (requestId !== searchRequestRef.current) return
       console.error("Search failed:", searchError)
       setError(searchError instanceof Error ? searchError.message : "Search failed")
       setResponse(undefined)
     } finally {
-      setIsLoading(false)
+      if (requestId === searchRequestRef.current) {
+        setIsLoading(false)
+      }
     }
   }
 
@@ -157,19 +164,24 @@ export function SearchClient({
     }
 
     if (isDirectOpenCandidate(trimmed, mode)) {
+      const requestId = ++searchRequestRef.current
       setIsLoading(true)
       setHasSearched(true)
       setError(undefined)
       try {
         const opened = await directOpen(trimmed)
+        if (requestId !== searchRequestRef.current) return
         if (opened.matched && opened.href) {
           router.push(opened.href)
           return
         }
       } catch (openError) {
+        if (requestId !== searchRequestRef.current) return
         console.info("Direct open failed; falling back to search", openError)
       } finally {
-        setIsLoading(false)
+        if (requestId === searchRequestRef.current) {
+          setIsLoading(false)
+        }
       }
     }
 
@@ -517,7 +529,7 @@ function isDirectOpenCandidate(query: string, mode: string) {
   if (mode !== "auto" && mode !== "citation") return false
   const trimmed = query.trim()
   if (/\s+(to|through)\s+|[–—-]/i.test(trimmed)) return false
-  return /^(?:ORS\s*)?\d{1,3}[A-Z]?\.\d{3}(?:\([A-Za-z0-9]+\))*$/i.test(trimmed)
+  return /^(?:(?:ORS|UTCR)\s*)?\d{1,3}[A-Z]?\.\d{3}(?:\([A-Za-z0-9]+\))*$/i.test(trimmed)
 }
 
 function toSearchParams(params: Record<string, string | number | boolean | undefined>) {

@@ -147,6 +147,21 @@ export interface QCSummary {
   notes: QCNote[]
 }
 
+export interface StatuteSummaryCounts {
+  provision_count: number
+  citation_counts: {
+    outbound: number
+    inbound: number
+  }
+  semantic_counts: {
+    obligations: number
+    exceptions: number
+    deadlines: number
+    penalties: number
+    definitions: number
+  }
+}
+
 export interface StatutePageResponse {
   identity: StatuteIdentity
   current_version: LegalTextVersion
@@ -161,6 +176,8 @@ export interface StatutePageResponse {
   inbound_citations: InboundCitation[]
   source_documents: SourceDocument[]
   qc: QCSummary
+  summary_counts?: StatuteSummaryCounts
+  source_notes?: string[]
 }
 
 export interface ProvisionInspectorData {

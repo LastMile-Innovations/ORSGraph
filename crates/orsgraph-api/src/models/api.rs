@@ -116,6 +116,55 @@ pub struct SourceDocument {
     pub edition_year: i32,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SourceIndexRequest {
+    pub q: Option<String>,
+    pub status: Option<String>,
+    pub edition_year: Option<i32>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct SourceIndexItem {
+    pub source_id: String,
+    pub title: String,
+    pub jurisdiction: String,
+    pub scope: String,
+    pub url: String,
+    pub retrieved_at: String,
+    pub raw_hash: String,
+    pub normalized_hash: String,
+    pub edition_year: i32,
+    pub parser_profile: String,
+    pub parser_warnings: Vec<String>,
+    pub byte_size: u64,
+    pub ingestion_status: String,
+    pub produced: SourceProducedCounts,
+}
+
+#[derive(Debug, Serialize, Clone, Default)]
+pub struct SourceProducedCounts {
+    pub sections: u64,
+    pub provisions: u64,
+    pub chunks: u64,
+    pub citation_mentions: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SourceIndexResponse {
+    pub items: Vec<SourceIndexItem>,
+    pub total: u64,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SourceDetailResponse {
+    pub source: SourceIndexItem,
+    pub related_sources: Vec<SourceIndexItem>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct StatuteIndexResponse {
     pub items: Vec<StatuteIndexItem>,
@@ -283,6 +332,12 @@ pub struct ProvisionChunk {
     pub search_weight: f64,
     pub embedded: bool,
     pub parser_confidence: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatuteChunksResponse {
+    pub citation: String,
+    pub chunks: Vec<ProvisionChunk>,
 }
 
 #[derive(Debug, Serialize)]
@@ -507,6 +562,31 @@ pub struct GraphStats {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct GraphPathRequest {
+    pub from: String,
+    pub to: String,
+    pub mode: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GraphPathResponse {
+    pub from: String,
+    pub to: String,
+    pub paths: Vec<GraphPath>,
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+    pub stats: GraphStats,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GraphPath {
+    pub node_ids: Vec<String>,
+    pub edge_ids: Vec<String>,
+    pub length: usize,
+}
+
 #[derive(Debug, Serialize)]
 pub struct QCSummaryResponse {
     pub node_counts_by_label: Vec<NodeCount>,
@@ -556,6 +636,31 @@ pub struct CitesCoverage {
     pub total_citations: u64,
     pub resolved_citations: u64,
     pub coverage: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QCReportRequest {
+    pub format: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct QCRunResponse {
+    pub run_id: String,
+    pub status: String,
+    pub started_at: String,
+    pub completed_at: String,
+    pub summary: QCSummaryResponse,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct QCReportResponse {
+    pub report_id: String,
+    pub format: String,
+    pub mime_type: String,
+    pub generated_at: String,
+    pub summary: QCSummaryResponse,
+    pub content: String,
 }
 
 #[derive(Debug, Deserialize)]

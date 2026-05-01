@@ -1,9 +1,44 @@
+"use client"
+
+import { useEffect, useState } from "react"
 import type { StatutePageResponse } from "@/lib/types"
 import Link from "next/link"
 import { GraphMiniCanvas } from "@/components/orsg/graph-mini-canvas"
-import { graphNodes, graphEdges } from "@/lib/mock-data"
+import { getGraphNeighborhood } from "@/lib/api"
+import type { GraphEdge, GraphNode } from "@/lib/types"
 
 export function GraphTab({ data }: { data: StatutePageResponse }) {
+  const [nodes, setNodes] = useState<GraphNode[]>([])
+  const [edges, setEdges] = useState<GraphEdge[]>([])
+  const [centerId, setCenterId] = useState(data.identity.canonical_id)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setError(null)
+    getGraphNeighborhood({
+      citation: data.identity.citation,
+      depth: 1,
+      limit: 80,
+      mode: "legal",
+    })
+      .then((graph) => {
+        if (cancelled) return
+        setNodes((graph.nodes ?? []).map(toMiniNode))
+        setEdges((graph.edges ?? []).map(toMiniEdge))
+        setCenterId(graph.center?.id ?? data.identity.canonical_id)
+      })
+      .catch((reason) => {
+        if (cancelled) return
+        setNodes([])
+        setEdges([])
+        setError(reason instanceof Error ? reason.message : "Graph data unavailable.")
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [data.identity.canonical_id, data.identity.citation])
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-border bg-muted/30 px-4 py-2">
@@ -18,8 +53,50 @@ export function GraphTab({ data }: { data: StatutePageResponse }) {
         </Link>
       </div>
       <div className="relative flex-1 bg-background">
-        <GraphMiniCanvas nodes={graphNodes} edges={graphEdges} centerId={data.identity.canonical_id} />
+        {nodes.length > 0 ? (
+          <GraphMiniCanvas nodes={nodes} edges={edges} centerId={centerId} />
+        ) : (
+          <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
+            {error ? `Graph data unavailable: ${error}` : "No live graph data returned for this statute."}
+          </div>
+        )}
       </div>
     </div>
   )
+}
+
+function toMiniNode(node: { id: string; label: string; type: string; status?: string | null; qcWarnings?: string[] }): GraphNode {
+  return {
+    id: node.id,
+    label: node.label,
+    type: miniNodeType(node.type),
+    status: node.status === "repealed" || node.status === "renumbered" || node.status === "amended" ? node.status : "active",
+    qc_status: node.qcWarnings && node.qcWarnings.length > 0 ? "warning" : "pass",
+  }
+}
+
+function toMiniEdge(edge: { id: string; source: string; target: string; type: string }): GraphEdge {
+  return {
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    type: miniEdgeType(edge.type),
+  }
+}
+
+function miniNodeType(type: string): GraphNode["type"] {
+  if (type === "LegalTextIdentity" || type === "LegalTextVersion") return "Statute"
+  if (type === "RetrievalChunk") return "Provision"
+  if (type === "DefinedTerm") return "Definition"
+  if (["Provision", "CitationMention", "Chapter", "Definition", "Exception", "Deadline", "Penalty"].includes(type)) {
+    return type as GraphNode["type"]
+  }
+  return "Provision"
+}
+
+function miniEdgeType(type: string): GraphEdge["type"] {
+  if (["CITES", "MENTIONS_CITATION", "RESOLVES_TO", "HAS_VERSION", "CONTAINS", "DERIVED_FROM", "DEFINES", "EXCEPTION_TO", "HAS_DEADLINE"].includes(type)) {
+    return type as GraphEdge["type"]
+  }
+  return "CONTAINS"
 }

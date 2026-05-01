@@ -1,0 +1,3215 @@
+{
+  "sources": [
+    {
+      "source_id": "or_leg_odata",
+      "name": "Oregon Legislature OData API",
+      "owner": "Oregon Legislature",
+      "jurisdiction": "or:state",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "legislative sessions",
+        "measures",
+        "committees",
+        "legislators",
+        "sponsors",
+        "votes",
+        "bill documents",
+        "meetings",
+        "testimony metadata"
+      ],
+      "update_frequency": "active sessions update frequently; historical sessions stable",
+      "rate_limits_terms": "Use the acceptable-use agreement; avoid excessive querying; cache by session and entity set.",
+      "robots_acceptable_use": "Open Data is the preferred source for OLIS data; do not regularly scrape OLIS pages for covered data.",
+      "preferred_ingestion_method": "OData API with `$metadata` driven entity mapping",
+      "fallback_ingestion_method": "Static crawl only for source documents not covered by the API",
+      "graph_nodes_created": [
+        "LegislativeSession",
+        "Measure",
+        "MeasureVersion",
+        "MeasureDocument",
+        "MeasureHistoryAction",
+        "Legislator",
+        "Committee",
+        "CommitteeMeeting",
+        "VoteEvent",
+        "VoteRecord",
+        "SourceDocument",
+        "SessionLaw"
+      ],
+      "graph_edges_created": [
+        "IN_SESSION",
+        "HAS_DOCUMENT",
+        "HAS_HISTORY_ACTION",
+        "SPONSORED_BY",
+        "CAST_VOTE",
+        "HELD_MEETING",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P0",
+      "risks": [
+        "Legacy OData shape",
+        "composite keys",
+        "possible response-shape drift",
+        "terms must stay visible in connector docs."
+      ],
+      "source_url": "https://api.oregonlegislature.gov/odata/ODataService.svc/",
+      "docs_url": "https://www.oregonlegislature.gov/citizen_engagement/Pages/data.aspx"
+    },
+    {
+      "source_id": "or_leg_ors_html",
+      "name": "Oregon Revised Statutes",
+      "owner": "Oregon Legislature",
+      "jurisdiction": "or:state",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "ORS titles",
+        "chapters",
+        "sections",
+        "source notes",
+        "citations",
+        "amendments",
+        "repealed and renumbered notes"
+      ],
+      "update_frequency": "biennial editions plus session updates",
+      "rate_limits_terms": "Respect site terms; throttle chapter fetches; preserve online-not-official-print disclaimer.",
+      "robots_acceptable_use": "Static official HTML is current canonical online source for ORS text in this repo.",
+      "preferred_ingestion_method": "Static crawl of official ORS chapter pages",
+      "fallback_ingestion_method": "Public.Law or official archives for discovery and cross-checking only",
+      "graph_nodes_created": [
+        "LegalCorpus",
+        "CorpusEdition",
+        "SourceDocument",
+        "SourcePage",
+        "LegalTextIdentity",
+        "LegalTextVersion",
+        "Provision",
+        "SessionLaw",
+        "CitationMention",
+        "SourceNote",
+        "RetrievalChunk"
+      ],
+      "graph_edges_created": [
+        "HAS_EDITION",
+        "HAS_SOURCE_DOCUMENT",
+        "HAS_VERSION",
+        "CONTAINS",
+        "DERIVED_FROM",
+        "CITES",
+        "MENTIONS_CITATION"
+      ],
+      "connector_status": "implemented",
+      "priority": "P0",
+      "risks": [
+        "Online database is not the official printed text",
+        "source disclaimer must be stored and displayed."
+      ],
+      "source_url": "https://www.oregonlegislature.gov/bills_laws/ors/ors.html",
+      "docs_url": "https://www.oregonlegislature.gov/bills_laws/Pages/ORS.aspx"
+    },
+    {
+      "source_id": "or_leg_oregon_laws",
+      "name": "Oregon Laws / Session Laws",
+      "owner": "Oregon Legislature",
+      "jurisdiction": "or:state",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "enrolled bills",
+        "Oregon Laws chapters",
+        "session-law sections",
+        "effective dates"
+      ],
+      "update_frequency": "session-based",
+      "rate_limits_terms": "Throttle static fetches; preserve source URLs and document dates.",
+      "robots_acceptable_use": "Crawl official pages and PDFs not covered by OData.",
+      "preferred_ingestion_method": "Static HTML/PDF crawl",
+      "fallback_ingestion_method": "OData document metadata for cross-linking",
+      "graph_nodes_created": [
+        "SourceDocument",
+        "SourcePage",
+        "SessionLaw",
+        "MeasureDocument",
+        "LegalTextVersion",
+        "LineageEvent",
+        "TemporalEffect"
+      ],
+      "graph_edges_created": [
+        "DERIVED_FROM",
+        "ENACTED_BY",
+        "AMENDS",
+        "EFFECTIVE_DURING",
+        "HAS_DOCUMENT"
+      ],
+      "connector_status": "planned",
+      "priority": "P0",
+      "risks": [
+        "Need robust section-to-ORS amendment parsing and effective-date handling."
+      ],
+      "source_url": "https://www.oregonlegislature.gov/bills_laws/lawsstatutes/Pages/default.aspx",
+      "docs_url": "https://www.oregonlegislature.gov/bills_laws/Pages/Oregon-Laws.aspx"
+    },
+    {
+      "source_id": "or_leg_orcp",
+      "name": "Oregon Rules of Civil Procedure",
+      "owner": "Oregon Legislature",
+      "jurisdiction": "or:state",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "civil procedure rules",
+        "pleading and service requirements",
+        "rule text"
+      ],
+      "update_frequency": "biennial or rule-cycle based",
+      "rate_limits_terms": "Throttle static fetches; preserve official disclaimers.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Static crawl of official ORCP pages.",
+      "fallback_ingestion_method": "PDF/static publication fallback",
+      "graph_nodes_created": [
+        "LegalCorpus",
+        "CorpusEdition",
+        "SourceDocument",
+        "LegalTextIdentity",
+        "LegalTextVersion",
+        "Provision",
+        "CourtRule",
+        "ProceduralRequirement",
+        "WorkProductRulePack"
+      ],
+      "graph_edges_created": [
+        "HAS_EDITION",
+        "CONTAINS",
+        "DERIVED_FROM",
+        "GOVERNS_WORK_PRODUCT",
+        "CITES"
+      ],
+      "connector_status": "planned",
+      "priority": "P0",
+      "risks": [
+        "ORCP must align with UTCR and SLR rule applicability instead of becoming one-off matter logic."
+      ],
+      "source_url": "https://www.oregonlegislature.gov/bills_laws/ors/Pages/orcp.aspx",
+      "docs_url": "https://www.oregonlegislature.gov/bills_laws/Pages/ORS.aspx"
+    },
+    {
+      "source_id": "or_leg_constitution",
+      "name": "Oregon Constitution",
+      "owner": "Oregon Legislature",
+      "jurisdiction": "or:state",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "articles",
+        "sections",
+        "constitutional authority"
+      ],
+      "update_frequency": "stable with amendments",
+      "rate_limits_terms": "Throttle static fetches; preserve source edition metadata.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Static crawl.",
+      "fallback_ingestion_method": "PDF/static fallback",
+      "graph_nodes_created": [
+        "LegalCorpus",
+        "CorpusEdition",
+        "SourceDocument",
+        "LegalTextIdentity",
+        "LegalTextVersion",
+        "Provision",
+        "CitationMention"
+      ],
+      "graph_edges_created": [
+        "HAS_EDITION",
+        "CONTAINS",
+        "DERIVED_FROM",
+        "CITES"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Amendment history may require additional election/session sources."
+      ],
+      "source_url": "https://www.oregonlegislature.gov/bills_laws/Pages/OrConst.aspx",
+      "docs_url": "https://www.oregonlegislature.gov/bills_laws/Pages/ORS.aspx"
+    },
+    {
+      "source_id": "or_sos_oar",
+      "name": "Oregon Administrative Rules Database",
+      "owner": "Oregon Secretary of State",
+      "jurisdiction": "or:state",
+      "source_type": "search_page",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "OAR rules",
+        "rule filings",
+        "Oregon Bulletins",
+        "agency rules",
+        "annual compilations",
+        "rule history"
+      ],
+      "update_frequency": "current rules and filings update continuously",
+      "rate_limits_terms": "Crawl/search cautiously unless an official API is found; preserve SOS disclaimers and filing metadata.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Search/static crawl because no confirmed official API is in the repo plan.",
+      "fallback_ingestion_method": "Bulk/static pages if available; agency rule pages for cross-checking",
+      "graph_nodes_created": [
+        "LegalCorpus",
+        "CorpusEdition",
+        "SourceDocument",
+        "AdministrativeRule",
+        "Regulation",
+        "Agency",
+        "RuleAuthorityDocument",
+        "CitationMention",
+        "RetrievalChunk"
+      ],
+      "graph_edges_created": [
+        "ISSUED_BY",
+        "HAS_VERSION",
+        "DERIVED_FROM",
+        "EFFECTIVE_DURING",
+        "CITES"
+      ],
+      "connector_status": "planned",
+      "priority": "P0",
+      "risks": [
+        "Search-page extraction can be brittle",
+        "official API availability must be rechecked before implementation."
+      ],
+      "source_url": "https://secure.sos.state.or.us/oard/",
+      "docs_url": "https://sos.oregon.gov/archives/Pages/oregon_administrative_rules.aspx"
+    },
+    {
+      "source_id": "ojd_utcr",
+      "name": "Oregon Uniform Trial Court Rules",
+      "owner": "Oregon Judicial Department",
+      "jurisdiction": "or:state",
+      "source_type": "pdf",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "current and prior UTCR PDFs",
+        "statewide court rules",
+        "procedural requirements"
+      ],
+      "update_frequency": "annual/current rule cycle",
+      "rate_limits_terms": "Fetch PDFs politely; preserve effective date, page provenance, and OJD URL.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "PDF ingestion from official OJD rules page.",
+      "fallback_ingestion_method": "Static rules page crawl for discovery",
+      "graph_nodes_created": [
+        "LegalCorpus",
+        "CorpusEdition",
+        "SourceDocument",
+        "SourcePage",
+        "CourtRule",
+        "Provision",
+        "ProceduralRequirement",
+        "FormattingProfile",
+        "WorkProductRulePack"
+      ],
+      "graph_edges_created": [
+        "HAS_EDITION",
+        "APPEARS_ON_PAGE",
+        "DERIVED_FROM",
+        "GOVERNS_WORK_PRODUCT",
+        "CITES"
+      ],
+      "connector_status": "implemented",
+      "priority": "P0",
+      "risks": [
+        "PDF extraction needs ongoing visual/text QC",
+        "rule-pack mappings must remain date-aware."
+      ],
+      "source_url": "https://www.courts.oregon.gov/rules/UTCR/Pages/current.aspx",
+      "docs_url": "https://www.courts.oregon.gov/programs/utcr/Pages/default.aspx"
+    },
+    {
+      "source_id": "ojd_slr_registry",
+      "name": "Supplementary Local Rules registry pages",
+      "owner": "Oregon Judicial Department and county courts",
+      "jurisdiction": "Oregon counties and circuits",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "SLR current/future/prior tables",
+        "effective dates",
+        "local rule editions"
+      ],
+      "update_frequency": "county-specific; usually annual plus out-of-cycle updates",
+      "rate_limits_terms": "Throttle page fetches; preserve current/future/prior buckets.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Static crawl of official county rules pages.",
+      "fallback_ingestion_method": "Manual snapshot ingestion for pages with dynamic tables",
+      "graph_nodes_created": [
+        "CourtRulesRegistrySource",
+        "CourtRulesRegistrySnapshot",
+        "RulePublicationEntry",
+        "RuleAuthorityDocument",
+        "LocalRule",
+        "SupplementaryLocalRuleEdition",
+        "EffectiveInterval"
+      ],
+      "graph_edges_created": [
+        "HAS_ENTRY",
+        "DESCRIBES",
+        "APPLIES_TO",
+        "GOVERNS_COURT",
+        "EFFECTIVE_DURING",
+        "SUPERSEDES"
+      ],
+      "connector_status": "partial",
+      "priority": "P0",
+      "risks": [
+        "Page structures vary by county",
+        "currentness must be resolved by filing date."
+      ],
+      "source_url": "https://www.courts.oregon.gov/courts/Pages/default.aspx",
+      "docs_url": "https://www.courts.oregon.gov/rules/Pages/default.aspx"
+    },
+    {
+      "source_id": "ojd_cjo_pjo",
+      "name": "Chief Justice and Presiding Judge Orders",
+      "owner": "Oregon Judicial Department and local courts",
+      "jurisdiction": "or:state`, Oregon counties",
+      "source_type": "pdf",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "statewide and local orders",
+        "emergency rules",
+        "court operations",
+        "remote appearance rules"
+      ],
+      "update_frequency": "as issued",
+      "rate_limits_terms": "Fetch PDFs politely; preserve issue date, effective interval, and supersession text.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "PDF crawl from OJD rule/order pages.",
+      "fallback_ingestion_method": "Registry-table discovery and manual snapshots",
+      "graph_nodes_created": [
+        "RuleAuthorityDocument",
+        "ChiefJusticeOrder",
+        "PresidingJudgeOrder",
+        "Court",
+        "Jurisdiction",
+        "RuleTopic",
+        "EffectiveInterval"
+      ],
+      "graph_edges_created": [
+        "APPLIES_TO",
+        "GOVERNS_COURT",
+        "HAS_TOPIC",
+        "EFFECTIVE_DURING",
+        "SUPERSEDES"
+      ],
+      "connector_status": "partial",
+      "priority": "P0",
+      "risks": [
+        "Orders can be temporary, county-specific, or superseded outside the normal SLR cycle."
+      ],
+      "source_url": "https://www.courts.oregon.gov/rules/Pages/default.aspx",
+      "docs_url": "https://www.courts.oregon.gov/rules/Pages/default.aspx"
+    },
+    {
+      "source_id": "ojd_orap",
+      "name": "Oregon Rules of Appellate Procedure",
+      "owner": "Oregon Judicial Department",
+      "jurisdiction": "or:state",
+      "source_type": "pdf",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "appellate rules",
+        "appellate procedure requirements"
+      ],
+      "update_frequency": "rule-cycle based",
+      "rate_limits_terms": "Fetch PDFs politely; preserve page and effective-date provenance.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "PDF ingestion from OJD rules page.",
+      "fallback_ingestion_method": "Static page crawl",
+      "graph_nodes_created": [
+        "LegalCorpus",
+        "CorpusEdition",
+        "SourceDocument",
+        "SourcePage",
+        "CourtRule",
+        "Provision",
+        "ProceduralRequirement"
+      ],
+      "graph_edges_created": [
+        "HAS_EDITION",
+        "CONTAINS",
+        "DERIVED_FROM",
+        "GOVERNS_WORK_PRODUCT"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Must align with appellate court/case workflows, not trial-court rule packs."
+      ],
+      "source_url": "https://www.courts.oregon.gov/rules/Pages/orap.aspx",
+      "docs_url": "https://www.courts.oregon.gov/rules/Pages/default.aspx"
+    },
+    {
+      "source_id": "ojd_appellate_opinions",
+      "name": "Oregon appellate opinions",
+      "owner": "Oregon Judicial Department",
+      "jurisdiction": "or:state",
+      "source_type": "pdf",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "Oregon Supreme Court",
+        "Court of Appeals",
+        "and Tax Court opinions"
+      ],
+      "update_frequency": "posted as issued",
+      "rate_limits_terms": "Throttle PDF/static fetches; preserve official opinion URL and issue date.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Official OJD static/PDF crawl.",
+      "fallback_ingestion_method": "Oregon Law Library digital collection; CourtListener as secondary cross-reference",
+      "graph_nodes_created": [
+        "Opinion",
+        "CourtCase",
+        "Court",
+        "Judge",
+        "SourceDocument",
+        "SourcePage",
+        "CitationMention",
+        "RetrievalChunk"
+      ],
+      "graph_edges_created": [
+        "DECIDED_BY",
+        "AUTHORED_BY",
+        "CITES",
+        "DERIVED_FROM",
+        "HAS_OPINION"
+      ],
+      "connector_status": "planned",
+      "priority": "P0",
+      "risks": [
+        "Current official opinions should prefer OJD over secondary case-law sources."
+      ],
+      "source_url": "https://www.courts.oregon.gov/publications/Pages/opinions.aspx",
+      "docs_url": "https://www.courts.oregon.gov/publications/Pages/default.aspx"
+    },
+    {
+      "source_id": "ojd_public_records_search",
+      "name": "OJD Records and Calendar Search",
+      "owner": "Oregon Judicial Department",
+      "jurisdiction": "Oregon courts",
+      "source_type": "search_page",
+      "access": "public_search",
+      "official_status": "official",
+      "data_types": [
+        "basic case information",
+        "calendars",
+        "court dates where public"
+      ],
+      "update_frequency": "live search",
+      "rate_limits_terms": "Treat as public search, not a bulk API; respect excluded case categories and access limits.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Targeted public-search lookup only for matter context.",
+      "fallback_ingestion_method": "OJCIN subscription/manual user-provided records outside free registry",
+      "graph_nodes_created": [
+        "CourtCase",
+        "Court",
+        "Docket",
+        "Filing",
+        "Party",
+        "CalendarEvent"
+      ],
+      "graph_edges_created": [
+        "FILED_IN",
+        "HAS_DOCKET_EVENT",
+        "SCHEDULED_FOR",
+        "INVOLVES_PARTY"
+      ],
+      "connector_status": "deferred",
+      "priority": "P1",
+      "risks": [
+        "Not a bulk API",
+        "some records are restricted by law or policy."
+      ],
+      "source_url": "https://webportal.courts.oregon.gov/portal/",
+      "docs_url": "https://www.courts.oregon.gov/how/pages/find.aspx"
+    },
+    {
+      "source_id": "ojd_forms",
+      "name": "OJD forms and packets",
+      "owner": "Oregon Judicial Department",
+      "jurisdiction": "or:state`, Oregon courts",
+      "source_type": "pdf",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "court forms",
+        "packets",
+        "instructions"
+      ],
+      "update_frequency": "updated as forms change",
+      "rate_limits_terms": "Fetch PDFs politely; preserve form revision date.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Static/PDF crawl from Forms Center.",
+      "fallback_ingestion_method": "Manual form inventory for dynamic pages",
+      "graph_nodes_created": [
+        "SourceDocument",
+        "SourcePage",
+        "CourtForm",
+        "AgencyGuidance",
+        "WorkProductTemplate"
+      ],
+      "graph_edges_created": [
+        "DERIVED_FROM",
+        "SUPPORTS_WORK_PRODUCT",
+        "GOVERNS_COURT"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Form revisions must be date-aware before export workflows rely on them."
+      ],
+      "source_url": "https://www.courts.oregon.gov/forms/Pages/default.aspx",
+      "docs_url": "https://www.courts.oregon.gov/forms/Pages/default.aspx"
+    },
+    {
+      "source_id": "ojd_efile_resources",
+      "name": "OJD eFiling resources",
+      "owner": "Oregon Judicial Department",
+      "jurisdiction": "or:state",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "eFiling guides",
+        "policies",
+        "filing requirements",
+        "file-format guidance"
+      ],
+      "update_frequency": "updated as policies change",
+      "rate_limits_terms": "Crawl politely; preserve source date and disclaimers.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Static/PDF crawl.",
+      "fallback_ingestion_method": "Manual snapshots",
+      "graph_nodes_created": [
+        "AgencyGuidance",
+        "SourceDocument",
+        "FilingRequirement",
+        "WorkProductRulePack"
+      ],
+      "graph_edges_created": [
+        "DERIVED_FROM",
+        "GOVERNS_WORK_PRODUCT",
+        "APPLIES_TO"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Filing/export automation remains out of scope without court-specific safety checks."
+      ],
+      "source_url": "https://www.courts.oregon.gov/services/online/Pages/efile.aspx",
+      "docs_url": "https://www.courts.oregon.gov/services/online/Pages/default.aspx"
+    },
+    {
+      "source_id": "or_law_library",
+      "name": "Oregon Law Library digital collection",
+      "owner": "State of Oregon Law Library",
+      "jurisdiction": "or:state",
+      "source_type": "search_page",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "opinions",
+        "research guides",
+        "historical legal materials"
+      ],
+      "update_frequency": "collection-dependent",
+      "rate_limits_terms": "Respect collection terms and search limits.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Static/search crawl for collection metadata and public documents.",
+      "fallback_ingestion_method": "Manual collection exports where available",
+      "graph_nodes_created": [
+        "SourceDocument",
+        "Opinion",
+        "LegalCorpus",
+        "CitationMention"
+      ],
+      "graph_edges_created": [
+        "DERIVED_FROM",
+        "CITES",
+        "HAS_COLLECTION"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Collection coverage and metadata shape vary by library system."
+      ],
+      "source_url": "https://soll.libguides.com/",
+      "docs_url": "https://soll.libguides.com/"
+    },
+    {
+      "source_id": "or_open_data",
+      "name": "Oregon Open Data Portal / Socrata",
+      "owner": "State of Oregon",
+      "jurisdiction": "or:state",
+      "source_type": "socrata",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "Oregon datasets",
+        "public meetings",
+        "transparency",
+        "agency data inventory",
+        "dataset metadata"
+      ],
+      "update_frequency": "dataset-specific",
+      "rate_limits_terms": "Use Socrata API; app token may improve limits; preserve dataset license and field metadata.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Socrata SODA API because every dataset exposes an API.",
+      "fallback_ingestion_method": "Dataset export downloads",
+      "graph_nodes_created": [
+        "SourceDocument",
+        "PublicMeeting",
+        "Agency",
+        "GovernmentEntity",
+        "BusinessEntity",
+        "DatasetRecord"
+      ],
+      "graph_edges_created": [
+        "PUBLISHED_BY",
+        "DERIVED_FROM",
+        "HAS_DATASET_RECORD",
+        "HELD_BY"
+      ],
+      "connector_status": "planned",
+      "priority": "P0",
+      "risks": [
+        "Each dataset has its own schema and update cadence",
+        "must snapshot metadata with data."
+      ],
+      "source_url": "https://data.oregon.gov/",
+      "docs_url": "https://data.oregon.gov/developers"
+    },
+    {
+      "source_id": "or_business_registry",
+      "name": "Oregon active businesses open data",
+      "owner": "Oregon Secretary of State / Oregon Open Data",
+      "jurisdiction": "or:state",
+      "source_type": "socrata",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "business registry",
+        "active businesses",
+        "LLCs",
+        "nonprofits",
+        "registered agents",
+        "addresses"
+      ],
+      "update_frequency": "regularly updated",
+      "rate_limits_terms": "Use Socrata API; respect portal terms and field documentation.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Socrata SODA API.",
+      "fallback_ingestion_method": "CSV export from dataset page",
+      "graph_nodes_created": [
+        "BusinessEntity",
+        "RegisteredAgent",
+        "Address",
+        "GovernmentEntity",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "REGISTERED_AGENT",
+        "REGISTERED_AT",
+        "HAS_ADDRESS",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P0",
+      "risks": [
+        "Entity resolution requires normalization and careful privacy/PII handling."
+      ],
+      "source_url": "https://data.oregon.gov/Business/Active-Businesses-ALL/tckn-sxa6",
+      "docs_url": "https://data.oregon.gov/developers"
+    },
+    {
+      "source_id": "orestar",
+      "name": "ORESTAR campaign finance",
+      "owner": "Oregon Secretary of State",
+      "jurisdiction": "or:state",
+      "source_type": "search_page",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "committees",
+        "transactions",
+        "candidates",
+        "measures"
+      ],
+      "update_frequency": "active election-cycle updates",
+      "rate_limits_terms": "Use public search cautiously unless an API/export is confirmed.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Public search or official exports if available.",
+      "fallback_ingestion_method": "Static reports/downloads",
+      "graph_nodes_created": [
+        "PoliticalCommittee",
+        "Candidate",
+        "Measure",
+        "Transaction",
+        "BusinessEntity"
+      ],
+      "graph_edges_created": [
+        "CONTRIBUTED_TO",
+        "FILED_BY",
+        "SUPPORTS_MEASURE",
+        "OPPOSES_MEASURE"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Search scraping may be restricted or brittle",
+        "terms review required."
+      ],
+      "source_url": "https://secure.sos.state.or.us/orestar/",
+      "docs_url": "https://sos.oregon.gov/elections/Pages/campaignfinance.aspx"
+    },
+    {
+      "source_id": "or_blue_book",
+      "name": "Oregon Blue Book",
+      "owner": "Oregon Secretary of State",
+      "jurisdiction": "or:state",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "agencies",
+        "officials",
+        "boards",
+        "commissions",
+        "local government facts"
+      ],
+      "update_frequency": "edition/office updates",
+      "rate_limits_terms": "Crawl politely; preserve edition and page URL.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Static crawl.",
+      "fallback_ingestion_method": "PDF/static export if available",
+      "graph_nodes_created": [
+        "Agency",
+        "GovernmentEntity",
+        "PublicBody",
+        "Official",
+        "Jurisdiction"
+      ],
+      "graph_edges_created": [
+        "PART_OF",
+        "SERVES",
+        "PUBLISHED_BY",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Historical/current officeholder data needs date scoping."
+      ],
+      "source_url": "https://sos.oregon.gov/blue-book/Pages/default.aspx",
+      "docs_url": "https://sos.oregon.gov/blue-book/Pages/default.aspx"
+    },
+    {
+      "source_id": "or_state_archives",
+      "name": "Oregon State Archives",
+      "owner": "Oregon Secretary of State",
+      "jurisdiction": "or:state",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "historical records",
+        "agency rules",
+        "retention schedules",
+        "archived publications"
+      ],
+      "update_frequency": "collection-dependent",
+      "rate_limits_terms": "Respect archive terms; preserve collection metadata.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Static/PDF crawl for selected public collections.",
+      "fallback_ingestion_method": "Manual archival exports",
+      "graph_nodes_created": [
+        "SourceDocument",
+        "Agency",
+        "GovernmentEntity",
+        "RecordSchedule",
+        "AdministrativeRule"
+      ],
+      "graph_edges_created": [
+        "DERIVED_FROM",
+        "PUBLISHED_BY",
+        "SUPERSEDES",
+        "ARCHIVED_BY"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Historical records require provenance and temporal labels to avoid currentness confusion."
+      ],
+      "source_url": "https://sos.oregon.gov/archives/Pages/default.aspx",
+      "docs_url": "https://sos.oregon.gov/archives/Pages/default.aspx"
+    },
+    {
+      "source_id": "or_agency_guidance",
+      "name": "Oregon agency manuals, forms, policies, and guidance",
+      "owner": "Oregon agencies",
+      "jurisdiction": "or:state",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "manuals",
+        "forms",
+        "guidance",
+        "enforcement documents",
+        "policy pages"
+      ],
+      "update_frequency": "agency-specific",
+      "rate_limits_terms": "Crawl only scoped official pages; preserve disclaimers and publication dates.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Source-specific static/PDF adapters.",
+      "fallback_ingestion_method": "Agency open-data datasets",
+      "graph_nodes_created": [
+        "AgencyGuidance",
+        "SourceDocument",
+        "Agency",
+        "Regulation",
+        "EnforcementAction",
+        "License"
+      ],
+      "graph_edges_created": [
+        "ISSUED_BY",
+        "DERIVED_FROM",
+        "INTERPRETS",
+        "ENFORCES"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Guidance authority varies",
+        "do not represent it as binding law unless source says so."
+      ],
+      "source_url": "https://www.oregon.gov/",
+      "docs_url": "https://www.oregon.gov/Pages/a_to_z_listing.aspx"
+    },
+    {
+      "source_id": "county_assessor_property",
+      "name": "County assessor/property records",
+      "owner": "Oregon counties",
+      "jurisdiction": "Oregon counties",
+      "source_type": "search_page",
+      "access": "public_search",
+      "official_status": "official",
+      "data_types": [
+        "parcels",
+        "ownership",
+        "tax lots",
+        "values",
+        "situs addresses"
+      ],
+      "update_frequency": "county-specific",
+      "rate_limits_terms": "Use official APIs/downloads where available; public search only for targeted lookups.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "County API/open-data download when available.",
+      "fallback_ingestion_method": "Public search; county GIS parcel layers",
+      "graph_nodes_created": [
+        "PropertyParcel",
+        "Address",
+        "BusinessEntity",
+        "PersonName",
+        "TaxLot",
+        "GISFeature"
+      ],
+      "graph_edges_created": [
+        "OWNS",
+        "HAS_ADDRESS",
+        "LOCATED_IN",
+        "ASSESSED_BY"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "County terms, data freshness, and PII boundaries vary."
+      ],
+      "source_url": "varies by county",
+      "docs_url": "varies by county"
+    },
+    {
+      "source_id": "county_recorder",
+      "name": "County recorder and clerk records",
+      "owner": "Oregon counties",
+      "jurisdiction": "Oregon counties",
+      "source_type": "search_page",
+      "access": "public_search",
+      "official_status": "official",
+      "data_types": [
+        "deeds",
+        "liens",
+        "easements",
+        "recorded notices",
+        "marriage/business records"
+      ],
+      "update_frequency": "live/county-specific",
+      "rate_limits_terms": "Use public record terms; avoid bulk scraping unless official bulk exists.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "County API/export if available.",
+      "fallback_ingestion_method": "Public search or user-provided records",
+      "graph_nodes_created": [
+        "RecordedDocument",
+        "PropertyParcel",
+        "BusinessEntity",
+        "Address",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "RECORDED_AGAINST",
+        "RECORDED_BY",
+        "DERIVED_FROM",
+        "REFERENCES"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Search access and document fees vary",
+        "some documents may not be free."
+      ],
+      "source_url": "varies by county",
+      "docs_url": "varies by county"
+    },
+    {
+      "source_id": "county_board_minutes",
+      "name": "County board agendas and minutes",
+      "owner": "Oregon counties",
+      "jurisdiction": "Oregon counties",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "agendas",
+        "minutes",
+        "ordinances",
+        "resolutions",
+        "votes"
+      ],
+      "update_frequency": "meeting-cycle based",
+      "rate_limits_terms": "Crawl politely; preserve agenda packet and meeting date.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Static/PDF crawl or agenda platform API.",
+      "fallback_ingestion_method": "Public meeting datasets where available",
+      "graph_nodes_created": [
+        "PublicMeeting",
+        "AgendaItem",
+        "Ordinance",
+        "GovernmentEntity",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "HELD_BY",
+        "HAS_AGENDA_ITEM",
+        "ADOPTED",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Agenda platforms differ",
+        "OCR may be needed for packets."
+      ],
+      "source_url": "varies by county",
+      "docs_url": "varies by county"
+    },
+    {
+      "source_id": "city_codes",
+      "name": "City code websites",
+      "owner": "Oregon cities",
+      "jurisdiction": "Oregon cities",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "municipal code",
+        "ordinances",
+        "local policies"
+      ],
+      "update_frequency": "city-specific",
+      "rate_limits_terms": "Prefer official code hosts and published exports; respect vendor terms.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Static crawl with source-specific adapter.",
+      "fallback_ingestion_method": "Municode/CivicPlus exports where allowed",
+      "graph_nodes_created": [
+        "LegalCorpus",
+        "CorpusEdition",
+        "Ordinance",
+        "Provision",
+        "GovernmentEntity",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "HAS_CORPUS",
+        "ENACTED_BY",
+        "DERIVED_FROM",
+        "CITES"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Vendor terms and canonical status vary by city."
+      ],
+      "source_url": "varies by city",
+      "docs_url": "varies by city"
+    },
+    {
+      "source_id": "city_agendas",
+      "name": "City council agendas and minutes",
+      "owner": "Oregon cities",
+      "jurisdiction": "Oregon cities",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "agendas",
+        "minutes",
+        "ordinances",
+        "resolutions",
+        "public statements"
+      ],
+      "update_frequency": "meeting-cycle based",
+      "rate_limits_terms": "Crawl politely; use APIs for Granicus/Legistar/BoardDocs where available.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Platform API/static crawl.",
+      "fallback_ingestion_method": "Public meeting datasets",
+      "graph_nodes_created": [
+        "PublicMeeting",
+        "AgendaItem",
+        "Ordinance",
+        "VoteEvent",
+        "GovernmentEntity",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "HELD_BY",
+        "HAS_AGENDA_ITEM",
+        "CAST_VOTE",
+        "ADOPTED",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Platform-specific extraction required",
+        "attachments may be PDFs."
+      ],
+      "source_url": "varies by city",
+      "docs_url": "varies by city"
+    },
+    {
+      "source_id": "portland_gov",
+      "name": "Portland.gov code, council, permits, policies",
+      "owner": "City of Portland",
+      "jurisdiction": "or:portland",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "Portland code",
+        "council records",
+        "policies",
+        "permits",
+        "open data links"
+      ],
+      "update_frequency": "dataset/page-specific",
+      "rate_limits_terms": "Use official APIs/open-data links first; crawl official pages politely.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API/open-data where available.",
+      "fallback_ingestion_method": "Static/PDF crawl",
+      "graph_nodes_created": [
+        "LegalCorpus",
+        "Ordinance",
+        "Permit",
+        "PublicMeeting",
+        "AgendaItem",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "ENACTED_BY",
+        "HAS_PERMIT",
+        "HELD_BY",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Portland data spans multiple systems and APIs."
+      ],
+      "source_url": "https://www.portland.gov/",
+      "docs_url": "https://www.portland.gov/open-data"
+    },
+    {
+      "source_id": "govinfo_api_bulk",
+      "name": "GovInfo API and bulk data",
+      "owner": "U.S. Government Publishing Office",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free_key_required",
+      "official_status": "official",
+      "data_types": [
+        "public laws",
+        "Statutes at Large",
+        "Congressional Record",
+        "CFR",
+        "Federal Register",
+        "bills",
+        "reports",
+        "hearings",
+        "package metadata"
+      ],
+      "update_frequency": "collection-specific; API can list updates",
+      "rate_limits_terms": "Free api.data.gov key required for API; bulk downloads available for some collections.",
+      "robots_acceptable_use": "Use API and bulk services; preserve MODS/PREMIS/package IDs.",
+      "preferred_ingestion_method": "GovInfo API first for metadata and updates.",
+      "fallback_ingestion_method": "Bulk XML/PDF/ZIP downloads",
+      "graph_nodes_created": [
+        "LegalCorpus",
+        "CorpusEdition",
+        "SourceDocument",
+        "SourcePage",
+        "Regulation",
+        "SessionLaw",
+        "FederalPublication",
+        "CitationMention"
+      ],
+      "graph_edges_created": [
+        "HAS_PACKAGE",
+        "HAS_GRANULE",
+        "DERIVED_FROM",
+        "CITES",
+        "PUBLISHED_BY"
+      ],
+      "connector_status": "planned",
+      "priority": "P0",
+      "risks": [
+        "API key handling",
+        "collection-specific package/granule models."
+      ],
+      "source_url": "https://www.govinfo.gov/",
+      "docs_url": "https://www.govinfo.gov/features/api"
+    },
+    {
+      "source_id": "federal_register_api",
+      "name": "Federal Register API",
+      "owner": "Office of the Federal Register / NARA",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "rules",
+        "proposed rules",
+        "notices",
+        "presidential documents",
+        "agencies",
+        "effective dates"
+      ],
+      "update_frequency": "daily business-day publication",
+      "rate_limits_terms": "Public API; respect agency rate guidance and cache by document number/date.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API first.",
+      "fallback_ingestion_method": "GovInfo Federal Register packages for issue-level artifacts",
+      "graph_nodes_created": [
+        "Regulation",
+        "AdministrativeRule",
+        "Agency",
+        "SourceDocument",
+        "EffectiveInterval",
+        "CitationMention"
+      ],
+      "graph_edges_created": [
+        "ISSUED_BY",
+        "EFFECTIVE_DURING",
+        "DERIVED_FROM",
+        "CITES",
+        "AMENDS"
+      ],
+      "connector_status": "planned",
+      "priority": "P0",
+      "risks": [
+        "Regulatory actions need careful effective-date and agency-action normalization."
+      ],
+      "source_url": "https://www.federalregister.gov/",
+      "docs_url": "https://www.federalregister.gov/developers/documentation/api/v1"
+    },
+    {
+      "source_id": "ecfr_api_bulk",
+      "name": "eCFR",
+      "owner": "National Archives / Office of the Federal Register",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "current federal regulations",
+        "titles",
+        "parts",
+        "sections",
+        "versions"
+      ],
+      "update_frequency": "current and historical point-in-time data",
+      "rate_limits_terms": "Use API/bulk endpoints and cache by title/date.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API/bulk first.",
+      "fallback_ingestion_method": "Static XML/HTML only if API cannot provide needed view",
+      "graph_nodes_created": [
+        "LegalCorpus",
+        "CorpusEdition",
+        "Regulation",
+        "AdministrativeRule",
+        "Provision",
+        "Agency",
+        "CitationMention"
+      ],
+      "graph_edges_created": [
+        "HAS_VERSION",
+        "ISSUED_BY",
+        "EFFECTIVE_DURING",
+        "CITES",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Versioning and agency hierarchy must be explicit."
+      ],
+      "source_url": "https://www.ecfr.gov/",
+      "docs_url": "https://www.ecfr.gov/developers/documentation/api/v1"
+    },
+    {
+      "source_id": "us_code_olrc",
+      "name": "United States Code downloads",
+      "owner": "Office of the Law Revision Counsel",
+      "jurisdiction": "us",
+      "source_type": "bulk",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "U.S. Code titles",
+        "sections",
+        "notes",
+        "historical releases"
+      ],
+      "update_frequency": "title/release based",
+      "rate_limits_terms": "Use official XML/XHTML downloads; preserve release point.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Bulk XML/XHTML download.",
+      "fallback_ingestion_method": "GovInfo USC packages",
+      "graph_nodes_created": [
+        "LegalCorpus",
+        "CorpusEdition",
+        "LegalTextIdentity",
+        "LegalTextVersion",
+        "Provision",
+        "CitationMention"
+      ],
+      "graph_edges_created": [
+        "HAS_EDITION",
+        "HAS_VERSION",
+        "CONTAINS",
+        "CITES",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Positive-law and note structures need specific parser handling."
+      ],
+      "source_url": "https://uscode.house.gov/download/download.shtml",
+      "docs_url": "https://uscode.house.gov/download/download.shtml"
+    },
+    {
+      "source_id": "congress_gov_api",
+      "name": "Congress.gov API",
+      "owner": "Library of Congress",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free_key_required",
+      "official_status": "official",
+      "data_types": [
+        "bills",
+        "amendments",
+        "members",
+        "committees",
+        "hearings",
+        "nominations",
+        "treaties"
+      ],
+      "update_frequency": "active Congress updates",
+      "rate_limits_terms": "Free API key required; cache by Congress/session and update date.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API first.",
+      "fallback_ingestion_method": "GovInfo/House bulk legislative data",
+      "graph_nodes_created": [
+        "Measure",
+        "MeasureVersion",
+        "MeasureDocument",
+        "Legislator",
+        "Committee",
+        "VoteEvent",
+        "Hearing",
+        "Treaty",
+        "Nomination"
+      ],
+      "graph_edges_created": [
+        "SPONSORED_BY",
+        "HAS_DOCUMENT",
+        "HELD_HEARING",
+        "IN_COMMITTEE",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "API key management and mapping to GovInfo bill packages."
+      ],
+      "source_url": "https://api.congress.gov/",
+      "docs_url": "https://api.congress.gov/"
+    },
+    {
+      "source_id": "house_xml_bulk",
+      "name": "House XML / Bulk Legislative Data",
+      "owner": "U.S. House of Representatives",
+      "jurisdiction": "us",
+      "source_type": "bulk",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "bills",
+        "resolutions",
+        "amendments",
+        "roll call votes",
+        "member data"
+      ],
+      "update_frequency": "session/update based",
+      "rate_limits_terms": "Use official bulk files and checksums where available.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Bulk XML download.",
+      "fallback_ingestion_method": "Congress.gov API",
+      "graph_nodes_created": [
+        "Measure",
+        "MeasureVersion",
+        "VoteEvent",
+        "VoteRecord",
+        "Legislator",
+        "Committee"
+      ],
+      "graph_edges_created": [
+        "HAS_VERSION",
+        "CAST_VOTE",
+        "SPONSORED_BY",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "XML formats differ by collection."
+      ],
+      "source_url": "https://xml.house.gov/",
+      "docs_url": "https://xml.house.gov/"
+    },
+    {
+      "source_id": "regulations_gov_api",
+      "name": "Regulations.gov API",
+      "owner": "General Services Administration / eRulemaking Program",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free_key_required",
+      "official_status": "official",
+      "data_types": [
+        "dockets",
+        "documents",
+        "comments",
+        "attachments"
+      ],
+      "update_frequency": "docket-specific",
+      "rate_limits_terms": "API key required; respect rate limits and comment privacy boundaries.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API first.",
+      "fallback_ingestion_method": "Public docket pages and bulk exports if available",
+      "graph_nodes_created": [
+        "Docket",
+        "Regulation",
+        "SourceDocument",
+        "PublicComment",
+        "Agency",
+        "Attachment"
+      ],
+      "graph_edges_created": [
+        "HAS_DOCUMENT",
+        "HAS_COMMENT",
+        "ISSUED_BY",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Comments may include personal data",
+        "redactions and privacy must be respected."
+      ],
+      "source_url": "https://www.regulations.gov/",
+      "docs_url": "https://open.gsa.gov/api/regulationsgov/"
+    },
+    {
+      "source_id": "scotus_opinions",
+      "name": "Supreme Court opinions",
+      "owner": "Supreme Court of the United States",
+      "jurisdiction": "us",
+      "source_type": "pdf",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "slip opinions",
+        "opinions",
+        "orders"
+      ],
+      "update_frequency": "as issued",
+      "rate_limits_terms": "Fetch PDFs politely; preserve term, docket, and release date.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Static/PDF crawl.",
+      "fallback_ingestion_method": "CourtListener/Free Law Project secondary metadata",
+      "graph_nodes_created": [
+        "Opinion",
+        "CourtCase",
+        "Court",
+        "Judge",
+        "SourceDocument",
+        "CitationMention"
+      ],
+      "graph_edges_created": [
+        "DECIDED_BY",
+        "AUTHORED_BY",
+        "CITES",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Docket metadata may require secondary sources."
+      ],
+      "source_url": "https://www.supremecourt.gov/opinions/opinions.aspx",
+      "docs_url": "https://www.supremecourt.gov/opinions/opinions.aspx"
+    },
+    {
+      "source_id": "scotus_database",
+      "name": "Supreme Court Database",
+      "owner": "Washington University / SCDB",
+      "jurisdiction": "us",
+      "source_type": "bulk",
+      "access": "free",
+      "official_status": "secondary",
+      "data_types": [
+        "SCOTUS coded metadata and variables"
+      ],
+      "update_frequency": "release based",
+      "rate_limits_terms": "Follow dataset citation/license terms.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Bulk dataset download.",
+      "fallback_ingestion_method": "CourtListener metadata cross-check",
+      "graph_nodes_created": [
+        "CourtCase",
+        "Opinion",
+        "Judge",
+        "LegalTaxonomy",
+        "DecisionVariable"
+      ],
+      "graph_edges_created": [
+        "HAS_CODED_VARIABLE",
+        "DECIDED_BY",
+        "REFERENCES"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Secondary coded data must not override official opinions."
+      ],
+      "source_url": "http://scdb.wustl.edu/",
+      "docs_url": "http://scdb.wustl.edu/documentation.php"
+    },
+    {
+      "source_id": "courtlistener_api",
+      "name": "CourtListener API",
+      "owner": "Free Law Project",
+      "jurisdiction": "U.S. federal and state",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "nonprofit",
+      "data_types": [
+        "opinions",
+        "clusters",
+        "courts",
+        "judges",
+        "citations",
+        "oral arguments",
+        "search metadata"
+      ],
+      "update_frequency": "continuously updated",
+      "rate_limits_terms": "Use authenticated API where possible; respect throttling and field-selection guidance.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API first.",
+      "fallback_ingestion_method": "Bulk exports where available",
+      "graph_nodes_created": [
+        "Opinion",
+        "CourtCase",
+        "Court",
+        "Judge",
+        "CitationMention",
+        "LegalTextIdentity",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "CITES",
+        "DECIDED_BY",
+        "AUTHORED_BY",
+        "CLUSTERED_WITH",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P0",
+      "risks": [
+        "Nonprofit source",
+        "do not override official OJD/SCOTUS sources for current official text."
+      ],
+      "source_url": "https://www.courtlistener.com/",
+      "docs_url": "https://www.courtlistener.com/help/api/rest/"
+    },
+    {
+      "source_id": "recap_archive_api",
+      "name": "RECAP Archive APIs",
+      "owner": "Free Law Project",
+      "jurisdiction": "U.S. federal courts",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "nonprofit",
+      "data_types": [
+        "federal dockets",
+        "filings",
+        "parties",
+        "attorneys",
+        "available PACER documents"
+      ],
+      "update_frequency": "continuously updated",
+      "rate_limits_terms": "Use API; PACER itself is not free; preserve source and availability metadata.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API first.",
+      "fallback_ingestion_method": "CourtListener search and user-provided docket docs",
+      "graph_nodes_created": [
+        "CourtCase",
+        "Docket",
+        "Filing",
+        "Party",
+        "Attorney",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "HAS_DOCKET_EVENT",
+        "FILED_BY",
+        "REPRESENTED_BY",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P0",
+      "risks": [
+        "Archive coverage is partial",
+        "federal court records may include sensitive data."
+      ],
+      "source_url": "https://www.courtlistener.com/recap/",
+      "docs_url": "https://www.courtlistener.com/help/api/rest/"
+    },
+    {
+      "source_id": "cap_courtlistener",
+      "name": "Caselaw Access Project via Free Law/CourtListener",
+      "owner": "Library Innovation Lab / Free Law Project",
+      "jurisdiction": "U.S. federal and state",
+      "source_type": "bulk",
+      "access": "free",
+      "official_status": "nonprofit",
+      "data_types": [
+        "historical U.S. case law",
+        "citations",
+        "reporter metadata"
+      ],
+      "update_frequency": "historical/backfill",
+      "rate_limits_terms": "Follow CAP/Free Law terms and attribution; use bulk/API routes now exposed through Free Law where applicable.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Bulk/API backfill.",
+      "fallback_ingestion_method": "CourtListener opinion API",
+      "graph_nodes_created": [
+        "Opinion",
+        "CourtCase",
+        "Court",
+        "CitationMention",
+        "Reporter",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "CITES",
+        "REPORTED_IN",
+        "DERIVED_FROM",
+        "DECIDED_BY"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Historical OCR and reporter metadata may need normalization."
+      ],
+      "source_url": "https://lil.law.harvard.edu/our-work/caselaw-access-project/",
+      "docs_url": "https://lil.law.harvard.edu/our-work/caselaw-access-project/"
+    },
+    {
+      "source_id": "free_law_scotus",
+      "name": "Free Law Project Supreme Court data",
+      "owner": "Free Law Project",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "nonprofit",
+      "data_types": [
+        "SCOTUS opinions and metadata"
+      ],
+      "update_frequency": "continuously updated",
+      "rate_limits_terms": "Respect Free Law API terms and throttling.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API/bulk.",
+      "fallback_ingestion_method": "Official SCOTUS PDFs",
+      "graph_nodes_created": [
+        "Opinion",
+        "CourtCase",
+        "Judge",
+        "CitationMention"
+      ],
+      "graph_edges_created": [
+        "CITES",
+        "DECIDED_BY",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P1",
+      "risks": [
+        "Secondary metadata should enrich, not replace, official SCOTUS sources."
+      ],
+      "source_url": "https://www.courtlistener.com/",
+      "docs_url": "https://www.courtlistener.com/help/api/rest/"
+    },
+    {
+      "source_id": "justia_findlaw_scholar_reference",
+      "name": "Justia, FindLaw, Google Scholar reference access",
+      "owner": "Various secondary publishers",
+      "jurisdiction": "U.S. federal and state",
+      "source_type": "search_page",
+      "access": "public_search",
+      "official_status": "secondary",
+      "data_types": [
+        "reference pages",
+        "case snippets",
+        "search/discovery"
+      ],
+      "update_frequency": "provider-specific",
+      "rate_limits_terms": "Respect terms; not primary ingestion.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Manual reference only; no broad ingestion by default.",
+      "fallback_ingestion_method": "Official source or CourtListener lookup",
+      "graph_nodes_created": [
+        "SourceDocument",
+        "ExternalReference"
+      ],
+      "graph_edges_created": [
+        "REFERENCES"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Terms and robots restrictions",
+        "not canonical."
+      ],
+      "source_url": "varies",
+      "docs_url": "varies"
+    },
+    {
+      "source_id": "open_states_api_bulk",
+      "name": "Open States / Plural Open",
+      "owner": "Plural",
+      "jurisdiction": "U.S. states, DC, Puerto Rico",
+      "source_type": "api",
+      "access": "free_key_required",
+      "official_status": "nonprofit",
+      "data_types": [
+        "bills",
+        "legislators",
+        "committees",
+        "votes",
+        "events"
+      ],
+      "update_frequency": "active legislative updates",
+      "rate_limits_terms": "API key or account may be required; follow terms and rate limits.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API and bulk data.",
+      "fallback_ingestion_method": "Official state legislature sources",
+      "graph_nodes_created": [
+        "LegislativeSession",
+        "Measure",
+        "Legislator",
+        "Committee",
+        "VoteEvent",
+        "Event"
+      ],
+      "graph_edges_created": [
+        "SPONSORED_BY",
+        "CAST_VOTE",
+        "IN_COMMITTEE",
+        "HELD_EVENT"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Non-official aggregation",
+        "official source documents remain final provenance."
+      ],
+      "source_url": "https://openstates.org/",
+      "docs_url": "https://docs.openstates.org/api-v3/"
+    },
+    {
+      "source_id": "legiscan_api",
+      "name": "LegiScan",
+      "owner": "LegiScan",
+      "jurisdiction": "U.S. states and Congress",
+      "source_type": "api",
+      "access": "free_key_required",
+      "official_status": "secondary",
+      "data_types": [
+        "bills",
+        "sponsors",
+        "texts",
+        "status",
+        "roll calls"
+      ],
+      "update_frequency": "active legislative updates",
+      "rate_limits_terms": "Free registration/API key; observe license and use limits.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API.",
+      "fallback_ingestion_method": "Official state sources",
+      "graph_nodes_created": [
+        "Measure",
+        "MeasureVersion",
+        "Legislator",
+        "VoteEvent",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "SPONSORED_BY",
+        "CAST_VOTE",
+        "HAS_VERSION",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P1",
+      "risks": [
+        "Secondary data",
+        "terms may restrict redistribution."
+      ],
+      "source_url": "https://legiscan.com/",
+      "docs_url": "https://legiscan.com/legiscan"
+    },
+    {
+      "source_id": "ncsl_topic_databases",
+      "name": "NCSL public topic databases",
+      "owner": "National Conference of State Legislatures",
+      "jurisdiction": "U.S. states",
+      "source_type": "search_page",
+      "access": "free",
+      "official_status": "secondary",
+      "data_types": [
+        "selected topic bill tracking and policy databases"
+      ],
+      "update_frequency": "topic-specific",
+      "rate_limits_terms": "Respect terms; use as secondary reference only.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Static/search reference.",
+      "fallback_ingestion_method": "Open States or official state sources",
+      "graph_nodes_created": [
+        "Measure",
+        "LegalTaxonomy",
+        "PolicyTopic",
+        "ExternalReference"
+      ],
+      "graph_edges_created": [
+        "TAGGED_AS",
+        "REFERENCES"
+      ],
+      "connector_status": "deferred",
+      "priority": "P1",
+      "risks": [
+        "Not comprehensive or canonical."
+      ],
+      "source_url": "https://www.ncsl.org/",
+      "docs_url": "https://www.ncsl.org/research"
+    },
+    {
+      "source_id": "state_legislature_official_sources",
+      "name": "Official state legislature sites",
+      "owner": "State legislatures",
+      "jurisdiction": "U.S. states",
+      "source_type": "api",
+      "access": "mixed",
+      "official_status": "official",
+      "data_types": [
+        "bills",
+        "statutes",
+        "votes",
+        "committees",
+        "session documents"
+      ],
+      "update_frequency": "state-specific",
+      "rate_limits_terms": "API where available; crawl last; respect each state's terms.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Official API or bulk feed.",
+      "fallback_ingestion_method": "Static crawl only for documents no API covers",
+      "graph_nodes_created": [
+        "LegislativeSession",
+        "Measure",
+        "Legislator",
+        "Committee",
+        "VoteEvent",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "SPONSORED_BY",
+        "CAST_VOTE",
+        "HAS_DOCUMENT",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Each state needs a source-specific adapter and disclaimer policy."
+      ],
+      "source_url": "varies by state",
+      "docs_url": "varies by state"
+    },
+    {
+      "source_id": "sec_edgar",
+      "name": "SEC EDGAR",
+      "owner": "U.S. Securities and Exchange Commission",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "public company filings",
+        "officers",
+        "exhibits",
+        "company facts"
+      ],
+      "update_frequency": "filing-based",
+      "rate_limits_terms": "Use SEC fair-access guidance; include descriptive User-Agent where required.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "SEC APIs and bulk submissions/companyfacts data.",
+      "fallback_ingestion_method": "Filing HTML/XBRL download",
+      "graph_nodes_created": [
+        "BusinessEntity",
+        "Filing",
+        "SourceDocument",
+        "Officer",
+        "Exhibit",
+        "Address"
+      ],
+      "graph_edges_created": [
+        "FILED",
+        "HAS_OFFICER",
+        "HAS_EXHIBIT",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Rate/access compliance and XBRL parsing complexity."
+      ],
+      "source_url": "https://www.sec.gov/edgar",
+      "docs_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces"
+    },
+    {
+      "source_id": "irs_exempt_orgs",
+      "name": "IRS Exempt Organizations data",
+      "owner": "Internal Revenue Service",
+      "jurisdiction": "us",
+      "source_type": "bulk",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "tax-exempt organizations",
+        "EO business master file",
+        "990 metadata"
+      ],
+      "update_frequency": "periodic release",
+      "rate_limits_terms": "Use official bulk downloads; preserve release date.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Bulk download.",
+      "fallback_ingestion_method": "IRS search pages for targeted lookup",
+      "graph_nodes_created": [
+        "BusinessEntity",
+        "NonprofitEntity",
+        "TaxFiling",
+        "Address",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "FILED",
+        "HAS_ADDRESS",
+        "DERIVED_FROM",
+        "TAX_EXEMPT_UNDER"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "990 documents and metadata have separate datasets and release cadences."
+      ],
+      "source_url": "https://www.irs.gov/charities-non-profits/exempt-organizations-business-master-file-extract-eo-bmf",
+      "docs_url": "https://www.irs.gov/charities-non-profits"
+    },
+    {
+      "source_id": "opencorporates",
+      "name": "OpenCorporates",
+      "owner": "OpenCorporates",
+      "jurisdiction": "global",
+      "source_type": "api",
+      "access": "mixed",
+      "official_status": "secondary",
+      "data_types": [
+        "company registry aggregation",
+        "officers",
+        "filings where available"
+      ],
+      "update_frequency": "continuously updated",
+      "rate_limits_terms": "Free tier and terms restrictions; verify before ingestion.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API only if terms permit.",
+      "fallback_ingestion_method": "Official registries",
+      "graph_nodes_created": [
+        "BusinessEntity",
+        "RegisteredAgent",
+        "Address",
+        "ExternalReference"
+      ],
+      "graph_edges_created": [
+        "SAME_AS",
+        "HAS_ADDRESS",
+        "REFERENCES"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Licensing and redistribution restrictions."
+      ],
+      "source_url": "https://opencorporates.com/",
+      "docs_url": "https://api.opencorporates.com/documentation/API-Reference"
+    },
+    {
+      "source_id": "fec_api",
+      "name": "FEC API",
+      "owner": "Federal Election Commission",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free_key_required",
+      "official_status": "official",
+      "data_types": [
+        "federal campaign finance",
+        "committees",
+        "candidates",
+        "filings",
+        "transactions"
+      ],
+      "update_frequency": "filing/election-cycle updates",
+      "rate_limits_terms": "Free API key; respect limits.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API first.",
+      "fallback_ingestion_method": "Bulk downloads",
+      "graph_nodes_created": [
+        "PoliticalCommittee",
+        "Candidate",
+        "Transaction",
+        "BusinessEntity",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "CONTRIBUTED_TO",
+        "FILED_BY",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P1",
+      "risks": [
+        "Entity resolution across campaign/legal/business data."
+      ],
+      "source_url": "https://www.fec.gov/data/",
+      "docs_url": "https://api.open.fec.gov/developers/"
+    },
+    {
+      "source_id": "usaspending_api",
+      "name": "USAspending.gov API",
+      "owner": "U.S. Treasury",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "federal awards",
+        "grants",
+        "contracts",
+        "recipients",
+        "agencies"
+      ],
+      "update_frequency": "regularly updated",
+      "rate_limits_terms": "Use API; respect documented query limits.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API first.",
+      "fallback_ingestion_method": "Bulk downloads",
+      "graph_nodes_created": [
+        "Award",
+        "Grant",
+        "Contract",
+        "Agency",
+        "BusinessEntity",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "AWARDED_TO",
+        "FUNDED_BY",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P1",
+      "risks": [
+        "Recipient identity normalization and large result sets."
+      ],
+      "source_url": "https://www.usaspending.gov/",
+      "docs_url": "https://api.usaspending.gov/"
+    },
+    {
+      "source_id": "oregon_geohub",
+      "name": "Oregon GEOHub",
+      "owner": "State of Oregon",
+      "jurisdiction": "or:state",
+      "source_type": "arcgis",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "statewide geospatial framework data",
+        "boundaries",
+        "roads",
+        "land",
+        "metadata",
+        "downloads"
+      ],
+      "update_frequency": "layer-specific",
+      "rate_limits_terms": "Use ArcGIS services/downloads; preserve layer metadata and coordinate system.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "ArcGIS service/download.",
+      "fallback_ingestion_method": "Static files from dataset pages",
+      "graph_nodes_created": [
+        "GISFeature",
+        "Jurisdiction",
+        "Address",
+        "PropertyParcel",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "LOCATED_IN",
+        "HAS_GEOMETRY",
+        "DERIVED_FROM",
+        "OVERLAPS"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Geometry versioning and large layers require incremental fetch strategy."
+      ],
+      "source_url": "https://geohub.oregon.gov/",
+      "docs_url": "https://geohub.oregon.gov/"
+    },
+    {
+      "source_id": "metro_gis",
+      "name": "Metro GIS",
+      "owner": "Metro",
+      "jurisdiction": "Portland metro region",
+      "source_type": "arcgis",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "regional GIS layers",
+        "boundaries",
+        "parcels/layers",
+        "services and downloads"
+      ],
+      "update_frequency": "layer-specific",
+      "rate_limits_terms": "Use web services/downloads; cache by layer version/date.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "ArcGIS services/downloads.",
+      "fallback_ingestion_method": "Static exports",
+      "graph_nodes_created": [
+        "GISFeature",
+        "PropertyParcel",
+        "Jurisdiction",
+        "Address",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "LOCATED_IN",
+        "HAS_GEOMETRY",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Regional layer schemas vary and may overlap county sources."
+      ],
+      "source_url": "https://www.oregonmetro.gov/tools-partners/maps-and-gis",
+      "docs_url": "https://www.oregonmetro.gov/tools-partners/maps-and-gis"
+    },
+    {
+      "source_id": "county_gis_portals",
+      "name": "County GIS portals",
+      "owner": "Oregon counties",
+      "jurisdiction": "Oregon counties",
+      "source_type": "arcgis",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "parcels",
+        "zoning",
+        "flood",
+        "tax lots",
+        "boundaries"
+      ],
+      "update_frequency": "county-specific",
+      "rate_limits_terms": "Prefer official ArcGIS/OpenData endpoints; respect layer terms.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "ArcGIS/OpenData service.",
+      "fallback_ingestion_method": "County downloads",
+      "graph_nodes_created": [
+        "GISFeature",
+        "PropertyParcel",
+        "Address",
+        "Jurisdiction",
+        "ZoningDistrict"
+      ],
+      "graph_edges_created": [
+        "LOCATED_IN",
+        "HAS_GEOMETRY",
+        "ZONED_AS",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "County schemas and update policies vary."
+      ],
+      "source_url": "varies by county",
+      "docs_url": "varies by county"
+    },
+    {
+      "source_id": "census_tiger",
+      "name": "Census TIGER/Line",
+      "owner": "U.S. Census Bureau",
+      "jurisdiction": "us",
+      "source_type": "bulk",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "boundaries",
+        "tracts",
+        "places",
+        "roads",
+        "geographies"
+      ],
+      "update_frequency": "annual/release based",
+      "rate_limits_terms": "Use official downloads; preserve vintage.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Bulk download.",
+      "fallback_ingestion_method": "Census API for selected geographies",
+      "graph_nodes_created": [
+        "GISFeature",
+        "Jurisdiction",
+        "CensusGeography",
+        "Address"
+      ],
+      "graph_edges_created": [
+        "LOCATED_IN",
+        "HAS_GEOMETRY",
+        "PART_OF"
+      ],
+      "connector_status": "deferred",
+      "priority": "P1",
+      "risks": [
+        "Vintage mismatches with local datasets."
+      ],
+      "source_url": "https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html",
+      "docs_url": "https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html"
+    },
+    {
+      "source_id": "census_api",
+      "name": "Census API",
+      "owner": "U.S. Census Bureau",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "ACS",
+        "population",
+        "demographics",
+        "geography attributes"
+      ],
+      "update_frequency": "dataset/vintage based",
+      "rate_limits_terms": "API key optional for higher limits; preserve dataset vintage.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API first.",
+      "fallback_ingestion_method": "Bulk tables",
+      "graph_nodes_created": [
+        "CensusGeography",
+        "DemographicMetric",
+        "Jurisdiction",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "HAS_METRIC",
+        "LOCATED_IN",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P1",
+      "risks": [
+        "Demographic data must be clearly contextual, not case determinative."
+      ],
+      "source_url": "https://api.census.gov/data.html",
+      "docs_url": "https://www.census.gov/data/developers.html"
+    },
+    {
+      "source_id": "fema_nfhl",
+      "name": "FEMA National Flood Hazard Layer",
+      "owner": "FEMA",
+      "jurisdiction": "us",
+      "source_type": "arcgis",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "flood zones",
+        "flood hazard areas",
+        "map panels"
+      ],
+      "update_frequency": "ongoing",
+      "rate_limits_terms": "Use FEMA services/downloads and preserve layer date.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "GIS/API service.",
+      "fallback_ingestion_method": "Bulk downloads",
+      "graph_nodes_created": [
+        "GISFeature",
+        "PropertyParcel",
+        "FloodZone",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "OVERLAPS",
+        "LOCATED_IN",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Spatial joins require geometry QC."
+      ],
+      "source_url": "https://www.fema.gov/flood-maps/national-flood-hazard-layer",
+      "docs_url": "https://www.fema.gov/flood-maps/national-flood-hazard-layer"
+    },
+    {
+      "source_id": "usgs_national_map",
+      "name": "USGS National Map",
+      "owner": "U.S. Geological Survey",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "elevation",
+        "hydrography",
+        "topography",
+        "land context"
+      ],
+      "update_frequency": "layer-specific",
+      "rate_limits_terms": "Use APIs/downloads; preserve dataset vintage.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API/download.",
+      "fallback_ingestion_method": "Static bulk downloads",
+      "graph_nodes_created": [
+        "GISFeature",
+        "SourceDocument",
+        "EnvironmentalFeature"
+      ],
+      "graph_edges_created": [
+        "HAS_GEOMETRY",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Large geospatial layers require tiling and QC."
+      ],
+      "source_url": "https://www.usgs.gov/programs/national-geospatial-program/national-map",
+      "docs_url": "https://apps.nationalmap.gov/services/"
+    },
+    {
+      "source_id": "noaa_nws",
+      "name": "NOAA / National Weather Service APIs",
+      "owner": "NOAA / NWS",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "weather observations",
+        "alerts",
+        "climate",
+        "incident context"
+      ],
+      "update_frequency": "live and archive updates",
+      "rate_limits_terms": "Respect API rate guidance and include contact User-Agent if required.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API first.",
+      "fallback_ingestion_method": "Bulk climate datasets",
+      "graph_nodes_created": [
+        "WeatherObservation",
+        "WeatherAlert",
+        "SourceDocument",
+        "Address"
+      ],
+      "graph_edges_created": [
+        "OBSERVED_AT",
+        "AFFECTED_AREA",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Incident use needs time/location precision and provenance."
+      ],
+      "source_url": "https://www.weather.gov/documentation/services-web-api",
+      "docs_url": "https://www.weather.gov/documentation/services-web-api"
+    },
+    {
+      "source_id": "epa_ejscreen_envirofacts",
+      "name": "EPA EJScreen / Envirofacts",
+      "owner": "U.S. Environmental Protection Agency",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "environmental justice",
+        "facilities",
+        "permits",
+        "enforcement context"
+      ],
+      "update_frequency": "dataset-specific",
+      "rate_limits_terms": "Use EPA APIs/downloads; preserve dataset/version metadata.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API/download.",
+      "fallback_ingestion_method": "Static exports",
+      "graph_nodes_created": [
+        "Facility",
+        "EnforcementAction",
+        "Permit",
+        "GISFeature",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "LOCATED_IN",
+        "SUBJECT_TO",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Environmental datasets need careful geographic and temporal scoping."
+      ],
+      "source_url": "https://www.epa.gov/enviro",
+      "docs_url": "https://www.epa.gov/enviro/web-services"
+    },
+    {
+      "source_id": "local_permits",
+      "name": "City and county permits/building records",
+      "owner": "Local governments",
+      "jurisdiction": "local",
+      "source_type": "search_page",
+      "access": "public_search",
+      "official_status": "official",
+      "data_types": [
+        "permits",
+        "inspections",
+        "violations",
+        "building records"
+      ],
+      "update_frequency": "local-system dependent",
+      "rate_limits_terms": "Prefer open-data/API portals; public search for targeted lookups only.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API/open-data where available.",
+      "fallback_ingestion_method": "Public search/static crawl",
+      "graph_nodes_created": [
+        "Permit",
+        "License",
+        "EnforcementAction",
+        "PropertyParcel",
+        "Address",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "ISSUED_FOR",
+        "LOCATED_AT",
+        "DERIVED_FROM",
+        "ENFORCED_BY"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Local terms and privacy boundaries vary."
+      ],
+      "source_url": "varies",
+      "docs_url": "varies"
+    },
+    {
+      "source_id": "agency_enforcement_dbs",
+      "name": "Agency enforcement databases",
+      "owner": "State/federal/local agencies",
+      "jurisdiction": "mixed",
+      "source_type": "api",
+      "access": "mixed",
+      "official_status": "official",
+      "data_types": [
+        "complaints",
+        "orders",
+        "licenses",
+        "sanctions",
+        "enforcement actions"
+      ],
+      "update_frequency": "agency-specific",
+      "rate_limits_terms": "Use official APIs/downloads first; preserve enforcement status and appeal posture.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API/download.",
+      "fallback_ingestion_method": "Static/search pages",
+      "graph_nodes_created": [
+        "EnforcementAction",
+        "Agency",
+        "BusinessEntity",
+        "License",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "ENFORCED_BY",
+        "SUBJECT_TO",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Authority and currentness vary by agency and case status."
+      ],
+      "source_url": "varies",
+      "docs_url": "varies"
+    },
+    {
+      "source_id": "professional_licensing_boards",
+      "name": "Professional licensing boards",
+      "owner": "State licensing agencies",
+      "jurisdiction": "mixed",
+      "source_type": "search_page",
+      "access": "public_search",
+      "official_status": "official",
+      "data_types": [
+        "license status",
+        "discipline",
+        "board actions",
+        "registrations"
+      ],
+      "update_frequency": "agency-specific",
+      "rate_limits_terms": "Use official lookup terms; avoid broad scraping unless API/export exists.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API/export where available.",
+      "fallback_ingestion_method": "Targeted public search",
+      "graph_nodes_created": [
+        "License",
+        "Professional",
+        "EnforcementAction",
+        "Agency",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "LICENSED_BY",
+        "DISCIPLINED_BY",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Personal data and stale status risks."
+      ],
+      "source_url": "varies",
+      "docs_url": "varies"
+    },
+    {
+      "source_id": "or_public_meetings",
+      "name": "Oregon public meetings datasets",
+      "owner": "Oregon Open Data / agencies",
+      "jurisdiction": "or:state",
+      "source_type": "socrata",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "notices",
+        "meetings",
+        "agendas",
+        "boards",
+        "commissions"
+      ],
+      "update_frequency": "meeting-cycle updates",
+      "rate_limits_terms": "Use Socrata API and dataset metadata.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Socrata API.",
+      "fallback_ingestion_method": "Static meeting pages",
+      "graph_nodes_created": [
+        "PublicMeeting",
+        "AgendaItem",
+        "Agency",
+        "PublicBody",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "HELD_BY",
+        "HAS_AGENDA_ITEM",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Dataset coverage may not include all local meetings."
+      ],
+      "source_url": "https://data.oregon.gov/",
+      "docs_url": "https://data.oregon.gov/developers"
+    },
+    {
+      "source_id": "data_gov_catalog",
+      "name": "Data.gov catalog",
+      "owner": "General Services Administration",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "federal/state/local dataset catalog metadata and API links"
+      ],
+      "update_frequency": "continuously updated",
+      "rate_limits_terms": "Use catalog API; source datasets still need separate terms review.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API catalog discovery.",
+      "fallback_ingestion_method": "Static catalog pages",
+      "graph_nodes_created": [
+        "DatasetCatalogEntry",
+        "Agency",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "CATALOGS",
+        "PUBLISHED_BY",
+        "LINKS_TO"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Discovery source only",
+        "not a substitute for dataset-specific provenance."
+      ],
+      "source_url": "https://catalog.data.gov/",
+      "docs_url": "https://catalog.data.gov/api/3/action/package_search"
+    },
+    {
+      "source_id": "bls_api",
+      "name": "BLS API",
+      "owner": "Bureau of Labor Statistics",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free_key_required",
+      "official_status": "official",
+      "data_types": [
+        "labor stats",
+        "CPI",
+        "wages",
+        "time series"
+      ],
+      "update_frequency": "scheduled releases",
+      "rate_limits_terms": "API key optional/required depending usage; preserve series ID and release date.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API first.",
+      "fallback_ingestion_method": "Bulk downloads",
+      "graph_nodes_created": [
+        "EconomicSeries",
+        "EconomicObservation",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "HAS_OBSERVATION",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Economic context must be labeled as contextual/damages support."
+      ],
+      "source_url": "https://www.bls.gov/developers/",
+      "docs_url": "https://www.bls.gov/developers/"
+    },
+    {
+      "source_id": "fred_api",
+      "name": "FRED API",
+      "owner": "Federal Reserve Bank of St. Louis",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free_key_required",
+      "official_status": "official",
+      "data_types": [
+        "macroeconomic time series"
+      ],
+      "update_frequency": "scheduled updates",
+      "rate_limits_terms": "Free API key required; preserve series metadata.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API first.",
+      "fallback_ingestion_method": "CSV downloads",
+      "graph_nodes_created": [
+        "EconomicSeries",
+        "EconomicObservation",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "HAS_OBSERVATION",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Not a legal authority source."
+      ],
+      "source_url": "https://fred.stlouisfed.org/",
+      "docs_url": "https://fred.stlouisfed.org/docs/api/fred/"
+    },
+    {
+      "source_id": "uspto_api_bulk",
+      "name": "USPTO APIs and bulk data",
+      "owner": "U.S. Patent and Trademark Office",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "patents",
+        "trademarks",
+        "assignments",
+        "prosecution data"
+      ],
+      "update_frequency": "dataset-specific",
+      "rate_limits_terms": "Use official APIs/bulk downloads and terms.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API/bulk.",
+      "fallback_ingestion_method": "Static search pages for targeted lookup",
+      "graph_nodes_created": [
+        "Patent",
+        "Trademark",
+        "BusinessEntity",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "OWNED_BY",
+        "FILED_BY",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "IP data needs domain-specific identifiers and large-file handling."
+      ],
+      "source_url": "https://developer.uspto.gov/",
+      "docs_url": "https://developer.uspto.gov/"
+    },
+    {
+      "source_id": "osha_data",
+      "name": "OSHA data",
+      "owner": "Occupational Safety and Health Administration",
+      "jurisdiction": "us",
+      "source_type": "bulk",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "inspections",
+        "violations",
+        "establishments",
+        "penalties"
+      ],
+      "update_frequency": "periodic release",
+      "rate_limits_terms": "Use official downloads/API-like endpoints; preserve inspection dates.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Downloads/API-like datasets.",
+      "fallback_ingestion_method": "Search pages for targeted lookup",
+      "graph_nodes_created": [
+        "Inspection",
+        "Violation",
+        "EnforcementAction",
+        "BusinessEntity",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "INSPECTED",
+        "VIOLATED",
+        "PENALIZED",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Establishment matching can be noisy."
+      ],
+      "source_url": "https://www.osha.gov/ords/imis/establishment.html",
+      "docs_url": "https://www.osha.gov/data"
+    },
+    {
+      "source_id": "hud_datasets",
+      "name": "HUD datasets",
+      "owner": "U.S. Department of Housing and Urban Development",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "housing",
+        "fair housing",
+        "subsidies",
+        "grantees"
+      ],
+      "update_frequency": "dataset-specific",
+      "rate_limits_terms": "Use HUD APIs/downloads and preserve dataset metadata.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API/download.",
+      "fallback_ingestion_method": "Data.gov catalog link",
+      "graph_nodes_created": [
+        "HousingProgram",
+        "Grant",
+        "PropertyParcel",
+        "BusinessEntity",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "FUNDED_BY",
+        "LOCATED_IN",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Housing data must be scoped and normalized carefully."
+      ],
+      "source_url": "https://www.huduser.gov/portal/datasets/pdrdatas_landing.html",
+      "docs_url": "https://www.huduser.gov/portal/dataset/api.html"
+    },
+    {
+      "source_id": "ofac_sanctions",
+      "name": "OFAC sanctions lists",
+      "owner": "U.S. Treasury OFAC",
+      "jurisdiction": "us",
+      "source_type": "bulk",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "sanctions entities",
+        "aliases",
+        "programs"
+      ],
+      "update_frequency": "frequent updates",
+      "rate_limits_terms": "Use official downloads; preserve list date.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Bulk/XML/CSV downloads.",
+      "fallback_ingestion_method": "Search page targeted lookup",
+      "graph_nodes_created": [
+        "SanctionedEntity",
+        "BusinessEntity",
+        "PersonName",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "LISTED_UNDER",
+        "ALIAS_OF",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Compliance data requires exact dates and identifiers."
+      ],
+      "source_url": "https://ofac.treasury.gov/sanctions-list-service",
+      "docs_url": "https://ofac.treasury.gov/sanctions-list-service"
+    },
+    {
+      "source_id": "sam_gov_api",
+      "name": "SAM.gov APIs",
+      "owner": "General Services Administration",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free_key_required",
+      "official_status": "official",
+      "data_types": [
+        "entity registrations",
+        "exclusions",
+        "contracts",
+        "assistance listings"
+      ],
+      "update_frequency": "continuously updated",
+      "rate_limits_terms": "API key required; respect terms.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API first.",
+      "fallback_ingestion_method": "Public search for targeted lookup",
+      "graph_nodes_created": [
+        "BusinessEntity",
+        "GovernmentEntity",
+        "Exclusion",
+        "Contract",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "REGISTERED_IN",
+        "EXCLUDED_FROM",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Entity matching and exclusion status need strong QC."
+      ],
+      "source_url": "https://sam.gov/",
+      "docs_url": "https://open.gsa.gov/api/"
+    },
+    {
+      "source_id": "courtlistener_citation_graph",
+      "name": "CourtListener citation graph",
+      "owner": "Free Law Project",
+      "jurisdiction": "U.S. federal and state",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "nonprofit",
+      "data_types": [
+        "opinion citations",
+        "clusters",
+        "citation graph metadata"
+      ],
+      "update_frequency": "continuously updated",
+      "rate_limits_terms": "Use API and field selection; respect throttling.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API first.",
+      "fallback_ingestion_method": "Bulk exports",
+      "graph_nodes_created": [
+        "CitationMention",
+        "Opinion",
+        "CourtCase",
+        "LegalTextIdentity"
+      ],
+      "graph_edges_created": [
+        "CITES",
+        "CLUSTERED_WITH",
+        "RESOLVES_TO"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Secondary citation graph should be cross-checked for official sources."
+      ],
+      "source_url": "https://www.courtlistener.com/",
+      "docs_url": "https://www.courtlistener.com/help/api/rest/"
+    },
+    {
+      "source_id": "flp_reporters_db",
+      "name": "Free Law Project reporters and court metadata",
+      "owner": "Free Law Project",
+      "jurisdiction": "U.S. federal and state",
+      "source_type": "bulk",
+      "access": "free",
+      "official_status": "nonprofit",
+      "data_types": [
+        "reporters",
+        "courts",
+        "citation normalization metadata"
+      ],
+      "update_frequency": "release based",
+      "rate_limits_terms": "Follow repository/license terms.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Bulk repository/data download.",
+      "fallback_ingestion_method": "CourtListener API",
+      "graph_nodes_created": [
+        "Reporter",
+        "Court",
+        "CitationPattern",
+        "LegalTaxonomy"
+      ],
+      "graph_edges_created": [
+        "NORMALIZES",
+        "REPORTED_IN",
+        "REFERENCES"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Citation normalization rules need tests before automated linking."
+      ],
+      "source_url": "https://free.law/",
+      "docs_url": "https://github.com/freelawproject/reporters-db"
+    },
+    {
+      "source_id": "cornell_lii",
+      "name": "Cornell Legal Information Institute",
+      "owner": "Cornell Law School",
+      "jurisdiction": "us",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "secondary",
+      "data_types": [
+        "legal encyclopedia",
+        "federal law reference pages",
+        "citation context"
+      ],
+      "update_frequency": "page-specific",
+      "rate_limits_terms": "Respect terms; use as secondary reference.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Static reference only where permitted.",
+      "fallback_ingestion_method": "Official sources",
+      "graph_nodes_created": [
+        "ExternalReference",
+        "LegalTaxonomy",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "REFERENCES",
+        "TAGGED_AS"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Not canonical for official text unless explicitly sourced."
+      ],
+      "source_url": "https://www.law.cornell.edu/",
+      "docs_url": "https://www.law.cornell.edu/"
+    },
+    {
+      "source_id": "wikidata",
+      "name": "Wikidata",
+      "owner": "Wikimedia Foundation",
+      "jurisdiction": "global",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "secondary",
+      "data_types": [
+        "judges",
+        "courts",
+        "agencies",
+        "statutes",
+        "entities",
+        "identifiers"
+      ],
+      "update_frequency": "continuously edited",
+      "rate_limits_terms": "Use SPARQL/API; preserve revision/claim provenance.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API/SPARQL.",
+      "fallback_ingestion_method": "Dumps",
+      "graph_nodes_created": [
+        "EntityAlias",
+        "GovernmentEntity",
+        "Judge",
+        "Court",
+        "ExternalIdentifier"
+      ],
+      "graph_edges_created": [
+        "SAME_AS",
+        "HAS_IDENTIFIER",
+        "ALIAS_OF"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Community-edited data requires confidence and provenance labels."
+      ],
+      "source_url": "https://www.wikidata.org/",
+      "docs_url": "https://www.wikidata.org/wiki/Wikidata:Data_access"
+    },
+    {
+      "source_id": "loc_authorities",
+      "name": "Library of Congress authorities",
+      "owner": "Library of Congress",
+      "jurisdiction": "us",
+      "source_type": "api",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "names",
+        "subjects",
+        "authority identifiers"
+      ],
+      "update_frequency": "catalog updates",
+      "rate_limits_terms": "Use API/linked data; preserve authority URI.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "API/linked data.",
+      "fallback_ingestion_method": "Bulk downloads",
+      "graph_nodes_created": [
+        "AuthorityRecord",
+        "EntityAlias",
+        "LegalTaxonomy",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "SAME_AS",
+        "HAS_SUBJECT",
+        "NORMALIZES"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Name authority may not resolve legal entities without additional evidence."
+      ],
+      "source_url": "https://id.loc.gov/",
+      "docs_url": "https://id.loc.gov/techcenter/"
+    },
+    {
+      "source_id": "gpo_mods_metadata",
+      "name": "GPO MODS metadata",
+      "owner": "U.S. Government Publishing Office",
+      "jurisdiction": "us",
+      "source_type": "bulk",
+      "access": "free_key_required",
+      "official_status": "official",
+      "data_types": [
+        "package metadata",
+        "MODS",
+        "PREMIS",
+        "provenance fields"
+      ],
+      "update_frequency": "collection-specific",
+      "rate_limits_terms": "Available through GovInfo packages/API; preserve package IDs.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "GovInfo API/package metadata.",
+      "fallback_ingestion_method": "Bulk package ZIPs",
+      "graph_nodes_created": [
+        "SourceDocument",
+        "SourceCollection",
+        "Checksum",
+        "SourceLicense"
+      ],
+      "graph_edges_created": [
+        "HAS_METADATA",
+        "DERIVED_FROM",
+        "HAS_CHECKSUM"
+      ],
+      "connector_status": "planned",
+      "priority": "P1",
+      "risks": [
+        "Should remain tied to GovInfo package provenance."
+      ],
+      "source_url": "https://www.govinfo.gov/",
+      "docs_url": "https://www.govinfo.gov/features/api"
+    },
+    {
+      "source_id": "indigo_book",
+      "name": "Indigo Book and citation style references",
+      "owner": "Public.Resource.Org and collaborators",
+      "jurisdiction": "us",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "secondary",
+      "data_types": [
+        "legal citation rules and examples"
+      ],
+      "update_frequency": "edition-based",
+      "rate_limits_terms": "Follow publication license; source as reference rules.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Static/bulk reference.",
+      "fallback_ingestion_method": "Manual citation rule fixtures",
+      "graph_nodes_created": [
+        "CitationRule",
+        "LegalTaxonomy",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "DEFINES_FORMAT",
+        "REFERENCES"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Citation style reference, not legal authority."
+      ],
+      "source_url": "https://law.resource.org/pub/us/code/blue/IndigoBook.html",
+      "docs_url": "https://law.resource.org/pub/us/code/blue/"
+    },
+    {
+      "source_id": "global_legal_corpora",
+      "name": "Future global legal corpora",
+      "owner": "National and international publishers",
+      "jurisdiction": "global",
+      "source_type": "bulk",
+      "access": "mixed",
+      "official_status": "unknown",
+      "data_types": [
+        "statutes",
+        "regulations",
+        "cases",
+        "treaties",
+        "gazettes"
+      ],
+      "update_frequency": "jurisdiction-specific",
+      "rate_limits_terms": "Terms and redistribution must be reviewed per jurisdiction.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Official API/bulk where available.",
+      "fallback_ingestion_method": "Static crawl only when lawful and necessary",
+      "graph_nodes_created": [
+        "LegalCorpus",
+        "CorpusEdition",
+        "Provision",
+        "Regulation",
+        "Opinion",
+        "Treaty",
+        "SourceDocument"
+      ],
+      "graph_edges_created": [
+        "HAS_EDITION",
+        "DERIVED_FROM",
+        "CITES",
+        "APPLIES_TO"
+      ],
+      "connector_status": "deferred",
+      "priority": "P2",
+      "risks": [
+        "Jurisdiction-specific law, licensing, language, and authenticity issues."
+      ],
+      "source_url": "varies",
+      "docs_url": "varies"
+    }
+  ]
+}

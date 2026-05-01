@@ -2,7 +2,9 @@
 
 import { useState, useMemo } from "react"
 import Link from "next/link"
-import type { ComplaintAnalysis, ResponseType, RiskLevel } from "@/lib/types"
+import type { ComplaintAnalysis, ComplaintParty, ResponseType, RiskLevel } from "@/lib/types"
+import { createMatter, extractDocument, importDocumentComplaint, uploadTextFile } from "@/lib/casebuilder/api"
+import type { ComplaintDraft } from "@/lib/casebuilder/types"
 import { cn } from "@/lib/utils"
 import {
   AlertTriangle,
@@ -44,6 +46,83 @@ const RESPONSE_META: Record<ResponseType, { label: string; cls: string }> = {
   lack_knowledge: { label: "Lack knowledge", cls: "bg-muted text-muted-foreground" },
   legal_conclusion: { label: "Legal conclusion", cls: "bg-accent/20 text-accent-foreground" },
   needs_review: { label: "Needs review", cls: "bg-primary/15 text-primary" },
+}
+
+export function ComplaintWorkflowClient() {
+  const [title, setTitle] = useState("Complaint analysis")
+  const [text, setText] = useState("")
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [analysis, setAnalysis] = useState<ComplaintAnalysis | null>(null)
+
+  async function analyze(event: React.FormEvent) {
+    event.preventDefault()
+    if (!text.trim()) return
+    setPending(true)
+    setError(null)
+    try {
+      const matter = await createMatter({
+        name: title || "Complaint analysis",
+        matter_type: "complaint_analysis",
+        user_role: "defendant",
+        jurisdiction: "Oregon",
+      })
+      if (!matter.data) throw new Error(matter.error || "Matter could not be created.")
+      const document = await uploadTextFile(matter.data.id, {
+        filename: `${title || "complaint"}.txt`,
+        text,
+        mime_type: "text/plain",
+        document_type: "complaint",
+        folder: "pleadings",
+      })
+      if (!document.data) throw new Error(document.error || "Complaint could not be uploaded.")
+      await extractDocument(matter.data.id, document.data.id)
+      const imported = await importDocumentComplaint(matter.data.id, document.data.id, { title, force: true })
+      const complaint = imported.data?.imported[0]?.complaint
+      if (!complaint) throw new Error(imported.error || imported.data?.warnings[0] || "Complaint import produced no complaint draft.")
+      setAnalysis(analysisFromComplaint(complaint, title, text))
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Complaint analysis failed.")
+    } finally {
+      setPending(false)
+    }
+  }
+
+  if (analysis) return <ComplaintClient analysis={analysis} />
+
+  return (
+    <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 p-6">
+      <div>
+        <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+          <Briefcase className="h-3 w-3" />
+          complaint analyzer / live
+        </div>
+        <h1 className="mt-1 text-xl font-semibold">Complaint Analyzer</h1>
+      </div>
+      <form onSubmit={analyze} className="space-y-3">
+        <input
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          className="h-9 w-full rounded border border-border bg-card px-3 text-sm"
+          placeholder="Matter or complaint title"
+        />
+        <textarea
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          className="min-h-[420px] w-full resize-y rounded border border-border bg-card px-3 py-2 text-sm leading-6"
+          placeholder="Paste complaint text..."
+        />
+        {error && <div className="rounded border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>}
+        <button
+          type="submit"
+          disabled={pending || !text.trim()}
+          className="rounded bg-primary px-4 py-2 font-mono text-xs uppercase tracking-wider text-primary-foreground disabled:opacity-50"
+        >
+          {pending ? "Analyzing" : "Analyze complaint"}
+        </button>
+      </form>
+    </div>
+  )
 }
 
 export function ComplaintClient({ analysis }: { analysis: ComplaintAnalysis }) {
@@ -131,6 +210,72 @@ export function ComplaintClient({ analysis }: { analysis: ComplaintAnalysis }) {
   )
 }
 
+function analysisFromComplaint(complaint: ComplaintDraft, title: string, sourceText: string): ComplaintAnalysis {
+  const parties: ComplaintParty[] = complaint.parties.map((party) => ({
+    party_id: party.party_id,
+    name: party.name,
+    role: party.role === "defendant" || party.role === "plaintiff" ? party.role : "third_party",
+    type: party.party_type === "entity" || party.party_type === "government" ? party.party_type : "individual",
+  }))
+  const claims = complaint.counts.map((count, index) => ({
+    claim_id: count.count_id,
+    count_label: `Count ${index + 1}`,
+    title: count.title,
+    cause_of_action: count.legal_theory,
+    required_elements: count.element_ids.map((elementId) => ({
+      element_id: elementId,
+      text: elementId,
+      alleged: true,
+      proven: false,
+      authority: count.authorities[0]?.citation ?? "review required",
+    })),
+    alleged_facts: count.fact_ids,
+    missing_facts: count.weaknesses,
+    potential_defenses: count.weaknesses.map((weakness) => ({ name: weakness, authority: "case review", viability: "medium" as RiskLevel })),
+    relevant_law: count.authorities.map((authority) => ({
+      citation: authority.citation,
+      canonical_id: authority.canonical_id,
+      reason: authority.reason ?? "Imported complaint authority",
+    })),
+    risk_level: (count.health === "blocked" ? "high" : count.health === "needs_review" ? "medium" : "low") as RiskLevel,
+  }))
+  return {
+    complaint_id: complaint.complaint_id,
+    filename: `${title || complaint.title}.txt`,
+    uploaded_at: complaint.created_at || new Date().toISOString(),
+    court: complaint.caption.court_name || "Unassigned court",
+    case_number: complaint.caption.case_number ?? "Unassigned",
+    user_role: "defendant",
+    service_date: new Date().toISOString().slice(0, 10),
+    summary: complaint.paragraphs.slice(0, 3).map((paragraph) => paragraph.text).join(" "),
+    parties,
+    claims,
+    allegations: complaint.paragraphs.map((paragraph) => ({
+      allegation_id: paragraph.paragraph_id,
+      paragraph: paragraph.number,
+      text: paragraph.text,
+      suggested_response: paragraph.review_status === "supported" ? "admit" : "needs_review",
+      reason: paragraph.review_status,
+      evidence_needed: paragraph.fact_ids,
+    })),
+    deadlines: [],
+    defense_candidates: claims.flatMap((claim) => claim.potential_defenses.map((defense) => ({
+      name: defense.name,
+      authority: defense.authority,
+      rationale: "Imported complaint weakness.",
+      viability: defense.viability,
+    }))),
+    motion_candidates: [],
+    counterclaim_candidates: [],
+    evidence_checklist: complaint.paragraphs.slice(0, 8).map((paragraph) => ({
+      item: `Evidence for paragraph ${paragraph.number}`,
+      obtained: paragraph.evidence_uses.length > 0,
+      needed_for: paragraph.text.slice(0, 80),
+    })),
+    draft_answer_preview: sourceText.slice(0, 1200),
+  }
+}
+
 // ===== Steps =====
 
 function UploadStep({ analysis, onNext }: { analysis: ComplaintAnalysis; onNext: () => void }) {
@@ -158,7 +303,7 @@ function UploadStep({ analysis, onNext }: { analysis: ComplaintAnalysis; onNext:
             <div className="mx-auto mt-3 max-w-md rounded border border-border bg-background px-3 py-2 text-left font-mono text-xs">
               <div className="truncate text-foreground">{selectedFile.name}</div>
               <div className="mt-0.5 text-[10px] tabular-nums text-muted-foreground">
-                {(selectedFile.size / 1024).toFixed(1)} KB selected · demo analysis will stay read-only
+                {(selectedFile.size / 1024).toFixed(1)} KB selected
               </div>
             </div>
           )}

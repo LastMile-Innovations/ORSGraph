@@ -25,6 +25,7 @@ export function SearchInput({ value, onChange, onKeyDown, onSelectSuggestion, to
 
   useEffect(() => {
     const requestId = ++suggestRequestRef.current
+    const controller = new AbortController()
     const fetchSuggestions = async () => {
       if (value.length < 2) {
         setSuggestions([])
@@ -35,13 +36,14 @@ export function SearchInput({ value, onChange, onKeyDown, onSelectSuggestion, to
 
       setIsSuggesting(true)
       try {
-        const res = await searchSuggest(value)
+        const res = await searchSuggest(value, 10, controller.signal)
         if (requestId !== suggestRequestRef.current) return
         setSuggestions(res)
         setShowDropdown(res.length > 0)
         setActiveIndex(-1)
       } catch (err) {
         if (requestId !== suggestRequestRef.current) return
+        if (err instanceof Error && err.name === "AbortError") return
         console.error("Suggest failed:", err)
       } finally {
         if (requestId === suggestRequestRef.current) {
@@ -51,7 +53,10 @@ export function SearchInput({ value, onChange, onKeyDown, onSelectSuggestion, to
     }
 
     const timer = setTimeout(fetchSuggestions, 300)
-    return () => clearTimeout(timer)
+    return () => {
+      controller.abort()
+      clearTimeout(timer)
+    }
   }, [value])
 
   useEffect(() => {

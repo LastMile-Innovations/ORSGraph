@@ -3,11 +3,6 @@
 import { Slider } from "@/components/ui/slider"
 
 export type GraphForces = {
-  legal: number
-  embedding: number
-  citation: number
-  semantic: number
-  history: number
   repulsion: number
   cluster: number
   labelDensity: number
@@ -23,11 +18,6 @@ export function GraphForceControls({
 }) {
   return (
     <div className="space-y-4">
-      <ForceSlider label="Legal edges" value={forces.legal} onChange={(legal) => onChange({ ...forces, legal })} />
-      <ForceSlider label="Embedding" value={forces.embedding} onChange={(embedding) => onChange({ ...forces, embedding })} />
-      <ForceSlider label="Citation" value={forces.citation} onChange={(citation) => onChange({ ...forces, citation })} />
-      <ForceSlider label="Semantic" value={forces.semantic} onChange={(semantic) => onChange({ ...forces, semantic })} />
-      <ForceSlider label="History" value={forces.history} onChange={(history) => onChange({ ...forces, history })} />
       <ForceSlider label="Repulsion" value={forces.repulsion} onChange={(repulsion) => onChange({ ...forces, repulsion })} />
       <ForceSlider label="Cluster" value={forces.cluster} onChange={(cluster) => onChange({ ...forces, cluster })} />
       <ForceSlider label="Labels" value={forces.labelDensity} onChange={(labelDensity) => onChange({ ...forces, labelDensity })} />

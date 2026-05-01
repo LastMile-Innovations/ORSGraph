@@ -1,6 +1,7 @@
 use ors_crawler_v0::{
-    court_rules_registry_parser, embeddings, io_jsonl, local_rule_pdf_parser, models, neo4j_loader,
-    ors_dom_parser, qc, qc_full, qc_neo4j, resolver, semantic, utcr_pdf_parser, voyage,
+    court_rules_registry_parser, embeddings, ingest_runner, io_jsonl, local_rule_pdf_parser,
+    models, neo4j_loader, ors_dom_parser, qc, qc_full, qc_neo4j, resolver, semantic,
+    source_registry, utcr_pdf_parser, voyage,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -177,6 +178,62 @@ enum Command {
         fetch_only: bool,
         #[arg(long)]
         skip_citation_resolution: bool,
+    },
+    ValidateSourceRegistry {
+        #[arg(long)]
+        registry: Option<PathBuf>,
+        #[arg(long, default_value_t = false)]
+        write_yaml: bool,
+    },
+    SourceIngest {
+        #[arg(long)]
+        source_id: Option<String>,
+        #[arg(long)]
+        priority: Option<String>,
+        #[arg(long, default_value = "data/sources")]
+        out: PathBuf,
+        #[arg(long)]
+        registry: Option<PathBuf>,
+        #[arg(long, default_value = "all")]
+        mode: String,
+        #[arg(long)]
+        fixture_dir: Option<PathBuf>,
+        #[arg(long, default_value_t = 2025)]
+        edition_year: i32,
+        #[arg(long)]
+        chapters: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        max_items: usize,
+        #[arg(
+            long,
+            env = "ORS_CRAWLER_USER_AGENT",
+            default_value = "NeighborOS-ORSGraph/0.1 registry crawler"
+        )]
+        user_agent: String,
+        #[arg(long, default_value_t = 500)]
+        delay_ms: u64,
+        #[arg(long, default_value_t = 3)]
+        max_attempts: u32,
+        #[arg(long, default_value_t = 2)]
+        concurrency: usize,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        allow_network: bool,
+        #[arg(long, default_value_t = false)]
+        refresh: bool,
+        #[arg(long, default_value_t = false)]
+        fail_on_qc: bool,
+    },
+    CombineGraph {
+        #[arg(long, default_value = "data/sources")]
+        sources_dir: PathBuf,
+        #[arg(long, default_value = "data/graph")]
+        out: PathBuf,
+        #[arg(long)]
+        registry: Option<PathBuf>,
+        #[arg(long)]
+        source_id: Option<String>,
+        #[arg(long)]
+        priority: Option<String>,
     },
     QcFull {
         #[arg(long)]
@@ -908,6 +965,78 @@ async fn main() -> Result<()> {
                 skip_citation_resolution,
             )
             .await?;
+            Ok(())
+        }
+        Command::ValidateSourceRegistry {
+            registry,
+            write_yaml,
+        } => ingest_runner::validate_source_registry(registry, write_yaml),
+        Command::SourceIngest {
+            source_id,
+            priority,
+            out,
+            registry,
+            mode,
+            fixture_dir,
+            edition_year,
+            chapters,
+            max_items,
+            user_agent,
+            delay_ms,
+            max_attempts,
+            concurrency,
+            allow_network,
+            refresh,
+            fail_on_qc,
+        } => {
+            let priority = priority
+                .as_deref()
+                .map(source_registry::SourcePriority::parse)
+                .transpose()?;
+            let mode = ingest_runner::IngestMode::parse(&mode)?;
+            let runs = ingest_runner::run_source_ingest(ingest_runner::SourceIngestOptions {
+                registry_path: registry,
+                out,
+                source_id,
+                priority,
+                mode,
+                fixture_dir,
+                fetch_policy: ors_crawler_v0::fetcher::FetchPolicy {
+                    user_agent,
+                    delay_ms,
+                    timeout_secs: 45,
+                    max_attempts,
+                    concurrency,
+                    allow_network,
+                    use_cache: !refresh,
+                },
+                edition_year,
+                chapters,
+                max_items,
+                fail_on_qc,
+            })
+            .await?;
+            info!(
+                "[source-ingest] completed {} source run(s), {} graph rows",
+                runs.len(),
+                runs.iter().map(|run| run.graph_rows).sum::<usize>()
+            );
+            Ok(())
+        }
+        Command::CombineGraph {
+            sources_dir,
+            out,
+            registry,
+            source_id,
+            priority,
+        } => {
+            let priority = priority
+                .as_deref()
+                .map(source_registry::SourcePriority::parse)
+                .transpose()?;
+            let rows =
+                ingest_runner::combine_graph(registry, sources_dir, out, source_id, priority)?;
+            info!("[combine-graph] wrote {} merged rows", rows);
             Ok(())
         }
         Command::QcFull {

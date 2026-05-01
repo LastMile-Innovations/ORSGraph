@@ -806,20 +806,48 @@ impl SearchService {
                         | "exhibitrequirement"
                         | "protectedinformationrequirement"
                 ),
+                "definition" | "definedterm" => {
+                    kind == "definedterm" || self.has_semantic_signal(candidate, &["definition"])
+                }
+                "obligation" | "exception" | "deadline" | "penalty" | "remedy" => {
+                    self.has_semantic_signal(candidate, &[expected.as_str()])
+                }
                 "notice" | "requirednotice" => {
-                    kind == "requirednotice" || self.has_semantic_signal(candidate, &["notice"])
+                    matches!(kind.as_str(), "requirednotice" | "required_notice")
+                        || self.has_semantic_signal(candidate, &["notice", "requirednotice"])
                 }
                 "history" => matches!(
                     kind.as_str(),
-                    "sourcenote" | "statusevent" | "temporaleffect" | "sessionlaw" | "amendment"
+                    "sourcenote"
+                        | "source_note"
+                        | "statusevent"
+                        | "status_event"
+                        | "temporaleffect"
+                        | "temporal_effect"
+                        | "sessionlaw"
+                        | "session_law"
+                        | "amendment"
                 ),
-                "source_note" | "sourcenote" => kind == "sourcenote",
-                "temporal_effect" | "temporaleffect" => kind == "temporaleffect",
-                "taxrule" | "tax_rule" => kind == "taxrule",
-                "moneyamount" | "money_amount" => kind == "moneyamount",
-                "ratelimit" | "rate_limit" => kind == "ratelimit",
-                "legalactor" | "legal_actor" | "actor" => kind == "legalactor",
-                "legalaction" | "legal_action" | "action" => kind == "legalaction",
+                "source_note" | "sourcenote" => {
+                    matches!(kind.as_str(), "sourcenote" | "source_note")
+                }
+                "temporal_effect" | "temporaleffect" => {
+                    matches!(kind.as_str(), "temporaleffect" | "temporal_effect")
+                }
+                "session_law" | "sessionlaw" => {
+                    matches!(kind.as_str(), "sessionlaw" | "session_law")
+                }
+                "taxrule" | "tax_rule" => matches!(kind.as_str(), "taxrule" | "tax_rule"),
+                "moneyamount" | "money_amount" => {
+                    matches!(kind.as_str(), "moneyamount" | "money_amount")
+                }
+                "ratelimit" | "rate_limit" => matches!(kind.as_str(), "ratelimit" | "rate_limit"),
+                "legalactor" | "legal_actor" | "actor" => {
+                    matches!(kind.as_str(), "legalactor" | "legal_actor")
+                }
+                "legalaction" | "legal_action" | "action" => {
+                    matches!(kind.as_str(), "legalaction" | "legal_action")
+                }
                 _ => false,
             }
     }

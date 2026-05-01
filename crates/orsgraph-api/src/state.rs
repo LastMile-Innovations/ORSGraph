@@ -1,4 +1,5 @@
 use crate::config::ApiConfig;
+use crate::services::admin::AdminService;
 use crate::services::analytics::AnalyticsService;
 use crate::services::casebuilder::CaseBuilderService;
 use crate::services::embedding::EmbeddingService;
@@ -26,6 +27,7 @@ pub struct AppState {
     pub rerank_service: Option<Arc<RerankService>>,
     pub stats_service: Arc<StatsService>,
     pub health_service: Arc<HealthService>,
+    pub admin_service: Arc<AdminService>,
     pub analytics_service: Arc<AnalyticsService>,
     pub home_service: Arc<HomeService>,
     pub casebuilder_service: Arc<CaseBuilderService>,
@@ -99,6 +101,8 @@ impl AppState {
 
         let stats_service = Arc::new(StatsService::new(neo4j_service.clone()));
         let health_service = Arc::new(HealthService::new(neo4j_service.clone()));
+        let config = Arc::new(config);
+        let admin_service = Arc::new(AdminService::new(config.clone()).await?);
         let analytics_service = Arc::new(AnalyticsService::new(neo4j_service.clone()));
         let home_service = Arc::new(HomeService::new(
             stats_service.clone(),
@@ -136,7 +140,8 @@ impl AppState {
             home_service,
             casebuilder_service,
             rule_applicability_resolver,
-            config: Arc::new(config),
+            admin_service,
+            config,
         })
     }
 }

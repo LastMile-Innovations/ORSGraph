@@ -3,6 +3,8 @@
 import { useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import type { FactCheckReport, FactCheckStatus } from "@/lib/types"
+import { createDraft, createMatter, factCheckDraft, patchDraft, citationCheckDraft } from "@/lib/casebuilder/api"
+import type { CaseCitationCheckFinding, CaseFactCheckFinding } from "@/lib/casebuilder/types"
 import { QCBadge, StatusBadge } from "@/components/orsg/badges"
 import {
   AlertTriangle,
@@ -63,6 +65,112 @@ const STATUS_META: Record<
     cls: "bg-muted text-muted-foreground",
     ring: "ring-border",
   },
+}
+
+export function FactCheckWorkflowClient() {
+  const [title, setTitle] = useState("Standalone fact check")
+  const [text, setText] = useState("")
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [report, setReport] = useState<FactCheckReport | null>(null)
+
+  async function runFactCheck(event: React.FormEvent) {
+    event.preventDefault()
+    if (!text.trim()) return
+    setPending(true)
+    setError(null)
+    setReport(null)
+    const paragraphs = text.split(/\n\s*\n/).map((paragraph) => paragraph.trim()).filter(Boolean)
+    try {
+      const matter = await createMatter({
+        name: title || "Standalone fact check",
+        matter_type: "fact_check",
+        user_role: "researcher",
+        jurisdiction: "Oregon",
+      })
+      if (!matter.data) throw new Error(matter.error || "Matter could not be created.")
+      const draft = await createDraft(matter.data.id, {
+        title,
+        draft_type: "memo",
+        description: "Standalone fact-check input",
+      })
+      if (!draft.data) throw new Error(draft.error || "Draft could not be created.")
+      await patchDraft(matter.data.id, draft.data.id, {
+        sections: [
+          {
+            id: "section:input",
+            heading: "Input",
+            body: text,
+            citations: [],
+            suggestions: [],
+            comments: [],
+          } as any,
+        ],
+        paragraphs: paragraphs.map((paragraph, index) => ({
+          paragraph_id: `paragraph:${index + 1}`,
+          id: `paragraph:${index + 1}`,
+          matter_id: matter.data!.id,
+          draft_id: draft.data!.id,
+          number: index + 1,
+          ordinal: index + 1,
+          role: "facts",
+          text: paragraph,
+          authorities: [],
+          fact_ids: [],
+          evidence_ids: [],
+          locked: false,
+          review_status: "needs_review",
+        } as any)),
+      })
+      const [facts, citations] = await Promise.all([
+        factCheckDraft(matter.data.id, draft.data.id),
+        citationCheckDraft(matter.data.id, draft.data.id),
+      ])
+      if (!facts.data) throw new Error(facts.error || "Fact-check failed.")
+      if (!citations.data) throw new Error(citations.error || "Citation-check failed.")
+      setReport(buildFactCheckReport(title, paragraphs, facts.data.result ?? [], citations.data.result ?? []))
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Fact-check failed.")
+    } finally {
+      setPending(false)
+    }
+  }
+
+  if (report) return <FactCheckClient report={report} />
+
+  return (
+    <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 p-6">
+      <div>
+        <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+          <FileSearch className="h-3 w-3" />
+          fact-check / live
+        </div>
+        <h1 className="mt-1 text-xl font-semibold">Fact Check</h1>
+      </div>
+      <form onSubmit={runFactCheck} className="space-y-3">
+        <input
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          className="h-9 w-full rounded border border-border bg-card px-3 text-sm"
+          placeholder="Document title"
+        />
+        <textarea
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          className="min-h-[360px] w-full resize-y rounded border border-border bg-card px-3 py-2 text-sm leading-6"
+          placeholder="Paste the draft, complaint, motion, or memo to check..."
+        />
+        {error && <div className="rounded border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>}
+        <button
+          type="submit"
+          disabled={pending || !text.trim()}
+          className="rounded bg-primary px-4 py-2 font-mono text-xs uppercase tracking-wider text-primary-foreground disabled:opacity-50"
+        >
+          {pending ? "Checking" : "Run live check"}
+        </button>
+      </form>
+    </div>
+  )
 }
 
 export function FactCheckClient({ report }: { report: FactCheckReport }) {
@@ -403,4 +511,89 @@ function SummaryBar({
       ))}
     </div>
   )
+}
+
+function buildFactCheckReport(
+  title: string,
+  paragraphs: string[],
+  factFindings: CaseFactCheckFinding[],
+  citationFindings: CaseCitationCheckFinding[],
+): FactCheckReport {
+  const findings = [
+    ...factFindings.map((finding, index) => ({
+      finding_id: finding.finding_id,
+      paragraph_id: finding.paragraph_id ?? `paragraph:${index + 1}`,
+      paragraph_index: paragraphIndex(finding.paragraph_id, index),
+      claim: finding.message,
+      status: findingStatus(finding.severity),
+      confidence: finding.severity === "info" ? 0.9 : 0.68,
+      explanation: finding.message,
+      suggested_fix: finding.status === "open" ? "Review supporting matter facts and evidence." : null,
+      sources: [],
+    })),
+    ...citationFindings.map((finding, index) => ({
+      finding_id: finding.finding_id,
+      paragraph_id: `citation:${index + 1}`,
+      paragraph_index: index + 1,
+      claim: finding.citation || "Citation",
+      status: findingStatus(finding.severity),
+      confidence: finding.canonical_id ? 0.85 : 0.55,
+      explanation: finding.message,
+      suggested_fix: finding.status === "open" ? "Review citation resolution before relying on this authority." : null,
+      sources: finding.canonical_id
+        ? [{
+            citation: finding.citation,
+            canonical_id: finding.canonical_id,
+            quote: null,
+            edition_year: new Date().getFullYear(),
+            status: "active" as const,
+          }]
+        : [],
+    })),
+  ]
+  return {
+    document: {
+      document_id: `fact-check:${Date.now()}`,
+      title,
+      doc_type: "memo",
+      word_count: paragraphs.join(" ").split(/\s+/).filter(Boolean).length,
+      uploaded_at: new Date().toISOString(),
+      paragraphs: paragraphs.map((paragraph, index) => ({
+        paragraph_id: `paragraph:${index + 1}`,
+        index: index + 1,
+        text: paragraph,
+      })),
+    },
+    findings,
+    summary: {
+      total: findings.length,
+      supported: findings.filter((finding) => finding.status === "supported").length,
+      partial: findings.filter((finding) => finding.status === "partially_supported").length,
+      unsupported: findings.filter((finding) => finding.status === "unsupported").length,
+      contradicted: findings.filter((finding) => finding.status === "contradicted").length,
+      wrong_citation: findings.filter((finding) => finding.status === "wrong_citation").length,
+      stale_law: findings.filter((finding) => finding.status === "stale_law").length,
+      needs_source: findings.filter((finding) => finding.status === "needs_source").length,
+    },
+    citation_table: citationFindings.map((finding, index) => ({
+      raw_citation: finding.citation,
+      resolved_citation: finding.canonical_id ? finding.citation : null,
+      canonical_id: finding.canonical_id ?? null,
+      edition_year: finding.canonical_id ? new Date().getFullYear() : null,
+      status: finding.canonical_id ? "active" : "unresolved",
+      qc_status: finding.severity === "info" ? "pass" : "warning",
+      occurrences: [index + 1],
+    })),
+  }
+}
+
+function paragraphIndex(paragraphId: string | null | undefined, fallback: number) {
+  const match = paragraphId?.match(/(\d+)$/)
+  return match ? Number.parseInt(match[1], 10) : fallback + 1
+}
+
+function findingStatus(severity: string): FactCheckStatus {
+  if (severity === "blocking" || severity === "serious") return "unsupported"
+  if (severity === "warning") return "partially_supported"
+  return "supported"
 }

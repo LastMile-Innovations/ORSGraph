@@ -1,9 +1,10 @@
 import Link from "next/link"
 import { HomeAction } from "@/lib/types"
-import { Search, MessageSquare, BookOpen, Network, ShieldCheck, Activity } from "lucide-react"
+import type { LucideIcon } from "lucide-react"
+import { Activity, ArrowRight, BookOpen, CheckCircle2, Clock3, MessageSquare, Network, Search, ShieldCheck } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-const IconMap: Record<string, any> = {
+const IconMap: Record<string, LucideIcon> = {
   Search,
   MessageSquare,
   BookOpen,
@@ -12,46 +13,69 @@ const IconMap: Record<string, any> = {
   Activity,
 }
 
+const statusClass: Record<NonNullable<HomeAction["status"]>, string> = {
+  ready: "bg-success/15 text-success",
+  coming_soon: "bg-muted text-muted-foreground",
+  internal: "bg-primary/15 text-primary",
+  warning: "bg-warning/15 text-warning",
+}
+
+const statusIcon: Record<NonNullable<HomeAction["status"]>, LucideIcon> = {
+  ready: CheckCircle2,
+  coming_soon: Clock3,
+  internal: Activity,
+  warning: ShieldCheck,
+}
+
 export function ActionCard({ action }: { action: HomeAction }) {
   const Icon = IconMap[action.icon] || Search
+  const StatusIcon = action.status ? statusIcon[action.status] : undefined
   const isPrimary = action.variant === "primary"
 
   return (
     <Link 
       href={action.href}
       className={cn(
-        "group relative flex flex-col p-6 rounded-2xl border transition-all duration-300",
+        "group relative flex min-h-52 flex-col rounded-md border p-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
         isPrimary 
-          ? "bg-indigo-600/10 border-indigo-500/50 hover:bg-indigo-600/20 hover:border-indigo-400" 
-          : "bg-zinc-900 border-zinc-800 hover:bg-zinc-800 hover:border-zinc-600"
+          ? "border-primary/40 bg-primary/10 hover:border-primary/70"
+          : "border-border bg-card hover:border-primary/40"
       )}
     >
-      <div className="flex items-center gap-4 mb-4">
-        <div className={cn(
-          "p-3 rounded-xl",
-          isPrimary ? "bg-indigo-500/20 text-indigo-400" : "bg-zinc-800 text-zinc-400 group-hover:text-zinc-200"
-        )}>
-          <Icon className="w-6 h-6" />
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className={cn(
+            "flex h-10 w-10 shrink-0 items-center justify-center rounded-md",
+            isPrimary ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground group-hover:text-primary"
+          )}>
+            <Icon className="h-5 w-5" />
+          </div>
+          <h3 className="min-w-0 text-sm font-semibold text-foreground">
+            {action.title}
+          </h3>
         </div>
-        <h3 className={cn(
-          "text-lg font-semibold",
-          isPrimary ? "text-indigo-300" : "text-zinc-100"
-        )}>
-          {action.title}
-        </h3>
+        {action.status && StatusIcon && (
+          <span className={cn("inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide", statusClass[action.status])}>
+            <StatusIcon className="h-3 w-3" />
+            {action.status.replace("_", " ")}
+          </span>
+        )}
       </div>
-      <p className="text-zinc-400 text-sm leading-relaxed mb-6 flex-grow">
+      <p className="mb-5 flex-grow text-sm leading-6 text-muted-foreground">
         {action.description}
       </p>
-      <div className="flex flex-wrap gap-2 mt-auto">
-        {action.badges?.map(badge => (
-          <span 
-            key={badge} 
-            className="px-2.5 py-1 text-xs font-mono rounded-md bg-zinc-950 border border-zinc-800 text-zinc-500"
-          >
-            {badge}
-          </span>
-        ))}
+      <div className="mt-auto flex items-end justify-between gap-3">
+        <div className="flex flex-wrap gap-1.5">
+          {action.badges?.map(badge => (
+            <span
+              key={badge}
+              className="rounded border border-border bg-background px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+            >
+              {badge}
+            </span>
+          ))}
+        </div>
+        <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
       </div>
     </Link>
   )

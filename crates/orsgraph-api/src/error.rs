@@ -34,6 +34,9 @@ pub enum ApiError {
 
     #[error("Unauthorized")]
     Unauthorized,
+
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
 }
 
 impl IntoResponse for ApiError {
@@ -72,6 +75,7 @@ impl IntoResponse for ApiError {
                 (StatusCode::INTERNAL_SERVER_ERROR, msg)
             }
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
+            ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
         };
 
         let body = json!({

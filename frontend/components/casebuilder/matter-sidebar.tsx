@@ -11,6 +11,7 @@ import {
   Calendar,
   CheckSquare,
   FileText,
+  Files,
   Folder,
   GavelIcon,
   GitGraphIcon,
@@ -24,7 +25,7 @@ import {
   Users,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { casebuilderHomeHref, matterHref } from "@/lib/casebuilder/routes"
+import { casebuilderHomeHref, matterHref, matterWorkProductsHref } from "@/lib/casebuilder/routes"
 import type { Matter, MatterSummary } from "@/lib/casebuilder/types"
 import { Button } from "@/components/ui/button"
 import {
@@ -46,6 +47,7 @@ interface MatterSidebarProps {
     claims?: number
     defenses?: number
     drafts?: number
+    workProducts?: number
     deadlines?: number
     tasks?: number
   }
@@ -91,6 +93,7 @@ export function MatterSidebar({ matter, counts = {}, className, onNavigate }: Ma
     {
       title: "work product",
       items: [
+        { href: matterWorkProductsHref(matter.matter_id), label: "Work product", icon: Files, count: resolvedCounts.workProducts },
         { href: `${base}/complaint`, label: "Complaint editor", icon: GavelIcon },
         { href: `${base}/drafts`, label: "Drafts", icon: FileText, count: resolvedCounts.drafts },
         { href: `${base}/tasks`, label: "Tasks", icon: CheckSquare, count: resolvedCounts.tasks },
@@ -260,6 +263,7 @@ function resolveMatterCounts(matter: MatterSidebarMatter, counts: NonNullable<Ma
     claims: counts.claims ?? (claims.length || matter.claim_count),
     defenses: counts.defenses ?? matter.defenses?.length ?? 0,
     drafts: counts.drafts ?? matter.drafts?.length ?? matter.draft_count,
+    workProducts: counts.workProducts ?? matter.work_products?.length ?? 0,
     deadlines: counts.deadlines ?? matter.deadlines?.filter((deadline) => deadline.status === "open").length ?? 0,
     tasks: counts.tasks ?? matter.tasks?.filter((task) => task.status !== "done").length ?? matter.open_task_count,
   }

@@ -1,10 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { AlertTriangle, CheckCircle2, ChevronRight, Database, FileSearch, GitBranch, Hash, Layers, Sparkles, XCircle } from "lucide-react"
-import { qcCorpus, corpusStatus } from "@/lib/mock-data"
+import { getQCReport, getQCSummary, runQCRun, type QCSummary } from "@/lib/api"
 import { Button } from "@/components/ui/button"
-import type { QCPanel } from "@/lib/types"
+import type { QCPanel, QCRunSummary } from "@/lib/types"
 
 const CATEGORY_ICON: Record<QCPanel["category"], React.ComponentType<{ className?: string }>> = {
   source: Database,
@@ -16,9 +16,82 @@ const CATEGORY_ICON: Record<QCPanel["category"], React.ComponentType<{ className
 }
 
 export function QCConsoleClient() {
-  const [activePanel, setActivePanel] = useState<string>(qcCorpus.panels[0]?.panel_id ?? "")
+  const [qcCorpus, setQCCorpus] = useState<QCRunSummary | null>(null)
+  const [activePanel, setActivePanel] = useState<string>("")
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getQCSummary()
+      .then((summary) => {
+        if (cancelled) return
+        const next = buildQCRun(summary)
+        setQCCorpus(next)
+        setActivePanel(next.panels[0]?.panel_id ?? "")
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : "QC summary failed.")
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  async function rerunChecks() {
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const run = await runQCRun()
+      const next = buildQCRun(run.summary, run.run_id)
+      setQCCorpus(next)
+      setActivePanel(next.panels[0]?.panel_id ?? "")
+      setMessage(`QC run ${run.run_id.replace(/^qc:run:/, "")} completed.`)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "QC run failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function exportReport() {
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const report = await getQCReport("csv")
+      const blob = new Blob([report.content], { type: report.mime_type })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = `${report.report_id.replace(/[:/]/g, "-")}.csv`
+      anchor.click()
+      URL.revokeObjectURL(url)
+      setMessage("QC report exported.")
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "QC export failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (loading) {
+    return <div className="p-6 text-sm text-muted-foreground">Loading QC summary...</div>
+  }
+
+  if (!qcCorpus) {
+    return <div className="p-6 text-sm text-destructive">QC summary unavailable{error ? `: ${error}` : "."}</div>
+  }
+
   const panel = qcCorpus.panels.find((p) => p.panel_id === activePanel) ?? qcCorpus.panels[0]
-  const passRate = qcCorpus.passed / qcCorpus.total_checks
+  const passRate = qcCorpus.total_checks > 0 ? qcCorpus.passed / qcCorpus.total_checks : 0
+  const unresolvedCitations = panelCount(qcCorpus, "citation", "fail") + panelCount(qcCorpus, "citation", "warning")
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -37,14 +110,19 @@ export function QCConsoleClient() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" className="font-mono text-xs">
+              <Button variant="outline" size="sm" className="font-mono text-xs" disabled={busy} onClick={rerunChecks}>
                 rerun checks
               </Button>
-              <Button size="sm" className="font-mono text-xs">
+              <Button size="sm" className="font-mono text-xs" disabled={busy} onClick={exportReport}>
                 export report
               </Button>
             </div>
           </div>
+          {(error || message) && (
+            <div className={`mb-3 rounded border px-3 py-2 text-xs ${error ? "border-destructive/30 bg-destructive/5 text-destructive" : "border-primary/20 bg-primary/5 text-muted-foreground"}`}>
+              {error || message}
+            </div>
+          )}
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <KpiCard
@@ -72,8 +150,8 @@ export function QCConsoleClient() {
               icon={Hash}
               tone="info"
               label="unresolved citations"
-              value={corpusStatus.citations.unresolved.toLocaleString()}
-              hint={`of ${corpusStatus.citations.total.toLocaleString()} mentions`}
+              value={unresolvedCitations.toLocaleString()}
+              hint={`${qcCorpus.panels.find((p) => p.category === "citation")?.count.toLocaleString() ?? "0"} citation QC rows`}
             />
           </div>
         </div>
@@ -124,6 +202,108 @@ export function QCConsoleClient() {
       </div>
     </div>
   )
+}
+
+function buildQCRun(summary: QCSummary, runId = `qc:run:${Date.now()}`): QCRunSummary {
+  const panels: QCPanel[] = [
+    {
+      panel_id: "qc:panel:orphan",
+      title: "Orphan records",
+      category: "source",
+      status: rowStatus(summary.orphan_counts.provisions + summary.orphan_counts.chunks + summary.orphan_counts.citations),
+      count: summary.orphan_counts.provisions + summary.orphan_counts.chunks + summary.orphan_counts.citations,
+      description: "Nodes that are missing required provenance or parent relationships.",
+      rows: [
+        qcRow("orphans:provisions", "Provision", summary.orphan_counts.provisions),
+        qcRow("orphans:chunks", "RetrievalChunk", summary.orphan_counts.chunks),
+        qcRow("orphans:citations", "CitationMention", summary.orphan_counts.citations),
+      ].filter((row) => row.level !== "info"),
+    },
+    {
+      panel_id: "qc:panel:duplicates",
+      title: "Duplicate identities",
+      category: "graph",
+      status: rowStatus(summary.duplicate_counts.legal_text_identities + summary.duplicate_counts.provisions + summary.duplicate_counts.cites_relationships),
+      count: summary.duplicate_counts.legal_text_identities + summary.duplicate_counts.provisions + summary.duplicate_counts.cites_relationships,
+      description: "Duplicate canonical records and duplicated citation edges.",
+      rows: [
+        qcRow("duplicates:legal-text", "LegalTextIdentity", summary.duplicate_counts.legal_text_identities),
+        qcRow("duplicates:provisions", "Provision", summary.duplicate_counts.provisions),
+        qcRow("duplicates:cites", "CITES", summary.duplicate_counts.cites_relationships),
+      ].filter((row) => row.level !== "info"),
+    },
+    {
+      panel_id: "qc:panel:embedding",
+      title: "Embedding readiness",
+      category: "embedding",
+      status: summary.embedding_readiness.coverage >= 95 || summary.embedding_readiness.total_chunks === 0 ? "pass" : "warning",
+      count: Math.max(0, summary.embedding_readiness.total_chunks - summary.embedding_readiness.embedded_chunks),
+      description: "Retrieval chunks without embeddings reduce semantic search coverage.",
+      rows:
+        summary.embedding_readiness.coverage >= 95 || summary.embedding_readiness.total_chunks === 0
+          ? []
+          : [
+              {
+                id: "embedding:coverage",
+                citation: "RetrievalChunk",
+                level: "warning",
+                message: `${summary.embedding_readiness.coverage.toFixed(2)}% embedding coverage.`,
+              },
+            ],
+    },
+    {
+      panel_id: "qc:panel:citations",
+      title: "Citation resolution",
+      category: "citation",
+      status: summary.cites_coverage.coverage >= 95 || summary.cites_coverage.total_citations === 0 ? "pass" : "warning",
+      count: Math.max(0, summary.cites_coverage.total_citations - summary.cites_coverage.resolved_citations),
+      description: "Citation mentions that have not resolved to a graph target.",
+      rows:
+        summary.cites_coverage.coverage >= 95 || summary.cites_coverage.total_citations === 0
+          ? []
+          : [
+              {
+                id: "citations:coverage",
+                citation: "CitationMention",
+                level: "warning",
+                message: `${summary.cites_coverage.coverage.toFixed(2)}% citation resolution coverage.`,
+              },
+            ],
+    },
+  ]
+  const totalChecks = panels.reduce((sum, panel) => sum + Math.max(panel.count, 1), 0)
+  const failures = panels.filter((panel) => panel.status === "fail").reduce((sum, panel) => sum + panel.count, 0)
+  const warnings = panels.filter((panel) => panel.status === "warning").reduce((sum, panel) => sum + panel.count, 0)
+  return {
+    run_id: runId,
+    ran_at: new Date().toISOString(),
+    duration_ms: 0,
+    status: failures > 0 ? "fail" : warnings > 0 ? "warning" : "pass",
+    total_checks: totalChecks,
+    passed: Math.max(0, totalChecks - warnings - failures),
+    warnings,
+    failures,
+    panels,
+  }
+}
+
+function qcRow(id: string, citation: string, count: number) {
+  return {
+    id,
+    citation,
+    level: count > 0 ? "fail" as const : "info" as const,
+    message: count > 0 ? `${count.toLocaleString()} records need review.` : "Clean.",
+  }
+}
+
+function rowStatus(count: number): "pass" | "warning" | "fail" {
+  return count > 0 ? "fail" : "pass"
+}
+
+function panelCount(run: QCRunSummary, category: QCPanel["category"], status: QCPanel["status"]) {
+  return run.panels
+    .filter((panel) => panel.category === category && panel.status === status)
+    .reduce((sum, panel) => sum + panel.count, 0)
 }
 
 function KpiCard({

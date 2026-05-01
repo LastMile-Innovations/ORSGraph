@@ -96,8 +96,24 @@ pub fn routes() -> Router<AppState> {
             "/matters/:matter_id/evidence/:evidence_id/link-fact",
             post(link_evidence_fact),
         )
-        .route("/matters/:matter_id/deadlines", get(list_deadlines))
-        .route("/matters/:matter_id/tasks", get(list_tasks))
+        .route("/matters/:matter_id/ask", post(ask_matter))
+        .route(
+            "/matters/:matter_id/deadlines",
+            get(list_deadlines).post(create_deadline),
+        )
+        .route(
+            "/matters/:matter_id/deadlines/compute",
+            post(compute_deadlines),
+        )
+        .route(
+            "/matters/:matter_id/deadlines/:deadline_id",
+            patch(patch_deadline),
+        )
+        .route(
+            "/matters/:matter_id/tasks",
+            get(list_tasks).post(create_task),
+        )
+        .route("/matters/:matter_id/tasks/:task_id", patch(patch_task))
         .route(
             "/matters/:matter_id/work-products",
             get(list_work_products).post(create_work_product),
@@ -718,6 +734,44 @@ async fn list_deadlines(
     ))
 }
 
+async fn create_deadline(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+    Json(request): Json<CreateDeadlineRequest>,
+) -> ApiResult<Json<CaseDeadline>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_deadline(&matter_id, request)
+            .await?,
+    ))
+}
+
+async fn patch_deadline(
+    State(state): State<AppState>,
+    Path((matter_id, deadline_id)): Path<(String, String)>,
+    Json(request): Json<PatchDeadlineRequest>,
+) -> ApiResult<Json<CaseDeadline>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_deadline(&matter_id, &deadline_id, request)
+            .await?,
+    ))
+}
+
+async fn compute_deadlines(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+) -> ApiResult<Json<ComputeDeadlinesResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .compute_deadlines(&matter_id)
+            .await?,
+    ))
+}
+
 async fn list_tasks(
     State(state): State<AppState>,
     Path(matter_id): Path<String>,
@@ -725,6 +779,192 @@ async fn list_tasks(
     Ok(Json(
         state.casebuilder_service.list_tasks(&matter_id).await?,
     ))
+}
+
+async fn create_task(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+    Json(request): Json<CreateTaskRequest>,
+) -> ApiResult<Json<CaseTask>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_task(&matter_id, request)
+            .await?,
+    ))
+}
+
+async fn patch_task(
+    State(state): State<AppState>,
+    Path((matter_id, task_id)): Path<(String, String)>,
+    Json(request): Json<PatchTaskRequest>,
+) -> ApiResult<Json<CaseTask>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_task(&matter_id, &task_id, request)
+            .await?,
+    ))
+}
+
+async fn ask_matter(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+    Json(request): Json<MatterAskRequest>,
+) -> ApiResult<Json<MatterAskResponse>> {
+    let matter = state.casebuilder_service.get_matter(&matter_id).await?;
+    let needle = request.question.to_lowercase();
+    let terms: Vec<&str> = needle
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|term| term.len() > 3)
+        .take(8)
+        .collect();
+
+    let related_facts: Vec<CaseFact> = matter
+        .facts
+        .iter()
+        .filter(|fact| {
+            let text = fact.statement.to_lowercase();
+            terms.iter().any(|term| text.contains(term))
+        })
+        .take(5)
+        .cloned()
+        .collect();
+    let related_documents: Vec<CaseDocument> = matter
+        .documents
+        .iter()
+        .filter(|document| {
+            let text = format!(
+                "{} {} {}",
+                document.title, document.filename, document.summary
+            )
+            .to_lowercase();
+            terms.iter().any(|term| text.contains(term))
+        })
+        .take(5)
+        .cloned()
+        .collect();
+
+    let search = state
+        .search_service
+        .search(SearchQuery {
+            q: request.question.clone(),
+            r#type: Some("all".to_string()),
+            authority_family: None,
+            chapter: None,
+            status: None,
+            mode: Some(SearchMode::Auto),
+            limit: Some(5),
+            offset: Some(0),
+            include: None,
+            semantic_type: None,
+            current_only: Some(true),
+            source_backed: Some(true),
+            has_citations: None,
+            has_deadlines: None,
+            has_penalties: None,
+            needs_review: None,
+        })
+        .await?;
+
+    let mut citations = Vec::new();
+    for (index, document) in related_documents.iter().enumerate() {
+        citations.push(MatterAskCitation {
+            citation_id: format!("matter-doc-{}", index + 1),
+            kind: "document".to_string(),
+            source_id: document.document_id.clone(),
+            title: document.title.clone(),
+            snippet: Some(document.summary.clone()),
+        });
+    }
+    for (index, fact) in related_facts.iter().enumerate() {
+        citations.push(MatterAskCitation {
+            citation_id: format!("matter-fact-{}", index + 1),
+            kind: "fact".to_string(),
+            source_id: fact.fact_id.clone(),
+            title: fact.statement.clone(),
+            snippet: fact.notes.clone(),
+        });
+    }
+    for (index, result) in search.results.iter().take(5).enumerate() {
+        citations.push(MatterAskCitation {
+            citation_id: format!("authority-{}", index + 1),
+            kind: "statute".to_string(),
+            source_id: result
+                .graph
+                .as_ref()
+                .and_then(|graph| graph.canonical_id.clone())
+                .unwrap_or_else(|| result.id.clone()),
+            title: result
+                .citation
+                .clone()
+                .or_else(|| result.title.clone())
+                .unwrap_or_else(|| result.id.clone()),
+            snippet: Some(result.snippet.clone()),
+        });
+    }
+
+    let source_spans = related_facts
+        .iter()
+        .flat_map(|fact| fact.source_spans.clone())
+        .chain(
+            related_documents
+                .iter()
+                .flat_map(|document| document.source_spans.clone()),
+        )
+        .take(8)
+        .collect();
+
+    let answer =
+        if related_facts.is_empty() && related_documents.is_empty() && search.results.is_empty() {
+            "I could not find matter records or source-backed authorities that match that question."
+                .to_string()
+        } else {
+            let mut parts = Vec::new();
+            if !related_facts.is_empty() {
+                parts.push(format!(
+                    "Found {} matching matter fact{}.",
+                    related_facts.len(),
+                    if related_facts.len() == 1 { "" } else { "s" }
+                ));
+            }
+            if !related_documents.is_empty() {
+                parts.push(format!(
+                    "Found {} matching document{}.",
+                    related_documents.len(),
+                    if related_documents.len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
+                ));
+            }
+            if let Some(top) = search.results.first() {
+                parts.push(format!(
+                    "The strongest source-backed authority match is {}: {}",
+                    top.citation.clone().unwrap_or_else(|| top.id.clone()),
+                    top.snippet
+                ));
+            }
+            parts.join(" ")
+        };
+
+    let mut warnings = search.warnings;
+    warnings.push(
+        "Matter ask is provider-free retrieval mode; verify legal conclusions before filing."
+            .to_string(),
+    );
+
+    Ok(Json(MatterAskResponse {
+        answer,
+        citations,
+        source_spans,
+        related_facts,
+        related_documents,
+        warnings,
+        mode: "retrieval".to_string(),
+        thread_id: request.thread_id,
+    }))
 }
 
 async fn list_complaints(

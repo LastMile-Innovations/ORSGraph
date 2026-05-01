@@ -4,6 +4,7 @@ import Link from "next/link"
 import { ExternalLink } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import type { GraphEdge, GraphNode } from "./types"
 
 export function GraphInspector({
@@ -11,11 +12,13 @@ export function GraphInspector({
   edges,
   onSelect,
   onExpand,
+  className,
 }: {
   node?: GraphNode | null
   edges: GraphEdge[]
   onSelect: (id: string) => void
   onExpand: (id: string) => void
+  className?: string
 }) {
   const connected = node ? edges.filter((edge) => edge.source === node.id || edge.target === node.id) : []
   const grouped = connected.reduce<Record<string, number>>((acc, edge) => {
@@ -24,7 +27,7 @@ export function GraphInspector({
   }, {})
 
   return (
-    <aside className="hidden h-full w-80 shrink-0 flex-col overflow-y-auto border-l border-border bg-card/50 scrollbar-thin xl:flex">
+    <aside className={cn("hidden h-full w-80 shrink-0 flex-col overflow-y-auto border-l border-border bg-card/50 scrollbar-thin xl:flex", className)}>
       <section className="border-b border-border p-4">
         <div className="mb-2 font-mono text-[11px] uppercase tracking-wide text-muted-foreground">Overview</div>
         {node ? (

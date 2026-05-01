@@ -2,10 +2,10 @@ import { AlertCircle } from "lucide-react"
 
 export function HomeOfflineBanner() {
   return (
-    <div className="bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-lg p-4 mb-8 flex items-center gap-3 max-w-5xl mx-auto">
-      <AlertCircle className="w-5 h-5 flex-shrink-0" />
+    <div className="mb-6 flex items-center gap-3 rounded-md border border-warning/30 bg-warning/10 p-3 text-warning">
+      <AlertCircle className="h-4 w-4 flex-shrink-0" />
       <p className="text-sm font-medium">
-        Using mock data. ORSGraph API is offline.
+        Live home data is unavailable. The page is showing read-only fallback data.
       </p>
     </div>
   )

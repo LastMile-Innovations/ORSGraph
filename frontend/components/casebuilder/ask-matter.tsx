@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import type { Matter, MatterChatMessage, MatterChatCitation } from "@/lib/casebuilder/types"
 import { matterClaimsHref, matterDocumentHref, matterFactsHref } from "@/lib/casebuilder/routes"
+import { askMatter } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
@@ -43,7 +44,7 @@ export function AskMatter({ matter }: AskMatterProps) {
   const [pending, setPending] = useState(false)
   const [scope, setScope] = useState<"all" | "documents" | "facts" | "claims">("all")
 
-  const send = (text: string) => {
+  const send = async (text: string) => {
     if (!text.trim()) return
     const userMsg: MatterChatMessage = {
       id: `msg-${Date.now()}`,
@@ -56,24 +57,35 @@ export function AskMatter({ matter }: AskMatterProps) {
     setInput("")
     setPending(true)
 
-    setTimeout(() => {
+    const result = await askMatter(matter.id, { question: text, scope })
+    if (result.data) {
       const reply: MatterChatMessage = {
         id: `msg-${Date.now() + 1}`,
         role: "assistant",
-        content: mockAssistantReply(text, matter),
-        citations: mockCitations(matter),
+        content: result.data.answer,
+        citations: mapAskCitations(result.data.citations),
         timestamp: new Date().toISOString(),
-        confidence: 0.86,
+        confidence: 0.72,
         reasoning: [
-          "Searched 24 indexed document chunks across the matter.",
-          "Pulled 5 facts tagged 'habitability' and 'damages'.",
-          "Cross-referenced 2 statutory provisions cited in the complaint draft.",
-          "Synthesized response and grounded each claim in a specific source.",
+          `Queried matter scope: ${scope}.`,
+          `Matched ${result.data.related_documents.length} document sources and ${result.data.related_facts.length} facts.`,
+          `Retrieved ${result.data.citations.filter((citation) => citation.kind === "statute").length} source-backed authority matches.`,
+          ...result.data.warnings.slice(0, 2),
         ],
       }
       setMessages((prev) => [...prev, reply])
-      setPending(false)
-    }, 1200)
+    } else {
+      const reply: MatterChatMessage = {
+        id: `msg-${Date.now() + 1}`,
+        role: "assistant",
+        content: result.error || "Matter ask is unavailable right now.",
+        citations: [],
+        timestamp: new Date().toISOString(),
+        reasoning: ["The live matter ask endpoint returned an error."],
+      }
+      setMessages((prev) => [...prev, reply])
+    }
+    setPending(false)
   }
 
   return (
@@ -406,64 +418,24 @@ function EmptyState({
   )
 }
 
-function mockAssistantReply(question: string, matter: Matter): string {
-  const q = question.toLowerCase()
-  if (q.includes("habitab") || q.includes("uninhabit")) {
-    return `Based on the matter's record, the strongest evidence of uninhabitability is:
-
-1. The mold inspection report (DOC-003) documents black mold colonies in three rooms exceeding ASTM remediation thresholds, dated June 12, 2024.
-
-2. The tenant's contemporaneous notice (DOC-002) on March 4, 2024 placed Defendant on actual notice of leaking plumbing and mold growth — six months before the eviction notice.
-
-3. ${matter.shortName}'s rent ledger (DOC-005) shows full rent payment continued throughout the period, supporting a constructive eviction theory rather than abandonment.
-
-This pattern likely satisfies the implied warranty of habitability under the relevant state code. Note that the AI Inspector flagged a confidence gap on the precise timing of the September repairs (FACT-007) — recommend deposing the property manager to lock down the dates.`
-  }
-  if (q.includes("strongest") || q.includes("weakest")) {
-    return `Strongest claim: Breach of implied warranty of habitability. Element coverage is 4 of 4, with three independent sources documenting the violations and contemporaneous notice. Damages are well-anchored to the rent ledger.
-
-Weakest defense: Defendant's failure-to-mitigate theory (DEF-002). The supporting facts are circumstantial and don't establish that the tenant unreasonably remained in possession. Two of three elements are flagged as 'weak' in the Evidence Matrix.
-
-Suggested next steps: (1) Lock down the habitability timeline with a 30(b)(6) deposition. (2) Move in limine to exclude the mitigation defense for lack of foundation. (3) Strengthen the negligence claim by adding the expert mold report as a citable authority.`
-  }
-  return `I reviewed the indexed documents and facts for ${matter.title}. Here's a synthesized response with the most relevant authorities cited inline. Let me know if you'd like me to dig deeper into any specific source.`
-}
-
-function mockCitations(matter: Matter): MatterChatCitation[] {
-  const cites: MatterChatCitation[] = []
-  let idx = 1
-  for (const doc of matter.documents.slice(0, 3)) {
-    cites.push({
-      id: `cit-${idx}`,
-      indexLabel: String(idx),
-      kind: "document",
-      refId: doc.id,
-      sourceId: doc.id,
-      sourceKind: "document",
-      shortLabel: doc.title,
-      fullLabel: doc.filename,
-      chunkId: doc.chunks[0]?.id,
-      title: doc.title,
-      snippet: doc.summary?.slice(0, 140),
-    })
-    idx++
-  }
-  for (const fact of matter.facts.slice(0, 2)) {
-    cites.push({
-      id: `cit-${idx}`,
-      indexLabel: String(idx),
-      kind: "fact",
-      refId: fact.id,
-      sourceId: fact.id,
-      sourceKind: "fact",
-      shortLabel: fact.id,
-      fullLabel: fact.statement,
-      title: fact.statement,
-      snippet: fact.tags.join(" · "),
-    })
-    idx++
-  }
-  return cites
+function mapAskCitations(citations: Array<{ citation_id: string; kind: string; source_id: string; title: string; snippet?: string | null }>): MatterChatCitation[] {
+  return citations.map((citation, index) => {
+    const kind = citation.kind === "document" || citation.kind === "fact" || citation.kind === "claim" || citation.kind === "statute" || citation.kind === "rule" || citation.kind === "source"
+      ? citation.kind
+      : "source"
+    return {
+      id: citation.citation_id,
+      indexLabel: String(index + 1),
+      kind,
+      refId: citation.source_id,
+      sourceId: citation.source_id,
+      sourceKind: kind === "document" || kind === "fact" || kind === "statute" || kind === "rule" ? kind : "statute",
+      shortLabel: citation.title,
+      fullLabel: citation.title,
+      title: citation.title,
+      snippet: citation.snippet ?? undefined,
+    }
+  })
 }
 
 /* eslint-disable-next-line @typescript-eslint/no-unused-vars */

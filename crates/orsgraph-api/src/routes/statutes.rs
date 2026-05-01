@@ -78,6 +78,14 @@ pub async fn get_history(
     Ok(Json(history))
 }
 
+pub async fn get_chunks(
+    Path(citation): Path<String>,
+    State(state): State<AppState>,
+) -> ApiResult<Json<StatuteChunksResponse>> {
+    let chunks = state.neo4j_service.get_chunks(&citation).await?;
+    Ok(Json(chunks))
+}
+
 pub async fn get_provision(
     Path(id): Path<String>,
     State(state): State<AppState>,

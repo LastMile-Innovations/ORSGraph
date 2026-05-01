@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useState } from "react"
+import { FormEvent, useEffect, useState } from "react"
 import { Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,6 +13,10 @@ export function GraphSearchBox({
   onSubmit: (value: string) => void
 }) {
   const [draft, setDraft] = useState(value)
+
+  useEffect(() => {
+    setDraft(value)
+  }, [value])
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()

@@ -9,7 +9,9 @@ export function SourceDetailClient({
   source,
   otherSources,
 }: {
-  source: SourceIndexEntry
+  source: SourceIndexEntry & {
+    produced?: { sections?: number; provisions?: number; chunks?: number; citation_mentions?: number }
+  }
   otherSources: SourceIndexEntry[]
 }) {
   return (
@@ -72,10 +74,10 @@ export function SourceDetailClient({
               what this source produced
             </h2>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <Field label="sections" value="38" />
-              <Field label="provisions" value="412" />
-              <Field label="chunks" value="1,847" />
-              <Field label="citation mentions" value="612" />
+              <Field label="sections" value={String(source.produced?.sections ?? 0)} />
+              <Field label="provisions" value={String(source.produced?.provisions ?? 0)} />
+              <Field label="chunks" value={String(source.produced?.chunks ?? 0)} />
+              <Field label="citation mentions" value={String(source.produced?.citation_mentions ?? 0)} />
             </div>
           </section>
 

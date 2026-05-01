@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertTriangle, RefreshCw } from "lucide-react"
+import { AlertTriangle, PanelRightOpen, RefreshCw, SlidersHorizontal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { GraphModeSelector } from "./GraphModeSelector"
 import { GraphSearchBox } from "./GraphSearchBox"
@@ -15,6 +15,8 @@ export function GraphToolbar({
   truncated,
   onModeChange,
   onOpen,
+  onOpenControls,
+  onOpenInspector,
   onRefresh,
 }: {
   query: string
@@ -25,6 +27,8 @@ export function GraphToolbar({
   truncated: boolean
   onModeChange: (mode: GraphMode) => void
   onOpen: (value: string) => void
+  onOpenControls: () => void
+  onOpenInspector: () => void
   onRefresh: () => void
 }) {
   return (
@@ -44,6 +48,14 @@ export function GraphToolbar({
             <GraphSearchBox value={query} onSubmit={onOpen} />
           </div>
           <GraphModeSelector value={mode} onChange={onModeChange} />
+          <div className="flex gap-1">
+            <Button type="button" variant="outline" size="icon-sm" onClick={onOpenControls} className="lg:hidden" aria-label="Open graph controls">
+              <SlidersHorizontal className="h-4 w-4" />
+            </Button>
+            <Button type="button" variant="outline" size="icon-sm" onClick={onOpenInspector} className="xl:hidden" aria-label="Open graph inspector">
+              <PanelRightOpen className="h-4 w-4" />
+            </Button>
+          </div>
           <Button type="button" variant="outline" size="icon-sm" onClick={onRefresh} aria-label="Refresh graph">
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           </Button>

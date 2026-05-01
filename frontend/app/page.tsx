@@ -16,22 +16,22 @@ export default async function HomePage() {
   const data = state.data
 
   return (
-    <Shell>
-      <div className="flex flex-1 flex-col overflow-y-auto scrollbar-thin bg-zinc-950 text-zinc-100 min-h-screen">
-        <HomeHero />
-        
-        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 pb-24">
-          <DataStateBanner source={state.source} error={state.error} label="Home data" className="mb-4 rounded border" />
+    <Shell hideLeftRail>
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-thin bg-background text-foreground">
+        <HomeHero corpus={data.corpus} health={data.health} build={data.build} dataSource={state.source} />
+
+        <div className="mx-auto w-full max-w-7xl px-4 pb-20 sm:px-6 lg:px-8">
+          <DataStateBanner source={state.source} error={state.error} label="Home data" className="mb-4 rounded-md border" />
           {data.health.api !== "connected" && <HomeOfflineBanner />}
-          
+
           <ActionCardGrid actions={data.actions} />
-          
+
           <CorpusStatusPanel corpus={data.corpus} />
-          
+
           <GraphIntelligencePanel insights={data.insights} />
-          
+
           <FeaturedStatutesGrid statutes={data.featuredStatutes} />
-          
+
           <SystemHealthPanel health={data.health} corpus={data.corpus} />
         </div>
       </div>

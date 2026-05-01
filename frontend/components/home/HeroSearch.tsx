@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { openSearch } from "@/lib/api"
-import { Search } from "lucide-react"
+import { Loader2, Search } from "lucide-react"
 
 export function HeroSearch() {
   const [query, setQuery] = useState("")
@@ -48,34 +48,43 @@ export function HeroSearch() {
   ]
 
   return (
-    <div className="w-full max-w-3xl mx-auto mt-8">
-      <form onSubmit={handleSubmit} className="relative group">
-        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-          <Search className="h-5 w-5 text-zinc-400 group-focus-within:text-zinc-200 transition-colors" />
+    <div className="mt-7 w-full max-w-3xl">
+      <form onSubmit={handleSubmit} className="rounded-md border border-border bg-background p-2 shadow-sm">
+        <label className="sr-only" htmlFor="home-search">
+          Search ORSGraph
+        </label>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded border border-input bg-card px-3 focus-within:border-primary">
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <input
+              id="home-search"
+              type="text"
+              className="min-w-0 flex-1 bg-transparent py-2 text-base text-foreground outline-none placeholder:text-muted-foreground"
+              placeholder="Search ORS citations, duties, deadlines, definitions..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              disabled={isLoading}
+              autoComplete="off"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={isLoading || !query.trim()}
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 sm:w-32"
+          >
+            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            Search
+          </button>
         </div>
-        <input
-          type="text"
-          className="block w-full pl-11 pr-4 py-4 bg-zinc-900/50 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all text-lg shadow-lg"
-          placeholder="Search ORS citations, duties, deadlines, definitions, penalties..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          disabled={isLoading}
-        />
-        <button 
-          type="submit" 
-          disabled={isLoading || !query.trim()}
-          className="absolute inset-y-2 right-2 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white rounded-lg font-medium transition-colors"
-        >
-          {isLoading ? "Loading..." : "Search"}
-        </button>
       </form>
-      
-      <div className="flex flex-wrap gap-2 mt-4 justify-center">
+
+      <div className="mt-3 flex flex-wrap gap-2">
         {chips.map((chip) => (
           <button
             key={chip}
+            type="button"
             onClick={() => handleChipClick(chip)}
-            className="px-3 py-1.5 text-xs font-mono text-zinc-400 bg-zinc-900/50 border border-zinc-800/80 hover:border-zinc-600 hover:text-zinc-200 rounded-full transition-colors"
+            className="rounded border border-border bg-card px-2.5 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           >
             {chip}
           </button>

@@ -1440,8 +1440,165 @@ impl CaseBuilderService {
         self.list_nodes(matter_id, deadline_spec()).await
     }
 
+    pub async fn create_deadline(
+        &self,
+        matter_id: &str,
+        request: CreateDeadlineRequest,
+    ) -> ApiResult<CaseDeadline> {
+        self.require_matter(matter_id).await?;
+        let deadline_id = generate_id("deadline", &request.title);
+        let due_date = request.due_date;
+        let deadline = CaseDeadline {
+            id: deadline_id.clone(),
+            deadline_id: deadline_id.clone(),
+            matter_id: matter_id.to_string(),
+            title: request.title,
+            description: request.description.unwrap_or_default(),
+            category: request.category.unwrap_or_else(|| "case".to_string()),
+            kind: request.kind.unwrap_or_else(|| "manual".to_string()),
+            days_remaining: days_until(&due_date),
+            due_date,
+            severity: request.severity.unwrap_or_else(|| "info".to_string()),
+            source: request.source.unwrap_or_else(|| "manual".to_string()),
+            source_citation: request.source_citation,
+            source_canonical_id: request.source_canonical_id,
+            triggered_by_event_id: request.triggered_by_event_id,
+            status: request.status.unwrap_or_else(|| "open".to_string()),
+            notes: request.notes,
+        };
+        self.merge_node(matter_id, deadline_spec(), &deadline_id, &deadline)
+            .await
+    }
+
+    pub async fn patch_deadline(
+        &self,
+        matter_id: &str,
+        deadline_id: &str,
+        request: PatchDeadlineRequest,
+    ) -> ApiResult<CaseDeadline> {
+        let mut deadline: CaseDeadline = self
+            .get_node(matter_id, deadline_spec(), deadline_id)
+            .await?;
+        if let Some(value) = request.title {
+            deadline.title = value;
+        }
+        if let Some(value) = request.due_date {
+            deadline.due_date = value;
+            deadline.days_remaining = days_until(&deadline.due_date);
+        }
+        if let Some(value) = request.description {
+            deadline.description = value;
+        }
+        if let Some(value) = request.category {
+            deadline.category = value;
+        }
+        if let Some(value) = request.kind {
+            deadline.kind = value;
+        }
+        if let Some(value) = request.severity {
+            deadline.severity = value;
+        }
+        if let Some(value) = request.source {
+            deadline.source = value;
+        }
+        if let Some(value) = request.source_citation {
+            deadline.source_citation = value;
+        }
+        if let Some(value) = request.source_canonical_id {
+            deadline.source_canonical_id = value;
+        }
+        if let Some(value) = request.triggered_by_event_id {
+            deadline.triggered_by_event_id = value;
+        }
+        if let Some(value) = request.status {
+            deadline.status = value;
+        }
+        if let Some(value) = request.notes {
+            deadline.notes = value;
+        }
+        self.merge_node(matter_id, deadline_spec(), deadline_id, &deadline)
+            .await
+    }
+
+    pub async fn compute_deadlines(&self, matter_id: &str) -> ApiResult<ComputeDeadlinesResponse> {
+        self.require_matter(matter_id).await?;
+        Ok(ComputeDeadlinesResponse {
+            generated: Vec::new(),
+            warnings: vec![
+                "No deterministic deadline rule matched this matter. Add known service, filing, or order dates to compute deadlines.".to_string(),
+            ],
+        })
+    }
+
     pub async fn list_tasks(&self, matter_id: &str) -> ApiResult<Vec<CaseTask>> {
         self.list_nodes(matter_id, task_spec()).await
+    }
+
+    pub async fn create_task(
+        &self,
+        matter_id: &str,
+        request: CreateTaskRequest,
+    ) -> ApiResult<CaseTask> {
+        self.require_matter(matter_id).await?;
+        let task_id = generate_id("task", &request.title);
+        let task = CaseTask {
+            id: task_id.clone(),
+            task_id: task_id.clone(),
+            matter_id: matter_id.to_string(),
+            title: request.title,
+            status: request.status.unwrap_or_else(|| "todo".to_string()),
+            priority: request.priority.unwrap_or_else(|| "med".to_string()),
+            due_date: request.due_date,
+            assigned_to: request.assigned_to,
+            related_claim_ids: request.related_claim_ids.unwrap_or_default(),
+            related_document_ids: request.related_document_ids.unwrap_or_default(),
+            related_deadline_id: request.related_deadline_id,
+            source: request.source.unwrap_or_else(|| "manual".to_string()),
+            description: request.description,
+        };
+        self.merge_node(matter_id, task_spec(), &task_id, &task)
+            .await
+    }
+
+    pub async fn patch_task(
+        &self,
+        matter_id: &str,
+        task_id: &str,
+        request: PatchTaskRequest,
+    ) -> ApiResult<CaseTask> {
+        let mut task: CaseTask = self.get_node(matter_id, task_spec(), task_id).await?;
+        if let Some(value) = request.title {
+            task.title = value;
+        }
+        if let Some(value) = request.status {
+            task.status = value;
+        }
+        if let Some(value) = request.priority {
+            task.priority = value;
+        }
+        if let Some(value) = request.due_date {
+            task.due_date = value;
+        }
+        if let Some(value) = request.assigned_to {
+            task.assigned_to = value;
+        }
+        if let Some(value) = request.related_claim_ids {
+            task.related_claim_ids = value;
+        }
+        if let Some(value) = request.related_document_ids {
+            task.related_document_ids = value;
+        }
+        if let Some(value) = request.related_deadline_id {
+            task.related_deadline_id = value;
+        }
+        if let Some(value) = request.source {
+            task.source = value;
+        }
+        if let Some(value) = request.description {
+            task.description = value;
+        }
+        self.merge_node(matter_id, task_spec(), task_id, &task)
+            .await
     }
 
     pub async fn list_work_products(&self, matter_id: &str) -> ApiResult<Vec<WorkProduct>> {
@@ -13853,6 +14010,35 @@ fn row_u64(row: &neo4rs::Row, key: &str) -> u64 {
 
 fn now_string() -> String {
     now_secs().to_string()
+}
+
+fn days_until(iso_date: &str) -> i64 {
+    let Some(target) = days_from_iso_date(iso_date) else {
+        return 0;
+    };
+    let today = (now_secs() / 86_400) as i64;
+    target - today
+}
+
+fn days_from_iso_date(value: &str) -> Option<i64> {
+    let mut parts = value.split('-');
+    let year = parts.next()?.parse::<i32>().ok()?;
+    let month = parts.next()?.parse::<u32>().ok()?;
+    let day = parts.next()?.parse::<u32>().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    Some(days_from_civil(year, month, day))
+}
+
+fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
+    let year = year - i32::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = (year - era * 400) as u32;
+    let month = month as i32;
+    let doy = ((153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5) as u32 + day - 1;
+    let doe = yoe as i64 * 365 + (yoe / 4) as i64 - (yoe / 100) as i64 + doy as i64;
+    era as i64 * 146_097 + doe - 719_468
 }
 
 fn generate_id(prefix: &str, seed: &str) -> String {

@@ -6,25 +6,27 @@ export function GraphIntelligencePanel({ insights }: { insights: GraphInsightCar
   if (!insights || insights.length === 0) return null
 
   return (
-    <section className="mb-16">
-      <h2 className="text-xl font-semibold text-zinc-100 mb-6">Graph Intelligence</h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+    <section className="mb-12">
+      <h2 className="mb-4 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">graph intelligence</h2>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {insights.map((insight, idx) => {
           const CardContent = (
             <div className={cn(
-              "p-5 rounded-xl border border-zinc-800 h-full flex flex-col",
-              insight.href ? "bg-zinc-900 hover:bg-zinc-800 hover:border-zinc-600 transition-colors" : "bg-zinc-900/50"
+              "flex h-full min-h-32 flex-col rounded-md border p-4 transition-colors",
+              insight.href ? "border-border bg-card hover:border-primary/40" : "border-border bg-card/70",
+              insight.state === "warning" && "border-warning/30",
+              insight.state === "error" && "border-destructive/30",
             )}>
-              <h3 className="text-sm font-medium text-zinc-500 mb-1">{insight.title}</h3>
-              <p className="text-xl font-semibold text-zinc-100 mb-2">{insight.value}</p>
+              <h3 className="mb-1 text-sm font-medium text-muted-foreground">{insight.title}</h3>
+              <p className="mb-2 text-xl font-semibold text-foreground">{insight.value}</p>
               {insight.subtitle && (
-                <p className="text-xs font-mono text-zinc-400 mt-auto pt-2 border-t border-zinc-800/50">{insight.subtitle}</p>
+                <p className="mt-auto border-t border-border pt-2 font-mono text-[11px] text-muted-foreground">{insight.subtitle}</p>
               )}
             </div>
           )
 
           if (insight.href) {
-            return <Link key={idx} href={insight.href} className="block">{CardContent}</Link>
+            return <Link key={idx} href={insight.href} className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60">{CardContent}</Link>
           }
 
           return <div key={idx}>{CardContent}</div>

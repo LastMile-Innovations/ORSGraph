@@ -18,6 +18,7 @@ import {
   MessageSquare,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   WifiOff,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -59,6 +60,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/statutes", label: "Statutes", icon: BookOpen, match: ["/statutes", "/provisions"] },
   { href: "/graph", label: "Graph", icon: GitGraphIcon, match: ["/graph"] },
   { href: "/qc", label: "QC", icon: ShieldCheck, match: ["/qc"] },
+  { href: "/admin", label: "Admin", icon: SlidersHorizontal, match: ["/admin"] },
   { href: "/casebuilder", label: "Matters", icon: Briefcase, match: ["/casebuilder", "/matters"] },
 ]
 
@@ -372,6 +374,12 @@ function RuntimeStatusMenu({ status }: { status: RuntimeStatus }) {
           </>
         )}
         <DropdownMenuSeparator />
+        <DropdownMenuItem asChild className="cursor-pointer">
+          <Link href="/admin">
+            <SlidersHorizontal className="h-4 w-4" />
+            Open Admin
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuItem asChild className="cursor-pointer">
           <Link href="/qc">
             <ShieldCheck className="h-4 w-4" />

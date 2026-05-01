@@ -1,4 +1,6 @@
-export type DataSource = "live" | "mock" | "demo" | "offline" | "error"
+export type DataSource = "live" | "mock" | "demo" | "offline" | "empty" | "error"
+
+export const DEMO_MODE = process.env.NEXT_PUBLIC_ORS_DEMO_MODE === "true"
 
 export interface DataState<T> {
   source: DataSource

@@ -2,10 +2,35 @@
 
 import Link from "next/link"
 import type { StatutePageResponse } from "@/lib/types"
-import { Type, ShieldAlert, Clock, Scale, ArrowDownRight, ArrowUpLeft, AlertTriangle, FileText } from "lucide-react"
+import { Type, ShieldAlert, Clock, Scale, ArrowDownRight, ArrowUpLeft, AlertTriangle, FileText, PanelRightOpen } from "lucide-react"
 import { QCBadge } from "@/components/orsg/badges"
+import { Button } from "@/components/ui/button"
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
+
+export function StatuteInspectorDrawer({ data }: { data: StatutePageResponse }) {
+  return (
+    <Drawer>
+      <DrawerTrigger asChild>
+        <Button variant="outline" size="sm" className="h-8 gap-1.5 xl:hidden">
+          <PanelRightOpen className="h-3.5 w-3.5" />
+          Intelligence
+        </Button>
+      </DrawerTrigger>
+      <DrawerContent className="max-h-[85vh]">
+        <DrawerHeader className="border-b border-border text-left">
+          <DrawerTitle className="font-mono text-sm">{data.identity.citation} intelligence</DrawerTitle>
+        </DrawerHeader>
+        <div className="min-h-0 overflow-y-auto">
+          <StatuteRightInspector data={data} />
+        </div>
+      </DrawerContent>
+    </Drawer>
+  )
+}
 
 export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
+  const counts = data.summary_counts
+
   return (
     <div className="flex h-full flex-col overflow-y-auto scrollbar-thin">
       <div className="border-b border-border px-4 py-3">
@@ -18,7 +43,7 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
       <Panel
         title="Definitions"
         icon={Type}
-        count={data.definitions.length}
+        count={counts?.semantic_counts.definitions ?? data.definitions.length}
         accent="text-chart-1"
       >
         {data.definitions.length === 0 ? (
@@ -41,7 +66,7 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
       <Panel
         title="Exceptions"
         icon={ShieldAlert}
-        count={data.exceptions.length}
+        count={counts?.semantic_counts.exceptions ?? data.exceptions.length}
         accent="text-warning"
       >
         {data.exceptions.length === 0 ? (
@@ -63,7 +88,7 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
       <Panel
         title="Deadlines"
         icon={Clock}
-        count={data.deadlines.length}
+        count={counts?.semantic_counts.deadlines ?? data.deadlines.length}
         accent="text-chart-3"
       >
         {data.deadlines.length === 0 ? (
@@ -86,7 +111,7 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
         )}
       </Panel>
 
-      <Panel title="Penalties" icon={Scale} count={data.penalties.length} accent="text-destructive">
+      <Panel title="Penalties" icon={Scale} count={counts?.semantic_counts.penalties ?? data.penalties.length} accent="text-destructive">
         {data.penalties.length === 0 ? (
           <Empty>No penalties</Empty>
         ) : (
@@ -109,7 +134,7 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
       <Panel
         title="Cites"
         icon={ArrowDownRight}
-        count={data.outbound_citations.length}
+        count={counts?.citation_counts.outbound ?? data.outbound_citations.length}
         accent="text-accent"
       >
         <ul className="space-y-1">
@@ -136,7 +161,7 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
       <Panel
         title="Cited by"
         icon={ArrowUpLeft}
-        count={data.inbound_citations.length}
+        count={counts?.citation_counts.inbound ?? data.inbound_citations.length}
         accent="text-accent"
       >
         <ul className="space-y-1">

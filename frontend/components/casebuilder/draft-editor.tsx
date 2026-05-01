@@ -32,7 +32,7 @@ import type {
   DraftComment,
 } from "@/lib/casebuilder/types"
 import { matterDocumentHref, matterDraftHref, matterFactsHref } from "@/lib/casebuilder/routes"
-import { citationCheckDraft, factCheckDraft, generateDraft, patchDraft } from "@/lib/casebuilder/api"
+import { citationCheckDraft, createWorkProduct, factCheckDraft, generateDraft, patchDraft, runWorkProductAiCommand } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
@@ -150,22 +150,44 @@ export function DraftEditor({ matter, draft: initialDraft }: DraftEditorProps) {
       return null
     })
 
-  const handlePrompt = (e: React.FormEvent) => {
+  const handlePrompt = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!aiPrompt.trim()) return
     setPendingPrompt(true)
-    setTimeout(() => {
-      // Mock: append a new suggestion to the active section.
+    setActionError(null)
+    const prompt = aiPrompt.trim()
+    const existingProduct =
+      matter.work_products.find((product) => product.source_draft_id === draft.id) ??
+      matter.work_products.find((product) => product.product_type === draft.draft_type || product.product_type === draft.kind)
+    let workProductId = existingProduct?.id ?? existingProduct?.work_product_id
+    if (!workProductId) {
+      const created = await createWorkProduct(matter.id, {
+        title: draft.title,
+        product_type: draft.draft_type ?? draft.kind,
+        source_draft_id: draft.id,
+      })
+      workProductId = created.data?.id ?? created.data?.work_product_id
+      if (!workProductId) {
+        setActionError(created.error || "Could not create a live work product for this draft command.")
+        setPendingPrompt(false)
+        return
+      }
+    }
+    const result = await runWorkProductAiCommand(matter.id, workProductId, {
+      command: "custom_prompt",
+      target_id: activeSection,
+      prompt,
+    })
+    if (result.data) {
+      const firstBlock = result.data.result?.blocks?.find((block) => block.text?.trim())
       const newSuggestion: DraftSuggestion = {
         id: `sug-${Date.now()}`,
         kind: "rewrite",
-        rationale: `AI response to: "${aiPrompt}". This is a mock suggestion.`,
-        original:
-          "The Defendant collected $14,400 in rent over the relevant period despite knowing the unit was uninhabitable.",
-        proposed:
-          "Defendant accepted $14,400 in rent payments during the period of habitability violations, doing so with actual knowledge of the unit's uninhabitable conditions.",
-        confidence: 0.84,
-        sources: ["DOC-001", "DOC-003"],
+        rationale: result.data.message || `Provider-free command response to: "${prompt}".`,
+        original: activeSectionBody(draft.sections, activeSection).slice(0, 180),
+        proposed: firstBlock?.text || activeSectionBody(draft.sections, activeSection),
+        confidence: result.data.enabled ? 0.76 : 0.5,
+        sources: firstBlock?.links?.slice(0, 4) ?? [],
       }
       setDraft((prev) => ({
         ...prev,
@@ -176,8 +198,11 @@ export function DraftEditor({ matter, draft: initialDraft }: DraftEditorProps) {
         ),
       }))
       setAiPrompt("")
-      setPendingPrompt(false)
-    }, 800)
+      setActionMessage(result.data.message)
+    } else {
+      setActionError(result.error || "Draft command failed.")
+    }
+    setPendingPrompt(false)
   }
 
   const allCitations = useMemo(
@@ -443,6 +468,10 @@ function applySuggestionToBody(body: string, suggestion?: DraftSuggestion): stri
     return body + "\n\n" + suggestion.proposed
   }
   return body
+}
+
+function activeSectionBody(sections: DraftSection[], activeSection: string) {
+  return sections.find((section) => section.id === activeSection)?.body ?? ""
 }
 
 interface SectionBlockProps {
