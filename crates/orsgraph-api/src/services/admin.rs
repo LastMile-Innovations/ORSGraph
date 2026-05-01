@@ -1867,11 +1867,18 @@ mod tests {
 
         let job = wait_for_terminal(&service, &detail.job.job_id).await;
         assert_eq!(job.status, AdminJobStatus::Succeeded);
-        let logs = service
-            .get_logs(&job.job_id, "stdout", 10)
-            .await
-            .unwrap()
-            .lines;
+        let mut logs = Vec::new();
+        for _ in 0..20 {
+            logs = service
+                .get_logs(&job.job_id, "stdout", 10)
+                .await
+                .unwrap()
+                .lines;
+            if logs.iter().any(|line| line.contains("crawl")) {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
         assert!(logs.iter().any(|line| line.contains("crawl")));
 
         let _ = fs::remove_dir_all(jobs_dir).await;

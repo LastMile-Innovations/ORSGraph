@@ -692,6 +692,15 @@ fn workproduct_ast_canonicalization_contract_is_explicit() {
     assert!(ast_patch.contains("apply_ast_patch_atomic"));
     assert!(markdown_adapter.contains("wp-ast-block"));
     assert!(html_renderer.contains("data-renderer=\\\"work-product-ast-v1\\\""));
+    let backend_ast_sources = [
+        backend_service.as_str(),
+        work_product_ast,
+        ast_validation,
+        ast_patch,
+        markdown_adapter,
+        html_renderer,
+    ]
+    .join("\n");
 
     for expected in [
         "\"complaint\"",
@@ -714,7 +723,8 @@ fn workproduct_ast_canonicalization_contract_is_explicit() {
 
     for expected in [
         "\"legal_memo\" | \"brief\" => Some(\"memo\")",
-        "\"letter\" | \"demand_letter\" => Some(\"letter\")",
+        "\"demand_letter\" => Some(\"letter\")",
+        "SUPPORTED_WORK_PRODUCT_TYPES",
         "ensure_work_product_ast_valid",
         "validate_optional_text_range",
         "split_ast_document_block",
@@ -724,7 +734,7 @@ fn workproduct_ast_canonicalization_contract_is_explicit() {
         "patch_work_product_ast",
     ] {
         assert!(
-            backend_service.contains(expected),
+            backend_ast_sources.contains(expected),
             "missing backend canonical AST behavior {expected}"
         );
     }

@@ -8,7 +8,7 @@ use bytes::Bytes;
 use flate2::read::DeflateDecoder;
 use neo4rs::query;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read};
@@ -114,15 +114,15 @@ struct AssemblyAiTranscriptResponse {
     status: String,
     #[serde(default)]
     text: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     utterances: Vec<AssemblyAiUtterance>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     words: Vec<AssemblyAiWord>,
     #[serde(default)]
     unredacted_text: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     unredacted_utterances: Vec<AssemblyAiUtterance>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     unredacted_words: Vec<AssemblyAiWord>,
     #[serde(default)]
     language_code: Option<String>,
@@ -136,6 +136,14 @@ struct AssemblyAiTranscriptResponse {
     redact_pii: Option<bool>,
     #[serde(default)]
     redact_pii_return_unredacted: Option<bool>,
+}
+
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -7921,8 +7929,33 @@ fn redact_transcript_text(text: &str) -> String {
     text.to_string()
 }
 
+fn assemblyai_http_error(action: &str, status: reqwest::StatusCode) -> ApiError {
+    ApiError::External(format!("AssemblyAI {action} failed with HTTP {status}."))
+}
+
+fn assemblyai_transcript_error_message(provider: &AssemblyAiTranscriptResponse) -> String {
+    match provider
+        .error
+        .as_deref()
+        .and_then(sanitized_provider_error_fragment)
+    {
+        Some(error) => format!("AssemblyAI returned an error status: {error}"),
+        None => "AssemblyAI returned an error status.".to_string(),
+    }
+}
+
+fn sanitized_provider_error_fragment(message: &str) -> Option<String> {
+    let normalized = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = normalized.trim();
+    if normalized.is_empty() {
+        return None;
+    }
+    Some(normalized.chars().take(240).collect())
+}
+
 fn sanitized_external_error(error: &ApiError) -> String {
     match error {
+        ApiError::External(message) if message.starts_with("AssemblyAI ") => message.clone(),
         ApiError::HttpClient(_) | ApiError::External(_) => {
             "External transcription provider request failed.".to_string()
         }
@@ -9728,24 +9761,25 @@ mod tests {
     use super::rule_engine::work_product_finding;
     use super::{
         apply_work_product_support_removal, apply_work_product_support_update,
-        apply_work_product_text_range_link, assemblyai_raw_words, assemblyai_speech_models,
-        assemblyai_transcript_create_request, canonical_id_for_citation, chunk_text,
+        apply_work_product_text_range_link, assemblyai_http_error, assemblyai_raw_words,
+        assemblyai_speech_models, assemblyai_transcript_create_request,
+        assemblyai_transcript_error_message, canonical_id_for_citation, chunk_text,
         citation_uses_for_text, default_formatting_profile, docx_package_manifest,
         docx_with_replaced_document_xml, failed_ingestion_run, generate_opaque_id,
         looks_like_complaint, normalize_compare_layers, object_blob_id_for_hash,
         oregon_civil_complaint_rule_pack, parse_complaint_structure, parse_document_bytes,
         propose_facts, prosemirror_doc_for_text, rebuild_work_product_ast_from_projection,
         redact_transcript_text, refresh_work_product_state, restore_work_product_scope,
-        safe_work_product_download_filename, sanitize_filename, sha256_hex, should_inline_payload,
-        slug, snapshot_entity_state_key, snapshot_full_state_key, snapshot_manifest_for_product,
-        snapshot_manifest_hash_for_states, snapshot_manifest_key,
-        summarize_version_snapshot_for_list, summarize_work_product_for_list,
-        transcript_segments_from_provider, transcript_segments_to_srt, transcript_segments_to_vtt,
-        validate_ast_patch_concurrency, version_change_state_summary,
-        work_product_block_graph_payload, work_product_export_key, work_product_hashes,
-        work_product_profile, AssemblyAiTranscriptResponse, AssemblyAiUtterance, AssemblyAiWord,
-        SourceContext, CASE_INDEX_VERSION, CHUNKER_VERSION, CITATION_RESOLVER_VERSION,
-        PARSER_REGISTRY_VERSION,
+        safe_work_product_download_filename, sanitize_filename, sanitized_external_error,
+        sha256_hex, should_inline_payload, slug, snapshot_entity_state_key,
+        snapshot_full_state_key, snapshot_manifest_for_product, snapshot_manifest_hash_for_states,
+        snapshot_manifest_key, summarize_version_snapshot_for_list,
+        summarize_work_product_for_list, transcript_segments_from_provider,
+        transcript_segments_to_srt, transcript_segments_to_vtt, validate_ast_patch_concurrency,
+        version_change_state_summary, work_product_block_graph_payload, work_product_export_key,
+        work_product_hashes, work_product_profile, AssemblyAiTranscriptResponse,
+        AssemblyAiUtterance, AssemblyAiWord, SourceContext, CASE_INDEX_VERSION, CHUNKER_VERSION,
+        CITATION_RESOLVER_VERSION, PARSER_REGISTRY_VERSION,
     };
     use crate::error::ApiError;
     use crate::models::casebuilder::{
@@ -11513,6 +11547,71 @@ mod tests {
             "x-casebuilder-assemblyai-secret"
         );
         assert!(!payload.to_string().contains("ASSEMBLYAI_API_KEY"));
+    }
+
+    #[test]
+    fn assemblyai_get_response_allows_documented_null_arrays() {
+        let provider: AssemblyAiTranscriptResponse = serde_json::from_value(serde_json::json!({
+            "id": "9ea68fd3-f953-42c1-9742-976c447fb463",
+            "status": "completed",
+            "text": "Transcript is ready.",
+            "utterances": null,
+            "words": null,
+            "unredacted_text": null,
+            "unredacted_utterances": null,
+            "unredacted_words": null,
+            "language_code": "en_us",
+            "audio_duration": 281,
+            "confidence": 0.9959,
+            "redact_pii": false,
+            "redact_pii_return_unredacted": null
+        }))
+        .unwrap();
+
+        assert_eq!(provider.status, "completed");
+        assert_eq!(provider.text.as_deref(), Some("Transcript is ready."));
+        assert!(provider.utterances.is_empty());
+        assert!(provider.words.is_empty());
+        assert!(provider.unredacted_utterances.is_empty());
+        assert!(provider.unredacted_words.is_empty());
+        assert_eq!(provider.audio_duration, Some(281.0));
+    }
+
+    #[test]
+    fn assemblyai_errors_keep_safe_operational_context() {
+        let error =
+            assemblyai_http_error("transcript submission", reqwest::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            sanitized_external_error(&error),
+            "AssemblyAI transcript submission failed with HTTP 400 Bad Request."
+        );
+
+        let generic_error = ApiError::External("raw external provider response".to_string());
+        assert_eq!(
+            sanitized_external_error(&generic_error),
+            "External transcription provider request failed."
+        );
+
+        let provider = AssemblyAiTranscriptResponse {
+            id: "provider:transcript".to_string(),
+            status: "error".to_string(),
+            text: None,
+            utterances: Vec::new(),
+            words: Vec::new(),
+            unredacted_text: None,
+            unredacted_utterances: Vec::new(),
+            unredacted_words: Vec::new(),
+            language_code: None,
+            audio_duration: None,
+            confidence: None,
+            error: Some(" Invalid media URL.\nTry another file. ".to_string()),
+            redact_pii: None,
+            redact_pii_return_unredacted: None,
+        };
+        assert_eq!(
+            assemblyai_transcript_error_message(&provider),
+            "AssemblyAI returned an error status: Invalid media URL. Try another file."
+        );
     }
 
     #[test]

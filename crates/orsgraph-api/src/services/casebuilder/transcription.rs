@@ -132,7 +132,7 @@ impl CaseBuilderService {
                     job.status = "failed".to_string();
                     job.retryable = false;
                     job.error_code = Some("assemblyai_error".to_string());
-                    job.error_message = Some("AssemblyAI returned an error status.".to_string());
+                    job.error_message = Some(assemblyai_transcript_error_message(&provider));
                     let job = self.merge_transcription_job(matter_id, &job).await?;
                     self.transcription_response(matter_id, &job).await
                 } else {
@@ -225,15 +225,10 @@ impl CaseBuilderService {
             }
             Ok(provider) if provider.status == "error" => {
                 job.status = "failed".to_string();
-                job.provider_status = Some(provider.status);
+                job.provider_status = Some(provider.status.clone());
                 job.retryable = false;
                 job.error_code = Some("assemblyai_error".to_string());
-                job.error_message = Some(
-                    provider
-                        .error
-                        .map(|_| "AssemblyAI returned an error status.".to_string())
-                        .unwrap_or_else(|| "AssemblyAI returned an error status.".to_string()),
-                );
+                job.error_message = Some(assemblyai_transcript_error_message(&provider));
                 job.updated_at = now_string();
                 let job = self.merge_transcription_job(matter_id, &job).await?;
                 self.transcription_response(matter_id, &job).await
@@ -655,9 +650,7 @@ impl CaseBuilderService {
         }
         let response = request.send().await?;
         if !response.status().is_success() {
-            return Err(ApiError::External(
-                "AssemblyAI upload request failed".to_string(),
-            ));
+            return Err(assemblyai_http_error("upload", response.status()));
         }
         let response = response.json::<AssemblyAiUploadResponse>().await?;
         Ok(response.upload_url)
@@ -686,8 +679,9 @@ impl CaseBuilderService {
             .send()
             .await?;
         if !response.status().is_success() {
-            return Err(ApiError::External(
-                "AssemblyAI transcript request failed".to_string(),
+            return Err(assemblyai_http_error(
+                "transcript submission",
+                response.status(),
             ));
         }
         Ok(response.json::<AssemblyAiTranscriptResponse>().await?)
@@ -710,9 +704,7 @@ impl CaseBuilderService {
             .send()
             .await?;
         if !response.status().is_success() {
-            return Err(ApiError::External(
-                "AssemblyAI transcript fetch failed".to_string(),
-            ));
+            return Err(assemblyai_http_error("transcript fetch", response.status()));
         }
         Ok(response.json::<AssemblyAiTranscriptResponse>().await?)
     }
