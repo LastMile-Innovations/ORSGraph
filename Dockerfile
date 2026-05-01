@@ -46,6 +46,9 @@ COPY --from=builder /app/target/release/orsgraph-api /app/orsgraph-api
 # Copy the Cypher queries (the loader looks for them in 'cypher/queries')
 COPY cypher ./cypher
 
+# Copy crawler registry docs used by default source-ingest/admin commands
+COPY docs/data ./docs/data
+
 # Create a data directory for the volume mount
 RUN mkdir -p /app/data
 

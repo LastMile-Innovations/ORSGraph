@@ -20,7 +20,10 @@ export function classifyFallbackSource(error: unknown): DataSource {
     message.includes("fetch failed") ||
     message.includes("econnrefused") ||
     message.includes("enotfound") ||
-    message.includes("network")
+    message.includes("network") ||
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("aborted")
   ) {
     return "offline"
   }

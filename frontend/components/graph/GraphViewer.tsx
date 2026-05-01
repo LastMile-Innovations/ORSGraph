@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { AlertTriangle } from "lucide-react"
 import { getGraphNeighborhood } from "@/lib/api"
-import type { DataSource } from "@/lib/data-state"
+import { classifyFallbackSource, type DataSource } from "@/lib/data-state"
 import { DataStateBanner } from "@/components/orsg/data-state-banner"
 import {
   Sheet,
@@ -117,7 +117,7 @@ export function GraphViewer({
         if (cancelled) return
         setResponse(emptyGraphResponse())
         setSelectedId(focus)
-        setSource("error")
+        setSource(classifyFallbackSource(error))
         setWarning(error instanceof Error ? `Graph API unavailable: ${error.message}` : "Graph API unavailable.")
       })
       .finally(() => {

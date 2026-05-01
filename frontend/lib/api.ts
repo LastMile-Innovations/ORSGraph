@@ -37,6 +37,7 @@ import {
 } from "./data-state";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_ORS_API_BASE_URL || 'http://localhost:8080/api/v1';
+const API_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_ORS_API_TIMEOUT_MS || 5000);
 const reportedFallbacks = new Set<string>();
 
 export type SearchMode = 'auto' | 'hybrid' | 'keyword' | 'semantic' | 'citation'
@@ -63,21 +64,53 @@ async function fetchApi<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
-  const response = await fetch(url, {
-    cache: 'no-store',
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  });
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, API_TIMEOUT_MS);
+  const parentSignal = options.signal;
+  const abortFromParent = () => controller.abort();
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(error.error || `API error: ${response.status}`);
+  if (parentSignal?.aborted) {
+    controller.abort();
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
   }
 
-  return response.json();
+  try {
+    const response = await fetch(url, {
+      cache: 'no-store',
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(error.error || `API error: ${response.status}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    if (timedOut && isAbortError(error)) {
+      throw new Error(`API request timed out after ${Math.round(API_TIMEOUT_MS / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", abortFromParent);
+  }
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : error instanceof Error && error.name === "AbortError";
 }
 
 function reportFallback(endpoint: string, error: unknown) {

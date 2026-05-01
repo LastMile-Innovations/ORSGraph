@@ -170,6 +170,7 @@ export interface AdminSourceDetail {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_ORS_API_BASE_URL || "http://localhost:8080/api/v1"
 const API_KEY = process.env.NEXT_PUBLIC_ORS_API_KEY
+const API_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_ORS_API_TIMEOUT_MS || 5000)
 
 async function fetchAdmin<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)
@@ -180,18 +181,50 @@ async function fetchAdmin<T>(endpoint: string, options: RequestInit = {}): Promi
     headers.set("x-api-key", API_KEY)
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    cache: "no-store",
-    ...options,
-    headers,
-  })
+  const controller = new AbortController()
+  let timedOut = false
+  const timeout = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, API_TIMEOUT_MS)
+  const parentSignal = options.signal
+  const abortFromParent = () => controller.abort()
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: `Admin API error: ${response.status}` }))
-    throw new Error(error.error || `Admin API error: ${response.status}`)
+  if (parentSignal?.aborted) {
+    controller.abort()
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true })
   }
 
-  return response.json()
+  try {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      cache: "no-store",
+      ...options,
+      signal: controller.signal,
+      headers,
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: `Admin API error: ${response.status}` }))
+      throw new Error(error.error || `Admin API error: ${response.status}`)
+    }
+
+    return response.json()
+  } catch (error) {
+    if (timedOut && isAbortError(error)) {
+      throw new Error(`Admin API request timed out after ${Math.round(API_TIMEOUT_MS / 1000)}s`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+    parentSignal?.removeEventListener("abort", abortFromParent)
+  }
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : error instanceof Error && error.name === "AbortError"
 }
 
 export function getAdminOverview() {

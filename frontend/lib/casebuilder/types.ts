@@ -505,6 +505,7 @@ export interface TranscriptionJob {
   raw_artifact_version_id?: string | null
   normalized_artifact_version_id?: string | null
   redacted_artifact_version_id?: string | null
+  redacted_audio_version_id?: string | null
   reviewed_document_version_id?: string | null
   caption_vtt_version_id?: string | null
   caption_srt_version_id?: string | null
@@ -513,6 +514,13 @@ export interface TranscriptionJob {
   speaker_count: number
   segment_count: number
   word_count: number
+  speakers_expected?: number | null
+  speaker_options?: AssemblyAiSpeakerOptions | null
+  word_search_terms: string[]
+  prompt_preset?: string | null
+  prompt?: string | null
+  keyterms_prompt: string[]
+  remove_audio_tags?: string | null
   redact_pii: boolean
   speech_models: string[]
   retryable: boolean
@@ -532,8 +540,10 @@ export interface TranscriptSegment {
   transcription_job_id: string
   source_span_id?: string | null
   ordinal: number
+  paragraph_ordinal?: number | null
   speaker_label?: string | null
   speaker_name?: string | null
+  channel?: string | null
   text: string
   redacted_text?: string | null
   time_start_ms: number
@@ -583,12 +593,57 @@ export interface TranscriptionJobResponse {
   raw_artifact_version?: DocumentVersion | null
   normalized_artifact_version?: DocumentVersion | null
   redacted_artifact_version?: DocumentVersion | null
+  redacted_audio_version?: DocumentVersion | null
   reviewed_document_version?: DocumentVersion | null
   caption_vtt_version?: DocumentVersion | null
   caption_srt_version?: DocumentVersion | null
   caption_vtt?: string | null
   caption_srt?: string | null
   warnings: string[]
+}
+
+export interface AssemblyAiSpeakerOptions {
+  min_speakers_expected?: number | null
+  max_speakers_expected?: number | null
+}
+
+export interface AssemblyAiTranscriptListQuery {
+  limit?: number
+  status?: "queued" | "processing" | "completed" | "error" | string
+  created_on?: string
+  before_id?: string
+  after_id?: string
+  throttled_only?: boolean
+}
+
+export interface AssemblyAiTranscriptPageDetails {
+  limit: number
+  result_count: number
+  current_url: string
+  prev_url?: string | null
+  next_url?: string | null
+}
+
+export interface AssemblyAiTranscriptListItem {
+  id: string
+  resource_url: string
+  status: "queued" | "processing" | "completed" | "error" | string
+  created: string
+  completed?: string | null
+  audio_url: string
+  error?: string | null
+}
+
+export interface AssemblyAiTranscriptListResponse {
+  page_details: AssemblyAiTranscriptPageDetails
+  transcripts: AssemblyAiTranscriptListItem[]
+}
+
+export interface AssemblyAiTranscriptDeleteResponse {
+  id: string
+  status: string
+  deleted: boolean
+  provider_response: Record<string, unknown>
 }
 
 export interface ExtractedEntity {

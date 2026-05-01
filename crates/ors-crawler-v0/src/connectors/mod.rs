@@ -77,7 +77,11 @@ impl DataConnector for OrsHtmlConnector {
         let chapters = if let Some(chapters) = &self.options.chapters {
             parse_chapter_list(chapters)?
         } else {
-            let max = self.options.max_items.max(1);
+            let max = if self.options.max_items == 0 {
+                524
+            } else {
+                self.options.max_items
+            };
             (1..=max).map(|chapter| chapter.to_string()).collect()
         };
         Ok(chapters

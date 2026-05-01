@@ -4,8 +4,8 @@ A Rust-first crawler/parser, legal graph loader, and CaseBuilder rules backend f
 
 ## What it does
 
-1. Discovers ORS chapters from `https://oregon.public.law/statutes`.
-2. Fetches canonical Oregon Legislature chapter HTML from `https://www.oregonlegislature.gov/bills_laws/ors/orsNNN.html`.
+1. Loads the source registry and selects connector-backed public legal sources.
+2. Fetches canonical Oregon Legislature chapter HTML from `https://www.oregonlegislature.gov/bills_laws/ors/orsNNN.html` for ORS registry jobs.
 3. Stores immutable raw HTML artifacts.
 4. Normalizes text.
 5. Parses sections/rules, provision markers, citation mentions, procedural semantics, registry currentness, and retrieval chunks.
@@ -19,35 +19,51 @@ Public.Law is used for discovery and outline hints. Oregon Legislature is treate
 
 ### Crawler
 
-ORS crawl:
+For the complete operating map, see [Crawler And API Overview](docs/crawler-api-overview.md). For connector and source registry details, see [Registry-Driven Crawler](docs/data/registry-driven-crawler.md).
+
+Registry-backed ORS smoke ingest:
 
 ```bash
-cargo run --release -- crawl \
-  --out data \
-  --delay-ms 900 \
-  --max-chapters 0
+cargo run --release -p ors-crawler-v0 --bin ors-crawler-v0 -- source-ingest \
+  --source-id or_leg_ors_html \
+  --out data/sources \
+  --max-items 2
 ```
 
-`--max-chapters 0` means no limit.
-
-For a smoke test:
+Combine source graph folders into the canonical graph directory:
 
 ```bash
-cargo run --release -- crawl --out data --delay-ms 500 --max-chapters 2
+cargo run --release -p ors-crawler-v0 --bin ors-crawler-v0 -- combine-graph \
+  --sources-dir data/sources \
+  --source-id or_leg_ors_html \
+  --out data/graph
 ```
+
+The old single-corpus ORS path is now explicit compatibility tooling: use `import-ors-legacy` for live legacy crawl/import or `import-ors-cache` for cached ORS HTML.
+
+Neo4j loading is JSONL-first and additive by default:
+
+```bash
+cargo run --release -p ors-crawler-v0 --bin ors-crawler-v0 -- seed-neo4j \
+  --graph-dir data/graph \
+  --neo4j-uri bolt://localhost:7687 \
+  --neo4j-user neo4j \
+  --neo4j-password-env NEO4J_PASSWORD
+```
+
+`seed-neo4j` creates constraints and uses idempotent upserts/materialization, so rerunning a seed updates matching nodes and relationships instead of truncating the database. Use `--dry-run` to validate JSONL without connecting to Neo4j. To replace existing graph data, run `clear-neo4j --yes` first, or set Docker `SEED_MODE=replace`; Docker defaults to append mode.
 
 Outputs:
 
 ```text
-data/raw/official/ors001.html
-data/normalized/chapters/ors001.txt
+data/sources/or_leg_ors_html/raw/ors001.html
+data/sources/or_leg_ors_html/graph/source_documents.jsonl
 data/graph/source_documents.jsonl
 data/graph/legal_text_identities.jsonl
 data/graph/legal_text_versions.jsonl
 data/graph/provisions.jsonl
 data/graph/citation_mentions.jsonl
 data/graph/retrieval_chunks.jsonl
-data/stats.json
 ```
 
 UTCR parse:
@@ -136,7 +152,7 @@ The 2025 UTCR parser records the Oregon Judicial Department PDF source URL and e
 
 ## Next steps
 
-1. Add Neo4j batch loader.
-2. Add embedding worker for `retrieval_chunks.jsonl`.
+1. Expand dedicated loaders/materializers for newly added legislative source JSONL.
+2. Add embedding worker hardening for `retrieval_chunks.jsonl`.
 3. Add section-diff cross-validation against Public.Law section pages.
 4. Add amendment/change-event parsing from Oregon Laws / statutes affected by measures.

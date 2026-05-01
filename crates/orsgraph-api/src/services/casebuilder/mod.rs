@@ -86,6 +86,10 @@ struct AssemblyAiTranscriptCreateRequest {
     language_detection: bool,
     speaker_labels: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    speakers_expected: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    speaker_options: Option<AssemblyAiSpeakerOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     redact_pii: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     redact_pii_policies: Option<Vec<String>>,
@@ -94,7 +98,17 @@ struct AssemblyAiTranscriptCreateRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     redact_pii_return_unredacted: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    redact_pii_audio: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redact_pii_audio_quality: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     language_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    keyterms_prompt: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remove_audio_tags: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     webhook_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -106,6 +120,43 @@ struct AssemblyAiTranscriptCreateRequest {
 #[derive(Debug, Deserialize)]
 struct AssemblyAiUploadResponse {
     upload_url: String,
+}
+
+const ASSEMBLYAI_CAPTION_CHARS_PER_CAPTION: u64 = 80;
+const ASSEMBLYAI_REDACTED_AUDIO_QUALITY: &str = "mp3";
+const ASSEMBLYAI_TRANSCRIPT_LIST_DEFAULT_LIMIT: u64 = 10;
+const ASSEMBLYAI_TRANSCRIPT_LIST_MAX_LIMIT: u64 = 200;
+const ASSEMBLYAI_WORD_SEARCH_MAX_TERMS: usize = 20;
+const ASSEMBLYAI_WORD_SEARCH_MAX_WORDS_PER_TERM: usize = 5;
+const ASSEMBLYAI_KEYTERMS_MAX_WORDS_TOTAL: usize = 1000;
+const ASSEMBLYAI_KEYTERM_MAX_WORDS: usize = 6;
+const ASSEMBLYAI_PROMPT_MAX_WORDS: usize = 1500;
+const ASSEMBLYAI_REMOVE_AUDIO_TAGS_ALL: &str = "all";
+const ASSEMBLYAI_PROMPT_PRESETS: &[&str] = &[
+    "verbatim_multilingual",
+    "unclear_masked",
+    "unclear",
+    "legal",
+    "medical",
+    "financial",
+    "technical",
+    "code_switching",
+    "customer_support",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssemblyAiSubtitleFormat {
+    Srt,
+    Vtt,
+}
+
+impl AssemblyAiSubtitleFormat {
+    fn as_str(self) -> &'static str {
+        match self {
+            AssemblyAiSubtitleFormat::Srt => "srt",
+            AssemblyAiSubtitleFormat::Vtt => "vtt",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -138,6 +189,52 @@ struct AssemblyAiTranscriptResponse {
     redact_pii_return_unredacted: Option<bool>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct AssemblyAiSentencesResponse {
+    id: String,
+    #[serde(default)]
+    confidence: Option<f32>,
+    #[serde(default)]
+    audio_duration: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    sentences: Vec<AssemblyAiSentence>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct AssemblyAiParagraphsResponse {
+    id: String,
+    #[serde(default)]
+    confidence: Option<f32>,
+    #[serde(default)]
+    audio_duration: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    paragraphs: Vec<AssemblyAiParagraph>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct AssemblyAiRedactedAudioResponse {
+    status: String,
+    redacted_audio_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct AssemblyAiWordSearchResponse {
+    id: String,
+    total_count: u64,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    matches: Vec<AssemblyAiWordSearchMatch>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct AssemblyAiWordSearchMatch {
+    text: String,
+    count: u64,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    timestamps: Vec<Vec<u64>>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    indexes: Vec<u64>,
+}
+
 fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
@@ -150,11 +247,39 @@ where
 struct AssemblyAiUtterance {
     #[serde(default)]
     speaker: Option<String>,
+    #[serde(default)]
+    channel: Option<String>,
     text: String,
     start: u64,
     end: u64,
     #[serde(default)]
     confidence: Option<f32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct AssemblyAiSentence {
+    text: String,
+    start: u64,
+    end: u64,
+    #[serde(default)]
+    confidence: Option<f32>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    words: Vec<AssemblyAiWord>,
+    #[serde(default)]
+    channel: Option<String>,
+    #[serde(default)]
+    speaker: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct AssemblyAiParagraph {
+    text: String,
+    start: u64,
+    end: u64,
+    #[serde(default)]
+    confidence: Option<f32>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    words: Vec<AssemblyAiWord>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -166,6 +291,8 @@ struct AssemblyAiWord {
     confidence: Option<f32>,
     #[serde(default)]
     speaker: Option<String>,
+    #[serde(default)]
+    channel: Option<String>,
 }
 
 #[derive(Clone)]
@@ -7560,6 +7687,212 @@ fn assemblyai_speech_models() -> Vec<String> {
     vec!["universal-3-pro".to_string(), "universal-2".to_string()]
 }
 
+fn validate_assemblyai_transcription_request(
+    request: &CreateTranscriptionRequest,
+) -> ApiResult<()> {
+    let prompt = assemblyai_effective_prompt(request)?;
+    let keyterms_prompt =
+        sanitize_assemblyai_keyterms(request.keyterms_prompt.iter().map(String::as_str));
+    let speaker_labels = request.speaker_labels.unwrap_or(true);
+    if prompt.is_some() && !keyterms_prompt.is_empty() {
+        return Err(ApiError::BadRequest(
+            "AssemblyAI prompt and keyterms_prompt cannot be used in the same request.".to_string(),
+        ));
+    }
+    if let Some(prompt) = prompt.as_deref() {
+        let word_count = prompt.split_whitespace().count();
+        if word_count > ASSEMBLYAI_PROMPT_MAX_WORDS {
+            return Err(ApiError::BadRequest(format!(
+                "AssemblyAI prompt must be {ASSEMBLYAI_PROMPT_MAX_WORDS} words or fewer."
+            )));
+        }
+    }
+    if assemblyai_keyterms_word_count(&keyterms_prompt) > ASSEMBLYAI_KEYTERMS_MAX_WORDS_TOTAL {
+        return Err(ApiError::BadRequest(format!(
+            "AssemblyAI keyterms_prompt must include {ASSEMBLYAI_KEYTERMS_MAX_WORDS_TOTAL} words or fewer across all terms."
+        )));
+    }
+    normalize_assemblyai_speaker_config(
+        speaker_labels,
+        request.speakers_expected,
+        request.speaker_options.as_ref(),
+    )?;
+    normalize_assemblyai_remove_audio_tags(request.remove_audio_tags.as_deref())?;
+    Ok(())
+}
+
+fn assemblyai_effective_prompt(request: &CreateTranscriptionRequest) -> ApiResult<Option<String>> {
+    if let Some(prompt) = sanitize_assemblyai_prompt(request.prompt.as_deref()) {
+        return Ok(Some(prompt));
+    }
+    if let Some(preset) = normalize_assemblyai_prompt_preset(request.prompt_preset.as_deref())? {
+        return Ok(Some(assemblyai_prompt_preset_text(&preset).to_string()));
+    }
+    Ok(None)
+}
+
+fn normalize_assemblyai_prompt_preset(value: Option<&str>) -> ApiResult<Option<String>> {
+    match value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.replace('-', "_").to_ascii_lowercase())
+    {
+        Some(value) if matches!(value.as_str(), "none" | "default" | "off") => Ok(None),
+        Some(value) if ASSEMBLYAI_PROMPT_PRESETS.contains(&value.as_str()) => Ok(Some(value)),
+        Some(value) => Err(ApiError::BadRequest(format!(
+            "AssemblyAI prompt_preset is not supported: {value}."
+        ))),
+        None => Ok(None),
+    }
+}
+
+fn assemblyai_prompt_preset_text(preset: &str) -> &'static str {
+    match preset {
+        "verbatim_multilingual" => {
+            "Required: Preserve the original language and script as spoken, including code-switching and mixed-language phrases.\n\nMandatory: Preserve linguistic speech patterns including disfluencies, filler words, hesitations, repetitions, stutters, false starts, and colloquialisms in the spoken language.\n\nAlways: Transcribe speech with your best guess based on context in all possible scenarios where speech is present in the audio."
+        }
+        "unclear_masked" => {
+            "Always: Transcribe speech exactly as heard. If uncertain or audio is unclear, mark as [masked]. After the first output, review the transcript again. Pay close attention to hallucinations, misspellings, or errors, and revise them like a computer performing spell and grammar checks. Ensure words and phrases make grammatical sense in sentences."
+        }
+        "unclear" => {
+            "Always: Transcribe speech exactly as heard. If uncertain or audio is unclear, mark as [unclear]. After the first output, review the transcript again. Pay close attention to hallucinations, misspellings, or errors, and revise them like a computer performing spell and grammar checks. Ensure words and phrases make grammatical sense in sentences."
+        }
+        "legal" => {
+            "Mandatory: Transcribe legal proceedings and legal recordings with precise terminology intact.\n\nRequired: Preserve linguistic speech patterns including disfluencies, filler words, hesitations, repetitions, stutters, false starts, and colloquialisms in the spoken language.\n\nNon-negotiable: Preserve legal entity names, party names, exhibit references, citations, acronyms, dates, and monetary amounts exactly when clear in the audio."
+        }
+        "medical" => {
+            "Mandatory: Preserve clinical terminology exactly as spoken, including drug names, dosages, conditions, procedures, and diagnostic terms.\n\nRequired: Preserve linguistic speech patterns including disfluencies, filler words, hesitations, repetitions, stutters, false starts, and colloquialisms in the spoken language.\n\nNon-negotiable: Use the most contextually correct spelling for medical terms and proper nouns."
+        }
+        "financial" => {
+            "Mandatory: Transcribe financial discussions with precise financial terminology.\n\nRequired: Preserve linguistic speech patterns including disfluencies, filler words, hesitations, repetitions, stutters, false starts, and colloquialisms in the spoken language.\n\nNon-negotiable: Preserve financial terms, acronyms, company names, and industry-standard phrases. Format numerical data with standard notation."
+        }
+        "technical" => {
+            "Mandatory: Transcribe technical discussions with precise terminology.\n\nRequired: Preserve linguistic speech patterns including disfluencies, filler words, hesitations, repetitions, stutters, false starts, and colloquialisms in the spoken language.\n\nNon-negotiable: Preserve software names, framework names, code terms, acronyms, command names, and technical proper nouns exactly when clear in the audio."
+        }
+        "code_switching" => {
+            "Mandatory: Transcribe verbatim, preserving natural code-switching between languages.\n\nRequired: Retain spoken language as-is without translation. Preserve words in the language they are spoken.\n\nNon-negotiable: Preserve linguistic speech patterns including disfluencies, filler words, hesitations, repetitions, stutters, false starts, and colloquialisms in the spoken language."
+        }
+        "customer_support" => {
+            "Context: a customer support call. Prioritize accurately transcribing names, account details, balance amounts, and organization names.\n\nMandatory: Transcribe overlapping speech across channels including crosstalk when audible.\n\nNon-negotiable: Preserve linguistic speech patterns including disfluencies, filler words, hesitations, repetitions, stutters, false starts, and colloquialisms in the spoken language."
+        }
+        _ => unreachable!("prompt preset must be validated before lookup"),
+    }
+}
+
+fn sanitize_assemblyai_prompt(prompt: Option<&str>) -> Option<String> {
+    prompt
+        .map(str::trim)
+        .filter(|prompt| !prompt.is_empty())
+        .map(str::to_string)
+}
+
+fn sanitize_assemblyai_keyterms<'a>(terms: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut word_budget_used = 0usize;
+    for term in terms {
+        let words = term
+            .split_whitespace()
+            .map(str::trim)
+            .filter(|word| !word.is_empty())
+            .collect::<Vec<_>>();
+        if words.is_empty() || words.len() > ASSEMBLYAI_KEYTERM_MAX_WORDS {
+            continue;
+        }
+        if word_budget_used + words.len() > ASSEMBLYAI_KEYTERMS_MAX_WORDS_TOTAL {
+            continue;
+        }
+        let normalized = words.join(" ");
+        if out
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(&normalized))
+        {
+            continue;
+        }
+        word_budget_used += words.len();
+        out.push(normalized);
+        if word_budget_used >= ASSEMBLYAI_KEYTERMS_MAX_WORDS_TOTAL {
+            break;
+        }
+    }
+    out
+}
+
+fn assemblyai_keyterms_word_count(terms: &[String]) -> usize {
+    terms
+        .iter()
+        .map(|term| term.split_whitespace().count())
+        .sum()
+}
+
+fn normalize_assemblyai_speaker_config(
+    speaker_labels: bool,
+    speakers_expected: Option<u64>,
+    speaker_options: Option<&AssemblyAiSpeakerOptions>,
+) -> ApiResult<(Option<u64>, Option<AssemblyAiSpeakerOptions>)> {
+    let speaker_options = speaker_options.and_then(normalize_assemblyai_speaker_options);
+    if !speaker_labels && (speakers_expected.is_some() || speaker_options.is_some()) {
+        return Err(ApiError::BadRequest(
+            "AssemblyAI speaker counts require speaker_labels to be enabled.".to_string(),
+        ));
+    }
+    if speakers_expected.is_some() && speaker_options.is_some() {
+        return Err(ApiError::BadRequest(
+            "AssemblyAI speakers_expected and speaker_options cannot be used together.".to_string(),
+        ));
+    }
+    if matches!(speakers_expected, Some(0)) {
+        return Err(ApiError::BadRequest(
+            "AssemblyAI speakers_expected must be greater than zero.".to_string(),
+        ));
+    }
+    if let Some(options) = speaker_options.as_ref() {
+        match (options.min_speakers_expected, options.max_speakers_expected) {
+            (Some(0), _) | (_, Some(0)) => {
+                return Err(ApiError::BadRequest(
+                    "AssemblyAI speaker_options values must be greater than zero.".to_string(),
+                ));
+            }
+            (Some(min), Some(max)) if min > max => {
+                return Err(ApiError::BadRequest(
+                    "AssemblyAI min_speakers_expected cannot exceed max_speakers_expected."
+                        .to_string(),
+                ));
+            }
+            (None, None) => {
+                return Err(ApiError::BadRequest(
+                    "AssemblyAI speaker_options requires min_speakers_expected or max_speakers_expected."
+                        .to_string(),
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok((speakers_expected, speaker_options))
+}
+
+fn normalize_assemblyai_speaker_options(
+    options: &AssemblyAiSpeakerOptions,
+) -> Option<AssemblyAiSpeakerOptions> {
+    if options.min_speakers_expected.is_none() && options.max_speakers_expected.is_none() {
+        return None;
+    }
+    Some(options.clone())
+}
+
+fn normalize_assemblyai_remove_audio_tags(value: Option<&str>) -> ApiResult<Option<String>> {
+    match value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase)
+    {
+        Some(value) if value == ASSEMBLYAI_REMOVE_AUDIO_TAGS_ALL => Ok(Some(value)),
+        Some(_) => Err(ApiError::BadRequest(
+            "AssemblyAI remove_audio_tags must be \"all\" when provided.".to_string(),
+        )),
+        None => Ok(Some(ASSEMBLYAI_REMOVE_AUDIO_TAGS_ALL.to_string())),
+    }
+}
+
 fn assemblyai_redact_pii_policies() -> Vec<String> {
     [
         "account_number",
@@ -7599,16 +7932,37 @@ fn assemblyai_transcript_create_request(
 ) -> AssemblyAiTranscriptCreateRequest {
     let webhook_enabled = webhook_url.is_some() && webhook_secret.is_some();
     let redact_pii = request.redact_pii.unwrap_or(true);
+    let speaker_labels = request.speaker_labels.unwrap_or(true);
+    let (speakers_expected, speaker_options) = normalize_assemblyai_speaker_config(
+        speaker_labels,
+        request.speakers_expected,
+        request.speaker_options.as_ref(),
+    )
+    .unwrap_or((None, None));
+    let prompt = assemblyai_effective_prompt(request).unwrap_or_else(|_| None);
+    let keyterms_prompt =
+        sanitize_assemblyai_keyterms(request.keyterms_prompt.iter().map(String::as_str));
     AssemblyAiTranscriptCreateRequest {
         audio_url: audio_url.to_string(),
         speech_models: job.speech_models.clone(),
         language_detection: request.language_code.is_none(),
-        speaker_labels: request.speaker_labels.unwrap_or(true),
+        speaker_labels,
+        speakers_expected,
+        speaker_options,
         redact_pii: redact_pii.then_some(true),
         redact_pii_policies: redact_pii.then(assemblyai_redact_pii_policies),
         redact_pii_sub: redact_pii.then_some("entity_name".to_string()),
         redact_pii_return_unredacted: redact_pii.then_some(true),
+        redact_pii_audio: redact_pii.then_some(true),
+        redact_pii_audio_quality: redact_pii
+            .then_some(ASSEMBLYAI_REDACTED_AUDIO_QUALITY.to_string()),
         language_code: request.language_code.clone(),
+        prompt,
+        keyterms_prompt: (!keyterms_prompt.is_empty()).then_some(keyterms_prompt),
+        remove_audio_tags: normalize_assemblyai_remove_audio_tags(
+            request.remove_audio_tags.as_deref(),
+        )
+        .unwrap_or_else(|_| Some(ASSEMBLYAI_REMOVE_AUDIO_TAGS_ALL.to_string())),
         webhook_url: webhook_url.filter(|_| webhook_enabled),
         webhook_auth_header_name: if webhook_enabled {
             Some(assemblyai_webhook_header_name().to_string())
@@ -7651,6 +8005,32 @@ fn assemblyai_raw_text(provider: &AssemblyAiTranscriptResponse) -> Option<&str> 
         .filter(|text| !text.trim().is_empty())
 }
 
+fn assemblyai_word_count(
+    provider: &AssemblyAiTranscriptResponse,
+    sentences: &AssemblyAiSentencesResponse,
+    paragraphs: &AssemblyAiParagraphsResponse,
+) -> usize {
+    let raw_words = assemblyai_raw_words(provider);
+    if raw_words.is_empty() {
+        let sentence_words = sentences
+            .sentences
+            .iter()
+            .map(|sentence| sentence.words.len())
+            .sum::<usize>();
+        if sentence_words == 0 {
+            paragraphs
+                .paragraphs
+                .iter()
+                .map(|paragraph| paragraph.words.len())
+                .sum()
+        } else {
+            sentence_words
+        }
+    } else {
+        raw_words.len()
+    }
+}
+
 fn assemblyai_redacted_utterance_text(
     provider: &AssemblyAiTranscriptResponse,
     index: usize,
@@ -7667,6 +8047,156 @@ fn assemblyai_redacted_utterance_text(
         }
     }
     redact_transcript_text(raw_text)
+}
+
+fn assemblyai_redacted_sentence_text(
+    provider: &AssemblyAiTranscriptResponse,
+    sentence: &AssemblyAiSentence,
+    raw_text: &str,
+) -> String {
+    if assemblyai_provider_has_redaction(provider) {
+        let text = sentence.text.trim();
+        if !text.is_empty() {
+            return text.to_string();
+        }
+    }
+    redact_transcript_text(raw_text)
+}
+
+fn assemblyai_unredacted_sentence_text(
+    provider: &AssemblyAiTranscriptResponse,
+    sentence: &AssemblyAiSentence,
+) -> Option<String> {
+    assemblyai_unredacted_timed_text(provider, sentence.start, sentence.end)
+}
+
+fn assemblyai_unredacted_paragraph_text(
+    provider: &AssemblyAiTranscriptResponse,
+    paragraph: &AssemblyAiParagraph,
+) -> Option<String> {
+    assemblyai_unredacted_timed_text(provider, paragraph.start, paragraph.end)
+}
+
+fn assemblyai_unredacted_timed_text(
+    provider: &AssemblyAiTranscriptResponse,
+    start: u64,
+    end: u64,
+) -> Option<String> {
+    if !assemblyai_provider_has_redaction(provider) || provider.unredacted_words.is_empty() {
+        return None;
+    }
+    let words = provider
+        .unredacted_words
+        .iter()
+        .filter(|word| transcript_word_overlaps(word, start, end))
+        .collect::<Vec<_>>();
+    if words.is_empty() {
+        None
+    } else {
+        Some(join_transcript_words(
+            words.iter().map(|word| word.text.as_str()),
+        ))
+    }
+}
+
+fn assemblyai_redacted_paragraph_text(
+    provider: &AssemblyAiTranscriptResponse,
+    paragraph: &AssemblyAiParagraph,
+    raw_text: &str,
+) -> String {
+    if assemblyai_provider_has_redaction(provider) {
+        let text = paragraph.text.trim();
+        if !text.is_empty() {
+            return text.to_string();
+        }
+    }
+    redact_transcript_text(raw_text)
+}
+
+fn assemblyai_sentence_speaker(sentence: &AssemblyAiSentence) -> Option<String> {
+    sentence.speaker.clone().or_else(|| {
+        dominant_transcript_label(
+            sentence
+                .words
+                .iter()
+                .filter_map(|word| word.speaker.as_deref()),
+        )
+    })
+}
+
+fn assemblyai_sentence_channel(sentence: &AssemblyAiSentence) -> Option<String> {
+    sentence.channel.clone().or_else(|| {
+        dominant_transcript_label(
+            sentence
+                .words
+                .iter()
+                .filter_map(|word| word.channel.as_deref()),
+        )
+    })
+}
+
+fn assemblyai_paragraph_speaker(paragraph: &AssemblyAiParagraph) -> Option<String> {
+    dominant_transcript_label(
+        paragraph
+            .words
+            .iter()
+            .filter_map(|word| word.speaker.as_deref()),
+    )
+}
+
+fn assemblyai_paragraph_channel(paragraph: &AssemblyAiParagraph) -> Option<String> {
+    dominant_transcript_label(
+        paragraph
+            .words
+            .iter()
+            .filter_map(|word| word.channel.as_deref()),
+    )
+}
+
+fn dominant_transcript_label<'a>(labels: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let mut counts: BTreeMap<&str, u64> = BTreeMap::new();
+    for label in labels {
+        let label = label.trim();
+        if !label.is_empty() {
+            *counts.entry(label).or_insert(0) += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(left.0)))
+        .map(|(label, _)| label.to_string())
+}
+
+fn transcript_word_overlaps(word: &AssemblyAiWord, start: u64, end: u64) -> bool {
+    word.start < end && word.end > start
+}
+
+fn transcript_time_overlap(start: u64, end: u64, other_start: u64, other_end: u64) -> u64 {
+    end.min(other_end).saturating_sub(start.max(other_start))
+}
+
+fn join_transcript_words<'a>(words: impl IntoIterator<Item = &'a str>) -> String {
+    let mut out = String::new();
+    for word in words {
+        let word = word.trim();
+        if word.is_empty() {
+            continue;
+        }
+        if out.is_empty() || transcript_word_attaches_to_previous(word) {
+            out.push_str(word);
+        } else {
+            out.push(' ');
+            out.push_str(word);
+        }
+    }
+    out
+}
+
+fn transcript_word_attaches_to_previous(word: &str) -> bool {
+    matches!(
+        word.chars().next(),
+        Some('.' | ',' | '?' | '!' | ':' | ';' | ')' | ']' | '}')
+    )
 }
 
 fn assemblyai_redacted_document_text(
@@ -7691,31 +8221,87 @@ fn transcript_segments_from_provider(
     document: &CaseDocument,
     job: &TranscriptionJob,
     provider: &AssemblyAiTranscriptResponse,
+    sentences: &AssemblyAiSentencesResponse,
+    paragraphs: &AssemblyAiParagraphsResponse,
     now: &str,
 ) -> (Vec<TranscriptSegment>, Vec<TranscriptSpeaker>) {
     let mut segments = Vec::new();
-    let utterances = assemblyai_raw_utterances(provider);
-    let words = assemblyai_raw_words(provider);
-    if !utterances.is_empty() {
-        for (index, utterance) in utterances.iter().enumerate() {
-            let ordinal = index as u64 + 1;
-            let speaker_label = utterance.speaker.clone();
-            let text = utterance.text.trim().to_string();
-            let redacted_text = if job.redact_pii {
-                assemblyai_redacted_utterance_text(provider, index, &text)
+    if !sentences.sentences.is_empty() {
+        for sentence in &sentences.sentences {
+            let sentence_text = sentence.text.trim().to_string();
+            if sentence_text.is_empty() {
+                continue;
+            }
+            let ordinal = segments.len() as u64 + 1;
+            let raw_text = if job.redact_pii {
+                assemblyai_unredacted_sentence_text(provider, sentence)
+                    .filter(|text| !text.trim().is_empty())
+                    .unwrap_or_else(|| sentence_text.clone())
             } else {
-                text.clone()
+                sentence_text.clone()
             };
+            let redacted_text = if job.redact_pii {
+                assemblyai_redacted_sentence_text(provider, sentence, &raw_text)
+            } else {
+                raw_text.clone()
+            };
+            let segment_id = transcript_segment_id(&job.transcription_job_id, ordinal);
             segments.push(TranscriptSegment {
-                segment_id: transcript_segment_id(&job.transcription_job_id, ordinal),
-                id: transcript_segment_id(&job.transcription_job_id, ordinal),
+                segment_id: segment_id.clone(),
+                id: segment_id,
                 matter_id: matter_id.to_string(),
                 document_id: document.document_id.clone(),
                 transcription_job_id: job.transcription_job_id.clone(),
                 source_span_id: None,
                 ordinal,
+                paragraph_ordinal: None,
+                speaker_label: assemblyai_sentence_speaker(sentence),
+                speaker_name: None,
+                channel: assemblyai_sentence_channel(sentence),
+                redacted_text: Some(redacted_text),
+                text: raw_text,
+                time_start_ms: sentence.start,
+                time_end_ms: sentence.end,
+                confidence: sentence
+                    .confidence
+                    .or(sentences.confidence)
+                    .or(provider.confidence)
+                    .unwrap_or(0.0),
+                review_status: "unreviewed".to_string(),
+                edited: false,
+                created_at: now.to_string(),
+                updated_at: now.to_string(),
+            });
+        }
+    }
+    let utterances = assemblyai_raw_utterances(provider);
+    let words = assemblyai_raw_words(provider);
+    if segments.is_empty() && !utterances.is_empty() {
+        for (index, utterance) in utterances.iter().enumerate() {
+            let ordinal = index as u64 + 1;
+            let speaker_label = utterance.speaker.clone();
+            let text = utterance.text.trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            let redacted_text = if job.redact_pii {
+                assemblyai_redacted_utterance_text(provider, index, &text)
+            } else {
+                text.clone()
+            };
+            let segment_id = transcript_segment_id(&job.transcription_job_id, ordinal);
+            segments.push(TranscriptSegment {
+                segment_id: segment_id.clone(),
+                id: segment_id,
+                matter_id: matter_id.to_string(),
+                document_id: document.document_id.clone(),
+                transcription_job_id: job.transcription_job_id.clone(),
+                source_span_id: None,
+                ordinal,
+                paragraph_ordinal: None,
                 speaker_label,
                 speaker_name: None,
+                channel: utterance.channel.clone(),
                 redacted_text: Some(redacted_text),
                 text,
                 time_start_ms: utterance.start,
@@ -7729,39 +8315,48 @@ fn transcript_segments_from_provider(
                 updated_at: now.to_string(),
             });
         }
-    } else if let Some(text) = assemblyai_raw_text(provider) {
-        let end = provider
-            .audio_duration
-            .map(|seconds| (seconds * 1000.0) as u64)
-            .or_else(|| words.last().map(|word| word.end))
-            .unwrap_or(0);
-        let text = text.trim().to_string();
-        let redacted_text = if job.redact_pii {
-            assemblyai_redacted_document_text(provider, &text)
-        } else {
-            text.clone()
-        };
-        segments.push(TranscriptSegment {
-            segment_id: transcript_segment_id(&job.transcription_job_id, 1),
-            id: transcript_segment_id(&job.transcription_job_id, 1),
-            matter_id: matter_id.to_string(),
-            document_id: document.document_id.clone(),
-            transcription_job_id: job.transcription_job_id.clone(),
-            source_span_id: None,
-            ordinal: 1,
-            speaker_label: None,
-            speaker_name: None,
-            text,
-            redacted_text: Some(redacted_text),
-            time_start_ms: words.first().map(|word| word.start).unwrap_or(0),
-            time_end_ms: end,
-            confidence: provider.confidence.unwrap_or(0.0),
-            review_status: "unreviewed".to_string(),
-            edited: false,
-            created_at: now.to_string(),
-            updated_at: now.to_string(),
-        });
+    } else if segments.is_empty() {
+        if let Some(text) = assemblyai_raw_text(provider) {
+            let end = provider
+                .audio_duration
+                .map(|seconds| (seconds * 1000.0) as u64)
+                .or_else(|| words.last().map(|word| word.end))
+                .unwrap_or(0);
+            let text = text.trim().to_string();
+            if text.is_empty() {
+                return (segments, Vec::new());
+            }
+            let redacted_text = if job.redact_pii {
+                assemblyai_redacted_document_text(provider, &text)
+            } else {
+                text.clone()
+            };
+            let segment_id = transcript_segment_id(&job.transcription_job_id, 1);
+            segments.push(TranscriptSegment {
+                segment_id: segment_id.clone(),
+                id: segment_id,
+                matter_id: matter_id.to_string(),
+                document_id: document.document_id.clone(),
+                transcription_job_id: job.transcription_job_id.clone(),
+                source_span_id: None,
+                ordinal: 1,
+                paragraph_ordinal: None,
+                speaker_label: None,
+                speaker_name: None,
+                channel: None,
+                text,
+                redacted_text: Some(redacted_text),
+                time_start_ms: words.first().map(|word| word.start).unwrap_or(0),
+                time_end_ms: end,
+                confidence: provider.confidence.unwrap_or(0.0),
+                review_status: "unreviewed".to_string(),
+                edited: false,
+                created_at: now.to_string(),
+                updated_at: now.to_string(),
+            });
+        }
     }
+    apply_assemblyai_paragraphs_to_segments(&mut segments, paragraphs);
 
     let mut speaker_counts: BTreeMap<String, u64> = BTreeMap::new();
     for segment in &segments {
@@ -7789,6 +8384,423 @@ fn transcript_segments_from_provider(
     (segments, speakers)
 }
 
+fn apply_assemblyai_paragraphs_to_segments(
+    segments: &mut [TranscriptSegment],
+    paragraphs: &AssemblyAiParagraphsResponse,
+) {
+    if paragraphs.paragraphs.is_empty() {
+        return;
+    }
+    for segment in segments {
+        let paragraph_index = paragraphs
+            .paragraphs
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, paragraph)| {
+                transcript_time_overlap(
+                    segment.time_start_ms,
+                    segment.time_end_ms,
+                    paragraph.start,
+                    paragraph.end,
+                )
+            })
+            .and_then(|(index, paragraph)| {
+                let overlap = transcript_time_overlap(
+                    segment.time_start_ms,
+                    segment.time_end_ms,
+                    paragraph.start,
+                    paragraph.end,
+                );
+                (overlap > 0).then_some(index as u64 + 1)
+            });
+        segment.paragraph_ordinal = paragraph_index;
+    }
+}
+
+fn transcript_paragraph_payloads(
+    provider: &AssemblyAiTranscriptResponse,
+    paragraphs: &AssemblyAiParagraphsResponse,
+    redact_pii: bool,
+) -> Vec<serde_json::Value> {
+    paragraphs
+        .paragraphs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, paragraph)| {
+            let paragraph_text = paragraph.text.trim().to_string();
+            if paragraph_text.is_empty() {
+                return None;
+            }
+            let raw_text = if redact_pii {
+                assemblyai_unredacted_paragraph_text(provider, paragraph)
+                    .filter(|text| !text.trim().is_empty())
+                    .unwrap_or_else(|| paragraph_text.clone())
+            } else {
+                paragraph_text.clone()
+            };
+            let redacted_text = if redact_pii {
+                assemblyai_redacted_paragraph_text(provider, paragraph, &raw_text)
+            } else {
+                raw_text.clone()
+            };
+            Some(serde_json::json!({
+                "ordinal": index + 1,
+                "text": raw_text,
+                "redacted_text": redacted_text,
+                "time_start_ms": paragraph.start,
+                "time_end_ms": paragraph.end,
+                "confidence": paragraph.confidence.or(paragraphs.confidence),
+                "speaker_label": assemblyai_paragraph_speaker(paragraph),
+                "channel": assemblyai_paragraph_channel(paragraph),
+                "word_count": paragraph.words.len(),
+            }))
+        })
+        .collect()
+}
+
+fn should_use_assemblyai_subtitles(
+    provider: &AssemblyAiTranscriptResponse,
+    redact_pii: bool,
+) -> bool {
+    !redact_pii || assemblyai_provider_has_redaction(provider)
+}
+
+fn provider_subtitle_or_local(
+    provider_subtitle: Option<String>,
+    local_subtitle: String,
+) -> (String, &'static str) {
+    match provider_subtitle
+        .map(|subtitle| subtitle.trim().to_string())
+        .filter(|subtitle| !subtitle.is_empty())
+    {
+        Some(subtitle) => (subtitle, "assemblyai_subtitles"),
+        None => (local_subtitle, "casebuilder_local"),
+    }
+}
+
+fn normalize_assemblyai_transcript_list_query(
+    mut query: AssemblyAiTranscriptListQuery,
+) -> ApiResult<AssemblyAiTranscriptListQuery> {
+    let limit = query
+        .limit
+        .unwrap_or(ASSEMBLYAI_TRANSCRIPT_LIST_DEFAULT_LIMIT);
+    if limit == 0 || limit > ASSEMBLYAI_TRANSCRIPT_LIST_MAX_LIMIT {
+        return Err(ApiError::BadRequest(format!(
+            "AssemblyAI transcript list limit must be between 1 and {ASSEMBLYAI_TRANSCRIPT_LIST_MAX_LIMIT}."
+        )));
+    }
+    query.limit = Some(limit);
+    query.status = query
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|status| !status.is_empty())
+        .map(str::to_ascii_lowercase);
+    if let Some(status) = query.status.as_deref() {
+        if !matches!(status, "queued" | "processing" | "completed" | "error") {
+            return Err(ApiError::BadRequest(
+                "AssemblyAI transcript status must be queued, processing, completed, or error."
+                    .to_string(),
+            ));
+        }
+    }
+    query.created_on = query
+        .created_on
+        .as_deref()
+        .map(str::trim)
+        .filter(|created_on| !created_on.is_empty())
+        .map(str::to_string);
+    if let Some(created_on) = query.created_on.as_deref() {
+        if !assemblyai_created_on_date_is_valid(created_on) {
+            return Err(ApiError::BadRequest(
+                "AssemblyAI created_on must use YYYY-MM-DD format.".to_string(),
+            ));
+        }
+    }
+    query.before_id = sanitize_optional_assemblyai_transcript_id(query.before_id.as_deref());
+    query.after_id = sanitize_optional_assemblyai_transcript_id(query.after_id.as_deref());
+    Ok(query)
+}
+
+fn assemblyai_transcript_list_query_pairs(
+    query: &AssemblyAiTranscriptListQuery,
+) -> Vec<(&'static str, String)> {
+    let mut pairs = vec![(
+        "limit",
+        query
+            .limit
+            .unwrap_or(ASSEMBLYAI_TRANSCRIPT_LIST_DEFAULT_LIMIT)
+            .to_string(),
+    )];
+    if let Some(status) = query.status.as_deref().filter(|status| !status.is_empty()) {
+        pairs.push(("status", status.to_string()));
+    }
+    if let Some(created_on) = query
+        .created_on
+        .as_deref()
+        .filter(|created_on| !created_on.is_empty())
+    {
+        pairs.push(("created_on", created_on.to_string()));
+    }
+    if let Some(before_id) = query
+        .before_id
+        .as_deref()
+        .filter(|before_id| !before_id.is_empty())
+    {
+        pairs.push(("before_id", before_id.to_string()));
+    }
+    if let Some(after_id) = query
+        .after_id
+        .as_deref()
+        .filter(|after_id| !after_id.is_empty())
+    {
+        pairs.push(("after_id", after_id.to_string()));
+    }
+    if let Some(throttled_only) = query.throttled_only {
+        pairs.push(("throttled_only", throttled_only.to_string()));
+    }
+    pairs
+}
+
+fn assemblyai_created_on_date_is_valid(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| index == 4 || index == 7 || byte.is_ascii_digit())
+}
+
+fn sanitize_optional_assemblyai_transcript_id(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(sanitize_path_segment)
+}
+
+fn normalize_assemblyai_transcript_id(value: &str) -> ApiResult<String> {
+    let transcript_id = sanitize_path_segment(value.trim());
+    if transcript_id.is_empty() {
+        return Err(ApiError::BadRequest(
+            "AssemblyAI transcript_id is required.".to_string(),
+        ));
+    }
+    Ok(transcript_id)
+}
+
+fn assemblyai_transcript_delete_response(
+    requested_transcript_id: &str,
+    provider_response: serde_json::Value,
+) -> AssemblyAiTranscriptDeleteResponse {
+    let id = provider_response
+        .get("id")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(requested_transcript_id)
+        .to_string();
+    let status = provider_response
+        .get("status")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("deleted")
+        .to_string();
+    let deleted = status == "deleted"
+        || provider_response
+            .get("text")
+            .map(|value| value.is_null())
+            .unwrap_or(false);
+    AssemblyAiTranscriptDeleteResponse {
+        id,
+        status,
+        deleted,
+        provider_response,
+    }
+}
+
+fn assemblyai_default_word_search_terms(
+    provider: &AssemblyAiTranscriptResponse,
+    sentences: &AssemblyAiSentencesResponse,
+    paragraphs: &AssemblyAiParagraphsResponse,
+) -> Vec<String> {
+    let mut text_parts = Vec::new();
+    if let Some(text) = provider
+        .text
+        .as_deref()
+        .filter(|text| !text.trim().is_empty())
+    {
+        text_parts.push(text.to_string());
+    } else if let Some(text) = assemblyai_raw_text(provider) {
+        text_parts.push(text.to_string());
+    }
+    if text_parts.is_empty() {
+        text_parts.extend(
+            sentences
+                .sentences
+                .iter()
+                .map(|sentence| sentence.text.trim())
+                .filter(|text| !text.is_empty())
+                .map(str::to_string),
+        );
+    }
+    if text_parts.is_empty() {
+        text_parts.extend(
+            paragraphs
+                .paragraphs
+                .iter()
+                .map(|paragraph| paragraph.text.trim())
+                .filter(|text| !text.is_empty())
+                .map(str::to_string),
+        );
+    }
+    let text = text_parts.join(" ");
+    if text.trim().is_empty() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    let lower_text = text.to_lowercase();
+    for term in [
+        "agreement",
+        "attorney",
+        "contract",
+        "court",
+        "damage",
+        "deadline",
+        "deposit",
+        "email",
+        "evidence",
+        "hearing",
+        "invoice",
+        "lease",
+        "notice",
+        "payment",
+        "receipt",
+        "repair",
+        "tenant",
+    ] {
+        if lower_text.contains(term) {
+            candidates.push(term.to_string());
+        }
+    }
+
+    let mut counts: BTreeMap<String, u64> = BTreeMap::new();
+    for token in text
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .map(str::trim)
+        .filter(|token| token.len() >= 4)
+    {
+        let token = token.to_ascii_lowercase();
+        if !assemblyai_word_search_stopword(&token) {
+            *counts.entry(token).or_insert(0) += 1;
+        }
+    }
+    let mut counted_terms = counts.into_iter().collect::<Vec<_>>();
+    counted_terms.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    candidates.extend(
+        counted_terms
+            .into_iter()
+            .take(ASSEMBLYAI_WORD_SEARCH_MAX_TERMS)
+            .map(|(term, _)| term),
+    );
+    sanitize_assemblyai_word_search_terms(candidates.iter().map(String::as_str))
+}
+
+fn sanitize_assemblyai_word_search_terms<'a>(
+    terms: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for term in terms {
+        let words = term
+            .split_whitespace()
+            .map(|word| word.trim_matches(|character: char| !character.is_alphanumeric()))
+            .filter(|word| !word.is_empty())
+            .collect::<Vec<_>>();
+        if words.is_empty() || words.len() > ASSEMBLYAI_WORD_SEARCH_MAX_WORDS_PER_TERM {
+            continue;
+        }
+        let normalized = words.join(" ").to_lowercase();
+        if normalized.is_empty()
+            || assemblyai_word_search_stopword(&normalized)
+            || out.iter().any(|existing| existing == &normalized)
+        {
+            continue;
+        }
+        out.push(normalized);
+        if out.len() >= ASSEMBLYAI_WORD_SEARCH_MAX_TERMS {
+            break;
+        }
+    }
+    out
+}
+
+fn assemblyai_word_search_stopword(term: &str) -> bool {
+    matches!(
+        term,
+        "about"
+            | "after"
+            | "again"
+            | "also"
+            | "because"
+            | "been"
+            | "being"
+            | "could"
+            | "from"
+            | "have"
+            | "into"
+            | "just"
+            | "like"
+            | "more"
+            | "only"
+            | "other"
+            | "over"
+            | "said"
+            | "should"
+            | "that"
+            | "their"
+            | "there"
+            | "they"
+            | "this"
+            | "through"
+            | "were"
+            | "what"
+            | "when"
+            | "where"
+            | "which"
+            | "with"
+            | "would"
+            | "your"
+    )
+}
+
+fn assemblyai_word_search_payload(
+    terms: &[String],
+    response: Option<&AssemblyAiWordSearchResponse>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "terms": terms,
+        "total_count": response.map(|response| response.total_count).unwrap_or(0),
+        "match_count": response.map(|response| response.matches.len()).unwrap_or(0),
+        "matches": response
+            .map(|response| {
+                response
+                    .matches
+                    .iter()
+                    .map(|search_match| {
+                        serde_json::json!({
+                            "text": search_match.text,
+                            "count": search_match.count,
+                            "timestamps": search_match.timestamps,
+                            "indexes": search_match.indexes,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+    })
+}
+
 fn transcript_source_spans(
     matter_id: &str,
     document_id: &str,
@@ -7797,6 +8809,7 @@ fn transcript_source_spans(
     document_version_id: Option<String>,
     object_blob_id: Option<String>,
     review_status: &str,
+    extraction_method: &str,
 ) -> Vec<SourceSpan> {
     segments
         .iter()
@@ -7831,7 +8844,7 @@ fn transcript_source_spans(
                         .clone()
                         .unwrap_or_else(|| redact_transcript_text(&segment.text))
                 }),
-                extraction_method: "assemblyai_transcript_segment".to_string(),
+                extraction_method: extraction_method.to_string(),
                 confidence: segment.confidence,
                 review_status: review_status.to_string(),
                 unavailable_reason: None,
@@ -7841,26 +8854,37 @@ fn transcript_source_spans(
 }
 
 fn transcript_segments_to_text(segments: &[TranscriptSegment], redacted: bool) -> String {
-    segments
-        .iter()
-        .map(|segment| {
-            let speaker = segment
-                .speaker_name
+    let mut paragraphs = Vec::new();
+    let mut current_paragraph: Option<u64> = None;
+    let mut current_lines = Vec::new();
+    for segment in segments {
+        if !current_lines.is_empty()
+            && segment.paragraph_ordinal.is_some()
+            && segment.paragraph_ordinal != current_paragraph
+        {
+            paragraphs.push(current_lines.join("\n"));
+            current_lines.clear();
+        }
+        current_paragraph = segment.paragraph_ordinal;
+        let speaker = segment
+            .speaker_name
+            .as_deref()
+            .or(segment.speaker_label.as_deref())
+            .unwrap_or("Speaker");
+        let text = if redacted {
+            segment
+                .redacted_text
                 .as_deref()
-                .or(segment.speaker_label.as_deref())
-                .unwrap_or("Speaker");
-            let text = if redacted {
-                segment
-                    .redacted_text
-                    .as_deref()
-                    .unwrap_or(segment.text.as_str())
-            } else {
-                segment.text.as_str()
-            };
-            format!("{speaker}: {text}")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+                .unwrap_or(segment.text.as_str())
+        } else {
+            segment.text.as_str()
+        };
+        current_lines.push(format!("{speaker}: {text}"));
+    }
+    if !current_lines.is_empty() {
+        paragraphs.push(current_lines.join("\n"));
+    }
+    paragraphs.join("\n\n")
 }
 
 fn transcript_segments_to_vtt(segments: &[TranscriptSegment], redacted: bool) -> String {
@@ -9761,34 +10785,49 @@ mod tests {
     use super::rule_engine::work_product_finding;
     use super::{
         apply_work_product_support_removal, apply_work_product_support_update,
-        apply_work_product_text_range_link, assemblyai_http_error, assemblyai_raw_words,
-        assemblyai_speech_models, assemblyai_transcript_create_request,
-        assemblyai_transcript_error_message, canonical_id_for_citation, chunk_text,
-        citation_uses_for_text, default_formatting_profile, docx_package_manifest,
-        docx_with_replaced_document_xml, failed_ingestion_run, generate_opaque_id,
-        looks_like_complaint, normalize_compare_layers, object_blob_id_for_hash,
-        oregon_civil_complaint_rule_pack, parse_complaint_structure, parse_document_bytes,
-        propose_facts, prosemirror_doc_for_text, rebuild_work_product_ast_from_projection,
-        redact_transcript_text, refresh_work_product_state, restore_work_product_scope,
-        safe_work_product_download_filename, sanitize_filename, sanitized_external_error,
-        sha256_hex, should_inline_payload, slug, snapshot_entity_state_key,
-        snapshot_full_state_key, snapshot_manifest_for_product, snapshot_manifest_hash_for_states,
-        snapshot_manifest_key, summarize_version_snapshot_for_list,
-        summarize_work_product_for_list, transcript_segments_from_provider,
-        transcript_segments_to_srt, transcript_segments_to_vtt, validate_ast_patch_concurrency,
+        apply_work_product_text_range_link, assemblyai_default_word_search_terms,
+        assemblyai_effective_prompt, assemblyai_http_error, assemblyai_keyterms_word_count,
+        assemblyai_prompt_preset_text, assemblyai_raw_words, assemblyai_speech_models,
+        assemblyai_transcript_create_request, assemblyai_transcript_delete_response,
+        assemblyai_transcript_error_message, assemblyai_transcript_list_query_pairs,
+        canonical_id_for_citation, chunk_text, citation_uses_for_text, default_formatting_profile,
+        docx_package_manifest, docx_with_replaced_document_xml, failed_ingestion_run,
+        generate_opaque_id, looks_like_complaint, normalize_assemblyai_prompt_preset,
+        normalize_assemblyai_remove_audio_tags, normalize_assemblyai_transcript_id,
+        normalize_assemblyai_transcript_list_query, normalize_compare_layers,
+        object_blob_id_for_hash, oregon_civil_complaint_rule_pack, parse_complaint_structure,
+        parse_document_bytes, propose_facts, prosemirror_doc_for_text, provider_subtitle_or_local,
+        rebuild_work_product_ast_from_projection, redact_transcript_text,
+        refresh_work_product_state, restore_work_product_scope,
+        safe_work_product_download_filename, sanitize_assemblyai_keyterms,
+        sanitize_assemblyai_prompt, sanitize_assemblyai_word_search_terms, sanitize_filename,
+        sanitized_external_error, sha256_hex, should_inline_payload,
+        should_use_assemblyai_subtitles, slug, snapshot_entity_state_key, snapshot_full_state_key,
+        snapshot_manifest_for_product, snapshot_manifest_hash_for_states, snapshot_manifest_key,
+        summarize_version_snapshot_for_list, summarize_work_product_for_list,
+        transcript_segments_from_provider, transcript_segments_to_srt, transcript_segments_to_vtt,
+        validate_assemblyai_transcription_request, validate_ast_patch_concurrency,
         version_change_state_summary, work_product_block_graph_payload, work_product_export_key,
-        work_product_hashes, work_product_profile, AssemblyAiTranscriptResponse,
-        AssemblyAiUtterance, AssemblyAiWord, SourceContext, CASE_INDEX_VERSION, CHUNKER_VERSION,
+        work_product_hashes, work_product_profile, AssemblyAiParagraph,
+        AssemblyAiParagraphsResponse, AssemblyAiRedactedAudioResponse, AssemblyAiSentence,
+        AssemblyAiSentencesResponse, AssemblyAiSubtitleFormat, AssemblyAiTranscriptResponse,
+        AssemblyAiUtterance, AssemblyAiWord, AssemblyAiWordSearchResponse, SourceContext,
+        ASSEMBLYAI_CAPTION_CHARS_PER_CAPTION, ASSEMBLYAI_KEYTERMS_MAX_WORDS_TOTAL,
+        ASSEMBLYAI_PROMPT_MAX_WORDS, ASSEMBLYAI_REDACTED_AUDIO_QUALITY,
+        ASSEMBLYAI_REMOVE_AUDIO_TAGS_ALL, ASSEMBLYAI_TRANSCRIPT_LIST_DEFAULT_LIMIT,
+        ASSEMBLYAI_WORD_SEARCH_MAX_TERMS, CASE_INDEX_VERSION, CHUNKER_VERSION,
         CITATION_RESOLVER_VERSION, PARSER_REGISTRY_VERSION,
     };
     use crate::error::ApiError;
     use crate::models::casebuilder::{
-        AstOperation, AstPatch, CaseDocument, CreateTranscriptionRequest, IngestionRun,
-        NullableStringPatch, PatchWorkProductSupportRequest, TextRange, TranscriptionJob,
-        VersionChangeSummary, VersionSnapshot, WorkProduct, WorkProductAction, WorkProductAnchor,
-        WorkProductArtifact, WorkProductBlock, WorkProductCitationUse, WorkProductDocument,
-        WorkProductDownloadResponse, WorkProductExhibitReference, WorkProductFinding,
-        WorkProductLink, WorkProductTextRangeLinkRequest,
+        AssemblyAiSpeakerOptions, AssemblyAiTranscriptDeleteResponse,
+        AssemblyAiTranscriptListQuery, AssemblyAiTranscriptListResponse, AstOperation, AstPatch,
+        CaseDocument, CreateTranscriptionRequest, IngestionRun, NullableStringPatch,
+        PatchWorkProductSupportRequest, TextRange, TranscriptionJob, VersionChangeSummary,
+        VersionSnapshot, WorkProduct, WorkProductAction, WorkProductAnchor, WorkProductArtifact,
+        WorkProductBlock, WorkProductCitationUse, WorkProductDocument, WorkProductDownloadResponse,
+        WorkProductExhibitReference, WorkProductFinding, WorkProductLink,
+        WorkProductTextRangeLinkRequest,
     };
     use crate::services::object_store::build_document_object_key;
     use std::collections::BTreeMap;
@@ -11494,6 +12533,7 @@ mod tests {
             raw_artifact_version_id: None,
             normalized_artifact_version_id: None,
             redacted_artifact_version_id: None,
+            redacted_audio_version_id: None,
             reviewed_document_version_id: None,
             caption_vtt_version_id: None,
             caption_srt_version_id: None,
@@ -11502,6 +12542,13 @@ mod tests {
             speaker_count: 0,
             segment_count: 0,
             word_count: 0,
+            speakers_expected: None,
+            speaker_options: None,
+            word_search_terms: Vec::new(),
+            prompt_preset: None,
+            prompt: None,
+            keyterms_prompt: Vec::new(),
+            remove_audio_tags: Some(ASSEMBLYAI_REMOVE_AUDIO_TAGS_ALL.to_string()),
             redact_pii: true,
             speech_models: assemblyai_speech_models(),
             retryable: false,
@@ -11519,6 +12566,13 @@ mod tests {
                 language_code: None,
                 redact_pii: Some(true),
                 speaker_labels: None,
+                speakers_expected: None,
+                speaker_options: None,
+                word_search_terms: Vec::new(),
+                prompt_preset: None,
+                prompt: None,
+                keyterms_prompt: Vec::new(),
+                remove_audio_tags: None,
             },
             &job,
             Some("https://example.test/webhook".to_string()),
@@ -11531,9 +12585,22 @@ mod tests {
         );
         assert_eq!(payload["language_detection"], true);
         assert_eq!(payload["speaker_labels"], true);
+        assert!(payload.get("speakers_expected").is_none());
+        assert!(payload.get("speaker_options").is_none());
         assert_eq!(payload["redact_pii"], true);
         assert_eq!(payload["redact_pii_sub"], "entity_name");
         assert_eq!(payload["redact_pii_return_unredacted"], true);
+        assert_eq!(payload["redact_pii_audio"], true);
+        assert_eq!(
+            payload["redact_pii_audio_quality"],
+            ASSEMBLYAI_REDACTED_AUDIO_QUALITY
+        );
+        assert_eq!(
+            payload["remove_audio_tags"],
+            ASSEMBLYAI_REMOVE_AUDIO_TAGS_ALL
+        );
+        assert!(payload.get("prompt").is_none());
+        assert!(payload.get("keyterms_prompt").is_none());
         assert!(payload["redact_pii_policies"]
             .as_array()
             .unwrap()
@@ -11547,6 +12614,221 @@ mod tests {
             "x-casebuilder-assemblyai-secret"
         );
         assert!(!payload.to_string().contains("ASSEMBLYAI_API_KEY"));
+    }
+
+    #[test]
+    fn assemblyai_speaker_diarization_options_are_validated_and_sent() {
+        let job = test_transcription_job(false);
+        let mut request = CreateTranscriptionRequest {
+            force: None,
+            language_code: None,
+            redact_pii: Some(false),
+            speaker_labels: Some(true),
+            speakers_expected: Some(3),
+            speaker_options: None,
+            word_search_terms: Vec::new(),
+            prompt_preset: None,
+            prompt: None,
+            keyterms_prompt: Vec::new(),
+            remove_audio_tags: None,
+        };
+
+        validate_assemblyai_transcription_request(&request).unwrap();
+        let payload = serde_json::to_value(assemblyai_transcript_create_request(
+            "assemblyai://upload",
+            &request,
+            &job,
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_eq!(payload["speaker_labels"], true);
+        assert_eq!(payload["speakers_expected"], 3);
+        assert!(payload.get("speaker_options").is_none());
+
+        request.speakers_expected = None;
+        request.speaker_options = Some(AssemblyAiSpeakerOptions {
+            min_speakers_expected: Some(3),
+            max_speakers_expected: Some(5),
+        });
+        validate_assemblyai_transcription_request(&request).unwrap();
+        let payload = serde_json::to_value(assemblyai_transcript_create_request(
+            "assemblyai://upload",
+            &request,
+            &job,
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_eq!(payload["speaker_options"]["min_speakers_expected"], 3);
+        assert_eq!(payload["speaker_options"]["max_speakers_expected"], 5);
+        assert!(payload.get("speakers_expected").is_none());
+
+        request.speakers_expected = Some(2);
+        assert!(validate_assemblyai_transcription_request(&request).is_err());
+
+        request.speakers_expected = None;
+        request.speaker_options = Some(AssemblyAiSpeakerOptions {
+            min_speakers_expected: Some(6),
+            max_speakers_expected: Some(5),
+        });
+        assert!(validate_assemblyai_transcription_request(&request).is_err());
+
+        request.speaker_labels = Some(false);
+        request.speaker_options = None;
+        request.speakers_expected = Some(2);
+        assert!(validate_assemblyai_transcription_request(&request).is_err());
+    }
+
+    #[test]
+    fn assemblyai_universal3_prompt_options_are_validated() {
+        let mut request = CreateTranscriptionRequest {
+            force: None,
+            language_code: None,
+            redact_pii: Some(false),
+            speaker_labels: Some(true),
+            speakers_expected: None,
+            speaker_options: None,
+            word_search_terms: Vec::new(),
+            prompt_preset: None,
+            prompt: Some(" Preserve legal names and exact exhibit references. ".to_string()),
+            keyterms_prompt: Vec::new(),
+            remove_audio_tags: Some("ALL".to_string()),
+        };
+
+        validate_assemblyai_transcription_request(&request).unwrap();
+        assert_eq!(
+            sanitize_assemblyai_prompt(request.prompt.as_deref()).as_deref(),
+            Some("Preserve legal names and exact exhibit references.")
+        );
+        assert_eq!(
+            normalize_assemblyai_remove_audio_tags(request.remove_audio_tags.as_deref()).unwrap(),
+            Some(ASSEMBLYAI_REMOVE_AUDIO_TAGS_ALL.to_string())
+        );
+
+        request.keyterms_prompt = vec!["Kelly Byrne-Donoghue".to_string()];
+        assert!(validate_assemblyai_transcription_request(&request).is_err());
+
+        request.prompt = None;
+        request.keyterms_prompt = vec![
+            "Kelly Byrne-Donoghue".to_string(),
+            "kelly byrne-donoghue".to_string(),
+            "one two three four five six seven".to_string(),
+        ];
+        assert_eq!(
+            sanitize_assemblyai_keyterms(request.keyterms_prompt.iter().map(String::as_str)),
+            vec!["Kelly Byrne-Donoghue".to_string()]
+        );
+
+        let mut budgeted_keyterms = (0..995)
+            .map(|index| format!("term{index}"))
+            .collect::<Vec<_>>();
+        budgeted_keyterms.push("one two three four five".to_string());
+        budgeted_keyterms.push("overflow".to_string());
+        let sanitized = sanitize_assemblyai_keyterms(budgeted_keyterms.iter().map(String::as_str));
+        assert_eq!(
+            assemblyai_keyterms_word_count(&sanitized),
+            ASSEMBLYAI_KEYTERMS_MAX_WORDS_TOTAL
+        );
+        assert!(!sanitized.contains(&"overflow".to_string()));
+
+        request.remove_audio_tags = Some("events".to_string());
+        assert!(validate_assemblyai_transcription_request(&request).is_err());
+
+        request.remove_audio_tags = None;
+        request.prompt = Some(vec!["word"; ASSEMBLYAI_PROMPT_MAX_WORDS + 1].join(" "));
+        request.keyterms_prompt = Vec::new();
+        assert!(validate_assemblyai_transcription_request(&request).is_err());
+    }
+
+    #[test]
+    fn assemblyai_keyterms_prompt_is_sent_when_prompt_is_absent() {
+        let job = test_transcription_job(false);
+        let request = CreateTranscriptionRequest {
+            force: None,
+            language_code: None,
+            redact_pii: Some(false),
+            speaker_labels: Some(true),
+            speakers_expected: None,
+            speaker_options: None,
+            word_search_terms: Vec::new(),
+            prompt_preset: None,
+            prompt: None,
+            keyterms_prompt: vec!["ORS 90.320".to_string(), "Kelly Byrne-Donoghue".to_string()],
+            remove_audio_tags: None,
+        };
+
+        let payload = serde_json::to_value(assemblyai_transcript_create_request(
+            "assemblyai://upload",
+            &request,
+            &job,
+            None,
+            None,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            payload["keyterms_prompt"],
+            serde_json::json!(["ORS 90.320", "Kelly Byrne-Donoghue"])
+        );
+        assert_eq!(
+            payload["remove_audio_tags"],
+            ASSEMBLYAI_REMOVE_AUDIO_TAGS_ALL
+        );
+        assert!(payload.get("prompt").is_none());
+    }
+
+    #[test]
+    fn assemblyai_prompt_presets_follow_async_prompting_guide() {
+        let mut request = CreateTranscriptionRequest {
+            force: None,
+            language_code: None,
+            redact_pii: Some(false),
+            speaker_labels: Some(true),
+            speakers_expected: None,
+            speaker_options: None,
+            word_search_terms: Vec::new(),
+            prompt_preset: Some("legal".to_string()),
+            prompt: None,
+            keyterms_prompt: Vec::new(),
+            remove_audio_tags: None,
+        };
+
+        validate_assemblyai_transcription_request(&request).unwrap();
+        assert_eq!(
+            normalize_assemblyai_prompt_preset(Some("unclear-masked")).unwrap(),
+            Some("unclear_masked".to_string())
+        );
+        let prompt = assemblyai_effective_prompt(&request)
+            .unwrap()
+            .expect("legal preset produces a prompt");
+        assert!(prompt.contains("Mandatory:"));
+        assert!(prompt.contains("legal"));
+        assert!(prompt.split_whitespace().count() <= ASSEMBLYAI_PROMPT_MAX_WORDS);
+
+        let payload = serde_json::to_value(assemblyai_transcript_create_request(
+            "assemblyai://upload",
+            &request,
+            &test_transcription_job(false),
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_eq!(payload["prompt"], assemblyai_prompt_preset_text("legal"));
+
+        request.keyterms_prompt = vec!["exhibit a".to_string()];
+        assert!(validate_assemblyai_transcription_request(&request).is_err());
+
+        request.keyterms_prompt = Vec::new();
+        request.prompt = Some("Explicit prompt wins.".to_string());
+        assert_eq!(
+            assemblyai_effective_prompt(&request).unwrap().as_deref(),
+            Some("Explicit prompt wins.")
+        );
+
+        request.prompt = None;
+        request.prompt_preset = Some("best transcript ever".to_string());
+        assert!(validate_assemblyai_transcription_request(&request).is_err());
     }
 
     #[test]
@@ -11575,6 +12857,343 @@ mod tests {
         assert!(provider.unredacted_utterances.is_empty());
         assert!(provider.unredacted_words.is_empty());
         assert_eq!(provider.audio_duration, Some(281.0));
+    }
+
+    #[test]
+    fn assemblyai_sentences_response_matches_documented_shape() {
+        let response: AssemblyAiSentencesResponse = serde_json::from_value(serde_json::json!({
+            "id": "9ea68fd3-f953-42c1-9742-976c447fb463",
+            "confidence": 0.95,
+            "audio_duration": 4.82,
+            "sentences": [
+                {
+                    "text": "Mary called 503-555-1212.",
+                    "start": 250,
+                    "end": 4820,
+                    "confidence": 0.95,
+                    "channel": "1",
+                    "speaker": "A",
+                    "words": [
+                        {
+                            "text": "Mary",
+                            "start": 250,
+                            "end": 650,
+                            "confidence": 0.95,
+                            "speaker": "A",
+                            "channel": "1"
+                        }
+                    ]
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(response.sentences.len(), 1);
+        assert_eq!(response.sentences[0].speaker.as_deref(), Some("A"));
+        assert_eq!(response.sentences[0].channel.as_deref(), Some("1"));
+        assert_eq!(response.sentences[0].words[0].channel.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn assemblyai_paragraphs_response_matches_documented_shape() {
+        let response: AssemblyAiParagraphsResponse = serde_json::from_value(serde_json::json!({
+            "id": "9ea68fd3-f953-42c1-9742-976c447fb463",
+            "confidence": 0.95,
+            "audio_duration": 4.82,
+            "paragraphs": [
+                {
+                    "text": "Mary called 503-555-1212.",
+                    "start": 250,
+                    "end": 4820,
+                    "confidence": 0.95,
+                    "words": [
+                        {
+                            "text": "Mary",
+                            "start": 250,
+                            "end": 650,
+                            "confidence": 0.95,
+                            "speaker": "A",
+                            "channel": "1"
+                        }
+                    ]
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(response.paragraphs.len(), 1);
+        assert_eq!(
+            response.paragraphs[0].words[0].speaker.as_deref(),
+            Some("A")
+        );
+        assert_eq!(
+            response.paragraphs[0].words[0].channel.as_deref(),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn assemblyai_subtitle_helpers_match_export_contract() {
+        assert_eq!(AssemblyAiSubtitleFormat::Srt.as_str(), "srt");
+        assert_eq!(AssemblyAiSubtitleFormat::Vtt.as_str(), "vtt");
+        assert_eq!(ASSEMBLYAI_CAPTION_CHARS_PER_CAPTION, 80);
+
+        let provider = AssemblyAiTranscriptResponse {
+            id: "provider:transcript".to_string(),
+            status: "completed".to_string(),
+            text: Some("Redacted caption.".to_string()),
+            utterances: Vec::new(),
+            words: Vec::new(),
+            unredacted_text: Some("Raw caption.".to_string()),
+            unredacted_utterances: Vec::new(),
+            unredacted_words: Vec::new(),
+            language_code: None,
+            audio_duration: None,
+            confidence: None,
+            error: None,
+            redact_pii: Some(true),
+            redact_pii_return_unredacted: Some(true),
+        };
+        assert!(should_use_assemblyai_subtitles(&provider, true));
+        assert!(should_use_assemblyai_subtitles(&provider, false));
+
+        let provider_without_redaction = AssemblyAiTranscriptResponse {
+            unredacted_text: None,
+            redact_pii: Some(false),
+            redact_pii_return_unredacted: None,
+            ..provider
+        };
+        assert!(!should_use_assemblyai_subtitles(
+            &provider_without_redaction,
+            true
+        ));
+        assert!(should_use_assemblyai_subtitles(
+            &provider_without_redaction,
+            false
+        ));
+
+        let (subtitle, source) =
+            provider_subtitle_or_local(Some("WEBVTT\n\nprovider".to_string()), "local".to_string());
+        assert_eq!(subtitle, "WEBVTT\n\nprovider");
+        assert_eq!(source, "assemblyai_subtitles");
+
+        let (subtitle, source) =
+            provider_subtitle_or_local(Some("  ".to_string()), "local".to_string());
+        assert_eq!(subtitle, "local");
+        assert_eq!(source, "casebuilder_local");
+    }
+
+    #[test]
+    fn assemblyai_redacted_audio_response_matches_documented_shape() {
+        let response: AssemblyAiRedactedAudioResponse = serde_json::from_value(serde_json::json!({
+            "status": "redacted_audio_ready",
+            "redacted_audio_url": "https://example.test/redacted-audio/transcript.mp3"
+        }))
+        .unwrap();
+
+        assert_eq!(response.status, "redacted_audio_ready");
+        assert_eq!(
+            response.redacted_audio_url,
+            "https://example.test/redacted-audio/transcript.mp3"
+        );
+    }
+
+    #[test]
+    fn assemblyai_word_search_response_matches_documented_shape() {
+        let response: AssemblyAiWordSearchResponse = serde_json::from_value(serde_json::json!({
+            "id": "9ea68fd3-f953-42c1-9742-976c447fb463",
+            "total_count": 3,
+            "matches": [
+                {
+                    "text": "notice",
+                    "count": 2,
+                    "timestamps": [[250, 650], [1200, 1800]],
+                    "indexes": [0, 9]
+                },
+                {
+                    "text": "rent payment",
+                    "count": 1,
+                    "timestamps": [[2200, 3200]],
+                    "indexes": [15]
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(response.total_count, 3);
+        assert_eq!(response.matches[0].text, "notice");
+        assert_eq!(response.matches[0].timestamps[0], vec![250, 650]);
+        assert_eq!(response.matches[1].indexes, vec![15]);
+    }
+
+    #[test]
+    fn assemblyai_word_search_terms_are_bounded_and_case_relevant() {
+        let terms = sanitize_assemblyai_word_search_terms([
+            " Rent ",
+            "rent",
+            "ORS 90.320",
+            "one two three four five six",
+            "that",
+        ]);
+
+        assert_eq!(terms, vec!["rent", "ors 90.320"]);
+
+        let provider = AssemblyAiTranscriptResponse {
+            id: "provider:transcript".to_string(),
+            status: "completed".to_string(),
+            text: Some(
+                "The tenant sent a rent payment receipt. The tenant emailed a repair notice."
+                    .to_string(),
+            ),
+            utterances: Vec::new(),
+            words: Vec::new(),
+            unredacted_text: None,
+            unredacted_utterances: Vec::new(),
+            unredacted_words: Vec::new(),
+            language_code: None,
+            audio_duration: None,
+            confidence: None,
+            error: None,
+            redact_pii: Some(false),
+            redact_pii_return_unredacted: None,
+        };
+        let terms = assemblyai_default_word_search_terms(
+            &provider,
+            &AssemblyAiSentencesResponse {
+                id: provider.id.clone(),
+                confidence: None,
+                audio_duration: None,
+                sentences: Vec::new(),
+            },
+            &AssemblyAiParagraphsResponse {
+                id: provider.id.clone(),
+                confidence: None,
+                audio_duration: None,
+                paragraphs: Vec::new(),
+            },
+        );
+
+        assert!(terms.len() <= ASSEMBLYAI_WORD_SEARCH_MAX_TERMS);
+        assert!(terms.contains(&"payment".to_string()));
+        assert!(terms.contains(&"receipt".to_string()));
+        assert!(terms.contains(&"tenant".to_string()));
+    }
+
+    #[test]
+    fn assemblyai_transcript_list_response_matches_documented_shape() {
+        let response: AssemblyAiTranscriptListResponse = serde_json::from_value(serde_json::json!({
+            "page_details": {
+                "limit": 10,
+                "result_count": 1,
+                "current_url": "https://api.assemblyai.com/v2/transcript?limit=10",
+                "prev_url": "https://api.assemblyai.com/v2/transcript?before_id=9ea68fd3-f953-42c1-9742-976c447fb463",
+                "next_url": null
+            },
+            "transcripts": [
+                {
+                    "id": "9ea68fd3-f953-42c1-9742-976c447fb463",
+                    "resource_url": "https://api.assemblyai.com/v2/transcript/9ea68fd3-f953-42c1-9742-976c447fb463",
+                    "status": "completed",
+                    "created": "2026-05-01T10:00:00.000Z",
+                    "completed": "2026-05-01T10:01:00.000Z",
+                    "audio_url": "https://example.test/audio.mp3",
+                    "error": null
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(response.page_details.limit, 10);
+        assert_eq!(response.page_details.result_count, 1);
+        assert_eq!(response.page_details.next_url, None);
+        assert_eq!(response.transcripts[0].status, "completed");
+        assert_eq!(
+            response.transcripts[0].completed.as_deref(),
+            Some("2026-05-01T10:01:00.000Z")
+        );
+    }
+
+    #[test]
+    fn assemblyai_transcript_list_query_is_validated_and_serialized() {
+        let query = normalize_assemblyai_transcript_list_query(AssemblyAiTranscriptListQuery {
+            limit: Some(25),
+            status: Some(" Completed ".to_string()),
+            created_on: Some("2026-05-01".to_string()),
+            before_id: Some("9ea68fd3-f953-42c1-9742-976c447fb463".to_string()),
+            after_id: None,
+            throttled_only: Some(false),
+        })
+        .unwrap();
+        assert_eq!(query.status.as_deref(), Some("completed"));
+
+        let pairs = assemblyai_transcript_list_query_pairs(&query);
+        assert!(pairs.contains(&("limit", "25".to_string())));
+        assert!(pairs.contains(&("status", "completed".to_string())));
+        assert!(pairs.contains(&("created_on", "2026-05-01".to_string())));
+        assert!(pairs.contains(&(
+            "before_id",
+            "9ea68fd3-f953-42c1-9742-976c447fb463".to_string()
+        )));
+        assert!(pairs.contains(&("throttled_only", "false".to_string())));
+
+        let default_query =
+            normalize_assemblyai_transcript_list_query(AssemblyAiTranscriptListQuery::default())
+                .unwrap();
+        assert_eq!(
+            default_query.limit,
+            Some(ASSEMBLYAI_TRANSCRIPT_LIST_DEFAULT_LIMIT)
+        );
+        assert!(
+            normalize_assemblyai_transcript_list_query(AssemblyAiTranscriptListQuery {
+                limit: Some(0),
+                ..AssemblyAiTranscriptListQuery::default()
+            })
+            .is_err()
+        );
+        assert!(
+            normalize_assemblyai_transcript_list_query(AssemblyAiTranscriptListQuery {
+                status: Some("deleted".to_string()),
+                ..AssemblyAiTranscriptListQuery::default()
+            })
+            .is_err()
+        );
+        assert!(
+            normalize_assemblyai_transcript_list_query(AssemblyAiTranscriptListQuery {
+                created_on: Some("05/01/2026".to_string()),
+                ..AssemblyAiTranscriptListQuery::default()
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn assemblyai_transcript_delete_response_preserves_provider_payload() {
+        let response: AssemblyAiTranscriptDeleteResponse = assemblyai_transcript_delete_response(
+            "9ea68fd3-f953-42c1-9742-976c447fb463",
+            serde_json::json!({
+                "id": "9ea68fd3-f953-42c1-9742-976c447fb463",
+                "status": "deleted",
+                "audio_url": "https://example.test/audio.mp3",
+                "text": null
+            }),
+        );
+
+        assert_eq!(response.id, "9ea68fd3-f953-42c1-9742-976c447fb463");
+        assert_eq!(response.status, "deleted");
+        assert!(response.deleted);
+        assert_eq!(
+            response.provider_response["audio_url"].as_str(),
+            Some("https://example.test/audio.mp3")
+        );
+    }
+
+    #[test]
+    fn assemblyai_transcript_id_is_required_for_delete() {
+        assert!(normalize_assemblyai_transcript_id("  ").is_err());
+        assert_eq!(
+            normalize_assemblyai_transcript_id("9ea68fd3-f953-42c1-9742-976c447fb463").unwrap(),
+            "9ea68fd3-f953-42c1-9742-976c447fb463"
+        );
     }
 
     #[test]
@@ -11625,33 +13244,73 @@ mod tests {
             text: Some("[PERSON_NAME] called [PHONE_NUMBER].".to_string()),
             utterances: vec![AssemblyAiUtterance {
                 speaker: Some("A".to_string()),
+                channel: None,
                 text: "[PERSON_NAME] called [PHONE_NUMBER].".to_string(),
                 start: 250,
                 end: 4820,
                 confidence: Some(0.95),
             }],
-            words: vec![AssemblyAiWord {
-                text: "[PERSON_NAME]".to_string(),
-                start: 250,
-                end: 650,
-                confidence: Some(0.95),
-                speaker: Some("A".to_string()),
-            }],
+            words: vec![
+                AssemblyAiWord {
+                    text: "[PERSON_NAME]".to_string(),
+                    start: 250,
+                    end: 650,
+                    confidence: Some(0.95),
+                    speaker: Some("A".to_string()),
+                    channel: None,
+                },
+                AssemblyAiWord {
+                    text: "called".to_string(),
+                    start: 700,
+                    end: 1050,
+                    confidence: Some(0.95),
+                    speaker: Some("A".to_string()),
+                    channel: None,
+                },
+                AssemblyAiWord {
+                    text: "[PHONE_NUMBER].".to_string(),
+                    start: 1100,
+                    end: 1800,
+                    confidence: Some(0.95),
+                    speaker: Some("A".to_string()),
+                    channel: None,
+                },
+            ],
             unredacted_text: Some("Mary called 503-555-1212.".to_string()),
             unredacted_utterances: vec![AssemblyAiUtterance {
                 speaker: Some("A".to_string()),
+                channel: None,
                 text: "Mary called 503-555-1212.".to_string(),
                 start: 250,
                 end: 4820,
                 confidence: Some(0.95),
             }],
-            unredacted_words: vec![AssemblyAiWord {
-                text: "Mary".to_string(),
-                start: 250,
-                end: 650,
-                confidence: Some(0.95),
-                speaker: Some("A".to_string()),
-            }],
+            unredacted_words: vec![
+                AssemblyAiWord {
+                    text: "Mary".to_string(),
+                    start: 250,
+                    end: 650,
+                    confidence: Some(0.95),
+                    speaker: Some("A".to_string()),
+                    channel: None,
+                },
+                AssemblyAiWord {
+                    text: "called".to_string(),
+                    start: 700,
+                    end: 1050,
+                    confidence: Some(0.95),
+                    speaker: Some("A".to_string()),
+                    channel: None,
+                },
+                AssemblyAiWord {
+                    text: "503-555-1212.".to_string(),
+                    start: 1100,
+                    end: 1800,
+                    confidence: Some(0.95),
+                    speaker: Some("A".to_string()),
+                    channel: None,
+                },
+            ],
             language_code: Some("en_us".to_string()),
             audio_duration: Some(4.82),
             confidence: Some(0.95),
@@ -11659,8 +13318,41 @@ mod tests {
             redact_pii: Some(true),
             redact_pii_return_unredacted: Some(true),
         };
-        let (segments, speakers) =
-            transcript_segments_from_provider("matter:test", &document, &job, &provider, "1");
+        let sentences = AssemblyAiSentencesResponse {
+            id: provider.id.clone(),
+            confidence: Some(0.95),
+            audio_duration: Some(4.82),
+            sentences: vec![AssemblyAiSentence {
+                text: "[PERSON_NAME] called [PHONE_NUMBER].".to_string(),
+                start: 250,
+                end: 4820,
+                confidence: Some(0.95),
+                words: provider.words.clone(),
+                channel: None,
+                speaker: Some("A".to_string()),
+            }],
+        };
+        let paragraphs = AssemblyAiParagraphsResponse {
+            id: provider.id.clone(),
+            confidence: Some(0.95),
+            audio_duration: Some(4.82),
+            paragraphs: vec![AssemblyAiParagraph {
+                text: "[PERSON_NAME] called [PHONE_NUMBER].".to_string(),
+                start: 250,
+                end: 4820,
+                confidence: Some(0.95),
+                words: provider.words.clone(),
+            }],
+        };
+        let (segments, speakers) = transcript_segments_from_provider(
+            "matter:test",
+            &document,
+            &job,
+            &provider,
+            &sentences,
+            &paragraphs,
+            "1",
+        );
         assert_eq!(segments.len(), 1);
         assert_eq!(segments[0].text, "Mary called 503-555-1212.");
         assert_eq!(
@@ -11668,6 +13360,7 @@ mod tests {
             Some("[PERSON_NAME] called [PHONE_NUMBER].")
         );
         assert_eq!(segments[0].speaker_label.as_deref(), Some("A"));
+        assert_eq!(segments[0].paragraph_ordinal, Some(1));
         assert_eq!(speakers.len(), 1);
         assert_eq!(assemblyai_raw_words(&provider)[0].text, "Mary");
     }
@@ -11688,8 +13381,10 @@ mod tests {
             transcription_job_id: "transcription:1".to_string(),
             source_span_id: Some("span:1".to_string()),
             ordinal: 1,
+            paragraph_ordinal: Some(1),
             speaker_label: Some("A".to_string()),
             speaker_name: None,
+            channel: None,
             text: "Hello there.".to_string(),
             redacted_text: Some("Hello there.".to_string()),
             time_start_ms: 1_000,
@@ -11815,6 +13510,7 @@ mod tests {
             raw_artifact_version_id: None,
             normalized_artifact_version_id: None,
             redacted_artifact_version_id: None,
+            redacted_audio_version_id: None,
             reviewed_document_version_id: None,
             caption_vtt_version_id: None,
             caption_srt_version_id: None,
@@ -11823,6 +13519,13 @@ mod tests {
             speaker_count: 0,
             segment_count: 0,
             word_count: 0,
+            speakers_expected: None,
+            speaker_options: None,
+            word_search_terms: Vec::new(),
+            prompt_preset: None,
+            prompt: None,
+            keyterms_prompt: Vec::new(),
+            remove_audio_tags: Some(ASSEMBLYAI_REMOVE_AUDIO_TAGS_ALL.to_string()),
             redact_pii,
             speech_models: assemblyai_speech_models(),
             retryable: false,

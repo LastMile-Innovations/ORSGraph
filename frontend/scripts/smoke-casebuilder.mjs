@@ -343,14 +343,12 @@ async function main() {
   )
   assert(astText.plain_text?.includes("Smoke motion"), "AST converts to plain text")
 
-  try {
-    await request(`/matters/${encodeURIComponent(matterId)}/export/docx`, { method: "POST" })
-    throw new Error("export/docx unexpectedly succeeded")
-  } catch (error) {
-    if (error.status !== 400 || !String(error.body?.error ?? "").includes("Export is deferred")) {
-      throw error
-    }
-  }
+  const docxPackage = await request(`/matters/${encodeURIComponent(matterId)}/export/docx`, { method: "POST" })
+  assert(docxPackage.result?.format === "docx", "matter DOCX export package returned")
+  assert(
+    docxPackage.result?.warnings?.some((warning) => warning.includes("renderer")),
+    "DOCX export reports renderer status",
+  )
 
   console.log("CaseBuilder V0 smoke passed")
 }

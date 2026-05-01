@@ -8,15 +8,15 @@ export default async function AskPage({
   searchParams: Promise<{ q?: string }>
 }) {
   const { q } = await searchParams
-  const question = q ?? "What Oregon laws define district attorney duties?"
-  const answerState = await askWithFallbackState(question)
+  const question = q?.trim() ?? ""
+  const answerState = question ? await askWithFallbackState(question) : undefined
   return (
     <Shell>
       <AskClient
         initialQuery={question}
-        initialAnswer={answerState.data}
-        initialDataSource={answerState.source}
-        initialDataError={answerState.error}
+        initialAnswer={answerState?.data ?? null}
+        initialDataSource={answerState?.source}
+        initialDataError={answerState?.error}
       />
     </Shell>
   )

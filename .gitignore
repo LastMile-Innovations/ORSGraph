@@ -19,9 +19,13 @@ Thumbs.db
 # Data
 # CaseBuilder uploads default to data/casebuilder/uploads and must stay local.
 /data/
+/.pnpm-store/
 
 # Logs
 *.log
+
+# Generated build caches
+/frontend/tsconfig.tsbuildinfo
 
 # Temporary
 /tmp/

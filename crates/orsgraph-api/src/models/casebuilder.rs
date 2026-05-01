@@ -543,6 +543,7 @@ pub struct TranscriptionJob {
     pub raw_artifact_version_id: Option<String>,
     pub normalized_artifact_version_id: Option<String>,
     pub redacted_artifact_version_id: Option<String>,
+    pub redacted_audio_version_id: Option<String>,
     pub reviewed_document_version_id: Option<String>,
     pub caption_vtt_version_id: Option<String>,
     pub caption_srt_version_id: Option<String>,
@@ -551,6 +552,20 @@ pub struct TranscriptionJob {
     pub speaker_count: u64,
     pub segment_count: u64,
     pub word_count: u64,
+    #[serde(default)]
+    pub speakers_expected: Option<u64>,
+    #[serde(default)]
+    pub speaker_options: Option<AssemblyAiSpeakerOptions>,
+    #[serde(default)]
+    pub word_search_terms: Vec<String>,
+    #[serde(default)]
+    pub prompt_preset: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub keyterms_prompt: Vec<String>,
+    #[serde(default)]
+    pub remove_audio_tags: Option<String>,
     pub redact_pii: bool,
     pub speech_models: Vec<String>,
     pub retryable: bool,
@@ -571,8 +586,10 @@ pub struct TranscriptSegment {
     pub transcription_job_id: String,
     pub source_span_id: Option<String>,
     pub ordinal: u64,
+    pub paragraph_ordinal: Option<u64>,
     pub speaker_label: Option<String>,
     pub speaker_name: Option<String>,
+    pub channel: Option<String>,
     pub text: String,
     pub redacted_text: Option<String>,
     pub time_start_ms: u64,
@@ -625,6 +642,7 @@ pub struct TranscriptionJobResponse {
     pub raw_artifact_version: Option<DocumentVersion>,
     pub normalized_artifact_version: Option<DocumentVersion>,
     pub redacted_artifact_version: Option<DocumentVersion>,
+    pub redacted_audio_version: Option<DocumentVersion>,
     pub reviewed_document_version: Option<DocumentVersion>,
     pub caption_vtt_version: Option<DocumentVersion>,
     pub caption_srt_version: Option<DocumentVersion>,
@@ -643,6 +661,28 @@ pub struct CreateTranscriptionRequest {
     pub redact_pii: Option<bool>,
     #[serde(default)]
     pub speaker_labels: Option<bool>,
+    #[serde(default)]
+    pub speakers_expected: Option<u64>,
+    #[serde(default)]
+    pub speaker_options: Option<AssemblyAiSpeakerOptions>,
+    #[serde(default)]
+    pub word_search_terms: Vec<String>,
+    #[serde(default)]
+    pub prompt_preset: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub keyterms_prompt: Vec<String>,
+    #[serde(default)]
+    pub remove_audio_tags: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct AssemblyAiSpeakerOptions {
+    #[serde(default)]
+    pub min_speakers_expected: Option<u64>,
+    #[serde(default)]
+    pub max_speakers_expected: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -685,6 +725,57 @@ pub struct TranscriptionWebhookResponse {
     pub handled: bool,
     pub message: String,
     pub transcription: Option<TranscriptionJobResponse>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct AssemblyAiTranscriptListQuery {
+    #[serde(default)]
+    pub limit: Option<u64>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub created_on: Option<String>,
+    #[serde(default)]
+    pub before_id: Option<String>,
+    #[serde(default)]
+    pub after_id: Option<String>,
+    #[serde(default)]
+    pub throttled_only: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AssemblyAiTranscriptPageDetails {
+    pub limit: u64,
+    pub result_count: u64,
+    pub current_url: String,
+    pub prev_url: Option<String>,
+    pub next_url: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AssemblyAiTranscriptListItem {
+    pub id: String,
+    pub resource_url: String,
+    pub status: String,
+    pub created: String,
+    #[serde(default)]
+    pub completed: Option<String>,
+    pub audio_url: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AssemblyAiTranscriptListResponse {
+    pub page_details: AssemblyAiTranscriptPageDetails,
+    pub transcripts: Vec<AssemblyAiTranscriptListItem>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AssemblyAiTranscriptDeleteResponse {
+    pub id: String,
+    pub status: String,
+    pub deleted: bool,
+    pub provider_response: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]

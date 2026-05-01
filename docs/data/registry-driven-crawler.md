@@ -59,6 +59,29 @@ The generic connector preserves raw artifacts and emits source-backed placeholde
 
 ## CLI Commands
 
+The canonical command shape is registry-first:
+
+```text
+validate-source-registry
+source-ingest
+combine-graph
+qc-full
+seed-neo4j
+materialize-neo4j
+qc-neo4j
+embed-neo4j
+```
+
+Legacy ORS commands are still available only as explicitly named compatibility imports:
+
+| Compatibility need | Command |
+| --- | --- |
+| Live legacy ORS import | `import-ors-legacy` |
+| Cached ORS HTML rebuild | `import-ors-cache` |
+| Historical aliases | `crawl`, `parse-cached` |
+
+Removed one-off graph fix/audit binaries should be replaced with supported QC, seed dry-run, materialization, and Neo4j QC commands.
+
 Validate the registry:
 
 ```sh
@@ -99,7 +122,19 @@ cargo run -p ors-crawler-v0 --bin ors-crawler-v0 -- combine-graph \
   --out data/graph
 ```
 
-The legacy `crawl` command still exists for the older ORS crawl/parser flow. The registry path for ORS is:
+Load combined JSONL into Neo4j:
+
+```sh
+cargo run -p ors-crawler-v0 --bin ors-crawler-v0 -- seed-neo4j \
+  --graph-dir data/graph \
+  --neo4j-uri bolt://localhost:7687 \
+  --neo4j-user neo4j \
+  --neo4j-password-env NEO4J_PASSWORD
+```
+
+Current Neo4j behavior is append/upsert by default. The loader creates constraints, reads graph JSONL batches, and writes nodes and relationships with stable IDs and `MERGE`-based materialization. It does not prune rows that disappeared from the JSONL contract. For a clean replacement, run `clear-neo4j --yes` before `seed-neo4j`, or use Docker with `SEED_MODE=replace`. Use `seed-neo4j --dry-run` to validate the JSONL row contract without connecting to Neo4j.
+
+The registry path is the primary ORS crawler path:
 
 ```sh
 cargo run -p ors-crawler-v0 --bin ors-crawler-v0 -- source-ingest \
@@ -108,6 +143,8 @@ cargo run -p ors-crawler-v0 --bin ors-crawler-v0 -- source-ingest \
   --out data/sources \
   --mode all
 ```
+
+The older single-corpus ORS importer is still available for compatibility as `import-ors-legacy` (`crawl` remains an alias), and cached HTML rebuilds use `import-ors-cache` (`parse-cached` remains an alias). New admin/Docker workflows should call the explicit import names or the registry `source-ingest`/`combine-graph` path.
 
 ## Source Ingest Options
 
@@ -124,7 +161,7 @@ Important `source-ingest` flags:
 | `--edition-year <year>` | Edition/session default year. |
 | `--session-key <key>` | OData session key such as `2025R1`. |
 | `--chapters <list>` | ORS chapter list for `or_leg_ors_html`; also retained as a compatibility fallback for OData session selection. |
-| `--max-items <n>` | Truncate discovered items for bounded test runs. |
+| `--max-items <n>` | Truncate discovered items for bounded test runs; `0` means no truncation. |
 | `--delay-ms <n>` | Per-fetch delay. |
 | `--max-attempts <n>` | Retry attempts for live fetches. |
 | `--concurrency <n>` | Bounded fetch/parse concurrency. |
@@ -286,11 +323,18 @@ GET /api/v1/admin/sources/:source_id
 Admin jobs allow:
 
 ```text
+dashboard crawl shortcut
 source_ingest
 combine_graph
+qc
+seed_neo4j
+materialize_neo4j
+embed_neo4j
 ```
 
 The dashboard Source Registry panel can run selected-source ingest, P0 ingest, and P0 combine jobs. It includes a Legislature session key field that passes `session_key` to source ingest jobs. The admin service validates `session_key` as a short alphanumeric/dash/underscore value and passes it to the crawler as `--session-key`.
+
+The dashboard `crawl` shortcut is retained for UI continuity, but it now builds `source-ingest --source-id or_leg_ors_html`, not the legacy ORS crawler. Legacy-only params such as `fetch_only` and `skip_citation_resolution` should not be sent to registry-backed jobs.
 
 ## Current Gaps
 
