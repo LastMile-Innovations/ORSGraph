@@ -1,7 +1,7 @@
 use crate::config::ApiConfig;
 use crate::services::admin::AdminService;
 use crate::services::analytics::AnalyticsService;
-use crate::services::casebuilder::CaseBuilderService;
+use crate::services::casebuilder::{AssemblyAiProviderConfig, CaseBuilderService};
 use crate::services::embedding::EmbeddingService;
 use crate::services::graph_expand::GraphExpandService;
 use crate::services::health::HealthService;
@@ -120,6 +120,15 @@ impl AppState {
             config.casebuilder_ast_entity_inline_bytes,
             config.casebuilder_ast_snapshot_inline_bytes,
             config.casebuilder_ast_block_inline_bytes,
+            AssemblyAiProviderConfig {
+                enabled: config.assemblyai_enabled,
+                api_key: config.assemblyai_api_key.clone(),
+                base_url: config.assemblyai_base_url.clone(),
+                webhook_url: config.assemblyai_webhook_url.clone(),
+                webhook_secret: config.assemblyai_webhook_secret.clone(),
+                timeout_ms: config.assemblyai_timeout_ms,
+                max_media_bytes: config.assemblyai_max_media_bytes,
+            },
         ));
 
         if let Err(e) = casebuilder_service.ensure_indexes().await {

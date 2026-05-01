@@ -8,6 +8,7 @@ use bytes::Bytes;
 use flate2::read::DeflateDecoder;
 use neo4rs::query;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read};
@@ -31,6 +32,100 @@ pub struct CaseBuilderService {
     download_ttl_seconds: u64,
     max_upload_bytes: u64,
     ast_storage_policy: AstStoragePolicy,
+    assemblyai: AssemblyAiProviderConfig,
+    http_client: reqwest::Client,
+}
+
+#[derive(Clone)]
+pub struct AssemblyAiProviderConfig {
+    pub enabled: bool,
+    pub api_key: Option<String>,
+    pub base_url: String,
+    pub webhook_url: Option<String>,
+    pub webhook_secret: Option<String>,
+    pub timeout_ms: u64,
+    pub max_media_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AssemblyAiTranscriptCreateRequest {
+    audio_url: String,
+    speech_models: Vec<String>,
+    language_detection: bool,
+    speaker_labels: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redact_pii: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redact_pii_policies: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redact_pii_sub: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redact_pii_return_unredacted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    webhook_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    webhook_auth_header_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    webhook_auth_header_value: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AssemblyAiUploadResponse {
+    upload_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct AssemblyAiTranscriptResponse {
+    id: String,
+    status: String,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    utterances: Vec<AssemblyAiUtterance>,
+    #[serde(default)]
+    words: Vec<AssemblyAiWord>,
+    #[serde(default)]
+    unredacted_text: Option<String>,
+    #[serde(default)]
+    unredacted_utterances: Vec<AssemblyAiUtterance>,
+    #[serde(default)]
+    unredacted_words: Vec<AssemblyAiWord>,
+    #[serde(default)]
+    language_code: Option<String>,
+    #[serde(default)]
+    audio_duration: Option<f64>,
+    #[serde(default)]
+    confidence: Option<f32>,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    redact_pii: Option<bool>,
+    #[serde(default)]
+    redact_pii_return_unredacted: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct AssemblyAiUtterance {
+    #[serde(default)]
+    speaker: Option<String>,
+    text: String,
+    start: u64,
+    end: u64,
+    #[serde(default)]
+    confidence: Option<f32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct AssemblyAiWord {
+    text: String,
+    start: u64,
+    end: u64,
+    #[serde(default)]
+    confidence: Option<f32>,
+    #[serde(default)]
+    speaker: Option<String>,
 }
 
 #[derive(Clone)]
@@ -71,6 +166,46 @@ struct SentenceCandidate {
     byte_end: u64,
     char_start: u64,
     char_end: u64,
+}
+
+#[derive(Clone)]
+struct ZipPackage {
+    entries: Vec<ZipEntryRecord>,
+    central_directory_offset: usize,
+}
+
+#[derive(Clone)]
+struct ZipEntryRecord {
+    name: String,
+    version_made_by: u16,
+    version_needed: u16,
+    flags: u16,
+    compression: u16,
+    last_modified_time: u16,
+    last_modified_date: u16,
+    crc32: u32,
+    compressed_size: usize,
+    uncompressed_size: usize,
+    internal_attrs: u16,
+    external_attrs: u32,
+    local_header_offset: usize,
+}
+
+#[derive(Clone)]
+struct ZipCentralRecord {
+    name: String,
+    version_made_by: u16,
+    version_needed: u16,
+    flags: u16,
+    compression: u16,
+    last_modified_time: u16,
+    last_modified_date: u16,
+    crc32: u32,
+    compressed_size: u32,
+    uncompressed_size: u32,
+    internal_attrs: u16,
+    external_attrs: u32,
+    local_header_offset: u32,
 }
 
 #[derive(Clone)]
@@ -170,6 +305,7 @@ impl CaseBuilderService {
         ast_entity_inline_bytes: u64,
         ast_snapshot_inline_bytes: u64,
         ast_block_inline_bytes: u64,
+        assemblyai: AssemblyAiProviderConfig,
     ) -> Self {
         Self {
             neo4j,
@@ -182,6 +318,8 @@ impl CaseBuilderService {
                 snapshot_inline_bytes: ast_snapshot_inline_bytes,
                 block_inline_bytes: ast_block_inline_bytes,
             },
+            assemblyai,
+            http_client: reqwest::Client::new(),
         }
     }
 
@@ -206,6 +344,11 @@ impl CaseBuilderService {
             "CREATE CONSTRAINT casebuilder_document_version_id IF NOT EXISTS FOR (n:DocumentVersion) REQUIRE n.document_version_id IS UNIQUE",
             "CREATE CONSTRAINT casebuilder_ingestion_run_id IF NOT EXISTS FOR (n:IngestionRun) REQUIRE n.ingestion_run_id IS UNIQUE",
             "CREATE CONSTRAINT casebuilder_source_span_id IF NOT EXISTS FOR (n:SourceSpan) REQUIRE n.source_span_id IS UNIQUE",
+            "CREATE CONSTRAINT casebuilder_document_annotation_id IF NOT EXISTS FOR (n:DocumentAnnotation) REQUIRE n.annotation_id IS UNIQUE",
+            "CREATE CONSTRAINT casebuilder_transcription_job_id IF NOT EXISTS FOR (n:TranscriptionJob) REQUIRE n.transcription_job_id IS UNIQUE",
+            "CREATE CONSTRAINT casebuilder_transcript_segment_id IF NOT EXISTS FOR (n:TranscriptSegment) REQUIRE n.segment_id IS UNIQUE",
+            "CREATE CONSTRAINT casebuilder_transcript_speaker_id IF NOT EXISTS FOR (n:TranscriptSpeaker) REQUIRE n.speaker_id IS UNIQUE",
+            "CREATE CONSTRAINT casebuilder_transcript_review_change_id IF NOT EXISTS FOR (n:TranscriptReviewChange) REQUIRE n.review_change_id IS UNIQUE",
             "CREATE CONSTRAINT casebuilder_complaint_id IF NOT EXISTS FOR (n:ComplaintDraft) REQUIRE n.complaint_id IS UNIQUE",
             "CREATE CONSTRAINT casebuilder_complaint_section_id IF NOT EXISTS FOR (n:ComplaintSection) REQUIRE n.section_id IS UNIQUE",
             "CREATE CONSTRAINT casebuilder_complaint_count_id IF NOT EXISTS FOR (n:ComplaintCount) REQUIRE n.count_id IS UNIQUE",
@@ -245,6 +388,11 @@ impl CaseBuilderService {
             "CREATE INDEX casebuilder_document_version_matter IF NOT EXISTS FOR (n:DocumentVersion) ON (n.matter_id)",
             "CREATE INDEX casebuilder_ingestion_run_matter IF NOT EXISTS FOR (n:IngestionRun) ON (n.matter_id)",
             "CREATE INDEX casebuilder_source_span_matter IF NOT EXISTS FOR (n:SourceSpan) ON (n.matter_id)",
+            "CREATE INDEX casebuilder_document_annotation_document IF NOT EXISTS FOR (n:DocumentAnnotation) ON (n.document_id, n.status)",
+            "CREATE INDEX casebuilder_transcription_job_document IF NOT EXISTS FOR (n:TranscriptionJob) ON (n.document_id, n.status)",
+            "CREATE INDEX casebuilder_transcription_job_provider IF NOT EXISTS FOR (n:TranscriptionJob) ON (n.provider_transcript_id)",
+            "CREATE INDEX casebuilder_transcript_segment_job IF NOT EXISTS FOR (n:TranscriptSegment) ON (n.transcription_job_id, n.ordinal)",
+            "CREATE INDEX casebuilder_transcript_speaker_job IF NOT EXISTS FOR (n:TranscriptSpeaker) ON (n.transcription_job_id)",
             "CREATE INDEX casebuilder_complaint_matter IF NOT EXISTS FOR (n:ComplaintDraft) ON (n.matter_id)",
             "CREATE INDEX casebuilder_complaint_status IF NOT EXISTS FOR (n:ComplaintDraft) ON (n.status)",
             "CREATE INDEX casebuilder_pleading_paragraph_complaint IF NOT EXISTS FOR (n:PleadingParagraph) ON (n.complaint_id)",
@@ -910,6 +1058,273 @@ impl CaseBuilderService {
         self.get_node(matter_id, document_spec(), document_id).await
     }
 
+    pub async fn get_document_workspace(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+    ) -> ApiResult<DocumentWorkspace> {
+        let document = self.get_document(matter_id, document_id).await?;
+        let current_version = self.current_document_version(matter_id, &document).await?;
+        let annotations = self
+            .list_document_annotations(matter_id, document_id)
+            .await?;
+        let source_spans = self
+            .list_nodes::<SourceSpan>(matter_id, source_span_spec())
+            .await?
+            .into_iter()
+            .filter(|span| span.document_id == document_id)
+            .collect::<Vec<_>>();
+        let mut warnings = Vec::new();
+        let bytes = match self.document_bytes(&document).await {
+            Ok(bytes) => Some(bytes),
+            Err(ApiError::NotFound(_)) if document.storage_status != "stored" => None,
+            Err(error) => {
+                warnings.push(format!("Source bytes are unavailable: {error}"));
+                None
+            }
+        };
+        let docx_manifest = if document_is_docx(&document) {
+            match bytes.as_ref() {
+                Some(bytes) => {
+                    match docx_package_manifest(&document, current_version.as_ref(), bytes) {
+                        Ok(manifest) => {
+                            if !manifest.editable {
+                                warnings.push(
+                                "DOCX contains unsupported complex OOXML parts; editable text is gated for review."
+                                    .to_string(),
+                            );
+                            }
+                            Some(manifest)
+                        }
+                        Err(error) => {
+                            warnings.push(format!("DOCX package manifest failed: {error}"));
+                            None
+                        }
+                    }
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        let text_content = workspace_text_content(&document, bytes.as_ref());
+        let capabilities = document_capabilities(&document, docx_manifest.as_ref());
+        let transcriptions = if document_is_media(&document) {
+            self.list_transcriptions(matter_id, document_id).await?
+        } else {
+            Vec::new()
+        };
+        let content_url = if document.storage_status == "stored" || document.storage_key.is_some() {
+            Some(format!(
+                "/api/v1/matters/{}/documents/{}/content",
+                matter_id, document_id
+            ))
+        } else {
+            None
+        };
+
+        Ok(DocumentWorkspace {
+            matter_id: matter_id.to_string(),
+            document,
+            current_version,
+            capabilities,
+            annotations,
+            source_spans,
+            transcriptions,
+            docx_manifest,
+            text_content,
+            content_url,
+            warnings,
+        })
+    }
+
+    pub async fn get_document_content_bytes(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+    ) -> ApiResult<(CaseDocument, Bytes)> {
+        let document = self.get_document(matter_id, document_id).await?;
+        let bytes = self.document_bytes(&document).await?;
+        Ok((document, bytes))
+    }
+
+    pub async fn list_document_annotations(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+    ) -> ApiResult<Vec<DocumentAnnotation>> {
+        self.get_document(matter_id, document_id).await?;
+        let mut annotations = self
+            .list_nodes::<DocumentAnnotation>(matter_id, document_annotation_spec())
+            .await?
+            .into_iter()
+            .filter(|annotation| annotation.document_id == document_id)
+            .filter(|annotation| annotation.status != "deleted")
+            .collect::<Vec<_>>();
+        annotations.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+        Ok(annotations)
+    }
+
+    pub async fn create_document_annotation(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        request: UpsertDocumentAnnotationRequest,
+    ) -> ApiResult<DocumentAnnotation> {
+        let document = self.get_document(matter_id, document_id).await?;
+        validate_document_annotation_range(&request)?;
+        self.validate_document_annotation_target(matter_id, &request)
+            .await?;
+        let annotation_type = normalize_document_annotation_type(&request.annotation_type)?;
+        let now = now_string();
+        let annotation_id = generate_opaque_id("document-annotation");
+        let annotation = DocumentAnnotation {
+            annotation_id: annotation_id.clone(),
+            id: annotation_id,
+            matter_id: matter_id.to_string(),
+            document_id: document_id.to_string(),
+            document_version_id: document.current_version_id.clone(),
+            annotation_type: annotation_type.clone(),
+            status: request
+                .status
+                .filter(|status| !status.trim().is_empty())
+                .unwrap_or_else(|| "active".to_string()),
+            label: request
+                .label
+                .filter(|label| !label.trim().is_empty())
+                .unwrap_or_else(|| default_annotation_label(&annotation_type).to_string()),
+            note: request.note.filter(|note| !note.trim().is_empty()),
+            color: request.color.filter(|color| !color.trim().is_empty()),
+            page_range: request.page_range,
+            text_range: request.text_range,
+            target_type: request.target_type.filter(|value| !value.trim().is_empty()),
+            target_id: request.target_id.filter(|value| !value.trim().is_empty()),
+            created_by: "user".to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        self.merge_document_annotation(matter_id, &annotation).await
+    }
+
+    pub async fn save_document_text(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        request: SaveDocumentTextRequest,
+    ) -> ApiResult<SaveDocumentTextResponse> {
+        let document = self.get_document(matter_id, document_id).await?;
+        let mut warnings = Vec::new();
+        let (bytes, mime_type, extension) = if document_is_docx(&document) {
+            let existing = self.document_bytes(&document).await?;
+            let (updated, docx_warnings) =
+                docx_with_replaced_document_xml(&existing, &request.text)?;
+            warnings.extend(docx_warnings);
+            (
+                Bytes::from(updated),
+                Some(
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        .to_string(),
+                ),
+                "docx".to_string(),
+            )
+        } else if document_is_markdown(&document) || document_is_text(&document) {
+            (
+                Bytes::from(request.text.into_bytes()),
+                Some(if document_is_markdown(&document) {
+                    "text/markdown".to_string()
+                } else {
+                    document
+                        .mime_type
+                        .clone()
+                        .unwrap_or_else(|| "text/plain".to_string())
+                }),
+                document_file_extension(&document).unwrap_or_else(|| "txt".to_string()),
+            )
+        } else {
+            return Err(ApiError::BadRequest(format!(
+                "{} cannot be edited as structured text in the OSS document workspace.",
+                document.filename
+            )));
+        };
+        let (document, document_version, ingestion_run) = self
+            .store_edited_document_bytes(
+                matter_id,
+                document,
+                bytes,
+                mime_type,
+                &extension,
+                "document_workspace_text_save",
+            )
+            .await?;
+        Ok(SaveDocumentTextResponse {
+            document,
+            document_version,
+            ingestion_run,
+            warnings,
+        })
+    }
+
+    pub async fn promote_document_work_product(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        request: PromoteDocumentWorkProductRequest,
+    ) -> ApiResult<PromoteDocumentWorkProductResponse> {
+        let document = self.get_document(matter_id, document_id).await?;
+        if !(document_is_markdown(&document)
+            || document_is_text(&document)
+            || document_is_docx(&document))
+        {
+            return Err(ApiError::BadRequest(
+                "Only Markdown, text, and supported DOCX text can be promoted into WorkProduct.document_ast in v1."
+                    .to_string(),
+            ));
+        }
+        let text = match document.extracted_text.clone() {
+            Some(text) if !text.trim().is_empty() => text,
+            _ => self.document_bytes_as_text(&document).await?,
+        };
+        if text.trim().is_empty() {
+            return Err(ApiError::BadRequest(
+                "No source text is available to promote into a work product.".to_string(),
+            ));
+        }
+        let mut product = self
+            .create_work_product(
+                matter_id,
+                CreateWorkProductRequest {
+                    title: request.title.or_else(|| Some(document.title.clone())),
+                    product_type: request.product_type.unwrap_or_else(|| "memo".to_string()),
+                    template: None,
+                    source_draft_id: None,
+                    source_complaint_id: None,
+                },
+            )
+            .await?;
+        let markdown = if document_is_markdown(&document) {
+            text.clone()
+        } else {
+            text_to_markdown_paragraphs(&text)
+        };
+        let (document_ast, warnings) =
+            super::markdown_adapter::markdown_to_work_product_ast(&product, &markdown);
+        product.document_ast = document_ast;
+        product.blocks = flatten_work_product_blocks(&product.document_ast.blocks);
+        product.history.push(work_product_event(
+            matter_id,
+            &product.work_product_id,
+            "promote_document",
+            "document",
+            document_id,
+            "Document source promoted into canonical WorkProduct AST.",
+        ));
+        let work_product = self.save_work_product(matter_id, product).await?;
+        Ok(PromoteDocumentWorkProductResponse {
+            work_product,
+            warnings,
+        })
+    }
+
     pub async fn extract_document(
         &self,
         matter_id: &str,
@@ -1087,6 +1502,515 @@ impl CaseBuilderService {
             ingestion_run,
             document_version: provenance.map(|provenance| provenance.document_version),
             source_spans,
+        })
+    }
+
+    pub async fn create_transcription(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        request: CreateTranscriptionRequest,
+    ) -> ApiResult<TranscriptionJobResponse> {
+        let mut document = self.get_document(matter_id, document_id).await?;
+        if !document_is_media(&document) {
+            return Err(ApiError::BadRequest(
+                "Only uploaded audio/video documents can be transcribed.".to_string(),
+            ));
+        }
+        let force = request.force.unwrap_or(false);
+        if !force {
+            if let Some(existing) = self
+                .list_transcription_jobs(matter_id, document_id)
+                .await?
+                .into_iter()
+                .rev()
+                .find(|job| {
+                    !matches!(
+                        job.status.as_str(),
+                        "failed" | "provider_disabled" | "cancelled"
+                    )
+                })
+            {
+                return self.transcription_response(matter_id, &existing).await;
+            }
+        }
+
+        let provenance = self
+            .ensure_document_original_provenance(matter_id, &mut document)
+            .await?;
+        let now = now_string();
+        let speech_models = assemblyai_speech_models();
+        let new_job_id = transcription_job_id(document_id, now_secs());
+        let mut job = TranscriptionJob {
+            transcription_job_id: new_job_id.clone(),
+            id: new_job_id,
+            matter_id: matter_id.to_string(),
+            document_id: document_id.to_string(),
+            document_version_id: provenance
+                .as_ref()
+                .map(|provenance| provenance.document_version.document_version_id.clone())
+                .or_else(|| document.current_version_id.clone()),
+            object_blob_id: provenance
+                .as_ref()
+                .map(|provenance| provenance.object_blob.object_blob_id.clone())
+                .or_else(|| document.object_blob_id.clone()),
+            provider: "assemblyai".to_string(),
+            provider_mode: if self.assemblyai.enabled && self.assemblyai.api_key.is_some() {
+                "live".to_string()
+            } else {
+                "disabled".to_string()
+            },
+            provider_transcript_id: None,
+            provider_status: None,
+            status: "queued".to_string(),
+            review_status: "not_started".to_string(),
+            raw_artifact_version_id: None,
+            normalized_artifact_version_id: None,
+            redacted_artifact_version_id: None,
+            reviewed_document_version_id: None,
+            caption_vtt_version_id: None,
+            caption_srt_version_id: None,
+            language_code: request.language_code.clone(),
+            duration_ms: None,
+            speaker_count: 0,
+            segment_count: 0,
+            word_count: 0,
+            redact_pii: request.redact_pii.unwrap_or(true),
+            speech_models,
+            retryable: false,
+            error_code: None,
+            error_message: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            completed_at: None,
+            reviewed_at: None,
+        };
+        job.id = job.transcription_job_id.clone();
+
+        if job.provider_mode == "disabled" {
+            job.status = "provider_disabled".to_string();
+            job.error_code = Some("assemblyai_disabled".to_string());
+            job.error_message =
+                Some("AssemblyAI transcription is disabled or missing an API key.".to_string());
+            let job = self.merge_transcription_job(matter_id, &job).await?;
+            return self.transcription_response(matter_id, &job).await;
+        }
+
+        if document.bytes > self.assemblyai.max_media_bytes {
+            job.status = "failed".to_string();
+            job.error_code = Some("media_too_large".to_string());
+            job.error_message = Some("Media exceeds configured AssemblyAI size limit.".to_string());
+            let job = self.merge_transcription_job(matter_id, &job).await?;
+            return self.transcription_response(matter_id, &job).await;
+        }
+
+        let media_bytes = self.document_bytes(&document).await?;
+        document.processing_status = "processing".to_string();
+        document.summary = "Transcription submitted to AssemblyAI; review is required before transcript-derived facts or evidence are created.".to_string();
+        self.merge_node(matter_id, document_spec(), document_id, &document)
+            .await?;
+        job.status = "processing".to_string();
+        job.provider_status = Some("submitted".to_string());
+        job.retryable = true;
+        let job = self.merge_transcription_job(matter_id, &job).await?;
+
+        let submit_result = async {
+            let upload_url = self
+                .assemblyai_upload_bytes(document.mime_type.clone(), media_bytes)
+                .await?;
+            self.assemblyai_submit_transcript(&upload_url, &request, &job)
+                .await
+        }
+        .await;
+
+        match submit_result {
+            Ok(provider) => {
+                let mut job = job;
+                job.provider_transcript_id = Some(provider.id.clone());
+                job.provider_status = Some(provider.status.clone());
+                job.updated_at = now_string();
+                if provider.status == "completed" {
+                    self.import_completed_transcript(matter_id, document, job, provider)
+                        .await
+                } else if provider.status == "error" {
+                    job.status = "failed".to_string();
+                    job.retryable = false;
+                    job.error_code = Some("assemblyai_error".to_string());
+                    job.error_message = Some("AssemblyAI returned an error status.".to_string());
+                    let job = self.merge_transcription_job(matter_id, &job).await?;
+                    self.transcription_response(matter_id, &job).await
+                } else {
+                    let job = self.merge_transcription_job(matter_id, &job).await?;
+                    self.transcription_response(matter_id, &job).await
+                }
+            }
+            Err(error) => {
+                let mut job = job;
+                job.status = "failed".to_string();
+                job.provider_status = Some("request_failed".to_string());
+                job.error_code = Some("assemblyai_request_failed".to_string());
+                job.error_message = Some(sanitized_external_error(&error));
+                job.updated_at = now_string();
+                let job = self.merge_transcription_job(matter_id, &job).await?;
+                self.transcription_response(matter_id, &job).await
+            }
+        }
+    }
+
+    pub async fn list_transcriptions(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+    ) -> ApiResult<Vec<TranscriptionJobResponse>> {
+        self.get_document(matter_id, document_id).await?;
+        let mut responses = Vec::new();
+        for job in self.list_transcription_jobs(matter_id, document_id).await? {
+            responses.push(self.transcription_response(matter_id, &job).await?);
+        }
+        Ok(responses)
+    }
+
+    pub async fn get_transcription(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        transcription_job_id: &str,
+    ) -> ApiResult<TranscriptionJobResponse> {
+        let job = self
+            .get_node::<TranscriptionJob>(matter_id, transcription_job_spec(), transcription_job_id)
+            .await?;
+        if job.document_id != document_id {
+            return Err(ApiError::NotFound(
+                "Transcription job not found".to_string(),
+            ));
+        }
+        self.transcription_response(matter_id, &job).await
+    }
+
+    pub async fn sync_transcription(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        transcription_job_id: &str,
+    ) -> ApiResult<TranscriptionJobResponse> {
+        let document = self.get_document(matter_id, document_id).await?;
+        let mut job = self
+            .get_node::<TranscriptionJob>(matter_id, transcription_job_spec(), transcription_job_id)
+            .await?;
+        if job.document_id != document_id {
+            return Err(ApiError::NotFound(
+                "Transcription job not found".to_string(),
+            ));
+        }
+        if matches!(job.status.as_str(), "review_ready" | "processed")
+            && job.normalized_artifact_version_id.is_some()
+        {
+            return self.transcription_response(matter_id, &job).await;
+        }
+        let Some(provider_transcript_id) = job.provider_transcript_id.clone() else {
+            return self.transcription_response(matter_id, &job).await;
+        };
+        if !self.assemblyai.enabled || self.assemblyai.api_key.is_none() {
+            job.status = "provider_disabled".to_string();
+            job.error_code = Some("assemblyai_disabled".to_string());
+            job.error_message =
+                Some("AssemblyAI transcription is disabled or missing an API key.".to_string());
+            job.updated_at = now_string();
+            let job = self.merge_transcription_job(matter_id, &job).await?;
+            return self.transcription_response(matter_id, &job).await;
+        }
+        match self
+            .assemblyai_fetch_transcript(&provider_transcript_id)
+            .await
+        {
+            Ok(provider) if provider.status == "completed" => {
+                self.import_completed_transcript(matter_id, document, job, provider)
+                    .await
+            }
+            Ok(provider) if provider.status == "error" => {
+                job.status = "failed".to_string();
+                job.provider_status = Some(provider.status);
+                job.retryable = false;
+                job.error_code = Some("assemblyai_error".to_string());
+                job.error_message = Some(
+                    provider
+                        .error
+                        .map(|_| "AssemblyAI returned an error status.".to_string())
+                        .unwrap_or_else(|| "AssemblyAI returned an error status.".to_string()),
+                );
+                job.updated_at = now_string();
+                let job = self.merge_transcription_job(matter_id, &job).await?;
+                self.transcription_response(matter_id, &job).await
+            }
+            Ok(provider) => {
+                job.status = "processing".to_string();
+                job.provider_status = Some(provider.status);
+                job.retryable = true;
+                job.updated_at = now_string();
+                let job = self.merge_transcription_job(matter_id, &job).await?;
+                self.transcription_response(matter_id, &job).await
+            }
+            Err(error) => {
+                job.status = "failed".to_string();
+                job.provider_status = Some("sync_failed".to_string());
+                job.retryable = true;
+                job.error_code = Some("assemblyai_sync_failed".to_string());
+                job.error_message = Some(sanitized_external_error(&error));
+                job.updated_at = now_string();
+                let job = self.merge_transcription_job(matter_id, &job).await?;
+                self.transcription_response(matter_id, &job).await
+            }
+        }
+    }
+
+    pub async fn patch_transcript_segment(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        transcription_job_id: &str,
+        segment_id: &str,
+        request: PatchTranscriptSegmentRequest,
+    ) -> ApiResult<TranscriptionJobResponse> {
+        let job = self
+            .get_node::<TranscriptionJob>(matter_id, transcription_job_spec(), transcription_job_id)
+            .await?;
+        if job.document_id != document_id {
+            return Err(ApiError::NotFound(
+                "Transcription job not found".to_string(),
+            ));
+        }
+        let mut segment = self
+            .get_node::<TranscriptSegment>(matter_id, transcript_segment_spec(), segment_id)
+            .await?;
+        if segment.transcription_job_id != transcription_job_id
+            || segment.document_id != document_id
+        {
+            return Err(ApiError::NotFound(
+                "Transcript segment not found".to_string(),
+            ));
+        }
+        let now = now_string();
+        if let Some(text) = request.text {
+            if text != segment.text {
+                self.record_transcript_review_change(
+                    matter_id,
+                    document_id,
+                    transcription_job_id,
+                    "segment",
+                    segment_id,
+                    "text",
+                    Some(segment.text.clone()),
+                    Some(text.clone()),
+                )
+                .await?;
+                segment.text = text;
+                segment.edited = true;
+            }
+        }
+        if let Some(redacted_text) = request.redacted_text {
+            segment.redacted_text = Some(redacted_text);
+            segment.edited = true;
+        }
+        if let Some(speaker_label) = request.speaker_label {
+            segment.speaker_label = Some(speaker_label);
+            segment.edited = true;
+        }
+        if let Some(review_status) = request.review_status {
+            segment.review_status = review_status;
+        }
+        segment.updated_at = now;
+        self.merge_transcript_segment(matter_id, &segment).await?;
+        self.transcription_response(matter_id, &job).await
+    }
+
+    pub async fn patch_transcript_speaker(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        transcription_job_id: &str,
+        speaker_id: &str,
+        request: PatchTranscriptSpeakerRequest,
+    ) -> ApiResult<TranscriptionJobResponse> {
+        let job = self
+            .get_node::<TranscriptionJob>(matter_id, transcription_job_spec(), transcription_job_id)
+            .await?;
+        if job.document_id != document_id {
+            return Err(ApiError::NotFound(
+                "Transcription job not found".to_string(),
+            ));
+        }
+        let mut speaker = self
+            .get_node::<TranscriptSpeaker>(matter_id, transcript_speaker_spec(), speaker_id)
+            .await?;
+        if speaker.transcription_job_id != transcription_job_id
+            || speaker.document_id != document_id
+        {
+            return Err(ApiError::NotFound(
+                "Transcript speaker not found".to_string(),
+            ));
+        }
+        if request.display_name != speaker.display_name {
+            self.record_transcript_review_change(
+                matter_id,
+                document_id,
+                transcription_job_id,
+                "speaker",
+                speaker_id,
+                "display_name",
+                speaker.display_name.clone(),
+                request.display_name.clone(),
+            )
+            .await?;
+            speaker.display_name = request.display_name;
+        }
+        if request.role != speaker.role {
+            speaker.role = request.role;
+        }
+        speaker.updated_at = now_string();
+        self.merge_transcript_speaker(matter_id, &speaker).await?;
+        self.transcription_response(matter_id, &job).await
+    }
+
+    pub async fn review_transcription(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        transcription_job_id: &str,
+        request: ReviewTranscriptionRequest,
+    ) -> ApiResult<TranscriptionJobResponse> {
+        let mut document = self.get_document(matter_id, document_id).await?;
+        let mut job = self
+            .get_node::<TranscriptionJob>(matter_id, transcription_job_spec(), transcription_job_id)
+            .await?;
+        if job.document_id != document_id {
+            return Err(ApiError::NotFound(
+                "Transcription job not found".to_string(),
+            ));
+        }
+        let mut segments = self
+            .list_transcript_segments(matter_id, transcription_job_id)
+            .await?;
+        if segments.is_empty() {
+            return Err(ApiError::BadRequest(
+                "No transcript segments are available to review.".to_string(),
+            ));
+        }
+        let reviewed_text = request
+            .reviewed_text
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or_else(|| transcript_segments_to_text(&segments, false));
+        let reviewed_version = self
+            .store_document_artifact_version(
+                matter_id,
+                &document,
+                Bytes::from(reviewed_text.clone().into_bytes()),
+                Some("text/plain".to_string()),
+                "transcript_reviewed_text",
+                "transcript_reviewed_text",
+                "txt",
+                true,
+            )
+            .await?;
+        document.processing_status = "processed".to_string();
+        document.summary = summarize_text(&reviewed_text);
+        document.extracted_text = Some(reviewed_text);
+        document.current_version_id = Some(reviewed_version.document_version_id.clone());
+        document.object_blob_id = Some(reviewed_version.object_blob_id.clone());
+        document.source_spans = transcript_source_spans(
+            matter_id,
+            document_id,
+            transcription_job_id,
+            &segments,
+            job.document_version_id.clone(),
+            job.object_blob_id.clone(),
+            "approved",
+        );
+        let document = self
+            .merge_node(matter_id, document_spec(), document_id, &document)
+            .await?;
+        for span in &document.source_spans {
+            self.merge_source_span(matter_id, span).await?;
+            self.link_transcription_job_to_source_span(&job, span)
+                .await?;
+        }
+        for segment in &mut segments {
+            segment.review_status = request
+                .status
+                .clone()
+                .unwrap_or_else(|| "approved".to_string());
+            segment.updated_at = now_string();
+            self.merge_transcript_segment(matter_id, segment).await?;
+        }
+        job.status = "processed".to_string();
+        job.review_status = "approved".to_string();
+        job.reviewed_document_version_id = Some(reviewed_version.document_version_id);
+        job.updated_at = now_string();
+        job.reviewed_at = Some(job.updated_at.clone());
+        job.retryable = false;
+        job.error_code = None;
+        job.error_message = None;
+        let job = self.merge_transcription_job(matter_id, &job).await?;
+        self.record_transcript_review_change(
+            matter_id,
+            document_id,
+            transcription_job_id,
+            "job",
+            transcription_job_id,
+            "review_status",
+            Some("review_ready".to_string()),
+            Some("approved".to_string()),
+        )
+        .await?;
+        let _ = document;
+        self.transcription_response(matter_id, &job).await
+    }
+
+    pub async fn handle_assemblyai_webhook(
+        &self,
+        header_value: Option<&str>,
+        payload: AssemblyAiWebhookPayload,
+    ) -> ApiResult<TranscriptionWebhookResponse> {
+        let Some(secret) = self.assemblyai.webhook_secret.as_deref() else {
+            return Err(ApiError::BadRequest(
+                "AssemblyAI webhook secret is not configured.".to_string(),
+            ));
+        };
+        if header_value != Some(secret) {
+            return Err(ApiError::BadRequest(
+                "Invalid AssemblyAI webhook authentication.".to_string(),
+            ));
+        }
+        let Some(mut job) = self
+            .find_transcription_job_by_provider_id(&payload.transcript_id)
+            .await?
+        else {
+            return Ok(TranscriptionWebhookResponse {
+                handled: false,
+                message: "No matching transcription job.".to_string(),
+                transcription: None,
+            });
+        };
+        job.provider_status = payload.status.clone();
+        job.updated_at = now_string();
+        let job = self
+            .merge_transcription_job(&job.matter_id.clone(), &job)
+            .await?;
+        let transcription = if payload.status.as_deref() == Some("completed") {
+            Some(
+                self.sync_transcription(
+                    &job.matter_id,
+                    &job.document_id,
+                    &job.transcription_job_id,
+                )
+                .await?,
+            )
+        } else {
+            Some(self.transcription_response(&job.matter_id, &job).await?)
+        };
+        Ok(TranscriptionWebhookResponse {
+            handled: true,
+            message: "AssemblyAI webhook recorded.".to_string(),
+            transcription,
         })
     }
 
@@ -1712,6 +2636,7 @@ impl CaseBuilderService {
         product.source_draft_id = request.source_draft_id;
         product.source_complaint_id = request.source_complaint_id;
         if let Some(template) = request.template {
+            product.document_ast.metadata.template_id = Some(template.clone());
             product.history.push(work_product_event(
                 matter_id,
                 work_product_id,
@@ -1874,11 +2799,9 @@ impl CaseBuilderService {
         )?;
         self.validate_ast_patch_matter_references(matter_id, &product, &patch)
             .await?;
-        for operation in &patch.operations {
-            apply_ast_operation(&mut product.document_ast, operation)?;
-        }
+        product.document_ast = super::ast_patch::apply_ast_patch_atomic(&product, &patch)?;
         normalize_work_product_ast(&mut product);
-        let validation = validate_work_product_document(&product);
+        let validation = super::ast_validation::validate_work_product_document(&product);
         if !validation.errors.is_empty() {
             let codes = validation
                 .errors
@@ -1934,7 +2857,69 @@ impl CaseBuilderService {
         work_product_id: &str,
     ) -> ApiResult<AstValidationResponse> {
         let product = self.get_work_product(matter_id, work_product_id).await?;
-        Ok(validate_work_product_document(&product))
+        Ok(super::ast_validation::validate_work_product_document(
+            &product,
+        ))
+    }
+
+    pub async fn get_work_product_ast(
+        &self,
+        matter_id: &str,
+        work_product_id: &str,
+    ) -> ApiResult<WorkProductDocument> {
+        let mut product = self.get_work_product(matter_id, work_product_id).await?;
+        super::work_product_ast::normalize_work_product_ast(&mut product);
+        Ok(product.document_ast)
+    }
+
+    pub async fn patch_work_product_ast(
+        &self,
+        matter_id: &str,
+        work_product_id: &str,
+        document_ast: WorkProductDocument,
+    ) -> ApiResult<WorkProduct> {
+        let mut product = self.get_work_product(matter_id, work_product_id).await?;
+        let before_product = product.clone();
+        product.document_ast = document_ast;
+        super::work_product_ast::normalize_work_product_ast(&mut product);
+        super::ast_validation::ensure_work_product_ast_valid(&product, "Work product AST patch")?;
+        product.blocks =
+            super::work_product_ast::flatten_work_product_blocks(&product.document_ast.blocks);
+        self.validate_work_product_matter_references(matter_id, &product)
+            .await?;
+        product.history.push(work_product_event(
+            matter_id,
+            work_product_id,
+            "ast_replaced",
+            "document_ast",
+            &product.document_ast.document_id,
+            "Canonical WorkProduct AST replaced.",
+        ));
+        refresh_work_product_state(&mut product);
+        self.validate_work_product_matter_references(matter_id, &product)
+            .await?;
+        let product = self.save_work_product(matter_id, product).await?;
+        self.record_work_product_change(
+            matter_id,
+            Some(&before_product),
+            &product,
+            "editor",
+            "ast_patch",
+            "AST replaced",
+            "Canonical WorkProduct AST replaced.",
+            vec![VersionChangeInput {
+                target_type: "document_ast".to_string(),
+                target_id: product.document_ast.document_id.clone(),
+                operation: "replace".to_string(),
+                before: json_value(&before_product.document_ast).ok(),
+                after: json_value(&product.document_ast).ok(),
+                summary: "Canonical WorkProduct AST replaced.".to_string(),
+                legal_impact: LegalImpactSummary::default(),
+                ai_audit_id: None,
+            }],
+        )
+        .await?;
+        Ok(product)
     }
 
     pub async fn work_product_ast_to_markdown(
@@ -1942,10 +2927,15 @@ impl CaseBuilderService {
         matter_id: &str,
         work_product_id: &str,
     ) -> ApiResult<AstMarkdownResponse> {
-        let product = self.get_work_product(matter_id, work_product_id).await?;
+        let mut product = self.get_work_product(matter_id, work_product_id).await?;
+        super::work_product_ast::normalize_work_product_ast(&mut product);
+        super::ast_validation::ensure_work_product_ast_valid(
+            &product,
+            "Work product AST to Markdown",
+        )?;
         Ok(AstMarkdownResponse {
-            markdown: work_product_markdown(&product),
-            warnings: validate_work_product_document(&product)
+            markdown: super::markdown_adapter::work_product_markdown(&product),
+            warnings: super::ast_validation::validate_work_product_document(&product)
                 .warnings
                 .into_iter()
                 .map(|issue| issue.message)
@@ -1960,9 +2950,26 @@ impl CaseBuilderService {
         request: MarkdownToAstRequest,
     ) -> ApiResult<AstDocumentResponse> {
         let product = self.get_work_product(matter_id, work_product_id).await?;
-        let (document_ast, warnings) = markdown_to_work_product_ast(&product, &request.markdown);
+        let (document_ast, mut warnings) =
+            super::markdown_adapter::markdown_to_work_product_ast(&product, &request.markdown);
+        let mut converted = product.clone();
+        converted.document_ast = document_ast;
+        super::work_product_ast::normalize_work_product_ast(&mut converted);
+        let validation = super::ast_validation::validate_work_product_document(&converted);
+        if !validation.errors.is_empty() {
+            let codes = validation
+                .errors
+                .iter()
+                .map(|issue| issue.code.clone())
+                .collect::<Vec<_>>()
+                .join(",");
+            return Err(ApiError::BadRequest(format!(
+                "Work product Markdown import failed AST validation: issue_codes={codes}"
+            )));
+        }
+        warnings.extend(validation.warnings.into_iter().map(|issue| issue.message));
         Ok(AstDocumentResponse {
-            document_ast,
+            document_ast: converted.document_ast,
             warnings,
         })
     }
@@ -1972,11 +2979,13 @@ impl CaseBuilderService {
         matter_id: &str,
         work_product_id: &str,
     ) -> ApiResult<AstRenderedResponse> {
-        let product = self.get_work_product(matter_id, work_product_id).await?;
+        let mut product = self.get_work_product(matter_id, work_product_id).await?;
+        super::work_product_ast::normalize_work_product_ast(&mut product);
+        super::ast_validation::ensure_work_product_ast_valid(&product, "Work product AST to HTML")?;
         Ok(AstRenderedResponse {
-            html: Some(render_work_product_preview(&product).html),
+            html: Some(super::html_renderer::render_work_product_preview(&product).html),
             plain_text: None,
-            warnings: validate_work_product_document(&product)
+            warnings: super::ast_validation::validate_work_product_document(&product)
                 .warnings
                 .into_iter()
                 .map(|issue| issue.message)
@@ -1989,11 +2998,16 @@ impl CaseBuilderService {
         matter_id: &str,
         work_product_id: &str,
     ) -> ApiResult<AstRenderedResponse> {
-        let product = self.get_work_product(matter_id, work_product_id).await?;
+        let mut product = self.get_work_product(matter_id, work_product_id).await?;
+        super::work_product_ast::normalize_work_product_ast(&mut product);
+        super::ast_validation::ensure_work_product_ast_valid(
+            &product,
+            "Work product AST to plain text",
+        )?;
         Ok(AstRenderedResponse {
             html: None,
-            plain_text: Some(work_product_plain_text(&product)),
-            warnings: validate_work_product_document(&product)
+            plain_text: Some(super::html_renderer::work_product_plain_text(&product)),
+            warnings: super::ast_validation::validate_work_product_document(&product)
                 .warnings
                 .into_iter()
                 .map(|issue| issue.message)
@@ -2434,7 +3448,7 @@ impl CaseBuilderService {
         }
         let operations = apply_work_product_text_range_link(&mut product, request)?;
         normalize_work_product_ast(&mut product);
-        let validation = validate_work_product_document(&product);
+        let validation = super::ast_validation::validate_work_product_document(&product);
         if !validation.errors.is_empty() {
             let codes = validation
                 .errors
@@ -2493,7 +3507,7 @@ impl CaseBuilderService {
         let mut product = self.get_work_product(matter_id, work_product_id).await?;
         ensure_work_product_ast_valid(&product, "Work product QC")?;
         let before_product = product.clone();
-        product.findings = work_product_findings(&product);
+        product.findings = super::rule_engine::work_product_findings(&product);
         product.document_ast.rule_findings = product.findings.clone();
         product.history.push(work_product_event(
             matter_id,
@@ -2631,7 +3645,7 @@ impl CaseBuilderService {
     ) -> ApiResult<WorkProductPreviewResponse> {
         let product = self.get_work_product(matter_id, work_product_id).await?;
         ensure_work_product_ast_valid(&product, "Work product preview")?;
-        Ok(render_work_product_preview(&product))
+        Ok(super::html_renderer::render_work_product_preview(&product))
     }
 
     pub async fn export_work_product(
@@ -2648,13 +3662,14 @@ impl CaseBuilderService {
         let mode = request.mode.unwrap_or_else(|| "review_needed".to_string());
         let generated_at = now_string();
         let artifact_id = format!("{work_product_id}:artifact:{format}:{generated_at}");
-        let warnings = work_product_export_warnings(
+        let warnings = super::html_renderer::work_product_export_warnings(
             &product,
             &format,
             request.include_exhibits.unwrap_or(false),
             request.include_qc_report.unwrap_or(false),
         );
-        let export_content = render_work_product_export_content(&product, &format)?;
+        let export_content =
+            super::html_renderer::render_work_product_export_content(&product, &format)?;
         let artifact_hash = sha256_hex(export_content.as_bytes());
         let artifact_key = work_product_export_key(
             matter_id,
@@ -2696,7 +3711,7 @@ impl CaseBuilderService {
             download_url: format!(
                 "/api/v1/matters/{matter_id}/work-products/{work_product_id}/artifacts/{artifact_id}/download"
             ),
-            page_count: render_work_product_preview(&product).page_count,
+            page_count: super::html_renderer::render_work_product_preview(&product).page_count,
             generated_at,
             warnings,
             content_preview,
@@ -2821,6 +3836,8 @@ impl CaseBuilderService {
             .target_id
             .clone()
             .unwrap_or_else(|| work_product_id.to_string());
+        let proposed_patch =
+            super::ai_patch::empty_provider_free_ai_patch(&product, &request.command, "system");
         for command in &mut product.ai_commands {
             if command.command_id == request.command {
                 command.last_message = Some(message.clone());
@@ -2889,7 +3906,11 @@ impl CaseBuilderService {
             output_text: None,
             inserted_text: None,
             user_action: "template_recorded".to_string(),
-            warnings: vec![message.clone()],
+            warnings: vec![
+                message.clone(),
+                "Provider-free AI returned an empty AstPatch; no unsupported text was inserted."
+                    .to_string(),
+            ],
             created_at: now_string(),
         };
         self.merge_node(
@@ -2912,8 +3933,12 @@ impl CaseBuilderService {
                 target_id: ai_audit.target_id.clone(),
                 operation: "create".to_string(),
                 before: None,
-                after: json_value(&ai_audit).ok(),
-                summary: message.clone(),
+                after: json_value(&serde_json::json!({
+                    "ai_audit": ai_audit.clone(),
+                    "proposed_patch": proposed_patch.clone(),
+                }))
+                .ok(),
+                summary: "Provider-free AI patch proposal recorded.".to_string(),
                 legal_impact: LegalImpactSummary::default(),
                 ai_audit_id: Some(ai_audit.ai_audit_id.clone()),
             }],
@@ -3090,7 +4115,11 @@ impl CaseBuilderService {
         } else {
             Vec::new()
         };
-        let layer_diffs = diff_work_product_layers(&from_product, &to_product, &selected_layers)?;
+        let layer_diffs = super::ast_diff::diff_work_product_layers(
+            &from_product,
+            &to_product,
+            &selected_layers,
+        )?;
         let summary = VersionChangeSummary {
             text_changes: text_diffs
                 .iter()
@@ -4203,6 +5232,9 @@ impl CaseBuilderService {
                         byte_end: provenance.byte_end,
                         char_start: provenance.char_start,
                         char_end: provenance.char_end,
+                        time_start_ms: None,
+                        time_end_ms: None,
+                        speaker_label: None,
                         quote: Some(paragraph.text.clone()),
                         extraction_method: "complaint_import_paragraph".to_string(),
                         confidence: 0.82,
@@ -5773,6 +6805,956 @@ impl CaseBuilderService {
         Ok(Some(provenance))
     }
 
+    async fn current_document_version(
+        &self,
+        matter_id: &str,
+        document: &CaseDocument,
+    ) -> ApiResult<Option<DocumentVersion>> {
+        if let Some(version_id) = document.current_version_id.as_deref() {
+            match self
+                .get_node::<DocumentVersion>(matter_id, document_version_spec(), version_id)
+                .await
+            {
+                Ok(version) => return Ok(Some(version)),
+                Err(ApiError::NotFound(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(self
+            .list_document_versions(matter_id, &document.document_id)
+            .await?
+            .into_iter()
+            .find(|version| version.current))
+    }
+
+    async fn list_document_versions(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+    ) -> ApiResult<Vec<DocumentVersion>> {
+        let mut versions = self
+            .list_nodes::<DocumentVersion>(matter_id, document_version_spec())
+            .await?
+            .into_iter()
+            .filter(|version| version.document_id == document_id)
+            .collect::<Vec<_>>();
+        versions.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+        Ok(versions)
+    }
+
+    async fn optional_document_version(
+        &self,
+        matter_id: &str,
+        version_id: &Option<String>,
+    ) -> ApiResult<Option<DocumentVersion>> {
+        let Some(version_id) = version_id.as_deref() else {
+            return Ok(None);
+        };
+        match self
+            .get_node::<DocumentVersion>(matter_id, document_version_spec(), version_id)
+            .await
+        {
+            Ok(version) => Ok(Some(version)),
+            Err(ApiError::NotFound(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn list_transcription_jobs(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+    ) -> ApiResult<Vec<TranscriptionJob>> {
+        let mut jobs = self
+            .list_nodes::<TranscriptionJob>(matter_id, transcription_job_spec())
+            .await?
+            .into_iter()
+            .filter(|job| job.document_id == document_id)
+            .collect::<Vec<_>>();
+        jobs.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+        Ok(jobs)
+    }
+
+    async fn list_transcript_segments(
+        &self,
+        matter_id: &str,
+        transcription_job_id: &str,
+    ) -> ApiResult<Vec<TranscriptSegment>> {
+        let mut segments = self
+            .list_nodes::<TranscriptSegment>(matter_id, transcript_segment_spec())
+            .await?
+            .into_iter()
+            .filter(|segment| segment.transcription_job_id == transcription_job_id)
+            .collect::<Vec<_>>();
+        segments.sort_by_key(|segment| segment.ordinal);
+        Ok(segments)
+    }
+
+    async fn list_transcript_speakers(
+        &self,
+        matter_id: &str,
+        transcription_job_id: &str,
+    ) -> ApiResult<Vec<TranscriptSpeaker>> {
+        let mut speakers = self
+            .list_nodes::<TranscriptSpeaker>(matter_id, transcript_speaker_spec())
+            .await?
+            .into_iter()
+            .filter(|speaker| speaker.transcription_job_id == transcription_job_id)
+            .collect::<Vec<_>>();
+        speakers.sort_by(|left, right| left.speaker_label.cmp(&right.speaker_label));
+        Ok(speakers)
+    }
+
+    async fn list_transcript_review_changes(
+        &self,
+        matter_id: &str,
+        transcription_job_id: &str,
+    ) -> ApiResult<Vec<TranscriptReviewChange>> {
+        let mut changes = self
+            .list_nodes::<TranscriptReviewChange>(matter_id, transcript_review_change_spec())
+            .await?
+            .into_iter()
+            .filter(|change| change.transcription_job_id == transcription_job_id)
+            .collect::<Vec<_>>();
+        changes.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+        Ok(changes)
+    }
+
+    async fn transcription_response(
+        &self,
+        matter_id: &str,
+        job: &TranscriptionJob,
+    ) -> ApiResult<TranscriptionJobResponse> {
+        let raw_artifact_version = self
+            .optional_document_version(matter_id, &job.raw_artifact_version_id)
+            .await?;
+        let normalized_artifact_version = self
+            .optional_document_version(matter_id, &job.normalized_artifact_version_id)
+            .await?;
+        let redacted_artifact_version = self
+            .optional_document_version(matter_id, &job.redacted_artifact_version_id)
+            .await?;
+        let reviewed_document_version = self
+            .optional_document_version(matter_id, &job.reviewed_document_version_id)
+            .await?;
+        let caption_vtt_version = self
+            .optional_document_version(matter_id, &job.caption_vtt_version_id)
+            .await?;
+        let caption_srt_version = self
+            .optional_document_version(matter_id, &job.caption_srt_version_id)
+            .await?;
+        let caption_vtt = self
+            .version_text(caption_vtt_version.as_ref())
+            .await
+            .ok()
+            .flatten();
+        let caption_srt = self
+            .version_text(caption_srt_version.as_ref())
+            .await
+            .ok()
+            .flatten();
+        Ok(TranscriptionJobResponse {
+            job: job.clone(),
+            segments: self
+                .list_transcript_segments(matter_id, &job.transcription_job_id)
+                .await?,
+            speakers: self
+                .list_transcript_speakers(matter_id, &job.transcription_job_id)
+                .await?,
+            review_changes: self
+                .list_transcript_review_changes(matter_id, &job.transcription_job_id)
+                .await?,
+            raw_artifact_version,
+            normalized_artifact_version,
+            redacted_artifact_version,
+            reviewed_document_version,
+            caption_vtt_version,
+            caption_srt_version,
+            caption_vtt,
+            caption_srt,
+            warnings: transcription_warnings(job),
+        })
+    }
+
+    async fn version_text(&self, version: Option<&DocumentVersion>) -> ApiResult<Option<String>> {
+        let Some(version) = version else {
+            return Ok(None);
+        };
+        let bytes = self.object_store.get_bytes(&version.storage_key).await?;
+        Ok(String::from_utf8(bytes.to_vec()).ok())
+    }
+
+    async fn assemblyai_upload_bytes(
+        &self,
+        mime_type: Option<String>,
+        bytes: Bytes,
+    ) -> ApiResult<String> {
+        let api_key = self.assemblyai_api_key()?;
+        let url = format!("{}/v2/upload", self.assemblyai.base_url);
+        let mut request = self
+            .http_client
+            .post(url)
+            .header("Authorization", api_key)
+            .timeout(Duration::from_millis(self.assemblyai.timeout_ms))
+            .body(bytes);
+        if let Some(mime_type) = mime_type {
+            request = request.header("content-type", mime_type);
+        }
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            return Err(ApiError::External(
+                "AssemblyAI upload request failed".to_string(),
+            ));
+        }
+        let response = response.json::<AssemblyAiUploadResponse>().await?;
+        Ok(response.upload_url)
+    }
+
+    async fn assemblyai_submit_transcript(
+        &self,
+        upload_url: &str,
+        request: &CreateTranscriptionRequest,
+        job: &TranscriptionJob,
+    ) -> ApiResult<AssemblyAiTranscriptResponse> {
+        let api_key = self.assemblyai_api_key()?;
+        let payload = assemblyai_transcript_create_request(
+            upload_url,
+            request,
+            job,
+            self.assemblyai.webhook_url.clone(),
+            self.assemblyai.webhook_secret.clone(),
+        );
+        let response = self
+            .http_client
+            .post(format!("{}/v2/transcript", self.assemblyai.base_url))
+            .header("Authorization", api_key)
+            .json(&payload)
+            .timeout(Duration::from_millis(self.assemblyai.timeout_ms))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(ApiError::External(
+                "AssemblyAI transcript request failed".to_string(),
+            ));
+        }
+        Ok(response.json::<AssemblyAiTranscriptResponse>().await?)
+    }
+
+    async fn assemblyai_fetch_transcript(
+        &self,
+        transcript_id: &str,
+    ) -> ApiResult<AssemblyAiTranscriptResponse> {
+        let api_key = self.assemblyai_api_key()?;
+        let response = self
+            .http_client
+            .get(format!(
+                "{}/v2/transcript/{}",
+                self.assemblyai.base_url,
+                sanitize_path_segment(transcript_id)
+            ))
+            .header("Authorization", api_key)
+            .timeout(Duration::from_millis(self.assemblyai.timeout_ms))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(ApiError::External(
+                "AssemblyAI transcript fetch failed".to_string(),
+            ));
+        }
+        Ok(response.json::<AssemblyAiTranscriptResponse>().await?)
+    }
+
+    fn assemblyai_api_key(&self) -> ApiResult<&str> {
+        self.assemblyai
+            .api_key
+            .as_deref()
+            .filter(|key| !key.trim().is_empty())
+            .ok_or_else(|| ApiError::BadRequest("AssemblyAI provider is disabled.".to_string()))
+    }
+
+    async fn import_completed_transcript(
+        &self,
+        matter_id: &str,
+        mut document: CaseDocument,
+        mut job: TranscriptionJob,
+        provider: AssemblyAiTranscriptResponse,
+    ) -> ApiResult<TranscriptionJobResponse> {
+        let now = now_string();
+        let (mut segments, speakers) =
+            transcript_segments_from_provider(matter_id, &document, &job, &provider, &now);
+        let source_spans = transcript_source_spans(
+            matter_id,
+            &document.document_id,
+            &job.transcription_job_id,
+            &segments,
+            job.document_version_id.clone(),
+            job.object_blob_id.clone(),
+            "unreviewed",
+        );
+        for (segment, span) in segments.iter_mut().zip(source_spans.iter()) {
+            segment.source_span_id = Some(span.source_span_id.clone());
+        }
+        let raw_bytes =
+            serde_json::to_vec(&provider).map_err(|error| ApiError::Internal(error.to_string()))?;
+        let raw_artifact = self
+            .store_document_artifact_version(
+                matter_id,
+                &document,
+                Bytes::from(raw_bytes),
+                Some("application/json".to_string()),
+                "transcript_provider_raw_json",
+                "transcript_provider_raw_json",
+                "json",
+                false,
+            )
+            .await?;
+        let normalized_payload = serde_json::json!({
+            "job": job.clone(),
+            "segments": segments.clone(),
+            "speakers": speakers.clone(),
+            "provider_status": provider.status.clone(),
+            "language_code": provider.language_code.clone(),
+            "audio_duration": provider.audio_duration,
+        });
+        let normalized_bytes = serde_json::to_vec(&normalized_payload)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let normalized_artifact = self
+            .store_document_artifact_version(
+                matter_id,
+                &document,
+                Bytes::from(normalized_bytes),
+                Some("application/json".to_string()),
+                "transcript_normalized_json",
+                "transcript_normalized_json",
+                "json",
+                false,
+            )
+            .await?;
+        let redaction_method = if job.redact_pii {
+            if assemblyai_provider_has_redaction(&provider) {
+                "assemblyai-pii-plus-casebuilder-fallback-v1"
+            } else {
+                "casebuilder-local-pii-v1"
+            }
+        } else {
+            "disabled"
+        };
+        let redacted_payload = serde_json::json!({
+            "segments": segments.iter().map(|segment| serde_json::json!({
+                "segment_id": segment.segment_id,
+                "ordinal": segment.ordinal,
+                "speaker_label": segment.speaker_label,
+                "speaker_name": segment.speaker_name,
+                "text": segment.redacted_text.clone().unwrap_or_else(|| redact_transcript_text(&segment.text)),
+                "time_start_ms": segment.time_start_ms,
+                "time_end_ms": segment.time_end_ms,
+                "confidence": segment.confidence,
+            })).collect::<Vec<_>>(),
+            "redaction": redaction_method
+        });
+        let redacted_bytes = serde_json::to_vec(&redacted_payload)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let redacted_artifact = self
+            .store_document_artifact_version(
+                matter_id,
+                &document,
+                Bytes::from(redacted_bytes),
+                Some("application/json".to_string()),
+                "transcript_redacted_json",
+                "transcript_redacted_json",
+                "json",
+                false,
+            )
+            .await?;
+        let vtt = transcript_segments_to_vtt(&segments, true);
+        let vtt_artifact = self
+            .store_document_artifact_version(
+                matter_id,
+                &document,
+                Bytes::from(vtt.clone().into_bytes()),
+                Some("text/vtt".to_string()),
+                "caption_vtt",
+                "caption_vtt",
+                "vtt",
+                false,
+            )
+            .await?;
+        let srt = transcript_segments_to_srt(&segments, true);
+        let srt_artifact = self
+            .store_document_artifact_version(
+                matter_id,
+                &document,
+                Bytes::from(srt.clone().into_bytes()),
+                Some("application/x-subrip".to_string()),
+                "caption_srt",
+                "caption_srt",
+                "srt",
+                false,
+            )
+            .await?;
+
+        job.status = "review_ready".to_string();
+        job.review_status = "needs_review".to_string();
+        job.provider_status = Some("completed".to_string());
+        job.raw_artifact_version_id = Some(raw_artifact.document_version_id);
+        job.normalized_artifact_version_id = Some(normalized_artifact.document_version_id);
+        job.redacted_artifact_version_id = Some(redacted_artifact.document_version_id);
+        job.caption_vtt_version_id = Some(vtt_artifact.document_version_id);
+        job.caption_srt_version_id = Some(srt_artifact.document_version_id);
+        job.language_code = provider.language_code.clone();
+        job.duration_ms = provider
+            .audio_duration
+            .map(|seconds| (seconds * 1000.0) as u64);
+        job.segment_count = segments.len() as u64;
+        job.speaker_count = speakers.len() as u64;
+        job.word_count = assemblyai_raw_words(&provider).len() as u64;
+        job.retryable = false;
+        job.error_code = None;
+        job.error_message = None;
+        job.completed_at = Some(now.clone());
+        job.updated_at = now;
+
+        document.processing_status = "review_ready".to_string();
+        document.summary = format!(
+            "Transcript is ready for human review: {} segment(s), {} speaker(s).",
+            job.segment_count, job.speaker_count
+        );
+        document.source_spans = source_spans.clone();
+        self.merge_node(matter_id, document_spec(), &document.document_id, &document)
+            .await?;
+        let job = self.merge_transcription_job(matter_id, &job).await?;
+        for speaker in &speakers {
+            self.merge_transcript_speaker(matter_id, speaker).await?;
+        }
+        for segment in &segments {
+            self.merge_transcript_segment(matter_id, segment).await?;
+        }
+        for span in &source_spans {
+            self.merge_source_span(matter_id, span).await?;
+            self.link_transcription_job_to_source_span(&job, span)
+                .await?;
+        }
+        self.transcription_response(matter_id, &job).await
+    }
+
+    async fn store_document_artifact_version(
+        &self,
+        matter_id: &str,
+        document: &CaseDocument,
+        bytes: Bytes,
+        mime_type: Option<String>,
+        role: &str,
+        artifact_kind: &str,
+        extension: &str,
+        current: bool,
+    ) -> ApiResult<DocumentVersion> {
+        self.ensure_upload_size(bytes.len() as u64)?;
+        let now = now_string();
+        let sha256 = sha256_hex(&bytes);
+        let document_version_id =
+            artifact_version_id(&document.document_id, artifact_kind, &sha256);
+        let storage_key = document_version_object_key(
+            matter_id,
+            &document.document_id,
+            &document_version_id,
+            &sha256,
+            extension,
+        );
+        let stored = self
+            .object_store
+            .put_bytes(
+                &storage_key,
+                bytes,
+                put_options(mime_type.clone(), Some(sha256.clone())),
+            )
+            .await?;
+        let object_blob_id = object_blob_id_for_hash(&sha256);
+        let object_blob = ObjectBlob {
+            object_blob_id: object_blob_id.clone(),
+            id: object_blob_id.clone(),
+            sha256: Some(sha256.clone()),
+            size_bytes: stored.content_length,
+            mime_type: stored.content_type.clone().or(mime_type.clone()),
+            storage_provider: self.object_store.provider().to_string(),
+            storage_bucket: stored
+                .bucket
+                .clone()
+                .or_else(|| self.object_store.bucket().map(str::to_string)),
+            storage_key: stored.key.clone(),
+            etag: stored.etag.clone(),
+            storage_class: None,
+            created_at: now.clone(),
+            retention_state: "active".to_string(),
+        };
+        self.merge_object_blob(matter_id, &object_blob).await?;
+        if current {
+            for mut version in self
+                .list_document_versions(matter_id, &document.document_id)
+                .await?
+                .into_iter()
+                .filter(|version| version.current)
+            {
+                version.current = false;
+                self.merge_document_version(matter_id, &version).await?;
+            }
+        }
+        let version = DocumentVersion {
+            document_version_id: document_version_id.clone(),
+            id: document_version_id,
+            matter_id: matter_id.to_string(),
+            document_id: document.document_id.clone(),
+            object_blob_id,
+            role: role.to_string(),
+            artifact_kind: artifact_kind.to_string(),
+            source_version_id: document.current_version_id.clone(),
+            created_by: "casebuilder_transcription".to_string(),
+            current,
+            created_at: now,
+            storage_provider: self.object_store.provider().to_string(),
+            storage_bucket: stored
+                .bucket
+                .clone()
+                .or_else(|| self.object_store.bucket().map(str::to_string)),
+            storage_key: stored.key,
+            sha256: Some(sha256),
+            size_bytes: stored.content_length,
+            mime_type,
+        };
+        self.merge_document_version(matter_id, &version).await
+    }
+
+    async fn merge_transcription_job(
+        &self,
+        matter_id: &str,
+        job: &TranscriptionJob,
+    ) -> ApiResult<TranscriptionJob> {
+        let job = self
+            .merge_node(
+                matter_id,
+                transcription_job_spec(),
+                &job.transcription_job_id,
+                job,
+            )
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (d:CaseDocument {document_id: $document_id})
+                     MATCH (j:TranscriptionJob {transcription_job_id: $transcription_job_id})
+                     SET j.document_id = $document_id,
+                         j.status = $status,
+                         j.provider_transcript_id = $provider_transcript_id
+                     MERGE (d)-[:HAS_TRANSCRIPTION_JOB]->(j)
+                     WITH d, j
+                     OPTIONAL MATCH (v:DocumentVersion {document_version_id: $document_version_id})
+                     OPTIONAL MATCH (b:ObjectBlob {object_blob_id: $object_blob_id})
+                     FOREACH (_ IN CASE WHEN v IS NULL THEN [] ELSE [1] END |
+                       MERGE (j)-[:DERIVED_FROM]->(v)
+                     )
+                     FOREACH (_ IN CASE WHEN b IS NULL THEN [] ELSE [1] END |
+                       MERGE (j)-[:DERIVED_FROM]->(b)
+                     )",
+                )
+                .param("document_id", job.document_id.clone())
+                .param("transcription_job_id", job.transcription_job_id.clone())
+                .param("status", job.status.clone())
+                .param(
+                    "provider_transcript_id",
+                    job.provider_transcript_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "document_version_id",
+                    job.document_version_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "object_blob_id",
+                    job.object_blob_id.clone().unwrap_or_default(),
+                ),
+            )
+            .await?;
+        Ok(job)
+    }
+
+    async fn merge_transcript_segment(
+        &self,
+        matter_id: &str,
+        segment: &TranscriptSegment,
+    ) -> ApiResult<TranscriptSegment> {
+        let segment = self
+            .merge_node(
+                matter_id,
+                transcript_segment_spec(),
+                &segment.segment_id,
+                segment,
+            )
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (j:TranscriptionJob {transcription_job_id: $transcription_job_id})
+                     MATCH (s:TranscriptSegment {segment_id: $segment_id})
+                     SET s.transcription_job_id = $transcription_job_id,
+                         s.document_id = $document_id,
+                         s.ordinal = $ordinal
+                     MERGE (j)-[:PRODUCED]->(s)
+                     WITH j, s
+                     OPTIONAL MATCH (span:SourceSpan {source_span_id: $source_span_id})
+                     FOREACH (_ IN CASE WHEN span IS NULL THEN [] ELSE [1] END |
+                       MERGE (s)-[:HAS_SOURCE_SPAN]->(span)
+                     )",
+                )
+                .param("transcription_job_id", segment.transcription_job_id.clone())
+                .param("segment_id", segment.segment_id.clone())
+                .param("document_id", segment.document_id.clone())
+                .param("ordinal", segment.ordinal as i64)
+                .param(
+                    "source_span_id",
+                    segment.source_span_id.clone().unwrap_or_default(),
+                ),
+            )
+            .await?;
+        Ok(segment)
+    }
+
+    async fn merge_transcript_speaker(
+        &self,
+        matter_id: &str,
+        speaker: &TranscriptSpeaker,
+    ) -> ApiResult<TranscriptSpeaker> {
+        let speaker = self
+            .merge_node(
+                matter_id,
+                transcript_speaker_spec(),
+                &speaker.speaker_id,
+                speaker,
+            )
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (j:TranscriptionJob {transcription_job_id: $transcription_job_id})
+                     MATCH (s:TranscriptSpeaker {speaker_id: $speaker_id})
+                     SET s.transcription_job_id = $transcription_job_id,
+                         s.speaker_label = $speaker_label
+                     MERGE (j)-[:HAS_SPEAKER]->(s)",
+                )
+                .param("transcription_job_id", speaker.transcription_job_id.clone())
+                .param("speaker_id", speaker.speaker_id.clone())
+                .param("speaker_label", speaker.speaker_label.clone()),
+            )
+            .await?;
+        Ok(speaker)
+    }
+
+    async fn merge_transcript_review_change(
+        &self,
+        matter_id: &str,
+        change: &TranscriptReviewChange,
+    ) -> ApiResult<TranscriptReviewChange> {
+        let change = self
+            .merge_node(
+                matter_id,
+                transcript_review_change_spec(),
+                &change.review_change_id,
+                change,
+            )
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (j:TranscriptionJob {transcription_job_id: $transcription_job_id})
+                     MATCH (c:TranscriptReviewChange {review_change_id: $review_change_id})
+                     MERGE (j)-[:HAS_REVIEW_CHANGE]->(c)",
+                )
+                .param("transcription_job_id", change.transcription_job_id.clone())
+                .param("review_change_id", change.review_change_id.clone()),
+            )
+            .await?;
+        Ok(change)
+    }
+
+    async fn record_transcript_review_change(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        transcription_job_id: &str,
+        target_type: &str,
+        target_id: &str,
+        field: &str,
+        before: Option<String>,
+        after: Option<String>,
+    ) -> ApiResult<TranscriptReviewChange> {
+        let now = now_string();
+        let change_id =
+            transcript_review_change_id(transcription_job_id, target_id, field, now_secs());
+        let change = TranscriptReviewChange {
+            review_change_id: change_id.clone(),
+            id: change_id,
+            matter_id: matter_id.to_string(),
+            document_id: document_id.to_string(),
+            transcription_job_id: transcription_job_id.to_string(),
+            target_type: target_type.to_string(),
+            target_id: target_id.to_string(),
+            field: field.to_string(),
+            before,
+            after,
+            created_by: "user".to_string(),
+            created_at: now,
+        };
+        self.merge_transcript_review_change(matter_id, &change)
+            .await
+    }
+
+    async fn link_transcription_job_to_source_span(
+        &self,
+        job: &TranscriptionJob,
+        span: &SourceSpan,
+    ) -> ApiResult<()> {
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (j:TranscriptionJob {transcription_job_id: $transcription_job_id})
+                     MATCH (s:SourceSpan {source_span_id: $source_span_id})
+                     MERGE (j)-[:PRODUCED]->(s)",
+                )
+                .param("transcription_job_id", job.transcription_job_id.clone())
+                .param("source_span_id", span.source_span_id.clone()),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn find_transcription_job_by_provider_id(
+        &self,
+        provider_transcript_id: &str,
+    ) -> ApiResult<Option<TranscriptionJob>> {
+        let rows = self
+            .neo4j
+            .run_rows(
+                query(
+                    "MATCH (j:TranscriptionJob {provider_transcript_id: $provider_transcript_id})
+                     RETURN j.payload AS payload
+                     LIMIT 1",
+                )
+                .param("provider_transcript_id", provider_transcript_id),
+            )
+            .await?;
+        let Some(payload) = rows
+            .first()
+            .and_then(|row| row.get::<String>("payload").ok())
+        else {
+            return Ok(None);
+        };
+        Ok(Some(from_payload(&payload)?))
+    }
+
+    async fn merge_document_annotation(
+        &self,
+        matter_id: &str,
+        annotation: &DocumentAnnotation,
+    ) -> ApiResult<DocumentAnnotation> {
+        let annotation = self
+            .merge_node(
+                matter_id,
+                document_annotation_spec(),
+                &annotation.annotation_id,
+                annotation,
+            )
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (d:CaseDocument {document_id: $document_id})
+                     MATCH (a:DocumentAnnotation {annotation_id: $annotation_id})
+                     SET a.document_id = $document_id,
+                         a.status = $status
+                     MERGE (d)-[:HAS_ANNOTATION]->(a)",
+                )
+                .param("document_id", annotation.document_id.clone())
+                .param("annotation_id", annotation.annotation_id.clone())
+                .param("status", annotation.status.clone()),
+            )
+            .await?;
+        Ok(annotation)
+    }
+
+    async fn validate_document_annotation_target(
+        &self,
+        matter_id: &str,
+        request: &UpsertDocumentAnnotationRequest,
+    ) -> ApiResult<()> {
+        match (
+            request
+                .target_type
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty()),
+            request
+                .target_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty()),
+        ) {
+            (None, None) => Ok(()),
+            (Some(_), None) | (None, Some(_)) => Err(ApiError::BadRequest(
+                "Annotation target_type and target_id must be provided together.".to_string(),
+            )),
+            (Some(target_type), Some(target_id)) => match target_type {
+                "fact" => self.require_fact(matter_id, target_id).await,
+                "evidence" => self.require_evidence(matter_id, target_id).await,
+                "document" | "case_document" => self.require_document(matter_id, target_id).await,
+                "source_span" | "text_span" | "document_page" => {
+                    self.require_source_span(matter_id, target_id).await
+                }
+                _ => Err(ApiError::BadRequest(
+                    "Unsupported document annotation target_type.".to_string(),
+                )),
+            },
+        }
+    }
+
+    async fn store_edited_document_bytes(
+        &self,
+        matter_id: &str,
+        mut document: CaseDocument,
+        bytes: Bytes,
+        mime_type: Option<String>,
+        extension: &str,
+        stage: &str,
+    ) -> ApiResult<(CaseDocument, DocumentVersion, IngestionRun)> {
+        self.ensure_upload_size(bytes.len() as u64)?;
+        let now = now_string();
+        let sha256 = sha256_hex(&bytes);
+        let prior_version_id = document.current_version_id.clone();
+        let document_version_id = edited_version_id(&document.document_id, &sha256, now_secs());
+        let storage_key = document_version_object_key(
+            matter_id,
+            &document.document_id,
+            &document_version_id,
+            &sha256,
+            extension,
+        );
+        let stored = self
+            .object_store
+            .put_bytes(
+                &storage_key,
+                bytes.clone(),
+                put_options(mime_type.clone(), Some(sha256.clone())),
+            )
+            .await?;
+        let object_blob_id = object_blob_id_for_hash(&sha256);
+        let object_blob = ObjectBlob {
+            object_blob_id: object_blob_id.clone(),
+            id: object_blob_id.clone(),
+            sha256: Some(sha256.clone()),
+            size_bytes: stored.content_length,
+            mime_type: stored.content_type.clone().or(mime_type.clone()),
+            storage_provider: self.object_store.provider().to_string(),
+            storage_bucket: stored
+                .bucket
+                .clone()
+                .or_else(|| self.object_store.bucket().map(str::to_string)),
+            storage_key: stored.key.clone(),
+            etag: stored.etag.clone(),
+            storage_class: None,
+            created_at: now.clone(),
+            retention_state: "active".to_string(),
+        };
+        let parser = parse_document_bytes(&document.filename, mime_type.as_deref(), &bytes);
+        let document_version = DocumentVersion {
+            document_version_id: document_version_id.clone(),
+            id: document_version_id.clone(),
+            matter_id: matter_id.to_string(),
+            document_id: document.document_id.clone(),
+            object_blob_id: object_blob_id.clone(),
+            role: "edited_source".to_string(),
+            artifact_kind: "document_package".to_string(),
+            source_version_id: prior_version_id.clone(),
+            created_by: "user".to_string(),
+            current: true,
+            created_at: now.clone(),
+            storage_provider: self.object_store.provider().to_string(),
+            storage_bucket: stored
+                .bucket
+                .clone()
+                .or_else(|| self.object_store.bucket().map(str::to_string)),
+            storage_key: stored.key.clone(),
+            sha256: Some(sha256.clone()),
+            size_bytes: stored.content_length,
+            mime_type: mime_type.clone(),
+        };
+        let ingestion_run_id = edited_ingestion_run_id(&document.document_id, &document_version_id);
+        let ingestion_run = IngestionRun {
+            ingestion_run_id: ingestion_run_id.clone(),
+            id: ingestion_run_id,
+            matter_id: matter_id.to_string(),
+            document_id: document.document_id.clone(),
+            document_version_id: Some(document_version_id.clone()),
+            object_blob_id: Some(object_blob_id.clone()),
+            input_sha256: Some(sha256.clone()),
+            status: parser.status.clone(),
+            stage: stage.to_string(),
+            mode: "document_workspace".to_string(),
+            started_at: now.clone(),
+            completed_at: Some(now.clone()),
+            error_code: None,
+            error_message: None,
+            retryable: false,
+            produced_node_ids: vec![document_version_id.clone(), object_blob_id.clone()],
+            produced_object_keys: vec![stored.key.clone()],
+            parser_id: Some(parser.parser_id),
+            parser_version: Some(PARSER_REGISTRY_VERSION.to_string()),
+            chunker_version: Some(CHUNKER_VERSION.to_string()),
+            citation_resolver_version: Some(CITATION_RESOLVER_VERSION.to_string()),
+            index_version: Some(CASE_INDEX_VERSION.to_string()),
+        };
+
+        for mut version in self
+            .list_document_versions(matter_id, &document.document_id)
+            .await?
+            .into_iter()
+            .filter(|version| version.current)
+        {
+            if version.document_version_id != document_version_id {
+                version.current = false;
+                self.merge_document_version(matter_id, &version).await?;
+            }
+        }
+
+        document.bytes = stored.content_length;
+        document.file_hash = Some(sha256);
+        document.mime_type = mime_type;
+        document.storage_provider = self.object_store.provider().to_string();
+        document.storage_status = "stored".to_string();
+        document.storage_bucket = stored
+            .bucket
+            .clone()
+            .or_else(|| self.object_store.bucket().map(str::to_string));
+        document.storage_key = Some(stored.key);
+        document.storage_path = stored.local_path;
+        document.content_etag = stored.etag;
+        document.upload_expires_at = None;
+        document.object_blob_id = Some(object_blob_id);
+        document.current_version_id = Some(document_version_id);
+        document.processing_status = parser.status;
+        document.summary = parser.message;
+        document.extracted_text = parser.text;
+        push_unique(
+            &mut document.ingestion_run_ids,
+            ingestion_run.ingestion_run_id.clone(),
+        );
+
+        self.merge_object_blob(matter_id, &object_blob).await?;
+        let document = self
+            .merge_node(matter_id, document_spec(), &document.document_id, &document)
+            .await?;
+        let document_version = self
+            .merge_document_version(matter_id, &document_version)
+            .await?;
+        let ingestion_run = self.merge_ingestion_run(matter_id, &ingestion_run).await?;
+        Ok((document, document_version, ingestion_run))
+    }
+
     async fn merge_object_blob(&self, matter_id: &str, blob: &ObjectBlob) -> ApiResult<ObjectBlob> {
         let payload = to_payload(blob)?;
         let rows = self
@@ -6782,7 +8764,7 @@ impl CaseBuilderService {
 
         for anchor in &product.anchors {
             let payload = to_payload(anchor)?;
-            let support_use = legal_support_use_from_anchor(product, anchor);
+            let support_use = super::support_linker::legal_support_use_from_anchor(product, anchor);
             let support_payload = to_payload(&support_use)?;
             let support_label = support_use_label(&support_use.source_type);
             self.neo4j
@@ -7605,30 +9587,32 @@ impl CaseBuilderService {
     }
 
     async fn document_bytes_as_text(&self, document: &CaseDocument) -> ApiResult<String> {
+        match self.document_bytes(document).await {
+            Ok(bytes) => {
+                Ok(
+                    parse_document_bytes(&document.filename, document.mime_type.as_deref(), &bytes)
+                        .text
+                        .unwrap_or_default(),
+                )
+            }
+            Err(ApiError::NotFound(_)) => Ok(String::new()),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn document_bytes(&self, document: &CaseDocument) -> ApiResult<Bytes> {
         if document.storage_status == "deleted" {
-            return Ok(String::new());
+            return Err(ApiError::NotFound("Document has been deleted".to_string()));
         }
         if let Some(key) = document.storage_key.as_deref() {
-            let bytes = self.object_store.get_bytes(key).await?;
-            return Ok(parse_document_bytes(
-                &document.filename,
-                document.mime_type.as_deref(),
-                &bytes,
-            )
-            .text
-            .unwrap_or_default());
+            return self.object_store.get_bytes(key).await;
         }
         if let Some(path) = document.storage_path.as_deref() {
-            let bytes = fs::read(path).await.map_err(io_error)?;
-            return Ok(parse_document_bytes(
-                &document.filename,
-                document.mime_type.as_deref(),
-                &bytes,
-            )
-            .text
-            .unwrap_or_default());
+            return fs::read(path).await.map(Bytes::from).map_err(io_error);
         }
-        Ok(String::new())
+        Err(ApiError::NotFound(
+            "Document source bytes are not available".to_string(),
+        ))
     }
 
     fn ensure_upload_size(&self, bytes: u64) -> ApiResult<()> {
@@ -7746,6 +9730,41 @@ fn source_span_spec() -> NodeSpec {
         label: "SourceSpan",
         id_key: "source_span_id",
         edge: "HAS_SOURCE_SPAN",
+    }
+}
+fn document_annotation_spec() -> NodeSpec {
+    NodeSpec {
+        label: "DocumentAnnotation",
+        id_key: "annotation_id",
+        edge: "HAS_DOCUMENT_ANNOTATION",
+    }
+}
+fn transcription_job_spec() -> NodeSpec {
+    NodeSpec {
+        label: "TranscriptionJob",
+        id_key: "transcription_job_id",
+        edge: "HAS_TRANSCRIPTION_JOB",
+    }
+}
+fn transcript_segment_spec() -> NodeSpec {
+    NodeSpec {
+        label: "TranscriptSegment",
+        id_key: "segment_id",
+        edge: "HAS_TRANSCRIPT_SEGMENT",
+    }
+}
+fn transcript_speaker_spec() -> NodeSpec {
+    NodeSpec {
+        label: "TranscriptSpeaker",
+        id_key: "speaker_id",
+        edge: "HAS_TRANSCRIPT_SPEAKER",
+    }
+}
+fn transcript_review_change_spec() -> NodeSpec {
+    NodeSpec {
+        label: "TranscriptReviewChange",
+        id_key: "review_change_id",
+        edge: "HAS_TRANSCRIPT_REVIEW_CHANGE",
     }
 }
 fn complaint_spec() -> NodeSpec {
@@ -10316,6 +12335,8 @@ fn work_product_document_from_projection(
         product_type: product.product_type.clone(),
         title: product.title.clone(),
         metadata: WorkProductMetadata {
+            work_product_type: Some(product.product_type.clone()),
+            document_title: Some(product.title.clone()),
             jurisdiction: Some(product.profile.jurisdiction.clone()),
             court: None,
             county: None,
@@ -10325,12 +12346,17 @@ fn work_product_document_from_projection(
             formatting_profile_id: Some(product.formatting_profile.profile_id.clone()),
             parties: None,
             status: product.status.clone(),
+            created_at: Some(product.created_at.clone()),
+            updated_at: Some(now.clone()),
+            created_by: None,
+            last_modified_by: None,
         },
         blocks: build_work_product_block_tree(&flat_blocks),
         links,
         citations,
         exhibits,
         rule_findings: product.findings.clone(),
+        tombstones: product.document_ast.tombstones.clone(),
         created_at: product.created_at.clone(),
         updated_at: now,
     }
@@ -11260,19 +13286,7 @@ fn validate_work_product_document(product: &WorkProduct) -> AstValidationRespons
 }
 
 fn ensure_work_product_ast_valid(product: &WorkProduct, context: &str) -> ApiResult<()> {
-    let validation = validate_work_product_document(product);
-    if validation.errors.is_empty() {
-        return Ok(());
-    }
-    let codes = validation
-        .errors
-        .iter()
-        .map(|issue| issue.code.clone())
-        .collect::<Vec<_>>()
-        .join(",");
-    Err(ApiError::BadRequest(format!(
-        "{context} failed AST validation: issue_codes={codes}"
-    )))
+    super::ast_validation::ensure_work_product_ast_valid(product, context)
 }
 
 fn validate_ast_blocks(
@@ -11350,6 +13364,8 @@ fn ast_issue(
     AstValidationIssue {
         code: code.to_string(),
         message: message.to_string(),
+        severity: None,
+        blocking: false,
         target_type: target_type.map(str::to_string),
         target_id: target_id.map(str::to_string),
     }
@@ -11642,6 +13658,9 @@ fn work_product_finding(
         matter_id: product.matter_id.clone(),
         work_product_id: product.work_product_id.clone(),
         rule_id: rule_id.to_string(),
+        rule_pack_id: Some(product.rule_pack.rule_pack_id.clone()),
+        source_citation: None,
+        source_url: None,
         category: category.to_string(),
         severity: severity.to_string(),
         target_type: target_type.to_string(),
@@ -11649,6 +13668,7 @@ fn work_product_finding(
         message: message.to_string(),
         explanation: explanation.to_string(),
         suggested_fix: suggested_fix.to_string(),
+        auto_fix_available: false,
         primary_action: WorkProductAction {
             action_id: format!("action:{}", sanitize_path_segment(rule_id)),
             label: suggested_fix.to_string(),
@@ -12121,6 +14141,9 @@ fn work_product_from_complaint(complaint: &ComplaintDraft) -> WorkProduct {
                 matter_id: finding.matter_id.clone(),
                 work_product_id: complaint.complaint_id.clone(),
                 rule_id: finding.rule_id.clone(),
+                rule_pack_id: Some(complaint.rule_pack.rule_pack_id.clone()),
+                source_citation: None,
+                source_url: None,
                 category: finding.category.clone(),
                 severity: finding.severity.clone(),
                 target_type: finding.target_type.clone(),
@@ -12128,6 +14151,7 @@ fn work_product_from_complaint(complaint: &ComplaintDraft) -> WorkProduct {
                 message: finding.message.clone(),
                 explanation: finding.explanation.clone(),
                 suggested_fix: finding.suggested_fix.clone(),
+                auto_fix_available: false,
                 primary_action: WorkProductAction {
                     action_id: finding.primary_action.action_id.clone(),
                     label: finding.primary_action.label.clone(),
@@ -13121,58 +15145,7 @@ fn citation_uses_for_text(
 }
 
 fn canonical_id_for_citation(citation: &str) -> Option<String> {
-    let normalized = citation.split_whitespace().collect::<Vec<_>>().join(" ");
-    let upper = normalized.to_ascii_uppercase();
-    if upper.starts_with("ORS CHAPTER") || upper.starts_with("ORS CHAPTERS") {
-        let chapter = normalized
-            .split_whitespace()
-            .find(|part| part.chars().any(|ch| ch.is_ascii_digit()))?
-            .trim_matches(|ch: char| !ch.is_ascii_alphanumeric());
-        return Some(format!("or:ors:chapter:{chapter}"));
-    }
-    if upper.starts_with("ORS ") {
-        let section = normalized
-            .split_whitespace()
-            .nth(1)?
-            .split('(')
-            .next()
-            .unwrap_or_default()
-            .trim_end_matches(',');
-        if section.contains('.') {
-            return Some(format!("or:ors:{section}"));
-        }
-    }
-    if upper.starts_with("ORCP ") {
-        return Some(format!(
-            "or:orcp:{}",
-            sanitize_path_segment(&normalized[5..].trim().to_ascii_lowercase())
-        ));
-    }
-    if upper.starts_with("UTCR ") {
-        let rule = normalized[5..]
-            .trim()
-            .split('(')
-            .next()
-            .unwrap_or_default()
-            .trim_end_matches(',');
-        return Some(format!(
-            "or:utcr:{}",
-            sanitize_path_segment(&rule.to_ascii_lowercase())
-        ));
-    }
-    if let Some(caps) = SESSION_LAW_CITATION_RE.captures(&normalized) {
-        let year = caps.get(1)?.as_str();
-        let chapter = caps.get(2)?.as_str();
-        let mut canonical = format!("or:session-law:{year}:ch:{chapter}");
-        if let Some(section) = caps.get(3) {
-            canonical.push_str(":sec:");
-            canonical.push_str(&sanitize_path_segment(
-                &section.as_str().trim().to_ascii_lowercase(),
-            ));
-        }
-        return Some(canonical);
-    }
-    None
+    super::citation_resolver::canonical_id_for_citation(citation)
 }
 
 fn is_external_authority_citation(citation: &str) -> bool {
@@ -15756,8 +17729,87 @@ fn original_version_id(document_id: &str) -> String {
     format!("version:{}:original", sanitize_path_segment(document_id))
 }
 
+fn edited_version_id(document_id: &str, sha256: &str, now_secs: u64) -> String {
+    format!(
+        "version:{}:{}",
+        sanitize_path_segment(document_id),
+        hex_prefix(format!("{sha256}:{now_secs}").as_bytes(), 16)
+    )
+}
+
+fn edited_ingestion_run_id(document_id: &str, document_version_id: &str) -> String {
+    format!(
+        "ingestion:{}:{}",
+        sanitize_path_segment(document_id),
+        hex_prefix(document_version_id.as_bytes(), 16)
+    )
+}
+
+fn document_version_object_key(
+    matter_id: &str,
+    document_id: &str,
+    document_version_id: &str,
+    sha256: &str,
+    extension: &str,
+) -> String {
+    format!(
+        "casebuilder/matters/{}/documents/{}/versions/{}/{}.{}",
+        hex_prefix(matter_id.as_bytes(), 24),
+        hex_prefix(document_id.as_bytes(), 24),
+        hex_prefix(document_version_id.as_bytes(), 24),
+        storage_hash_segment(sha256),
+        sanitize_path_segment(extension)
+    )
+}
+
+fn artifact_version_id(document_id: &str, artifact_kind: &str, sha256: &str) -> String {
+    format!(
+        "version:{}:{}:{}",
+        sanitize_path_segment(document_id),
+        sanitize_path_segment(artifact_kind),
+        hex_prefix(sha256.as_bytes(), 16)
+    )
+}
+
 fn primary_ingestion_run_id(document_id: &str) -> String {
     format!("ingestion:{}:primary", sanitize_path_segment(document_id))
+}
+
+fn transcription_job_id(document_id: &str, now_secs: u64) -> String {
+    format!(
+        "transcription:{}:{}",
+        sanitize_path_segment(document_id),
+        hex_prefix(format!("{document_id}:{now_secs}").as_bytes(), 16)
+    )
+}
+
+fn transcript_segment_id(transcription_job_id: &str, ordinal: u64) -> String {
+    format!(
+        "segment:{}:{}",
+        sanitize_path_segment(transcription_job_id),
+        ordinal
+    )
+}
+
+fn transcript_speaker_id(transcription_job_id: &str, speaker_label: &str) -> String {
+    format!(
+        "speaker:{}:{}",
+        sanitize_path_segment(transcription_job_id),
+        sanitize_path_segment(speaker_label)
+    )
+}
+
+fn transcript_review_change_id(
+    transcription_job_id: &str,
+    target_id: &str,
+    field: &str,
+    now_secs: u64,
+) -> String {
+    format!(
+        "transcript-change:{}:{}",
+        sanitize_path_segment(transcription_job_id),
+        hex_prefix(format!("{target_id}:{field}:{now_secs}").as_bytes(), 16)
+    )
 }
 
 fn source_span_id(document_id: &str, kind: &str, index: u64) -> String {
@@ -15797,6 +17849,9 @@ fn source_spans_for_chunks(
             byte_end: chunk.byte_end,
             char_start: chunk.char_start,
             char_end: chunk.char_end,
+            time_start_ms: None,
+            time_end_ms: None,
+            speaker_label: None,
             quote: Some(chunk.text.clone()),
             extraction_method: "deterministic_text_chunk".to_string(),
             confidence: 1.0,
@@ -15828,6 +17883,9 @@ fn source_span_for_sentence(
         byte_end: Some(sentence.byte_end),
         char_start: Some(sentence.char_start),
         char_end: Some(sentence.char_end),
+        time_start_ms: None,
+        time_end_ms: None,
+        speaker_label: None,
         quote: Some(sentence.text.clone()),
         extraction_method: "deterministic_sentence".to_string(),
         confidence: 0.55,
@@ -15859,12 +17917,417 @@ fn manual_evidence_source_span(
         byte_end: None,
         char_start: None,
         char_end: None,
+        time_start_ms: None,
+        time_end_ms: None,
+        speaker_label: None,
         quote: Some(quote.to_string()),
         extraction_method: "manual_evidence_quote".to_string(),
         confidence: 0.75,
         review_status: "unreviewed".to_string(),
         unavailable_reason: None,
     }
+}
+
+fn assemblyai_speech_models() -> Vec<String> {
+    vec!["universal-3-pro".to_string(), "universal-2".to_string()]
+}
+
+fn assemblyai_redact_pii_policies() -> Vec<String> {
+    [
+        "account_number",
+        "banking_information",
+        "credit_card_cvv",
+        "credit_card_expiration",
+        "credit_card_number",
+        "date_of_birth",
+        "drivers_license",
+        "email_address",
+        "healthcare_number",
+        "ip_address",
+        "location",
+        "passport_number",
+        "password",
+        "person_name",
+        "phone_number",
+        "us_social_security_number",
+        "username",
+        "vehicle_id",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+fn assemblyai_webhook_header_name() -> &'static str {
+    "x-casebuilder-assemblyai-secret"
+}
+
+fn assemblyai_transcript_create_request(
+    audio_url: &str,
+    request: &CreateTranscriptionRequest,
+    job: &TranscriptionJob,
+    webhook_url: Option<String>,
+    webhook_secret: Option<String>,
+) -> AssemblyAiTranscriptCreateRequest {
+    let webhook_enabled = webhook_url.is_some() && webhook_secret.is_some();
+    let redact_pii = request.redact_pii.unwrap_or(true);
+    AssemblyAiTranscriptCreateRequest {
+        audio_url: audio_url.to_string(),
+        speech_models: job.speech_models.clone(),
+        language_detection: request.language_code.is_none(),
+        speaker_labels: request.speaker_labels.unwrap_or(true),
+        redact_pii: redact_pii.then_some(true),
+        redact_pii_policies: redact_pii.then(assemblyai_redact_pii_policies),
+        redact_pii_sub: redact_pii.then_some("entity_name".to_string()),
+        redact_pii_return_unredacted: redact_pii.then_some(true),
+        language_code: request.language_code.clone(),
+        webhook_url: webhook_url.filter(|_| webhook_enabled),
+        webhook_auth_header_name: if webhook_enabled {
+            Some(assemblyai_webhook_header_name().to_string())
+        } else {
+            None
+        },
+        webhook_auth_header_value: webhook_secret.filter(|_| webhook_enabled),
+    }
+}
+
+fn assemblyai_provider_has_redaction(provider: &AssemblyAiTranscriptResponse) -> bool {
+    provider.redact_pii.unwrap_or(false)
+        || provider.redact_pii_return_unredacted.unwrap_or(false)
+        || provider.unredacted_text.is_some()
+        || !provider.unredacted_utterances.is_empty()
+        || !provider.unredacted_words.is_empty()
+}
+
+fn assemblyai_raw_utterances(provider: &AssemblyAiTranscriptResponse) -> &[AssemblyAiUtterance] {
+    if provider.unredacted_utterances.is_empty() {
+        &provider.utterances
+    } else {
+        &provider.unredacted_utterances
+    }
+}
+
+fn assemblyai_raw_words(provider: &AssemblyAiTranscriptResponse) -> &[AssemblyAiWord] {
+    if provider.unredacted_words.is_empty() {
+        &provider.words
+    } else {
+        &provider.unredacted_words
+    }
+}
+
+fn assemblyai_raw_text(provider: &AssemblyAiTranscriptResponse) -> Option<&str> {
+    provider
+        .unredacted_text
+        .as_deref()
+        .or(provider.text.as_deref())
+        .filter(|text| !text.trim().is_empty())
+}
+
+fn assemblyai_redacted_utterance_text(
+    provider: &AssemblyAiTranscriptResponse,
+    index: usize,
+    raw_text: &str,
+) -> String {
+    if assemblyai_provider_has_redaction(provider) {
+        if let Some(text) = provider
+            .utterances
+            .get(index)
+            .map(|utterance| utterance.text.trim())
+            .filter(|text| !text.is_empty())
+        {
+            return text.to_string();
+        }
+    }
+    redact_transcript_text(raw_text)
+}
+
+fn assemblyai_redacted_document_text(
+    provider: &AssemblyAiTranscriptResponse,
+    raw_text: &str,
+) -> String {
+    if assemblyai_provider_has_redaction(provider) {
+        if let Some(text) = provider
+            .text
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        {
+            return text.to_string();
+        }
+    }
+    redact_transcript_text(raw_text)
+}
+
+fn transcript_segments_from_provider(
+    matter_id: &str,
+    document: &CaseDocument,
+    job: &TranscriptionJob,
+    provider: &AssemblyAiTranscriptResponse,
+    now: &str,
+) -> (Vec<TranscriptSegment>, Vec<TranscriptSpeaker>) {
+    let mut segments = Vec::new();
+    let utterances = assemblyai_raw_utterances(provider);
+    let words = assemblyai_raw_words(provider);
+    if !utterances.is_empty() {
+        for (index, utterance) in utterances.iter().enumerate() {
+            let ordinal = index as u64 + 1;
+            let speaker_label = utterance.speaker.clone();
+            let text = utterance.text.trim().to_string();
+            let redacted_text = if job.redact_pii {
+                assemblyai_redacted_utterance_text(provider, index, &text)
+            } else {
+                text.clone()
+            };
+            segments.push(TranscriptSegment {
+                segment_id: transcript_segment_id(&job.transcription_job_id, ordinal),
+                id: transcript_segment_id(&job.transcription_job_id, ordinal),
+                matter_id: matter_id.to_string(),
+                document_id: document.document_id.clone(),
+                transcription_job_id: job.transcription_job_id.clone(),
+                source_span_id: None,
+                ordinal,
+                speaker_label,
+                speaker_name: None,
+                redacted_text: Some(redacted_text),
+                text,
+                time_start_ms: utterance.start,
+                time_end_ms: utterance.end,
+                confidence: utterance
+                    .confidence
+                    .unwrap_or(provider.confidence.unwrap_or(0.0)),
+                review_status: "unreviewed".to_string(),
+                edited: false,
+                created_at: now.to_string(),
+                updated_at: now.to_string(),
+            });
+        }
+    } else if let Some(text) = assemblyai_raw_text(provider) {
+        let end = provider
+            .audio_duration
+            .map(|seconds| (seconds * 1000.0) as u64)
+            .or_else(|| words.last().map(|word| word.end))
+            .unwrap_or(0);
+        let text = text.trim().to_string();
+        let redacted_text = if job.redact_pii {
+            assemblyai_redacted_document_text(provider, &text)
+        } else {
+            text.clone()
+        };
+        segments.push(TranscriptSegment {
+            segment_id: transcript_segment_id(&job.transcription_job_id, 1),
+            id: transcript_segment_id(&job.transcription_job_id, 1),
+            matter_id: matter_id.to_string(),
+            document_id: document.document_id.clone(),
+            transcription_job_id: job.transcription_job_id.clone(),
+            source_span_id: None,
+            ordinal: 1,
+            speaker_label: None,
+            speaker_name: None,
+            text,
+            redacted_text: Some(redacted_text),
+            time_start_ms: words.first().map(|word| word.start).unwrap_or(0),
+            time_end_ms: end,
+            confidence: provider.confidence.unwrap_or(0.0),
+            review_status: "unreviewed".to_string(),
+            edited: false,
+            created_at: now.to_string(),
+            updated_at: now.to_string(),
+        });
+    }
+
+    let mut speaker_counts: BTreeMap<String, u64> = BTreeMap::new();
+    for segment in &segments {
+        if let Some(label) = segment.speaker_label.as_deref() {
+            *speaker_counts.entry(label.to_string()).or_insert(0) += 1;
+        }
+    }
+    let speakers = speaker_counts
+        .into_iter()
+        .map(|(label, count)| TranscriptSpeaker {
+            speaker_id: transcript_speaker_id(&job.transcription_job_id, &label),
+            id: transcript_speaker_id(&job.transcription_job_id, &label),
+            matter_id: matter_id.to_string(),
+            document_id: document.document_id.clone(),
+            transcription_job_id: job.transcription_job_id.clone(),
+            speaker_label: label,
+            display_name: None,
+            role: None,
+            confidence: provider.confidence,
+            segment_count: count,
+            created_at: now.to_string(),
+            updated_at: now.to_string(),
+        })
+        .collect();
+    (segments, speakers)
+}
+
+fn transcript_source_spans(
+    matter_id: &str,
+    document_id: &str,
+    transcription_job_id: &str,
+    segments: &[TranscriptSegment],
+    document_version_id: Option<String>,
+    object_blob_id: Option<String>,
+    review_status: &str,
+) -> Vec<SourceSpan> {
+    segments
+        .iter()
+        .map(|segment| {
+            let id = format!(
+                "span:{}:{}",
+                sanitize_path_segment(transcription_job_id),
+                segment.ordinal
+            );
+            SourceSpan {
+                source_span_id: id.clone(),
+                id,
+                matter_id: matter_id.to_string(),
+                document_id: document_id.to_string(),
+                document_version_id: document_version_id.clone(),
+                object_blob_id: object_blob_id.clone(),
+                ingestion_run_id: None,
+                page: None,
+                chunk_id: Some(segment.segment_id.clone()),
+                byte_start: None,
+                byte_end: None,
+                char_start: None,
+                char_end: None,
+                time_start_ms: Some(segment.time_start_ms),
+                time_end_ms: Some(segment.time_end_ms),
+                speaker_label: segment.speaker_label.clone(),
+                quote: Some(if review_status == "approved" {
+                    segment.text.clone()
+                } else {
+                    segment
+                        .redacted_text
+                        .clone()
+                        .unwrap_or_else(|| redact_transcript_text(&segment.text))
+                }),
+                extraction_method: "assemblyai_transcript_segment".to_string(),
+                confidence: segment.confidence,
+                review_status: review_status.to_string(),
+                unavailable_reason: None,
+            }
+        })
+        .collect()
+}
+
+fn transcript_segments_to_text(segments: &[TranscriptSegment], redacted: bool) -> String {
+    segments
+        .iter()
+        .map(|segment| {
+            let speaker = segment
+                .speaker_name
+                .as_deref()
+                .or(segment.speaker_label.as_deref())
+                .unwrap_or("Speaker");
+            let text = if redacted {
+                segment
+                    .redacted_text
+                    .as_deref()
+                    .unwrap_or(segment.text.as_str())
+            } else {
+                segment.text.as_str()
+            };
+            format!("{speaker}: {text}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn transcript_segments_to_vtt(segments: &[TranscriptSegment], redacted: bool) -> String {
+    let mut out = String::from("WEBVTT\n\n");
+    for segment in segments {
+        out.push_str(&format!(
+            "{} --> {}\n{}\n\n",
+            caption_timestamp(segment.time_start_ms, '.'),
+            caption_timestamp(segment.time_end_ms, '.'),
+            caption_text(segment, redacted)
+        ));
+    }
+    out
+}
+
+fn transcript_segments_to_srt(segments: &[TranscriptSegment], redacted: bool) -> String {
+    let mut out = String::new();
+    for (index, segment) in segments.iter().enumerate() {
+        out.push_str(&format!(
+            "{}\n{} --> {}\n{}\n\n",
+            index + 1,
+            caption_timestamp(segment.time_start_ms, ','),
+            caption_timestamp(segment.time_end_ms, ','),
+            caption_text(segment, redacted)
+        ));
+    }
+    out
+}
+
+fn caption_text(segment: &TranscriptSegment, redacted: bool) -> String {
+    let speaker = segment
+        .speaker_name
+        .as_deref()
+        .or(segment.speaker_label.as_deref())
+        .unwrap_or("Speaker");
+    let text = if redacted {
+        segment
+            .redacted_text
+            .as_deref()
+            .unwrap_or(segment.text.as_str())
+    } else {
+        segment.text.as_str()
+    };
+    format!("{speaker}: {text}")
+}
+
+fn caption_timestamp(ms: u64, millis_separator: char) -> String {
+    let hours = ms / 3_600_000;
+    let minutes = (ms % 3_600_000) / 60_000;
+    let seconds = (ms % 60_000) / 1000;
+    let millis = ms % 1000;
+    format!("{hours:02}:{minutes:02}:{seconds:02}{millis_separator}{millis:03}")
+}
+
+static EMAIL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b").unwrap());
+static PHONE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b").unwrap()
+});
+static SSN_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap());
+
+fn redact_transcript_text(text: &str) -> String {
+    let text = EMAIL_RE.replace_all(text, "[redacted email]");
+    let text = PHONE_RE.replace_all(&text, "[redacted phone]");
+    let text = SSN_RE.replace_all(&text, "[redacted ssn]");
+    text.to_string()
+}
+
+fn sanitized_external_error(error: &ApiError) -> String {
+    match error {
+        ApiError::HttpClient(_) | ApiError::External(_) => {
+            "External transcription provider request failed.".to_string()
+        }
+        _ => "Transcription request failed.".to_string(),
+    }
+}
+
+fn transcription_warnings(job: &TranscriptionJob) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if job.provider_mode == "disabled" {
+        warnings.push("AssemblyAI transcription is disabled for this API instance.".to_string());
+    }
+    if matches!(job.status.as_str(), "review_ready") {
+        warnings.push(
+            "Transcript review is required before transcript-derived facts or evidence are created."
+                .to_string(),
+        );
+    }
+    if job.redact_pii {
+        warnings.push(
+            "Raw transcript artifacts are private; redacted transcript text is used for review display."
+                .to_string(),
+        );
+    }
+    warnings
 }
 
 fn failed_ingestion_run(
@@ -16105,6 +18568,194 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("sha256:{out}")
 }
 
+fn document_file_extension(document: &CaseDocument) -> Option<String> {
+    Path::new(&document.filename)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| sanitize_path_segment(ext).to_ascii_lowercase())
+        .filter(|ext| !ext.is_empty())
+}
+
+fn document_lower_parts(document: &CaseDocument) -> (String, String) {
+    (
+        document.filename.to_ascii_lowercase(),
+        document
+            .mime_type
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase(),
+    )
+}
+
+fn document_is_docx(document: &CaseDocument) -> bool {
+    let (lower, mime) = document_lower_parts(document);
+    lower.ends_with(".docx")
+        || mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+}
+
+fn document_is_pdf(document: &CaseDocument) -> bool {
+    let (lower, mime) = document_lower_parts(document);
+    lower.ends_with(".pdf") || mime == "application/pdf"
+}
+
+fn document_is_markdown(document: &CaseDocument) -> bool {
+    let (lower, mime) = document_lower_parts(document);
+    lower.ends_with(".md") || lower.ends_with(".markdown") || mime == "text/markdown"
+}
+
+fn document_is_text(document: &CaseDocument) -> bool {
+    let (lower, mime) = document_lower_parts(document);
+    mime.starts_with("text/")
+        || matches!(
+            mime.as_str(),
+            "application/json" | "application/xml" | "application/x-ndjson"
+        )
+        || [".txt", ".csv", ".html", ".htm", ".json", ".log", ".xml"]
+            .iter()
+            .any(|suffix| lower.ends_with(suffix))
+}
+
+fn document_is_image(document: &CaseDocument) -> bool {
+    let (lower, mime) = document_lower_parts(document);
+    is_image_file(&lower, &mime)
+}
+
+fn document_is_media(document: &CaseDocument) -> bool {
+    let (lower, mime) = document_lower_parts(document);
+    is_audio_video_file(&lower, &mime)
+}
+
+fn document_is_spreadsheet(document: &CaseDocument) -> bool {
+    let (lower, mime) = document_lower_parts(document);
+    mime.contains("spreadsheet")
+        || mime.contains("ms-excel")
+        || [".xlsx", ".xls", ".ods", ".csv"]
+            .iter()
+            .any(|suffix| lower.ends_with(suffix))
+}
+
+fn workspace_text_content(document: &CaseDocument, bytes: Option<&Bytes>) -> Option<String> {
+    if let Some(text) = document
+        .extracted_text
+        .as_deref()
+        .filter(|text| !text.trim().is_empty())
+    {
+        return Some(text.to_string());
+    }
+    if !(document_is_docx(document)
+        || document_is_markdown(document)
+        || document_is_text(document)
+        || document_is_pdf(document))
+    {
+        return None;
+    }
+    bytes.and_then(|bytes| {
+        parse_document_bytes(&document.filename, document.mime_type.as_deref(), bytes)
+            .text
+            .filter(|text| !text.trim().is_empty())
+    })
+}
+
+fn document_capabilities(
+    document: &CaseDocument,
+    docx_manifest: Option<&DocxPackageManifest>,
+) -> Vec<DocumentCapability> {
+    if document_is_docx(document) {
+        let editable = docx_manifest
+            .map(|manifest| manifest.editable)
+            .unwrap_or(true);
+        return vec![
+            capability("view", true, "custom_docx", None),
+            capability(
+                "edit",
+                editable,
+                "ooxml_round_trip_text",
+                (!editable).then(|| {
+                    "Complex DOCX objects are read-only until they are mapped safely.".to_string()
+                }),
+            ),
+            capability("annotate", true, "graph_sidecar", None),
+            capability("extract", true, "deterministic_docx_text", None),
+            capability("promote", editable, "work_product_ast", None),
+        ];
+    }
+    if document_is_pdf(document) {
+        return vec![
+            capability("view", true, "pdfjs", None),
+            capability("edit", false, "immutable_pdf_bytes", Some("PDF v1 keeps original bytes immutable and stores redactions/notes as CaseBuilder sidecar annotations.".to_string())),
+            capability("annotate", true, "graph_sidecar", None),
+            capability("extract", true, "embedded_text_or_ocr", None),
+            capability("promote", false, "pdf_text_review_required", None),
+        ];
+    }
+    if document_is_markdown(document) {
+        return vec![
+            capability("view", true, "markdown_source", None),
+            capability("edit", true, "markdown_ast_source", None),
+            capability("annotate", true, "graph_sidecar", None),
+            capability("extract", true, "markdown_text", None),
+            capability("promote", true, "work_product_ast", None),
+        ];
+    }
+    if document_is_text(document) {
+        return vec![
+            capability("view", true, "plain_text", None),
+            capability("edit", true, "plain_text", None),
+            capability("annotate", true, "graph_sidecar", None),
+            capability("extract", true, "deterministic_text", None),
+            capability("promote", true, "work_product_ast", None),
+        ];
+    }
+    if document_is_image(document) {
+        return vec![
+            capability("view", true, "image_preview", None),
+            capability("edit", false, "immutable_source", None),
+            capability("annotate", true, "graph_sidecar", None),
+            capability("extract", true, "ocr_deferred", None),
+            capability("promote", false, "ocr_required", None),
+        ];
+    }
+    if document_is_media(document) {
+        return vec![
+            capability("view", true, "media_preview", None),
+            capability("edit", false, "immutable_source", None),
+            capability("annotate", true, "graph_sidecar", None),
+            capability("extract", true, "transcription_deferred", None),
+            capability("promote", false, "transcript_required", None),
+        ];
+    }
+    if document_is_spreadsheet(document) {
+        return vec![
+            capability("view", false, "spreadsheet_preview_pending", None),
+            capability("edit", false, "unsupported_binary", None),
+            capability("annotate", true, "graph_sidecar", None),
+            capability("extract", false, "spreadsheet_parser_pending", None),
+            capability("promote", false, "unsupported_binary", None),
+        ];
+    }
+    vec![
+        capability("view", false, "unsupported_binary", None),
+        capability("edit", false, "unsupported_binary", None),
+        capability("annotate", true, "graph_sidecar", None),
+        capability("extract", false, "unsupported_binary", None),
+        capability("promote", false, "unsupported_binary", None),
+    ]
+}
+
+fn capability(
+    capability: &str,
+    enabled: bool,
+    mode: &str,
+    reason: Option<String>,
+) -> DocumentCapability {
+    DocumentCapability {
+        capability: capability.to_string(),
+        enabled,
+        mode: mode.to_string(),
+        reason,
+    }
+}
+
 fn parse_document_bytes(filename: &str, mime_type: Option<&str>, bytes: &[u8]) -> ParserOutcome {
     let lower = filename.to_ascii_lowercase();
     let mime = mime_type.unwrap_or_default().to_ascii_lowercase();
@@ -16343,37 +18994,17 @@ fn extract_docx_like_text(bytes: &[u8]) -> Option<String> {
 }
 
 fn extract_docx_zip_text(bytes: &[u8]) -> Option<String> {
-    let eocd = find_zip_eocd(bytes)?;
-    let entry_count = le_u16(bytes, eocd + 10)? as usize;
-    let mut cursor = le_u32(bytes, eocd + 16)? as usize;
+    let package = read_zip_package(bytes)?;
     let mut parts = Vec::new();
 
-    for _ in 0..entry_count {
-        if cursor + 46 > bytes.len() || le_u32(bytes, cursor)? != 0x0201_4b50 {
-            break;
-        }
-        let compression = le_u16(bytes, cursor + 10)?;
-        let compressed_size = le_u32(bytes, cursor + 20)? as usize;
-        let name_len = le_u16(bytes, cursor + 28)? as usize;
-        let extra_len = le_u16(bytes, cursor + 30)? as usize;
-        let comment_len = le_u16(bytes, cursor + 32)? as usize;
-        let local_header_offset = le_u32(bytes, cursor + 42)? as usize;
-        let name_start = cursor + 46;
-        let name_end = name_start.checked_add(name_len)?;
-        let next = name_end.checked_add(extra_len)?.checked_add(comment_len)?;
-        if next > bytes.len() {
-            break;
-        }
-
-        let name = std::str::from_utf8(&bytes[name_start..name_end]).ok()?;
-        if is_docx_text_part(name) {
-            let entry = read_zip_entry(bytes, local_header_offset, compression, compressed_size)?;
+    for entry in &package.entries {
+        if is_docx_text_part(&entry.name) {
+            let entry = read_zip_entry(bytes, entry)?;
             let raw = String::from_utf8(entry).ok()?;
             if let Some(text) = extract_docx_xml_text(&raw) {
                 parts.push(text);
             }
         }
-        cursor = next;
     }
 
     let text = parts.join("\n");
@@ -16420,12 +19051,200 @@ fn is_docx_text_part(name: &str) -> bool {
         || (name.starts_with("word/footer") && name.ends_with(".xml"))
 }
 
-fn read_zip_entry(
+fn docx_package_manifest(
+    document: &CaseDocument,
+    version: Option<&DocumentVersion>,
     bytes: &[u8],
-    local_header_offset: usize,
-    compression: u16,
-    compressed_size: usize,
-) -> Option<Vec<u8>> {
+) -> ApiResult<DocxPackageManifest> {
+    let package = read_zip_package(bytes).ok_or_else(|| {
+        ApiError::BadRequest("DOCX package central directory is not readable.".to_string())
+    })?;
+    let mut unsupported_features = Vec::new();
+    let mut text_preview = None;
+    let mut text_part_count = 0_u64;
+    let mut has_document_xml = false;
+    for entry in &package.entries {
+        if is_docx_text_part(&entry.name) {
+            text_part_count += 1;
+        }
+        if entry.name == "word/document.xml" {
+            has_document_xml = true;
+            let raw = read_zip_entry(bytes, entry)
+                .and_then(|entry_bytes| String::from_utf8(entry_bytes).ok())
+                .unwrap_or_default();
+            unsupported_features = docx_unsupported_features(&raw);
+            text_preview = extract_docx_xml_text(&raw);
+        }
+    }
+    let entries = package
+        .entries
+        .iter()
+        .map(|entry| DocxPackageEntry {
+            name: entry.name.clone(),
+            size_bytes: entry.uncompressed_size as u64,
+            compressed_size_bytes: entry.compressed_size as u64,
+            compression: zip_compression_label(entry.compression),
+            supported_text_part: is_docx_text_part(&entry.name),
+        })
+        .collect::<Vec<_>>();
+
+    Ok(DocxPackageManifest {
+        document_id: document.document_id.clone(),
+        document_version_id: version.map(|version| version.document_version_id.clone()),
+        entry_count: entries.len() as u64,
+        text_part_count,
+        editable: has_document_xml && unsupported_features.is_empty(),
+        unsupported_features,
+        entries,
+        text_preview,
+    })
+}
+
+fn docx_with_replaced_document_xml(bytes: &[u8], text: &str) -> ApiResult<(Vec<u8>, Vec<String>)> {
+    let package = read_zip_package(bytes).ok_or_else(|| {
+        ApiError::BadRequest("DOCX package central directory is not readable.".to_string())
+    })?;
+    let document_entry = package
+        .entries
+        .iter()
+        .find(|entry| entry.name == "word/document.xml")
+        .ok_or_else(|| {
+            ApiError::BadRequest("DOCX package is missing word/document.xml.".to_string())
+        })?;
+    let existing_document_xml = read_zip_entry(bytes, document_entry)
+        .and_then(|entry_bytes| String::from_utf8(entry_bytes).ok())
+        .unwrap_or_default();
+    let unsupported = docx_unsupported_features(&existing_document_xml);
+    if !unsupported.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "DOCX contains unsupported complex OOXML features: {}",
+            unsupported.join(", ")
+        )));
+    }
+    let replacement = docx_document_xml_from_text(text).into_bytes();
+    let mut out = Vec::new();
+    let mut central_records = Vec::new();
+    let mut entries = package.entries.clone();
+    entries.sort_by_key(|entry| entry.local_header_offset);
+
+    for (index, entry) in entries.iter().enumerate() {
+        let local_header_offset = out.len() as u32;
+        if entry.name == "word/document.xml" {
+            write_stored_zip_local_entry(&mut out, &entry.name, &replacement);
+            central_records.push(ZipCentralRecord {
+                name: entry.name.clone(),
+                version_made_by: entry.version_made_by,
+                version_needed: 20,
+                flags: 0,
+                compression: 0,
+                last_modified_time: entry.last_modified_time,
+                last_modified_date: entry.last_modified_date,
+                crc32: crc32(&replacement),
+                compressed_size: replacement.len() as u32,
+                uncompressed_size: replacement.len() as u32,
+                internal_attrs: entry.internal_attrs,
+                external_attrs: entry.external_attrs,
+                local_header_offset,
+            });
+            continue;
+        }
+        let local_end = zip_local_entry_end(&package, &entries, index).ok_or_else(|| {
+            ApiError::BadRequest(format!("DOCX ZIP entry {} is not readable.", entry.name))
+        })?;
+        let local_start = entry.local_header_offset;
+        if local_start > local_end || local_end > bytes.len() {
+            return Err(ApiError::BadRequest(format!(
+                "DOCX ZIP entry {} has invalid byte offsets.",
+                entry.name
+            )));
+        }
+        out.extend_from_slice(&bytes[local_start..local_end]);
+        central_records.push(ZipCentralRecord {
+            name: entry.name.clone(),
+            version_made_by: entry.version_made_by,
+            version_needed: entry.version_needed,
+            flags: entry.flags,
+            compression: entry.compression,
+            last_modified_time: entry.last_modified_time,
+            last_modified_date: entry.last_modified_date,
+            crc32: entry.crc32,
+            compressed_size: entry.compressed_size as u32,
+            uncompressed_size: entry.uncompressed_size as u32,
+            internal_attrs: entry.internal_attrs,
+            external_attrs: entry.external_attrs,
+            local_header_offset,
+        });
+    }
+    write_zip_central_directory(&mut out, &central_records)?;
+    Ok((
+        out,
+        vec![
+            "DOCX save rewrote word/document.xml and copied unmapped package entries forward."
+                .to_string(),
+        ],
+    ))
+}
+
+fn read_zip_package(bytes: &[u8]) -> Option<ZipPackage> {
+    let eocd = find_zip_eocd(bytes)?;
+    let entry_count = le_u16(bytes, eocd + 10)? as usize;
+    let central_directory_offset = le_u32(bytes, eocd + 16)? as usize;
+    let mut cursor = central_directory_offset;
+    let mut entries = Vec::new();
+
+    for _ in 0..entry_count {
+        if cursor + 46 > bytes.len() || le_u32(bytes, cursor)? != 0x0201_4b50 {
+            return None;
+        }
+        let version_made_by = le_u16(bytes, cursor + 4)?;
+        let version_needed = le_u16(bytes, cursor + 6)?;
+        let flags = le_u16(bytes, cursor + 8)?;
+        let compression = le_u16(bytes, cursor + 10)?;
+        let last_modified_time = le_u16(bytes, cursor + 12)?;
+        let last_modified_date = le_u16(bytes, cursor + 14)?;
+        let crc32 = le_u32(bytes, cursor + 16)?;
+        let compressed_size = le_u32(bytes, cursor + 20)? as usize;
+        let uncompressed_size = le_u32(bytes, cursor + 24)? as usize;
+        let name_len = le_u16(bytes, cursor + 28)? as usize;
+        let extra_len = le_u16(bytes, cursor + 30)? as usize;
+        let comment_len = le_u16(bytes, cursor + 32)? as usize;
+        let internal_attrs = le_u16(bytes, cursor + 36)?;
+        let external_attrs = le_u32(bytes, cursor + 38)?;
+        let local_header_offset = le_u32(bytes, cursor + 42)? as usize;
+        let name_start = cursor + 46;
+        let name_end = name_start.checked_add(name_len)?;
+        let next = name_end.checked_add(extra_len)?.checked_add(comment_len)?;
+        if next > bytes.len() {
+            return None;
+        }
+        let name = std::str::from_utf8(&bytes[name_start..name_end])
+            .ok()?
+            .to_string();
+        entries.push(ZipEntryRecord {
+            name,
+            version_made_by,
+            version_needed,
+            flags,
+            compression,
+            last_modified_time,
+            last_modified_date,
+            crc32,
+            compressed_size,
+            uncompressed_size,
+            internal_attrs,
+            external_attrs,
+            local_header_offset,
+        });
+        cursor = next;
+    }
+    Some(ZipPackage {
+        entries,
+        central_directory_offset,
+    })
+}
+
+fn read_zip_entry(bytes: &[u8], entry: &ZipEntryRecord) -> Option<Vec<u8>> {
+    let local_header_offset = entry.local_header_offset;
     if local_header_offset + 30 > bytes.len() || le_u32(bytes, local_header_offset)? != 0x0403_4b50
     {
         return None;
@@ -16436,12 +19255,12 @@ fn read_zip_entry(
         .checked_add(30)?
         .checked_add(name_len)?
         .checked_add(extra_len)?;
-    let data_end = data_start.checked_add(compressed_size)?;
+    let data_end = data_start.checked_add(entry.compressed_size)?;
     if data_end > bytes.len() {
         return None;
     }
     let payload = &bytes[data_start..data_end];
-    match compression {
+    match entry.compression {
         0 => Some(payload.to_vec()),
         8 => {
             let mut decoder = DeflateDecoder::new(Cursor::new(payload));
@@ -16451,6 +19270,129 @@ fn read_zip_entry(
         }
         _ => None,
     }
+}
+
+fn zip_local_entry_end(
+    package: &ZipPackage,
+    ordered_entries: &[ZipEntryRecord],
+    index: usize,
+) -> Option<usize> {
+    ordered_entries
+        .iter()
+        .skip(index + 1)
+        .find(|entry| entry.local_header_offset > ordered_entries[index].local_header_offset)
+        .map(|entry| entry.local_header_offset)
+        .or(Some(package.central_directory_offset))
+}
+
+fn zip_compression_label(compression: u16) -> String {
+    match compression {
+        0 => "stored".to_string(),
+        8 => "deflated".to_string(),
+        other => format!("unsupported:{other}"),
+    }
+}
+
+fn docx_unsupported_features(document_xml: &str) -> Vec<String> {
+    let mut features = Vec::new();
+    for (needle, label) in [
+        ("<w:tbl", "tables"),
+        ("<w:drawing", "drawings"),
+        ("<w:pict", "legacy_pictures"),
+        ("<w:object", "embedded_objects"),
+        ("<w:sdt", "content_controls"),
+        ("<w:txbxContent", "text_boxes"),
+    ] {
+        if document_xml.contains(needle) {
+            features.push(label.to_string());
+        }
+    }
+    features
+}
+
+fn docx_document_xml_from_text(text: &str) -> String {
+    let mut body = String::new();
+    for line in text.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            body.push_str("<w:p/>");
+        } else {
+            body.push_str("<w:p><w:r><w:t xml:space=\"preserve\">");
+            body.push_str(&encode_xml_text(trimmed));
+            body.push_str("</w:t></w:r></w:p>");
+        }
+    }
+    if body.is_empty() {
+        body.push_str("<w:p/>");
+    }
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:body>{body}<w:sectPr/></w:body></w:document>"
+    )
+}
+
+fn write_stored_zip_local_entry(out: &mut Vec<u8>, name: &str, payload: &[u8]) {
+    out.extend_from_slice(&0x0403_4b50_u32.to_le_bytes());
+    push_le_u16(out, 20);
+    push_le_u16(out, 0);
+    push_le_u16(out, 0);
+    push_le_u16(out, 0);
+    push_le_u16(out, 0);
+    push_le_u32(out, crc32(payload));
+    push_le_u32(out, payload.len() as u32);
+    push_le_u32(out, payload.len() as u32);
+    push_le_u16(out, name.len() as u16);
+    push_le_u16(out, 0);
+    out.extend_from_slice(name.as_bytes());
+    out.extend_from_slice(payload);
+}
+
+fn write_zip_central_directory(out: &mut Vec<u8>, records: &[ZipCentralRecord]) -> ApiResult<()> {
+    let central_start = out.len();
+    for record in records {
+        if record.name.len() > u16::MAX as usize {
+            return Err(ApiError::BadRequest(
+                "ZIP entry name is too long for DOCX writer.".to_string(),
+            ));
+        }
+        out.extend_from_slice(&0x0201_4b50_u32.to_le_bytes());
+        push_le_u16(out, record.version_made_by);
+        push_le_u16(out, record.version_needed);
+        push_le_u16(out, record.flags);
+        push_le_u16(out, record.compression);
+        push_le_u16(out, record.last_modified_time);
+        push_le_u16(out, record.last_modified_date);
+        push_le_u32(out, record.crc32);
+        push_le_u32(out, record.compressed_size);
+        push_le_u32(out, record.uncompressed_size);
+        push_le_u16(out, record.name.len() as u16);
+        push_le_u16(out, 0);
+        push_le_u16(out, 0);
+        push_le_u16(out, 0);
+        push_le_u16(out, record.internal_attrs);
+        push_le_u32(out, record.external_attrs);
+        push_le_u32(out, record.local_header_offset);
+        out.extend_from_slice(record.name.as_bytes());
+    }
+    let central_size = out.len().saturating_sub(central_start);
+    if records.len() > u16::MAX as usize
+        || central_start > u32::MAX as usize
+        || central_size > u32::MAX as usize
+    {
+        return Err(ApiError::BadRequest(
+            "DOCX package is too large for the v1 ZIP writer.".to_string(),
+        ));
+    }
+    out.extend_from_slice(&0x0605_4b50_u32.to_le_bytes());
+    push_le_u16(out, 0);
+    push_le_u16(out, 0);
+    push_le_u16(out, records.len() as u16);
+    push_le_u16(out, records.len() as u16);
+    push_le_u32(out, central_size as u32);
+    push_le_u32(out, central_start as u32);
+    push_le_u16(out, 0);
+    Ok(())
 }
 
 fn find_zip_eocd(bytes: &[u8]) -> Option<usize> {
@@ -16473,12 +19415,40 @@ fn le_u32(bytes: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
+fn push_le_u16(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_le_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffff_u32;
+    for byte in bytes {
+        crc ^= *byte as u32;
+        for _ in 0..8 {
+            let mask = 0_u32.wrapping_sub(crc & 1);
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
+}
+
 fn decode_xml_text(text: &str) -> String {
     text.replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
+}
+
+fn encode_xml_text(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 fn summarize_text(text: &str) -> String {
@@ -16985,6 +19955,76 @@ fn has_non_empty_value(value: Option<&str>) -> bool {
     matches!(value, Some(item) if !item.trim().is_empty())
 }
 
+fn normalize_document_annotation_type(value: &str) -> ApiResult<String> {
+    let normalized = value.trim().to_ascii_lowercase().replace('-', "_");
+    match normalized.as_str() {
+        "highlight" | "note" | "redaction" | "exhibit_label" | "fact_link" | "citation"
+        | "issue" => Ok(normalized),
+        _ => Err(ApiError::BadRequest(
+            "Unsupported document annotation type.".to_string(),
+        )),
+    }
+}
+
+fn default_annotation_label(annotation_type: &str) -> &'static str {
+    match annotation_type {
+        "highlight" => "Highlight",
+        "redaction" => "Redaction",
+        "exhibit_label" => "Exhibit label",
+        "fact_link" => "Fact link",
+        "citation" => "Citation",
+        "issue" => "Issue",
+        _ => "Note",
+    }
+}
+
+fn validate_document_annotation_range(request: &UpsertDocumentAnnotationRequest) -> ApiResult<()> {
+    if let Some(range) = &request.page_range {
+        if range.page == 0 {
+            return Err(ApiError::BadRequest(
+                "Annotation page numbers are one-based.".to_string(),
+            ));
+        }
+        for (name, value) in [
+            ("x", range.x),
+            ("y", range.y),
+            ("width", range.width),
+            ("height", range.height),
+        ] {
+            if value.is_some_and(|value| value.is_sign_negative()) {
+                return Err(ApiError::BadRequest(format!(
+                    "Annotation page range {name} cannot be negative."
+                )));
+            }
+        }
+    }
+    if let Some(range) = &request.text_range {
+        if let (Some(start), Some(end)) = (range.char_start, range.char_end) {
+            if start >= end {
+                return Err(ApiError::BadRequest(
+                    "Annotation text char range must have a positive length.".to_string(),
+                ));
+            }
+        }
+        if let (Some(start), Some(end)) = (range.byte_start, range.byte_end) {
+            if start >= end {
+                return Err(ApiError::BadRequest(
+                    "Annotation text byte range must have a positive length.".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn text_to_markdown_paragraphs(text: &str) -> String {
+    text.split("\n\n")
+        .map(|paragraph| paragraph.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|paragraph| !paragraph.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 fn sync_work_product_anchor_projection(product: &mut WorkProduct, anchor: &WorkProductAnchor) {
     let relation_projects = support_relation_projects_to_block_ids(&anchor.relation);
     let has_projected_anchor =
@@ -17233,29 +20273,34 @@ fn io_error(error: std::io::Error) -> ApiError {
 mod tests {
     use super::{
         apply_ast_operation, apply_work_product_support_removal, apply_work_product_support_update,
-        apply_work_product_text_range_link, canonical_id_for_citation, chunk_text,
+        apply_work_product_text_range_link, assemblyai_raw_words, assemblyai_speech_models,
+        assemblyai_transcript_create_request, canonical_id_for_citation, chunk_text,
         citation_uses_for_text, default_formatting_profile, diff_work_product_layers,
-        failed_ingestion_run, generate_opaque_id, looks_like_complaint,
-        markdown_to_work_product_ast, normalize_compare_layers, object_blob_id_for_hash,
-        oregon_civil_complaint_rule_pack, parse_complaint_structure, parse_document_bytes,
-        propose_facts, prosemirror_doc_for_text, rebuild_work_product_ast_from_projection,
+        docx_package_manifest, docx_with_replaced_document_xml, failed_ingestion_run,
+        generate_opaque_id, looks_like_complaint, markdown_to_work_product_ast,
+        normalize_compare_layers, object_blob_id_for_hash, oregon_civil_complaint_rule_pack,
+        parse_complaint_structure, parse_document_bytes, propose_facts, prosemirror_doc_for_text,
+        rebuild_work_product_ast_from_projection, redact_transcript_text,
         refresh_work_product_state, restore_work_product_scope,
         safe_work_product_download_filename, sanitize_filename, sha256_hex, should_inline_payload,
         slug, snapshot_entity_state_key, snapshot_full_state_key, snapshot_manifest_for_product,
         snapshot_manifest_hash_for_states, snapshot_manifest_key,
         summarize_version_snapshot_for_list, summarize_work_product_for_list,
+        transcript_segments_from_provider, transcript_segments_to_srt, transcript_segments_to_vtt,
         validate_ast_patch_concurrency, validate_work_product_document,
         version_change_state_summary, work_product_block_graph_payload, work_product_export_key,
-        work_product_finding, work_product_hashes, work_product_profile, SourceContext,
+        work_product_finding, work_product_hashes, work_product_profile,
+        AssemblyAiTranscriptResponse, AssemblyAiUtterance, AssemblyAiWord, SourceContext,
         CASE_INDEX_VERSION, CHUNKER_VERSION, CITATION_RESOLVER_VERSION, PARSER_REGISTRY_VERSION,
     };
     use crate::error::ApiError;
     use crate::models::casebuilder::{
-        AstOperation, AstPatch, IngestionRun, NullableStringPatch, PatchWorkProductSupportRequest,
-        TextRange, VersionChangeSummary, VersionSnapshot, WorkProduct, WorkProductAction,
-        WorkProductAnchor, WorkProductArtifact, WorkProductBlock, WorkProductCitationUse,
-        WorkProductDocument, WorkProductDownloadResponse, WorkProductExhibitReference,
-        WorkProductFinding, WorkProductLink, WorkProductTextRangeLinkRequest,
+        AstOperation, AstPatch, CaseDocument, CreateTranscriptionRequest, IngestionRun,
+        NullableStringPatch, PatchWorkProductSupportRequest, TextRange, TranscriptionJob,
+        VersionChangeSummary, VersionSnapshot, WorkProduct, WorkProductAction, WorkProductAnchor,
+        WorkProductArtifact, WorkProductBlock, WorkProductCitationUse, WorkProductDocument,
+        WorkProductDownloadResponse, WorkProductExhibitReference, WorkProductFinding,
+        WorkProductLink, WorkProductTextRangeLinkRequest,
     };
     use crate::services::object_store::build_document_object_key;
     use std::collections::BTreeMap;
@@ -18211,6 +21256,9 @@ mod tests {
                         matter_id: "matter:test".to_string(),
                         work_product_id: "work-product:test".to_string(),
                         rule_id: "support:required".to_string(),
+                        rule_pack_id: Some("test-rule-pack".to_string()),
+                        source_citation: None,
+                        source_url: None,
                         category: "support".to_string(),
                         severity: "warning".to_string(),
                         target_type: "paragraph".to_string(),
@@ -18218,6 +21266,7 @@ mod tests {
                         message: message.to_string(),
                         explanation: message.to_string(),
                         suggested_fix: "Link support.".to_string(),
+                        auto_fix_available: false,
                         primary_action: WorkProductAction {
                             action_id: "action:test".to_string(),
                             label: "Link support".to_string(),
@@ -18937,6 +21986,300 @@ mod tests {
         assert_eq!(media.status, "transcription_deferred");
     }
 
+    #[test]
+    fn assemblyai_request_uses_casebuilder_defaults_without_webhook_leakage() {
+        let job = TranscriptionJob {
+            transcription_job_id: "transcription:doc:test".to_string(),
+            id: "transcription:doc:test".to_string(),
+            matter_id: "matter:test".to_string(),
+            document_id: "doc:test".to_string(),
+            document_version_id: Some("version:doc:test:original".to_string()),
+            object_blob_id: Some("blob:sha256:test".to_string()),
+            provider: "assemblyai".to_string(),
+            provider_mode: "live".to_string(),
+            provider_transcript_id: None,
+            provider_status: None,
+            status: "queued".to_string(),
+            review_status: "not_started".to_string(),
+            raw_artifact_version_id: None,
+            normalized_artifact_version_id: None,
+            redacted_artifact_version_id: None,
+            reviewed_document_version_id: None,
+            caption_vtt_version_id: None,
+            caption_srt_version_id: None,
+            language_code: None,
+            duration_ms: None,
+            speaker_count: 0,
+            segment_count: 0,
+            word_count: 0,
+            redact_pii: true,
+            speech_models: assemblyai_speech_models(),
+            retryable: false,
+            error_code: None,
+            error_message: None,
+            created_at: "1".to_string(),
+            updated_at: "1".to_string(),
+            completed_at: None,
+            reviewed_at: None,
+        };
+        let request = assemblyai_transcript_create_request(
+            "assemblyai://upload",
+            &CreateTranscriptionRequest {
+                force: None,
+                language_code: None,
+                redact_pii: Some(true),
+                speaker_labels: None,
+            },
+            &job,
+            Some("https://example.test/webhook".to_string()),
+            Some("secret".to_string()),
+        );
+        let payload = serde_json::to_value(request).unwrap();
+        assert_eq!(
+            payload["speech_models"],
+            serde_json::json!(["universal-3-pro", "universal-2"])
+        );
+        assert_eq!(payload["language_detection"], true);
+        assert_eq!(payload["speaker_labels"], true);
+        assert_eq!(payload["redact_pii"], true);
+        assert_eq!(payload["redact_pii_sub"], "entity_name");
+        assert_eq!(payload["redact_pii_return_unredacted"], true);
+        assert!(payload["redact_pii_policies"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("person_name")));
+        assert!(payload["redact_pii_policies"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("phone_number")));
+        assert_eq!(
+            payload["webhook_auth_header_name"],
+            "x-casebuilder-assemblyai-secret"
+        );
+        assert!(!payload.to_string().contains("ASSEMBLYAI_API_KEY"));
+    }
+
+    #[test]
+    fn assemblyai_return_unredacted_preserves_raw_segments() {
+        let mut document = test_case_document("doc:media", "hearing.mp4");
+        document.mime_type = Some("video/mp4".to_string());
+        let job = test_transcription_job(true);
+        let provider = AssemblyAiTranscriptResponse {
+            id: "provider:transcript".to_string(),
+            status: "completed".to_string(),
+            text: Some("[PERSON_NAME] called [PHONE_NUMBER].".to_string()),
+            utterances: vec![AssemblyAiUtterance {
+                speaker: Some("A".to_string()),
+                text: "[PERSON_NAME] called [PHONE_NUMBER].".to_string(),
+                start: 250,
+                end: 4820,
+                confidence: Some(0.95),
+            }],
+            words: vec![AssemblyAiWord {
+                text: "[PERSON_NAME]".to_string(),
+                start: 250,
+                end: 650,
+                confidence: Some(0.95),
+                speaker: Some("A".to_string()),
+            }],
+            unredacted_text: Some("Mary called 503-555-1212.".to_string()),
+            unredacted_utterances: vec![AssemblyAiUtterance {
+                speaker: Some("A".to_string()),
+                text: "Mary called 503-555-1212.".to_string(),
+                start: 250,
+                end: 4820,
+                confidence: Some(0.95),
+            }],
+            unredacted_words: vec![AssemblyAiWord {
+                text: "Mary".to_string(),
+                start: 250,
+                end: 650,
+                confidence: Some(0.95),
+                speaker: Some("A".to_string()),
+            }],
+            language_code: Some("en_us".to_string()),
+            audio_duration: Some(4.82),
+            confidence: Some(0.95),
+            error: None,
+            redact_pii: Some(true),
+            redact_pii_return_unredacted: Some(true),
+        };
+        let (segments, speakers) =
+            transcript_segments_from_provider("matter:test", &document, &job, &provider, "1");
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].text, "Mary called 503-555-1212.");
+        assert_eq!(
+            segments[0].redacted_text.as_deref(),
+            Some("[PERSON_NAME] called [PHONE_NUMBER].")
+        );
+        assert_eq!(segments[0].speaker_label.as_deref(), Some("A"));
+        assert_eq!(speakers.len(), 1);
+        assert_eq!(assemblyai_raw_words(&provider)[0].text, "Mary");
+    }
+
+    #[test]
+    fn transcript_redaction_and_captions_are_deterministic() {
+        let redacted = redact_transcript_text(
+            "Call me at 503-555-1212 or email tenant@example.com. SSN 123-45-6789.",
+        );
+        assert!(redacted.contains("[redacted phone]"));
+        assert!(redacted.contains("[redacted email]"));
+        assert!(redacted.contains("[redacted ssn]"));
+        let segment = crate::models::casebuilder::TranscriptSegment {
+            segment_id: "segment:1".to_string(),
+            id: "segment:1".to_string(),
+            matter_id: "matter:test".to_string(),
+            document_id: "doc:test".to_string(),
+            transcription_job_id: "transcription:1".to_string(),
+            source_span_id: Some("span:1".to_string()),
+            ordinal: 1,
+            speaker_label: Some("A".to_string()),
+            speaker_name: None,
+            text: "Hello there.".to_string(),
+            redacted_text: Some("Hello there.".to_string()),
+            time_start_ms: 1_000,
+            time_end_ms: 2_500,
+            confidence: 0.9,
+            review_status: "unreviewed".to_string(),
+            edited: false,
+            created_at: "1".to_string(),
+            updated_at: "1".to_string(),
+        };
+        let vtt = transcript_segments_to_vtt(&[segment.clone()], true);
+        let srt = transcript_segments_to_srt(&[segment], true);
+        assert!(vtt.contains("00:00:01.000 --> 00:00:02.500"));
+        assert!(srt.contains("00:00:01,000 --> 00:00:02,500"));
+    }
+
+    #[test]
+    fn docx_manifest_detects_editable_text_parts() {
+        let bytes = stored_zip_document_xml(
+            br#"<w:document><w:body><w:p><w:r><w:t>Simple editable paragraph.</w:t></w:r></w:p></w:body></w:document>"#,
+        );
+        let document = test_case_document("doc:test", "simple.docx");
+        let manifest = docx_package_manifest(&document, None, &bytes).unwrap();
+        assert_eq!(manifest.entry_count, 1);
+        assert_eq!(manifest.text_part_count, 1);
+        assert!(manifest.editable);
+        assert!(manifest
+            .text_preview
+            .as_deref()
+            .unwrap()
+            .contains("Simple editable paragraph."));
+    }
+
+    #[test]
+    fn docx_round_trip_replaces_document_xml_and_keeps_package_readable() {
+        let bytes = stored_zip_document_xml(
+            br#"<w:document><w:body><w:p><w:r><w:t>Old paragraph.</w:t></w:r></w:p></w:body></w:document>"#,
+        );
+        let (updated, warnings) =
+            docx_with_replaced_document_xml(&bytes, "New paragraph.\n\nSecond paragraph.").unwrap();
+        assert!(!warnings.is_empty());
+        let parsed = parse_document_bytes(
+            "simple.docx",
+            Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            &updated,
+        );
+        assert_eq!(parsed.status, "processed");
+        let text = parsed.text.unwrap();
+        assert!(text.contains("New paragraph."));
+        assert!(text.contains("Second paragraph."));
+        assert!(!text.contains("Old paragraph."));
+    }
+
+    #[test]
+    fn docx_round_trip_rejects_complex_objects_for_v1() {
+        let bytes = stored_zip_document_xml(
+            br#"<w:document><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Table text.</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#,
+        );
+        let error = docx_with_replaced_document_xml(&bytes, "Replacement").unwrap_err();
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    fn test_case_document(document_id: &str, filename: &str) -> CaseDocument {
+        CaseDocument {
+            document_id: document_id.to_string(),
+            id: document_id.to_string(),
+            matter_id: "matter:test".to_string(),
+            filename: filename.to_string(),
+            title: filename.to_string(),
+            document_type: "other".to_string(),
+            mime_type: Some(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    .to_string(),
+            ),
+            pages: 1,
+            bytes: 0,
+            file_hash: None,
+            uploaded_at: "1".to_string(),
+            source: "user_upload".to_string(),
+            confidentiality: "private".to_string(),
+            processing_status: "stored".to_string(),
+            is_exhibit: false,
+            exhibit_label: None,
+            summary: String::new(),
+            date_observed: None,
+            parties_mentioned: Vec::new(),
+            entities_mentioned: Vec::new(),
+            facts_extracted: 0,
+            citations_found: 0,
+            contradictions_flagged: 0,
+            linked_claim_ids: Vec::new(),
+            folder: "Uploads".to_string(),
+            storage_path: None,
+            storage_provider: "local".to_string(),
+            storage_status: "stored".to_string(),
+            storage_bucket: None,
+            storage_key: None,
+            content_etag: None,
+            upload_expires_at: None,
+            deleted_at: None,
+            object_blob_id: None,
+            current_version_id: None,
+            ingestion_run_ids: Vec::new(),
+            source_spans: Vec::new(),
+            extracted_text: None,
+        }
+    }
+
+    fn test_transcription_job(redact_pii: bool) -> TranscriptionJob {
+        TranscriptionJob {
+            transcription_job_id: "transcription:doc:test".to_string(),
+            id: "transcription:doc:test".to_string(),
+            matter_id: "matter:test".to_string(),
+            document_id: "doc:media".to_string(),
+            document_version_id: Some("version:doc:media:original".to_string()),
+            object_blob_id: Some("blob:sha256:test".to_string()),
+            provider: "assemblyai".to_string(),
+            provider_mode: "live".to_string(),
+            provider_transcript_id: Some("provider:transcript".to_string()),
+            provider_status: Some("completed".to_string()),
+            status: "review_ready".to_string(),
+            review_status: "needs_review".to_string(),
+            raw_artifact_version_id: None,
+            normalized_artifact_version_id: None,
+            redacted_artifact_version_id: None,
+            reviewed_document_version_id: None,
+            caption_vtt_version_id: None,
+            caption_srt_version_id: None,
+            language_code: None,
+            duration_ms: None,
+            speaker_count: 0,
+            segment_count: 0,
+            word_count: 0,
+            redact_pii,
+            speech_models: assemblyai_speech_models(),
+            retryable: false,
+            error_code: None,
+            error_message: None,
+            created_at: "1".to_string(),
+            updated_at: "1".to_string(),
+            completed_at: None,
+            reviewed_at: None,
+        }
+    }
+
     fn stored_zip_document_xml(xml: &[u8]) -> Vec<u8> {
         let name = b"word/document.xml";
         let mut zip = Vec::new();
@@ -19049,7 +22392,7 @@ mod tests {
         );
         assert_eq!(
             canonical_id_for_citation("ORCP 16 D"),
-            Some("or:orcp:16_d".to_string())
+            Some("or:orcp:16-d".to_string())
         );
         assert_eq!(
             canonical_id_for_citation("UTCR 2.010(4)"),

@@ -119,9 +119,21 @@ fn casebuilder_routes_cover_v0_contracts() {
         "/matters/:matter_id/files/binary",
         "/matters/:matter_id/files/uploads",
         "/matters/:matter_id/files/uploads/:upload_id/complete",
+        "/matters/:matter_id/documents/:document_id/workspace",
+        "/matters/:matter_id/documents/:document_id/content",
+        "/matters/:matter_id/documents/:document_id/annotations",
+        "/matters/:matter_id/documents/:document_id/text",
+        "/matters/:matter_id/documents/:document_id/promote-work-product",
         "/matters/:matter_id/documents/:document_id/download-url",
+        "/matters/:matter_id/documents/:document_id/transcriptions",
+        "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id",
+        "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id/sync",
+        "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id/segments/:segment_id",
+        "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id/speakers/:speaker_id",
+        "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id/review",
         "/matters/:matter_id/documents/:document_id/extract",
         "/matters/:matter_id/documents/:document_id/import-complaint",
+        "/casebuilder/webhooks/assemblyai",
         "/matters/:matter_id/facts/:fact_id/approve",
         "/matters/:matter_id/claims/:claim_id/map-elements",
         "/matters/:matter_id/evidence/:evidence_id/link-fact",
@@ -132,6 +144,7 @@ fn casebuilder_routes_cover_v0_contracts() {
         "/matters/:matter_id/work-products/:work_product_id/links",
         "/matters/:matter_id/work-products/:work_product_id/links/:anchor_id",
         "/matters/:matter_id/work-products/:work_product_id/text-ranges",
+        "/matters/:matter_id/work-products/:work_product_id/ast",
         "/matters/:matter_id/work-products/:work_product_id/ast/patch",
         "/matters/:matter_id/work-products/:work_product_id/ast/validate",
         "/matters/:matter_id/work-products/:work_product_id/ast/to-markdown",
@@ -229,6 +242,16 @@ fn casebuilder_constraints_cover_core_graph_nodes() {
         "casebuilder_document_version_id",
         "casebuilder_ingestion_run_id",
         "casebuilder_source_span_id",
+        "casebuilder_document_annotation_id",
+        "casebuilder_document_annotation_document",
+        "casebuilder_transcription_job_id",
+        "casebuilder_transcript_segment_id",
+        "casebuilder_transcript_speaker_id",
+        "casebuilder_transcript_review_change_id",
+        "casebuilder_transcription_job_document",
+        "casebuilder_transcription_job_provider",
+        "casebuilder_transcript_segment_job",
+        "casebuilder_transcript_speaker_job",
         "casebuilder_external_authority_id",
         "casebuilder_complaint_id",
         "casebuilder_complaint_section_id",
@@ -266,6 +289,112 @@ fn casebuilder_constraints_cover_core_graph_nodes() {
         assert!(
             service.contains(expected),
             "missing CaseBuilder constraint/index {expected}"
+        );
+    }
+}
+
+#[test]
+fn document_workspace_contract_is_oss_only_and_casebuilder_native() {
+    let backend_models = include_str!("../src/models/casebuilder.rs");
+    let backend_service = include_str!("../src/services/casebuilder.rs");
+    let frontend_types = include_str!("../../../frontend/lib/casebuilder/types.ts");
+    let frontend_api = include_str!("../../../frontend/lib/casebuilder/api.ts");
+    let frontend_workspace =
+        include_str!("../../../frontend/components/casebuilder/document-workspace.tsx");
+    let license_gate = include_str!("../../../frontend/scripts/check-oss-licenses.mjs");
+
+    for expected in [
+        "struct DocumentWorkspace",
+        "struct DocumentCapability",
+        "struct DocumentAnnotation",
+        "struct DocxPackageManifest",
+        "struct DocumentPageRange",
+        "struct DocumentTextRange",
+        "struct SaveDocumentTextRequest",
+        "struct PromoteDocumentWorkProductResponse",
+        "struct TranscriptionJob",
+        "struct TranscriptSegment",
+        "struct TranscriptSpeaker",
+        "struct TranscriptReviewChange",
+        "struct TranscriptionJobResponse",
+    ] {
+        assert!(
+            backend_models.contains(expected),
+            "missing backend document workspace DTO {expected}"
+        );
+    }
+
+    for expected in [
+        "get_document_workspace",
+        "get_document_content_bytes",
+        "create_document_annotation",
+        "save_document_text",
+        "promote_document_work_product",
+        "create_transcription",
+        "sync_transcription",
+        "review_transcription",
+        "docx_with_replaced_document_xml",
+        "read_zip_package",
+        "docx_package_manifest",
+        "immutable_pdf_bytes",
+        "graph_sidecar",
+    ] {
+        assert!(
+            backend_service.contains(expected),
+            "missing backend document workspace behavior {expected}"
+        );
+    }
+
+    for expected in [
+        "interface DocumentWorkspace",
+        "interface DocumentCapability",
+        "interface DocumentAnnotation",
+        "interface DocxPackageManifest",
+        "interface TranscriptionJob",
+        "interface TranscriptSegment",
+        "interface TranscriptionJobResponse",
+    ] {
+        assert!(
+            frontend_types.contains(expected),
+            "missing frontend document workspace type {expected}"
+        );
+    }
+
+    for expected in [
+        "getDocumentWorkspace",
+        "createDocumentAnnotation",
+        "saveDocumentText",
+        "promoteDocumentWorkProduct",
+        "createTranscription",
+        "syncTranscription",
+        "reviewTranscription",
+        "normalizeDocumentWorkspace",
+        "normalizeTranscriptionJobResponse",
+    ] {
+        assert!(
+            frontend_api.contains(expected),
+            "missing frontend document workspace API {expected}"
+        );
+    }
+
+    for expected in [
+        "DocumentWorkspace",
+        "iframe",
+        "Sidecar Annotations",
+        "DOCX Package",
+        "MediaTranscriptPane",
+        "Transcribe",
+    ] {
+        assert!(
+            frontend_workspace.contains(expected),
+            "missing frontend document workspace UI marker {expected}"
+        );
+    }
+
+    for denied in ["onlyoffice", "collabora", "pspdfkit", "pdftron", "aspose"] {
+        assert!(
+            license_gate.contains(denied),
+            "license gate should reject {denied}"
         );
     }
 }
@@ -425,6 +554,8 @@ fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
         "previewComplaint",
         "exportComplaint",
         "runComplaintAiCommand",
+        "getWorkProductAst",
+        "patchWorkProductAst",
         "applyWorkProductAstPatch",
         "validateWorkProductAst",
         "workProductAstToMarkdown",
@@ -491,12 +622,21 @@ fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
 fn workproduct_ast_canonicalization_contract_is_explicit() {
     let backend_service = include_str!("../src/services/casebuilder.rs");
     let backend_models = include_str!("../src/models/casebuilder.rs");
+    let services_mod = include_str!("../src/services/mod.rs");
+    let work_product_ast = include_str!("../src/services/work_product_ast.rs");
+    let ast_validation = include_str!("../src/services/ast_validation.rs");
+    let ast_patch = include_str!("../src/services/ast_patch.rs");
+    let markdown_adapter = include_str!("../src/services/markdown_adapter.rs");
+    let html_renderer = include_str!("../src/services/html_renderer.rs");
     let frontend_types = include_str!("../../../frontend/lib/casebuilder/types.ts");
     let frontend_api = include_str!("../../../frontend/lib/casebuilder/api.ts");
 
     for expected in [
         "pub draft_id: Option<String>",
         "pub document_type: String",
+        "pub tombstones: Vec<WorkProductBlock>",
+        "pub sentence_id: Option<String>",
+        "pub tombstoned: bool",
         "alias = \"schemaVersion\"",
         "alias = \"matterId\"",
         "alias = \"workProductId\"",
@@ -510,6 +650,31 @@ fn workproduct_ast_canonicalization_contract_is_explicit() {
             "missing backend canonical AST model contract {expected}"
         );
     }
+
+    for expected in [
+        "pub mod work_product_ast",
+        "pub mod ast_validation",
+        "pub mod ast_patch",
+        "pub mod ast_diff",
+        "pub mod markdown_adapter",
+        "pub mod html_renderer",
+        "pub mod docx_renderer",
+        "pub mod pdf_renderer",
+        "pub mod rule_engine",
+        "pub mod citation_resolver",
+        "pub mod support_linker",
+        "pub mod ai_patch",
+    ] {
+        assert!(
+            services_mod.contains(expected),
+            "missing dedicated WorkProduct AST service module {expected}"
+        );
+    }
+    assert!(work_product_ast.contains("SUPPORTED_BLOCK_TYPES"));
+    assert!(ast_validation.contains("validate_work_product_document"));
+    assert!(ast_patch.contains("apply_ast_patch_atomic"));
+    assert!(markdown_adapter.contains("wp-ast-block"));
+    assert!(html_renderer.contains("data-renderer=\\\"work-product-ast-v1\\\""));
 
     for expected in [
         "\"complaint\"",
@@ -538,6 +703,8 @@ fn workproduct_ast_canonicalization_contract_is_explicit() {
         "split_ast_document_block",
         "merge_ast_document_blocks",
         "canonical_work_product_blocks(product)",
+        "get_work_product_ast",
+        "patch_work_product_ast",
     ] {
         assert!(
             backend_service.contains(expected),
@@ -548,6 +715,9 @@ fn workproduct_ast_canonicalization_contract_is_explicit() {
     for expected in [
         "draft_id?: string | null",
         "document_type: string",
+        "tombstones: WorkProductBlock[]",
+        "sentence_id?: string | null",
+        "tombstoned: boolean",
         "CANONICAL_WORK_PRODUCT_TYPES",
         "normalizeWorkProductType",
         "input.schemaVersion",
@@ -684,6 +854,11 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "struct DocumentVersion",
         "struct IngestionRun",
         "struct SourceSpan",
+        "struct TranscriptionJob",
+        "struct TranscriptSegment",
+        "struct TranscriptSpeaker",
+        "time_start_ms",
+        "speaker_label",
         "struct CaseGraphNode",
         "struct CaseGraphEdge",
         "struct IssueSuggestion",
@@ -709,6 +884,11 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "interface DocumentVersion",
         "interface IngestionRun",
         "interface SourceSpan",
+        "interface TranscriptionJob",
+        "interface TranscriptSegment",
+        "interface TranscriptSpeaker",
+        "time_start_ms",
+        "speaker_label",
         "interface CaseGraphNode",
         "interface CaseGraphEdge",
         "interface IssueSuggestion",
@@ -733,6 +913,8 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "normalizeDocumentVersion",
         "normalizeIngestionRun",
         "normalizeSourceSpan",
+        "normalizeTranscriptionJobResponse",
+        "normalizeTranscriptSegment",
         "normalizeCaseGraphResponse",
         "normalizeIssueSpotResponse",
         "normalizeQcRun",
@@ -822,6 +1004,9 @@ fn casebuilder_provenance_dtos_serialize_with_matter_safe_ids() {
         byte_end: Some(10),
         char_start: Some(0),
         char_end: Some(10),
+        time_start_ms: None,
+        time_end_ms: None,
+        speaker_label: None,
         quote: Some("short text".to_string()),
         extraction_method: "deterministic_sentence".to_string(),
         confidence: 1.0,

@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import { MatterShell } from "@/components/casebuilder/matter-shell"
-import { DocumentViewer } from "@/components/casebuilder/document-viewer"
-import { getMatterState } from "@/lib/casebuilder/api"
+import { DocumentWorkspace } from "@/components/casebuilder/document-workspace"
+import { getDocumentWorkspace, getMatterState } from "@/lib/casebuilder/api"
 
 interface PageProps {
   params: Promise<{ id: string; docId: string }>
@@ -10,14 +10,19 @@ interface PageProps {
 export default async function DocumentPage({ params }: PageProps) {
   const { id, docId } = await params
   const matterState = await getMatterState(id)
+  const workspaceState = await getDocumentWorkspace(id, docId)
   const matter = matterState.data
   if (!matter) notFound()
-  const document = matter.documents.find((d) => d.id === docId)
-  if (!document) notFound()
+  const workspace = workspaceState.data
+  if (!workspace) notFound()
 
   return (
-    <MatterShell matter={matter} activeSection="documents" dataState={matterState}>
-      <DocumentViewer matter={matter} document={document} />
+    <MatterShell
+      matter={matter}
+      activeSection="documents"
+      dataState={{ source: workspaceState.source, error: workspaceState.error ?? matterState.error }}
+    >
+      <DocumentWorkspace matter={matter} workspace={workspace} />
     </MatterShell>
   )
 }

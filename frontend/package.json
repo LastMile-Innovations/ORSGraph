@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm run build",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run build && pnpm run check:licenses",
+    "check:licenses": "node scripts/check-oss-licenses.mjs",
     "smoke:routes": "node scripts/smoke-routes.mjs",
     "smoke:casebuilder": "node scripts/smoke-casebuilder.mjs"
   },

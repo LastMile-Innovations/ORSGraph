@@ -79,6 +79,7 @@ export function DocumentLibrary({ matter, documents }: Props) {
     const map: Record<string, number> = { All: documents.length }
     for (const f of FOLDERS) map[f] = 0
     for (const d of documents) map[d.folder] = (map[d.folder] ?? 0) + 1
+    map["Media queue"] = documents.filter(isMediaDocument).length
     return map
   }, [documents])
 
@@ -93,7 +94,9 @@ export function DocumentLibrary({ matter, documents }: Props) {
 
   const filtered = useMemo(() => {
     return documents.filter((d) => {
-      if (folder !== "All" && d.folder !== folder) return false
+      if (folder === "Media queue") {
+        if (!isMediaDocument(d)) return false
+      } else if (folder !== "All" && d.folder !== folder) return false
       if (query.trim()) {
         const q = query.toLowerCase()
         const hay = `${d.filename} ${d.summary} ${d.parties_mentioned.join(" ")} ${d.entities_mentioned.join(" ")}`.toLowerCase()
@@ -285,6 +288,12 @@ export function DocumentLibrary({ matter, documents }: Props) {
           </div>
           <div className="space-y-px px-1 pb-3">
             <FolderItem name="All" count={folderCounts.All} active={folder === "All"} onClick={() => setFolder("All")} />
+            <FolderItem
+              name="Media queue"
+              count={folderCounts["Media queue"]}
+              active={folder === "Media queue"}
+              onClick={() => setFolder("Media queue")}
+            />
             {FOLDERS.map((f) => (
               <FolderItem
                 key={f}
@@ -302,6 +311,7 @@ export function DocumentLibrary({ matter, documents }: Props) {
           <div className="space-y-1 px-3 pb-3 font-mono text-[11px]">
             <KV label="processed" value={documents.filter((d) => d.processing_status === "processed").length} cls="text-success" />
             <KV label="processing" value={documents.filter((d) => d.processing_status === "processing").length} cls="text-primary" />
+            <KV label="review ready" value={documents.filter((d) => d.processing_status === "review_ready").length} cls="text-primary" />
             <KV label="queued" value={documents.filter((d) => d.processing_status === "queued").length} cls="text-muted-foreground" />
             <KV label="ocr needed" value={documents.filter((d) => d.processing_status === "ocr_required").length} cls="text-warning" />
             <KV label="transcribe" value={documents.filter((d) => d.processing_status === "transcription_deferred").length} cls="text-warning" />
@@ -572,6 +582,8 @@ function guessMimeType(filename: string) {
     return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
   }
   if (/\.(png|jpe?g|gif|webp|heic)$/i.test(filename)) return "image/*"
+  if (/\.(mp3|m4a|wav|aac|flac)$/i.test(filename)) return "audio/*"
+  if (/\.(mp4|mov|m4v|webm)$/i.test(filename)) return "video/*"
   return "application/octet-stream"
 }
 
@@ -588,6 +600,18 @@ function guessDocumentType(filename: string, mimeType: string): DocumentType {
   if (/\.csv$/i.test(filename)) return "spreadsheet"
   if (mimeType.startsWith("image/") || /\.(png|jpe?g|gif|webp|heic)$/i.test(filename)) return "photo"
   return "evidence"
+}
+
+function isMediaDocument(document: { filename: string; mime_type?: string; processing_status?: string }) {
+  const filename = document.filename.toLowerCase()
+  const mimeType = (document.mime_type ?? "").toLowerCase()
+  return (
+    mimeType.startsWith("audio/") ||
+    mimeType.startsWith("video/") ||
+    /\.(mp3|m4a|wav|aac|flac|mp4|mov|m4v|webm)$/i.test(filename) ||
+    document.processing_status === "transcription_deferred" ||
+    document.processing_status === "review_ready"
+  )
 }
 
 function shouldImportAsComplaint(filename: string, documentType: DocumentType) {

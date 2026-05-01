@@ -43,6 +43,20 @@ pub struct ApiConfig {
     pub casebuilder_ast_snapshot_inline_bytes: u64,
     #[serde(default = "default_casebuilder_ast_block_inline_bytes")]
     pub casebuilder_ast_block_inline_bytes: u64,
+    #[serde(default)]
+    pub assemblyai_enabled: bool,
+    #[serde(default)]
+    pub assemblyai_api_key: Option<String>,
+    #[serde(default = "default_assemblyai_base_url")]
+    pub assemblyai_base_url: String,
+    #[serde(default)]
+    pub assemblyai_webhook_url: Option<String>,
+    #[serde(default)]
+    pub assemblyai_webhook_secret: Option<String>,
+    #[serde(default = "default_assemblyai_timeout_ms")]
+    pub assemblyai_timeout_ms: u64,
+    #[serde(default = "default_assemblyai_max_media_bytes")]
+    pub assemblyai_max_media_bytes: u64,
     #[serde(default = "default_log_level")]
     pub log_level: String,
 
@@ -131,6 +145,18 @@ fn default_casebuilder_ast_snapshot_inline_bytes() -> u64 {
 
 fn default_casebuilder_ast_block_inline_bytes() -> u64 {
     64 * 1024
+}
+
+fn default_assemblyai_base_url() -> String {
+    "https://api.assemblyai.com".to_string()
+}
+
+fn default_assemblyai_timeout_ms() -> u64 {
+    30_000
+}
+
+fn default_assemblyai_max_media_bytes() -> u64 {
+    500 * 1024 * 1024
 }
 
 fn default_api_host() -> String {
@@ -302,6 +328,29 @@ impl ApiConfig {
         if let Some(value) = read_u64("ORS_CASEBUILDER_AST_BLOCK_INLINE_BYTES") {
             self.casebuilder_ast_block_inline_bytes = value;
         }
+        if let Some(value) = read_bool("ORS_ASSEMBLYAI_ENABLED") {
+            self.assemblyai_enabled = value;
+        }
+        if let Some(value) =
+            read_string("ASSEMBLYAI_API_KEY").or_else(|| read_string("ORS_ASSEMBLYAI_API_KEY"))
+        {
+            self.assemblyai_api_key = Some(value);
+        }
+        if let Some(value) = read_string("ORS_ASSEMBLYAI_BASE_URL") {
+            self.assemblyai_base_url = value;
+        }
+        if let Some(value) = read_string("ORS_ASSEMBLYAI_WEBHOOK_URL") {
+            self.assemblyai_webhook_url = Some(value);
+        }
+        if let Some(value) = read_string("ORS_ASSEMBLYAI_WEBHOOK_SECRET") {
+            self.assemblyai_webhook_secret = Some(value);
+        }
+        if let Some(value) = read_u64("ORS_ASSEMBLYAI_TIMEOUT_MS") {
+            self.assemblyai_timeout_ms = value;
+        }
+        if let Some(value) = read_u64("ORS_ASSEMBLYAI_MAX_MEDIA_BYTES") {
+            self.assemblyai_max_media_bytes = value;
+        }
 
         if let Ok(value) = env::var("VOYAGE_API_KEY") {
             if !value.trim().is_empty() {
@@ -407,6 +456,31 @@ impl ApiConfig {
                 "ORS_CASEBUILDER_AST_BLOCK_INLINE_BYTES must be greater than 0".to_string(),
             ));
         }
+        self.assemblyai_base_url = self
+            .assemblyai_base_url
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
+        if self.assemblyai_enabled && self.assemblyai_api_key.as_deref().is_none_or(str::is_empty) {
+            return Err(ConfigError::Message(
+                "ORS_ASSEMBLYAI_API_KEY or ASSEMBLYAI_API_KEY is required when ORS_ASSEMBLYAI_ENABLED=true".to_string(),
+            ));
+        }
+        if self.assemblyai_enabled && self.assemblyai_base_url.is_empty() {
+            return Err(ConfigError::Message(
+                "ORS_ASSEMBLYAI_BASE_URL must not be empty when AssemblyAI is enabled".to_string(),
+            ));
+        }
+        if self.assemblyai_timeout_ms == 0 {
+            return Err(ConfigError::Message(
+                "ORS_ASSEMBLYAI_TIMEOUT_MS must be greater than 0".to_string(),
+            ));
+        }
+        if self.assemblyai_max_media_bytes == 0 {
+            return Err(ConfigError::Message(
+                "ORS_ASSEMBLYAI_MAX_MEDIA_BYTES must be greater than 0".to_string(),
+            ));
+        }
         if self.storage_backend == "r2" {
             for (name, value) in [
                 ("ORS_R2_ACCOUNT_ID", &self.r2_account_id),
@@ -490,6 +564,13 @@ mod tests {
             casebuilder_ast_entity_inline_bytes: 64 * 1024,
             casebuilder_ast_snapshot_inline_bytes: 256 * 1024,
             casebuilder_ast_block_inline_bytes: 64 * 1024,
+            assemblyai_enabled: false,
+            assemblyai_api_key: None,
+            assemblyai_base_url: "https://api.assemblyai.com".to_string(),
+            assemblyai_webhook_url: None,
+            assemblyai_webhook_secret: None,
+            assemblyai_timeout_ms: 30_000,
+            assemblyai_max_media_bytes: 500 * 1024 * 1024,
             log_level: "info".to_string(),
             voyage_api_key: None,
             rerank_enabled: false,
@@ -541,6 +622,13 @@ mod tests {
             casebuilder_ast_entity_inline_bytes: 64 * 1024,
             casebuilder_ast_snapshot_inline_bytes: 256 * 1024,
             casebuilder_ast_block_inline_bytes: 64 * 1024,
+            assemblyai_enabled: false,
+            assemblyai_api_key: None,
+            assemblyai_base_url: "https://api.assemblyai.com".to_string(),
+            assemblyai_webhook_url: None,
+            assemblyai_webhook_secret: None,
+            assemblyai_timeout_ms: 30_000,
+            assemblyai_max_media_bytes: 500 * 1024 * 1024,
             log_level: "info".to_string(),
             voyage_api_key: None,
             rerank_enabled: false,

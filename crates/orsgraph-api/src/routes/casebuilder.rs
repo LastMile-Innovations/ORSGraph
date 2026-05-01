@@ -7,7 +7,8 @@ use axum::{
     body::Bytes,
     extract::DefaultBodyLimit,
     extract::{Path, Query, State},
-    http::{header, HeaderMap},
+    http::{header, HeaderMap, HeaderValue},
+    response::{IntoResponse, Response},
     routing::{get, patch, post},
     Json, Router,
 };
@@ -56,12 +57,60 @@ pub fn routes() -> Router<AppState> {
             get(get_document).delete(delete_document),
         )
         .route(
+            "/matters/:matter_id/documents/:document_id/workspace",
+            get(get_document_workspace),
+        )
+        .route(
+            "/matters/:matter_id/documents/:document_id/content",
+            get(get_document_content),
+        )
+        .route(
+            "/matters/:matter_id/documents/:document_id/annotations",
+            get(list_document_annotations).post(create_document_annotation),
+        )
+        .route(
+            "/matters/:matter_id/documents/:document_id/text",
+            patch(save_document_text),
+        )
+        .route(
+            "/matters/:matter_id/documents/:document_id/promote-work-product",
+            post(promote_document_work_product),
+        )
+        .route(
             "/matters/:matter_id/documents/:document_id/download-url",
             post(create_download_url),
         )
         .route(
+            "/matters/:matter_id/documents/:document_id/transcriptions",
+            get(list_transcriptions).post(create_transcription),
+        )
+        .route(
+            "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id",
+            get(get_transcription),
+        )
+        .route(
+            "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id/sync",
+            post(sync_transcription),
+        )
+        .route(
+            "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id/segments/:segment_id",
+            patch(patch_transcript_segment),
+        )
+        .route(
+            "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id/speakers/:speaker_id",
+            patch(patch_transcript_speaker),
+        )
+        .route(
+            "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id/review",
+            post(review_transcription),
+        )
+        .route(
             "/matters/:matter_id/documents/:document_id/extract",
             post(extract_document),
+        )
+        .route(
+            "/casebuilder/webhooks/assemblyai",
+            post(assemblyai_webhook),
         )
         .route(
             "/matters/:matter_id/documents/:document_id/import-complaint",
@@ -145,6 +194,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/matters/:matter_id/work-products/:work_product_id/text-ranges",
             post(link_work_product_text_range),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/ast",
+            get(get_work_product_ast).patch(patch_work_product_ast),
         )
         .route(
             "/matters/:matter_id/work-products/:work_product_id/ast/patch",
@@ -573,6 +626,93 @@ async fn get_document(
     ))
 }
 
+async fn get_document_workspace(
+    State(state): State<AppState>,
+    Path((matter_id, document_id)): Path<(String, String)>,
+) -> ApiResult<Json<DocumentWorkspace>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .get_document_workspace(&matter_id, &document_id)
+            .await?,
+    ))
+}
+
+async fn get_document_content(
+    State(state): State<AppState>,
+    Path((matter_id, document_id)): Path<(String, String)>,
+) -> ApiResult<Response> {
+    let (document, bytes) = state
+        .casebuilder_service
+        .get_document_content_bytes(&matter_id, &document_id)
+        .await?;
+    let mut headers = HeaderMap::new();
+    if let Some(mime_type) = document.mime_type.as_deref() {
+        if let Ok(value) = HeaderValue::from_str(mime_type) {
+            headers.insert(header::CONTENT_TYPE, value);
+        }
+    }
+    let disposition = format!(
+        "inline; filename=\"{}\"",
+        document.filename.replace(['"', '\r', '\n'], "_")
+    );
+    if let Ok(value) = HeaderValue::from_str(&disposition) {
+        headers.insert(header::CONTENT_DISPOSITION, value);
+    }
+    Ok((headers, bytes).into_response())
+}
+
+async fn list_document_annotations(
+    State(state): State<AppState>,
+    Path((matter_id, document_id)): Path<(String, String)>,
+) -> ApiResult<Json<Vec<DocumentAnnotation>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .list_document_annotations(&matter_id, &document_id)
+            .await?,
+    ))
+}
+
+async fn create_document_annotation(
+    State(state): State<AppState>,
+    Path((matter_id, document_id)): Path<(String, String)>,
+    Json(request): Json<UpsertDocumentAnnotationRequest>,
+) -> ApiResult<Json<DocumentAnnotation>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_document_annotation(&matter_id, &document_id, request)
+            .await?,
+    ))
+}
+
+async fn save_document_text(
+    State(state): State<AppState>,
+    Path((matter_id, document_id)): Path<(String, String)>,
+    Json(request): Json<SaveDocumentTextRequest>,
+) -> ApiResult<Json<SaveDocumentTextResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .save_document_text(&matter_id, &document_id, request)
+            .await?,
+    ))
+}
+
+async fn promote_document_work_product(
+    State(state): State<AppState>,
+    Path((matter_id, document_id)): Path<(String, String)>,
+    Json(request): Json<PromoteDocumentWorkProductRequest>,
+) -> ApiResult<Json<PromoteDocumentWorkProductResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .promote_document_work_product(&matter_id, &document_id, request)
+            .await?,
+    ))
+}
+
 async fn extract_document(
     State(state): State<AppState>,
     Path((matter_id, document_id)): Path<(String, String)>,
@@ -607,6 +747,132 @@ async fn create_download_url(
         state
             .casebuilder_service
             .create_download_url(&matter_id, &document_id)
+            .await?,
+    ))
+}
+
+async fn create_transcription(
+    State(state): State<AppState>,
+    Path((matter_id, document_id)): Path<(String, String)>,
+    Json(request): Json<CreateTranscriptionRequest>,
+) -> ApiResult<Json<TranscriptionJobResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_transcription(&matter_id, &document_id, request)
+            .await?,
+    ))
+}
+
+async fn list_transcriptions(
+    State(state): State<AppState>,
+    Path((matter_id, document_id)): Path<(String, String)>,
+) -> ApiResult<Json<Vec<TranscriptionJobResponse>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .list_transcriptions(&matter_id, &document_id)
+            .await?,
+    ))
+}
+
+async fn get_transcription(
+    State(state): State<AppState>,
+    Path((matter_id, document_id, transcription_job_id)): Path<(String, String, String)>,
+) -> ApiResult<Json<TranscriptionJobResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .get_transcription(&matter_id, &document_id, &transcription_job_id)
+            .await?,
+    ))
+}
+
+async fn sync_transcription(
+    State(state): State<AppState>,
+    Path((matter_id, document_id, transcription_job_id)): Path<(String, String, String)>,
+) -> ApiResult<Json<TranscriptionJobResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .sync_transcription(&matter_id, &document_id, &transcription_job_id)
+            .await?,
+    ))
+}
+
+async fn patch_transcript_segment(
+    State(state): State<AppState>,
+    Path((matter_id, document_id, transcription_job_id, segment_id)): Path<(
+        String,
+        String,
+        String,
+        String,
+    )>,
+    Json(request): Json<PatchTranscriptSegmentRequest>,
+) -> ApiResult<Json<TranscriptionJobResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_transcript_segment(
+                &matter_id,
+                &document_id,
+                &transcription_job_id,
+                &segment_id,
+                request,
+            )
+            .await?,
+    ))
+}
+
+async fn patch_transcript_speaker(
+    State(state): State<AppState>,
+    Path((matter_id, document_id, transcription_job_id, speaker_id)): Path<(
+        String,
+        String,
+        String,
+        String,
+    )>,
+    Json(request): Json<PatchTranscriptSpeakerRequest>,
+) -> ApiResult<Json<TranscriptionJobResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_transcript_speaker(
+                &matter_id,
+                &document_id,
+                &transcription_job_id,
+                &speaker_id,
+                request,
+            )
+            .await?,
+    ))
+}
+
+async fn review_transcription(
+    State(state): State<AppState>,
+    Path((matter_id, document_id, transcription_job_id)): Path<(String, String, String)>,
+    Json(request): Json<ReviewTranscriptionRequest>,
+) -> ApiResult<Json<TranscriptionJobResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .review_transcription(&matter_id, &document_id, &transcription_job_id, request)
+            .await?,
+    ))
+}
+
+async fn assemblyai_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<AssemblyAiWebhookPayload>,
+) -> ApiResult<Json<TranscriptionWebhookResponse>> {
+    let header_value = headers
+        .get("x-casebuilder-assemblyai-secret")
+        .and_then(|value| value.to_str().ok());
+    Ok(Json(
+        state
+            .casebuilder_service
+            .handle_assemblyai_webhook(header_value, payload)
             .await?,
     ))
 }
@@ -1481,6 +1747,31 @@ async fn apply_work_product_ast_patch(
         state
             .casebuilder_service
             .apply_work_product_ast_patch(&matter_id, &work_product_id, request)
+            .await?,
+    ))
+}
+
+async fn get_work_product_ast(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+) -> ApiResult<Json<WorkProductDocument>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .get_work_product_ast(&matter_id, &work_product_id)
+            .await?,
+    ))
+}
+
+async fn patch_work_product_ast(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+    Json(request): Json<WorkProductDocument>,
+) -> ApiResult<Json<WorkProduct>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_work_product_ast(&matter_id, &work_product_id, request)
             .await?,
     ))
 }

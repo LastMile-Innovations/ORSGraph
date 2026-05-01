@@ -410,11 +410,306 @@ pub struct SourceSpan {
     pub byte_end: Option<u64>,
     pub char_start: Option<u64>,
     pub char_end: Option<u64>,
+    #[serde(default)]
+    pub time_start_ms: Option<u64>,
+    #[serde(default)]
+    pub time_end_ms: Option<u64>,
+    #[serde(default)]
+    pub speaker_label: Option<String>,
     pub quote: Option<String>,
     pub extraction_method: String,
     pub confidence: f32,
     pub review_status: String,
     pub unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DocumentCapability {
+    pub capability: String,
+    pub enabled: bool,
+    pub mode: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DocumentPageRange {
+    pub page: u64,
+    pub x: Option<f32>,
+    pub y: Option<f32>,
+    pub width: Option<f32>,
+    pub height: Option<f32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DocumentTextRange {
+    pub page: Option<u64>,
+    pub byte_start: Option<u64>,
+    pub byte_end: Option<u64>,
+    pub char_start: Option<u64>,
+    pub char_end: Option<u64>,
+    #[serde(default)]
+    pub time_start_ms: Option<u64>,
+    #[serde(default)]
+    pub time_end_ms: Option<u64>,
+    #[serde(default)]
+    pub speaker_label: Option<String>,
+    pub quote: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DocumentAnnotation {
+    pub annotation_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub document_version_id: Option<String>,
+    pub annotation_type: String,
+    pub status: String,
+    pub label: String,
+    pub note: Option<String>,
+    pub color: Option<String>,
+    pub page_range: Option<DocumentPageRange>,
+    pub text_range: Option<DocumentTextRange>,
+    pub target_type: Option<String>,
+    pub target_id: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpsertDocumentAnnotationRequest {
+    pub annotation_type: String,
+    pub label: Option<String>,
+    pub note: Option<String>,
+    pub color: Option<String>,
+    pub page_range: Option<DocumentPageRange>,
+    pub text_range: Option<DocumentTextRange>,
+    pub target_type: Option<String>,
+    pub target_id: Option<String>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DocxPackageEntry {
+    pub name: String,
+    pub size_bytes: u64,
+    pub compressed_size_bytes: u64,
+    pub compression: String,
+    pub supported_text_part: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DocxPackageManifest {
+    pub document_id: String,
+    pub document_version_id: Option<String>,
+    pub entry_count: u64,
+    pub text_part_count: u64,
+    pub editable: bool,
+    pub unsupported_features: Vec<String>,
+    pub entries: Vec<DocxPackageEntry>,
+    pub text_preview: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocumentWorkspace {
+    pub matter_id: String,
+    pub document: CaseDocument,
+    pub current_version: Option<DocumentVersion>,
+    pub capabilities: Vec<DocumentCapability>,
+    pub annotations: Vec<DocumentAnnotation>,
+    pub source_spans: Vec<SourceSpan>,
+    pub transcriptions: Vec<TranscriptionJobResponse>,
+    pub docx_manifest: Option<DocxPackageManifest>,
+    pub text_content: Option<String>,
+    pub content_url: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TranscriptionJob {
+    pub transcription_job_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub document_version_id: Option<String>,
+    pub object_blob_id: Option<String>,
+    pub provider: String,
+    pub provider_mode: String,
+    pub provider_transcript_id: Option<String>,
+    pub provider_status: Option<String>,
+    pub status: String,
+    pub review_status: String,
+    pub raw_artifact_version_id: Option<String>,
+    pub normalized_artifact_version_id: Option<String>,
+    pub redacted_artifact_version_id: Option<String>,
+    pub reviewed_document_version_id: Option<String>,
+    pub caption_vtt_version_id: Option<String>,
+    pub caption_srt_version_id: Option<String>,
+    pub language_code: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub speaker_count: u64,
+    pub segment_count: u64,
+    pub word_count: u64,
+    pub redact_pii: bool,
+    pub speech_models: Vec<String>,
+    pub retryable: bool,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub completed_at: Option<String>,
+    pub reviewed_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TranscriptSegment {
+    pub segment_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub transcription_job_id: String,
+    pub source_span_id: Option<String>,
+    pub ordinal: u64,
+    pub speaker_label: Option<String>,
+    pub speaker_name: Option<String>,
+    pub text: String,
+    pub redacted_text: Option<String>,
+    pub time_start_ms: u64,
+    pub time_end_ms: u64,
+    pub confidence: f32,
+    pub review_status: String,
+    pub edited: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TranscriptSpeaker {
+    pub speaker_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub transcription_job_id: String,
+    pub speaker_label: String,
+    pub display_name: Option<String>,
+    pub role: Option<String>,
+    pub confidence: Option<f32>,
+    pub segment_count: u64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TranscriptReviewChange {
+    pub review_change_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub transcription_job_id: String,
+    pub target_type: String,
+    pub target_id: String,
+    pub field: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TranscriptionJobResponse {
+    pub job: TranscriptionJob,
+    pub segments: Vec<TranscriptSegment>,
+    pub speakers: Vec<TranscriptSpeaker>,
+    pub review_changes: Vec<TranscriptReviewChange>,
+    pub raw_artifact_version: Option<DocumentVersion>,
+    pub normalized_artifact_version: Option<DocumentVersion>,
+    pub redacted_artifact_version: Option<DocumentVersion>,
+    pub reviewed_document_version: Option<DocumentVersion>,
+    pub caption_vtt_version: Option<DocumentVersion>,
+    pub caption_srt_version: Option<DocumentVersion>,
+    pub caption_vtt: Option<String>,
+    pub caption_srt: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateTranscriptionRequest {
+    #[serde(default)]
+    pub force: Option<bool>,
+    #[serde(default)]
+    pub language_code: Option<String>,
+    #[serde(default)]
+    pub redact_pii: Option<bool>,
+    #[serde(default)]
+    pub speaker_labels: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatchTranscriptSegmentRequest {
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub redacted_text: Option<String>,
+    #[serde(default)]
+    pub speaker_label: Option<String>,
+    #[serde(default)]
+    pub review_status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatchTranscriptSpeakerRequest {
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReviewTranscriptionRequest {
+    #[serde(default)]
+    pub reviewed_text: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AssemblyAiWebhookPayload {
+    pub transcript_id: String,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TranscriptionWebhookResponse {
+    pub handled: bool,
+    pub message: String,
+    pub transcription: Option<TranscriptionJobResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveDocumentTextRequest {
+    pub text: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SaveDocumentTextResponse {
+    pub document: CaseDocument,
+    pub document_version: DocumentVersion,
+    pub ingestion_run: IngestionRun,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PromoteDocumentWorkProductRequest {
+    pub product_type: Option<String>,
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PromoteDocumentWorkProductResponse {
+    pub work_product: WorkProduct,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -994,6 +1289,8 @@ pub struct WorkProductDocument {
     #[serde(default)]
     pub rule_findings: Vec<WorkProductFinding>,
     #[serde(default)]
+    pub tombstones: Vec<WorkProductBlock>,
+    #[serde(default)]
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
@@ -1009,6 +1306,10 @@ pub fn default_work_product_document_type() -> String {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct WorkProductMetadata {
+    #[serde(default)]
+    pub work_product_type: Option<String>,
+    #[serde(default)]
+    pub document_title: Option<String>,
     #[serde(default)]
     pub jurisdiction: Option<String>,
     #[serde(default)]
@@ -1027,6 +1328,14 @@ pub struct WorkProductMetadata {
     pub parties: Option<WorkProductParties>,
     #[serde(default = "default_work_product_metadata_status")]
     pub status: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    pub created_by: Option<String>,
+    #[serde(default)]
+    pub last_modified_by: Option<String>,
 }
 
 fn default_work_product_metadata_status() -> String {
@@ -1406,6 +1715,8 @@ pub struct WorkProductBlock {
     #[serde(default)]
     pub sentence_index: Option<u64>,
     #[serde(default)]
+    pub sentence_id: Option<String>,
+    #[serde(default)]
     pub section_kind: Option<String>,
     #[serde(default)]
     pub count_number: Option<u64>,
@@ -1431,6 +1742,20 @@ pub struct WorkProductBlock {
     pub mark_ids: Vec<String>,
     #[serde(default)]
     pub locked: bool,
+    #[serde(default)]
+    pub tombstoned: bool,
+    #[serde(default)]
+    pub deleted_at: Option<String>,
+    #[serde(default)]
+    pub source_document_id: Option<String>,
+    #[serde(default)]
+    pub source_span_id: Option<String>,
+    #[serde(default)]
+    pub created_by: Option<String>,
+    #[serde(default)]
+    pub last_modified_by: Option<String>,
+    #[serde(default)]
+    pub provenance: Option<BTreeMap<String, String>>,
     #[serde(default)]
     pub review_status: String,
     #[serde(default)]
@@ -1478,6 +1803,12 @@ pub struct WorkProductFinding {
     pub matter_id: String,
     pub work_product_id: String,
     pub rule_id: String,
+    #[serde(default)]
+    pub rule_pack_id: Option<String>,
+    #[serde(default)]
+    pub source_citation: Option<String>,
+    #[serde(default)]
+    pub source_url: Option<String>,
     pub category: String,
     pub severity: String,
     pub target_type: String,
@@ -1485,6 +1816,8 @@ pub struct WorkProductFinding {
     pub message: String,
     pub explanation: String,
     pub suggested_fix: String,
+    #[serde(default)]
+    pub auto_fix_available: bool,
     pub primary_action: WorkProductAction,
     pub status: String,
     pub created_at: String,
@@ -1785,6 +2118,10 @@ pub enum AstOperation {
 pub struct AstValidationIssue {
     pub code: String,
     pub message: String,
+    #[serde(default)]
+    pub severity: Option<String>,
+    #[serde(default)]
+    pub blocking: bool,
     #[serde(default)]
     pub target_type: Option<String>,
     #[serde(default)]

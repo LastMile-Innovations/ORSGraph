@@ -392,11 +392,203 @@ export interface SourceSpan {
   byte_end?: number | null
   char_start?: number | null
   char_end?: number | null
+  time_start_ms?: number | null
+  time_end_ms?: number | null
+  speaker_label?: string | null
   quote?: string | null
   extraction_method: string
   confidence: number
   review_status: "unreviewed" | "approved" | "rejected" | "unavailable" | string
   unavailable_reason?: string | null
+}
+
+export interface DocumentCapability {
+  capability: string
+  enabled: boolean
+  mode: string
+  reason?: string | null
+}
+
+export interface DocumentPageRange {
+  page: number
+  x?: number | null
+  y?: number | null
+  width?: number | null
+  height?: number | null
+}
+
+export interface DocumentTextRange {
+  page?: number | null
+  byte_start?: number | null
+  byte_end?: number | null
+  char_start?: number | null
+  char_end?: number | null
+  time_start_ms?: number | null
+  time_end_ms?: number | null
+  speaker_label?: string | null
+  quote?: string | null
+}
+
+export interface DocumentAnnotation {
+  annotation_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  document_version_id?: string | null
+  annotation_type: "highlight" | "note" | "redaction" | "exhibit_label" | "fact_link" | "citation" | "issue" | string
+  status: "active" | "resolved" | "deleted" | string
+  label: string
+  note?: string | null
+  color?: string | null
+  page_range?: DocumentPageRange | null
+  text_range?: DocumentTextRange | null
+  target_type?: string | null
+  target_id?: string | null
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface DocxPackageEntry {
+  name: string
+  size_bytes: number
+  compressed_size_bytes: number
+  compression: string
+  supported_text_part: boolean
+}
+
+export interface DocxPackageManifest {
+  document_id: string
+  document_version_id?: string | null
+  entry_count: number
+  text_part_count: number
+  editable: boolean
+  unsupported_features: string[]
+  entries: DocxPackageEntry[]
+  text_preview?: string | null
+}
+
+export interface DocumentWorkspace {
+  matter_id: string
+  document: CaseDocument
+  current_version?: DocumentVersion | null
+  capabilities: DocumentCapability[]
+  annotations: DocumentAnnotation[]
+  source_spans: SourceSpan[]
+  transcriptions: TranscriptionJobResponse[]
+  docx_manifest?: DocxPackageManifest | null
+  text_content?: string | null
+  content_url?: string | null
+  warnings: string[]
+}
+
+export interface TranscriptionJob {
+  transcription_job_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  document_version_id?: string | null
+  object_blob_id?: string | null
+  provider: "assemblyai" | string
+  provider_mode: "disabled" | "live" | string
+  provider_transcript_id?: string | null
+  provider_status?: string | null
+  status:
+    | "queued"
+    | "processing"
+    | "review_ready"
+    | "processed"
+    | "failed"
+    | "provider_disabled"
+    | string
+  review_status: "not_started" | "needs_review" | "approved" | string
+  raw_artifact_version_id?: string | null
+  normalized_artifact_version_id?: string | null
+  redacted_artifact_version_id?: string | null
+  reviewed_document_version_id?: string | null
+  caption_vtt_version_id?: string | null
+  caption_srt_version_id?: string | null
+  language_code?: string | null
+  duration_ms?: number | null
+  speaker_count: number
+  segment_count: number
+  word_count: number
+  redact_pii: boolean
+  speech_models: string[]
+  retryable: boolean
+  error_code?: string | null
+  error_message?: string | null
+  created_at: string
+  updated_at: string
+  completed_at?: string | null
+  reviewed_at?: string | null
+}
+
+export interface TranscriptSegment {
+  segment_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  transcription_job_id: string
+  source_span_id?: string | null
+  ordinal: number
+  speaker_label?: string | null
+  speaker_name?: string | null
+  text: string
+  redacted_text?: string | null
+  time_start_ms: number
+  time_end_ms: number
+  confidence: number
+  review_status: string
+  edited: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface TranscriptSpeaker {
+  speaker_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  transcription_job_id: string
+  speaker_label: string
+  display_name?: string | null
+  role?: string | null
+  confidence?: number | null
+  segment_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface TranscriptReviewChange {
+  review_change_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  transcription_job_id: string
+  target_type: string
+  target_id: string
+  field: string
+  before?: string | null
+  after?: string | null
+  created_by: string
+  created_at: string
+}
+
+export interface TranscriptionJobResponse {
+  job: TranscriptionJob
+  segments: TranscriptSegment[]
+  speakers: TranscriptSpeaker[]
+  review_changes: TranscriptReviewChange[]
+  raw_artifact_version?: DocumentVersion | null
+  normalized_artifact_version?: DocumentVersion | null
+  redacted_artifact_version?: DocumentVersion | null
+  reviewed_document_version?: DocumentVersion | null
+  caption_vtt_version?: DocumentVersion | null
+  caption_srt_version?: DocumentVersion | null
+  caption_vtt?: string | null
+  caption_srt?: string | null
+  warnings: string[]
 }
 
 export interface ExtractedEntity {
@@ -510,6 +702,7 @@ export interface MatterDocument {
   current_version_id?: string | null
   ingestion_run_ids?: string[]
   source_spans?: SourceSpan[]
+  extracted_text?: string | null
 }
 
 // ===== Parties =====
@@ -962,11 +1155,14 @@ export interface WorkProductDocument {
   citations: WorkProductCitationUse[]
   exhibits: WorkProductExhibitReference[]
   rule_findings: WorkProductFinding[]
+  tombstones: WorkProductBlock[]
   created_at: string
   updated_at: string
 }
 
 export interface WorkProductMetadata {
+  work_product_type?: string | null
+  document_title?: string | null
   jurisdiction?: string | null
   court?: string | null
   county?: string | null
@@ -981,6 +1177,10 @@ export interface WorkProductMetadata {
     respondents: string[]
   } | null
   status: string
+  created_at?: string | null
+  updated_at?: string | null
+  created_by?: string | null
+  last_modified_by?: string | null
 }
 
 export interface TextRange {
@@ -1301,6 +1501,7 @@ export interface WorkProductBlock {
   rule_finding_ids: string[]
   paragraph_number?: number | null
   sentence_index?: number | null
+  sentence_id?: string | null
   section_kind?: string | null
   count_number?: number | null
   claim_type?: string | null
@@ -1314,6 +1515,13 @@ export interface WorkProductBlock {
   authorities: { citation: string; canonical_id: string; reason?: string; pinpoint?: string }[]
   mark_ids: string[]
   locked: boolean
+  tombstoned: boolean
+  deleted_at?: string | null
+  source_document_id?: string | null
+  source_span_id?: string | null
+  created_by?: string | null
+  last_modified_by?: string | null
+  provenance?: Record<string, string> | null
   review_status: string
   prosemirror_json?: Record<string, unknown> | null
 }
@@ -1352,6 +1560,8 @@ export type AstOperation =
 export interface AstValidationIssue {
   code: string
   message: string
+  severity?: string | null
+  blocking: boolean
   target_type?: string | null
   target_id?: string | null
 }
@@ -1416,6 +1626,9 @@ export interface WorkProductFinding {
   matter_id: string
   work_product_id: string
   rule_id: string
+  rule_pack_id?: string | null
+  source_citation?: string | null
+  source_url?: string | null
   category: string
   severity: "info" | "warning" | "serious" | "blocking" | string
   target_type: string
@@ -1423,6 +1636,7 @@ export interface WorkProductFinding {
   message: string
   explanation: string
   suggested_fix: string
+  auto_fix_available: boolean
   primary_action: WorkProductAction
   status: "open" | "resolved" | "ignored" | string
   created_at: string

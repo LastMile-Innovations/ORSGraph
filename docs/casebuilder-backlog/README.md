@@ -41,6 +41,8 @@ Work in phase order unless a dependency blocks progress. A feature is not Done j
 - [10-complaint-editor-backlog.md](10-complaint-editor-backlog.md): Complaint profile backlog for the first structured WorkProduct profile: complaint AST/facade, guided UX, Oregon rule pack, QC, preview, export, AI, history, and filing packet work.
 - [11-case-history-version-control.md](11-case-history-version-control.md): Optimized Case History spec and agile backlog for Git-like legal version control across complaint edits, support links, QC, AI audit, exports, restore, branches, milestones, and merge cards.
 - [12-work-product-builder-backlog.md](12-work-product-builder-backlog.md): Canonical shared WorkProduct Builder backlog for the `WorkProduct.document_ast` model, AST patching, editor projections, links/citations/exhibits, rule findings, exports, performance, security, test gates, and reusable legal document editing across complaints, answers, motions, declarations, memos, letters, notices, exhibit lists, filing packets, and future filings.
+- [13-work-product-ast-mvp-backlog.md](13-work-product-ast-mvp-backlog.md): Optimized status-marked requirement backlog for the WorkProduct AST MVP, mapping the full `REQ-AST-*` family list into ship-sized implementation items with Done/Partial/Todo/Deferred status.
+- [14-media-transcript-creator-editor.md](14-media-transcript-creator-editor.md): CaseBuilder media transcript creator/editor spec and backlog for AssemblyAI provider config, transcription jobs, redacted/reviewed artifacts, media transcript review, captions, webhooks, and reviewed-span case links.
 
 ## Current done summary
 

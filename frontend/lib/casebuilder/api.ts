@@ -16,6 +16,9 @@ import type {
   CaseDefense,
   CaseEvidence,
   CaseTask,
+  DocxPackageManifest,
+  DocumentAnnotation,
+  DocumentCapability,
   CaseFactCheckFinding,
   ChangeSet,
   ComplaintCaption,
@@ -36,6 +39,7 @@ import type {
   RestoreVersionResponse,
   SignatureBlock,
   DocumentVersion,
+  DocumentWorkspace,
   Claim,
   ClaimElement,
   Deadline,
@@ -51,6 +55,11 @@ import type {
   QcRun,
   SourceSpan,
   TimelineEvent,
+  TranscriptionJob,
+  TranscriptionJobResponse,
+  TranscriptReviewChange,
+  TranscriptSegment,
+  TranscriptSpeaker,
   WorkProduct,
   WorkProductAnchor,
   WorkProductArtifact,
@@ -73,6 +82,12 @@ import { decodeMatterRouteId } from "./routes"
 const API_BASE_URL = process.env.NEXT_PUBLIC_ORS_API_BASE_URL || "http://localhost:8080/api/v1"
 const API_KEY = process.env.NEXT_PUBLIC_ORS_API_KEY
 const DEMO_MODE = process.env.NEXT_PUBLIC_ORS_DEMO_MODE === "true"
+
+function documentContentProxyUrl(matterId: string, documentId: string, contentUrl?: string | null): string | null {
+  if (!contentUrl) return null
+  const params = new URLSearchParams({ matterId, documentId })
+  return `/api/casebuilder/document-content?${params.toString()}`
+}
 
 export type LoadSource = "live" | "demo" | "offline" | "error"
 
@@ -171,6 +186,63 @@ export interface ExtractDocumentResponse {
   ingestion_run?: IngestionRun | null
   document_version?: DocumentVersion | null
   source_spans: SourceSpan[]
+}
+
+export interface SaveDocumentTextInput {
+  text: string
+}
+
+export interface SaveDocumentTextResponse {
+  document: CaseDocument
+  document_version: DocumentVersion
+  ingestion_run: IngestionRun
+  warnings: string[]
+}
+
+export interface CreateDocumentAnnotationInput {
+  annotation_type: string
+  label?: string
+  note?: string
+  color?: string
+  page_range?: DocumentAnnotation["page_range"]
+  text_range?: DocumentAnnotation["text_range"]
+  target_type?: string
+  target_id?: string
+  status?: string
+}
+
+export interface PromoteDocumentWorkProductInput {
+  product_type?: string
+  title?: string
+}
+
+export interface PromoteDocumentWorkProductResponse {
+  work_product: WorkProduct
+  warnings: string[]
+}
+
+export interface CreateTranscriptionInput {
+  force?: boolean
+  language_code?: string | null
+  redact_pii?: boolean
+  speaker_labels?: boolean
+}
+
+export interface PatchTranscriptSegmentInput {
+  text?: string
+  redacted_text?: string | null
+  speaker_label?: string | null
+  review_status?: string
+}
+
+export interface PatchTranscriptSpeakerInput {
+  display_name?: string | null
+  role?: string | null
+}
+
+export interface ReviewTranscriptionInput {
+  reviewed_text?: string
+  status?: string
 }
 
 export interface CreatePartyInput {
@@ -669,6 +741,103 @@ export function createDocumentDownloadUrl(
   )
 }
 
+export async function getDocumentWorkspace(
+  matterId: string,
+  documentId: string,
+): Promise<LoadState<DocumentWorkspace | null>> {
+  const decodedMatterId = decodeMatterRouteId(matterId)
+  try {
+    const live = await fetchCaseBuilder<unknown>(
+      `/matters/${encodeURIComponent(decodedMatterId)}/documents/${encodeURIComponent(documentId)}/workspace`,
+    )
+    return { source: "live", data: normalizeDocumentWorkspace(live) }
+  } catch (error) {
+    if (!DEMO_MODE) {
+      return { source: "error", data: null, error: errorMessage(error) }
+    }
+    const matter = getDemoMatterById(decodedMatterId)
+    const document = matter?.documents.find((candidate) => candidate.id === documentId || candidate.document_id === documentId)
+    if (!matter || !document) {
+      return { source: "error", data: null, error: errorMessage(error) }
+    }
+    return {
+      source: "demo",
+      data: normalizeDocumentWorkspace({
+        matter_id: matter.id,
+        document,
+        current_version: null,
+        capabilities: demoCapabilitiesForDocument(document),
+        annotations: [],
+        source_spans: document.source_spans ?? [],
+        docx_manifest: null,
+        text_content: document.extracted_text ?? document.chunks?.map((chunk) => chunk.text).join("\n\n") ?? null,
+        content_url: null,
+        warnings: ["Demo mode is showing an offline document workspace."],
+      }),
+      error: errorMessage(error),
+    }
+  }
+}
+
+export function createDocumentAnnotation(
+  matterId: string,
+  documentId: string,
+  input: CreateDocumentAnnotationInput,
+): Promise<ActionState<DocumentAnnotation>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/documents/${encodeURIComponent(documentId)}/annotations`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      normalize: normalizeDocumentAnnotation,
+    },
+  )
+}
+
+export function saveDocumentText(
+  matterId: string,
+  documentId: string,
+  input: SaveDocumentTextInput,
+): Promise<ActionState<SaveDocumentTextResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/documents/${encodeURIComponent(documentId)}/text`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+      normalize: (raw) => {
+        const response = raw as any
+        return {
+          document: normalizeDocument(response.document),
+          document_version: normalizeDocumentVersion(response.document_version),
+          ingestion_run: normalizeIngestionRun(response.ingestion_run),
+          warnings: array(response.warnings),
+        }
+      },
+    },
+  )
+}
+
+export function promoteDocumentWorkProduct(
+  matterId: string,
+  documentId: string,
+  input: PromoteDocumentWorkProductInput,
+): Promise<ActionState<PromoteDocumentWorkProductResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/documents/${encodeURIComponent(documentId)}/promote-work-product`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      normalize: (raw) => {
+        const response = raw as any
+        return {
+          work_product: normalizeWorkProduct(response.work_product),
+          warnings: array(response.warnings),
+        }
+      },
+    },
+  )
+}
+
 export function deleteDocument(
   matterId: string,
   documentId: string,
@@ -708,6 +877,98 @@ export function extractDocument(
           source_spans: array(response.source_spans).map(normalizeSourceSpan),
         }
       },
+    },
+  )
+}
+
+export function createTranscription(
+  matterId: string,
+  documentId: string,
+  input: CreateTranscriptionInput = {},
+): Promise<ActionState<TranscriptionJobResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/documents/${encodeURIComponent(documentId)}/transcriptions`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      normalize: normalizeTranscriptionJobResponse,
+    },
+  )
+}
+
+export function listTranscriptions(
+  matterId: string,
+  documentId: string,
+): Promise<ActionState<TranscriptionJobResponse[]>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/documents/${encodeURIComponent(documentId)}/transcriptions`,
+    {
+      method: "GET",
+      normalize: (raw) => array(raw).map(normalizeTranscriptionJobResponse),
+    },
+  )
+}
+
+export function syncTranscription(
+  matterId: string,
+  documentId: string,
+  transcriptionJobId: string,
+): Promise<ActionState<TranscriptionJobResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/documents/${encodeURIComponent(documentId)}/transcriptions/${encodeURIComponent(transcriptionJobId)}/sync`,
+    {
+      method: "POST",
+      normalize: normalizeTranscriptionJobResponse,
+    },
+  )
+}
+
+export function patchTranscriptSegment(
+  matterId: string,
+  documentId: string,
+  transcriptionJobId: string,
+  segmentId: string,
+  input: PatchTranscriptSegmentInput,
+): Promise<ActionState<TranscriptionJobResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/documents/${encodeURIComponent(documentId)}/transcriptions/${encodeURIComponent(transcriptionJobId)}/segments/${encodeURIComponent(segmentId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+      normalize: normalizeTranscriptionJobResponse,
+    },
+  )
+}
+
+export function patchTranscriptSpeaker(
+  matterId: string,
+  documentId: string,
+  transcriptionJobId: string,
+  speakerId: string,
+  input: PatchTranscriptSpeakerInput,
+): Promise<ActionState<TranscriptionJobResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/documents/${encodeURIComponent(documentId)}/transcriptions/${encodeURIComponent(transcriptionJobId)}/speakers/${encodeURIComponent(speakerId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+      normalize: normalizeTranscriptionJobResponse,
+    },
+  )
+}
+
+export function reviewTranscription(
+  matterId: string,
+  documentId: string,
+  transcriptionJobId: string,
+  input: ReviewTranscriptionInput,
+): Promise<ActionState<TranscriptionJobResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/documents/${encodeURIComponent(documentId)}/transcriptions/${encodeURIComponent(transcriptionJobId)}/review`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      normalize: normalizeTranscriptionJobResponse,
     },
   )
 }
@@ -1205,6 +1466,42 @@ export function applyWorkProductAstPatch(
     `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/work-products/${encodeURIComponent(workProductId)}/ast/patch`,
     {
       method: "POST",
+      body: JSON.stringify(input),
+      normalize: normalizeWorkProduct,
+    },
+  )
+}
+
+export function getWorkProductAst(
+  matterId: string,
+  workProductId: string,
+): Promise<ActionState<WorkProductDocument>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/work-products/${encodeURIComponent(workProductId)}/ast`,
+    {
+      method: "GET",
+      normalize: (raw) =>
+        normalizeWorkProductDocument(raw, {
+          workProductId,
+          matterId: decodeMatterRouteId(matterId),
+          productType: "custom",
+          title: "Work product",
+          fallbackBlocks: [],
+          fallbackFindings: [],
+        }),
+    },
+  )
+}
+
+export function patchWorkProductAst(
+  matterId: string,
+  workProductId: string,
+  input: WorkProductDocument,
+): Promise<ActionState<WorkProduct>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/work-products/${encodeURIComponent(workProductId)}/ast`,
+    {
+      method: "PATCH",
       body: JSON.stringify(input),
       normalize: normalizeWorkProduct,
     },
@@ -2299,7 +2596,101 @@ function normalizeDocument(input: any): CaseDocument {
     current_version_id: input.current_version_id ?? input.currentVersionId ?? null,
     ingestion_run_ids: array(input.ingestion_run_ids, input.ingestionRunIds),
     source_spans: array(input.source_spans, input.sourceSpans).map(normalizeSourceSpan),
+    extracted_text: extractedText,
   }
+}
+
+function normalizeDocumentWorkspace(input: any): DocumentWorkspace {
+  const matterId = string(input.matter_id)
+  const document = normalizeDocument(input.document)
+  return {
+    matter_id: matterId,
+    document,
+    current_version: input.current_version ? normalizeDocumentVersion(input.current_version) : null,
+    capabilities: array(input.capabilities).map(normalizeDocumentCapability),
+    annotations: array(input.annotations).map(normalizeDocumentAnnotation),
+    source_spans: array(input.source_spans, input.sourceSpans).map(normalizeSourceSpan),
+    transcriptions: array(input.transcriptions).map(normalizeTranscriptionJobResponse),
+    docx_manifest: input.docx_manifest ? normalizeDocxPackageManifest(input.docx_manifest) : null,
+    text_content: input.text_content ?? input.textContent ?? null,
+    content_url: documentContentProxyUrl(matterId, document.document_id, input.content_url ?? input.contentUrl ?? null),
+    warnings: array(input.warnings),
+  }
+}
+
+function normalizeDocumentCapability(input: any): DocumentCapability {
+  return {
+    capability: string(input.capability),
+    enabled: Boolean(input.enabled),
+    mode: string(input.mode),
+    reason: input.reason ?? null,
+  }
+}
+
+function normalizeDocumentAnnotation(input: any): DocumentAnnotation {
+  return {
+    ...input,
+    id: string(input.id, input.annotation_id),
+    annotation_id: string(input.annotation_id, input.id),
+    matter_id: string(input.matter_id),
+    document_id: string(input.document_id),
+    document_version_id: input.document_version_id ?? input.documentVersionId ?? null,
+    annotation_type: string(input.annotation_type, input.annotationType, "note"),
+    status: string(input.status, "active"),
+    label: string(input.label, "Note"),
+    note: input.note ?? null,
+    color: input.color ?? null,
+    page_range: input.page_range ?? input.pageRange ?? null,
+    text_range: input.text_range ?? input.textRange ?? null,
+    target_type: input.target_type ?? input.targetType ?? null,
+    target_id: input.target_id ?? input.targetId ?? null,
+    created_by: string(input.created_by, input.createdBy, "user"),
+    created_at: string(input.created_at, input.createdAt),
+    updated_at: string(input.updated_at, input.updatedAt),
+  }
+}
+
+function normalizeDocxPackageManifest(input: any): DocxPackageManifest {
+  return {
+    document_id: string(input.document_id),
+    document_version_id: input.document_version_id ?? input.documentVersionId ?? null,
+    entry_count: number(input.entry_count, input.entryCount),
+    text_part_count: number(input.text_part_count, input.textPartCount),
+    editable: Boolean(input.editable),
+    unsupported_features: array(input.unsupported_features, input.unsupportedFeatures),
+    entries: array(input.entries).map((entry: any) => ({
+      name: string(entry.name),
+      size_bytes: number(entry.size_bytes, entry.sizeBytes),
+      compressed_size_bytes: number(entry.compressed_size_bytes, entry.compressedSizeBytes),
+      compression: string(entry.compression),
+      supported_text_part: Boolean(entry.supported_text_part ?? entry.supportedTextPart),
+    })),
+    text_preview: input.text_preview ?? input.textPreview ?? null,
+  }
+}
+
+function demoCapabilitiesForDocument(document: CaseDocument): DocumentCapability[] {
+  const filename = document.filename.toLowerCase()
+  const mime = (document.mime_type ?? "").toLowerCase()
+  if (filename.endsWith(".pdf") || mime === "application/pdf") {
+    return [
+      { capability: "view", enabled: true, mode: "pdfjs" },
+      { capability: "edit", enabled: false, mode: "immutable_pdf_bytes" },
+      { capability: "annotate", enabled: true, mode: "graph_sidecar" },
+    ]
+  }
+  if (filename.endsWith(".docx")) {
+    return [
+      { capability: "view", enabled: true, mode: "custom_docx" },
+      { capability: "edit", enabled: true, mode: "ooxml_round_trip_text" },
+      { capability: "annotate", enabled: true, mode: "graph_sidecar" },
+    ]
+  }
+  return [
+    { capability: "view", enabled: true, mode: "text_or_preview" },
+    { capability: "edit", enabled: filename.endsWith(".md") || mime.startsWith("text/"), mode: "source_text" },
+    { capability: "annotate", enabled: true, mode: "graph_sidecar" },
+  ]
 }
 
 function normalizeDocumentChunk(input: any) {
@@ -2440,6 +2831,122 @@ function normalizeIngestionRun(input: any): IngestionRun {
   }
 }
 
+function normalizeTranscriptionJobResponse(input: any): TranscriptionJobResponse {
+  return {
+    job: normalizeTranscriptionJob(input.job),
+    segments: array(input.segments).map(normalizeTranscriptSegment),
+    speakers: array(input.speakers).map(normalizeTranscriptSpeaker),
+    review_changes: array(input.review_changes, input.reviewChanges).map(normalizeTranscriptReviewChange),
+    raw_artifact_version: input.raw_artifact_version ? normalizeDocumentVersion(input.raw_artifact_version) : null,
+    normalized_artifact_version: input.normalized_artifact_version ? normalizeDocumentVersion(input.normalized_artifact_version) : null,
+    redacted_artifact_version: input.redacted_artifact_version ? normalizeDocumentVersion(input.redacted_artifact_version) : null,
+    reviewed_document_version: input.reviewed_document_version ? normalizeDocumentVersion(input.reviewed_document_version) : null,
+    caption_vtt_version: input.caption_vtt_version ? normalizeDocumentVersion(input.caption_vtt_version) : null,
+    caption_srt_version: input.caption_srt_version ? normalizeDocumentVersion(input.caption_srt_version) : null,
+    caption_vtt: input.caption_vtt ?? input.captionVtt ?? null,
+    caption_srt: input.caption_srt ?? input.captionSrt ?? null,
+    warnings: array(input.warnings),
+  }
+}
+
+function normalizeTranscriptionJob(input: any): TranscriptionJob {
+  return {
+    ...input,
+    id: string(input.id, input.transcription_job_id),
+    transcription_job_id: string(input.transcription_job_id, input.id),
+    matter_id: string(input.matter_id),
+    document_id: string(input.document_id),
+    document_version_id: input.document_version_id ?? input.documentVersionId ?? null,
+    object_blob_id: input.object_blob_id ?? input.objectBlobId ?? null,
+    provider: string(input.provider, "assemblyai"),
+    provider_mode: string(input.provider_mode, input.providerMode, "disabled"),
+    provider_transcript_id: input.provider_transcript_id ?? input.providerTranscriptId ?? null,
+    provider_status: input.provider_status ?? input.providerStatus ?? null,
+    status: string(input.status, "queued"),
+    review_status: string(input.review_status, input.reviewStatus, "not_started"),
+    raw_artifact_version_id: input.raw_artifact_version_id ?? input.rawArtifactVersionId ?? null,
+    normalized_artifact_version_id: input.normalized_artifact_version_id ?? input.normalizedArtifactVersionId ?? null,
+    redacted_artifact_version_id: input.redacted_artifact_version_id ?? input.redactedArtifactVersionId ?? null,
+    reviewed_document_version_id: input.reviewed_document_version_id ?? input.reviewedDocumentVersionId ?? null,
+    caption_vtt_version_id: input.caption_vtt_version_id ?? input.captionVttVersionId ?? null,
+    caption_srt_version_id: input.caption_srt_version_id ?? input.captionSrtVersionId ?? null,
+    language_code: input.language_code ?? input.languageCode ?? null,
+    duration_ms: nullableNumber(input.duration_ms, input.durationMs),
+    speaker_count: number(input.speaker_count, input.speakerCount),
+    segment_count: number(input.segment_count, input.segmentCount),
+    word_count: number(input.word_count, input.wordCount),
+    redact_pii: Boolean(input.redact_pii ?? input.redactPii ?? true),
+    speech_models: array(input.speech_models, input.speechModels).map(String),
+    retryable: Boolean(input.retryable),
+    error_code: input.error_code ?? input.errorCode ?? null,
+    error_message: input.error_message ?? input.errorMessage ?? null,
+    created_at: string(input.created_at, input.createdAt),
+    updated_at: string(input.updated_at, input.updatedAt),
+    completed_at: input.completed_at ?? input.completedAt ?? null,
+    reviewed_at: input.reviewed_at ?? input.reviewedAt ?? null,
+  }
+}
+
+function normalizeTranscriptSegment(input: any): TranscriptSegment {
+  return {
+    ...input,
+    id: string(input.id, input.segment_id),
+    segment_id: string(input.segment_id, input.id),
+    matter_id: string(input.matter_id),
+    document_id: string(input.document_id),
+    transcription_job_id: string(input.transcription_job_id, input.transcriptionJobId),
+    source_span_id: input.source_span_id ?? input.sourceSpanId ?? null,
+    ordinal: number(input.ordinal),
+    speaker_label: input.speaker_label ?? input.speakerLabel ?? null,
+    speaker_name: input.speaker_name ?? input.speakerName ?? null,
+    text: string(input.text),
+    redacted_text: input.redacted_text ?? input.redactedText ?? null,
+    time_start_ms: number(input.time_start_ms, input.timeStartMs),
+    time_end_ms: number(input.time_end_ms, input.timeEndMs),
+    confidence: number(input.confidence),
+    review_status: string(input.review_status, input.reviewStatus, "unreviewed"),
+    edited: Boolean(input.edited),
+    created_at: string(input.created_at, input.createdAt),
+    updated_at: string(input.updated_at, input.updatedAt),
+  }
+}
+
+function normalizeTranscriptSpeaker(input: any): TranscriptSpeaker {
+  return {
+    ...input,
+    id: string(input.id, input.speaker_id),
+    speaker_id: string(input.speaker_id, input.id),
+    matter_id: string(input.matter_id),
+    document_id: string(input.document_id),
+    transcription_job_id: string(input.transcription_job_id, input.transcriptionJobId),
+    speaker_label: string(input.speaker_label, input.speakerLabel),
+    display_name: input.display_name ?? input.displayName ?? null,
+    role: input.role ?? null,
+    confidence: nullableNumber(input.confidence),
+    segment_count: number(input.segment_count, input.segmentCount),
+    created_at: string(input.created_at, input.createdAt),
+    updated_at: string(input.updated_at, input.updatedAt),
+  }
+}
+
+function normalizeTranscriptReviewChange(input: any): TranscriptReviewChange {
+  return {
+    ...input,
+    id: string(input.id, input.review_change_id),
+    review_change_id: string(input.review_change_id, input.id),
+    matter_id: string(input.matter_id),
+    document_id: string(input.document_id),
+    transcription_job_id: string(input.transcription_job_id, input.transcriptionJobId),
+    target_type: string(input.target_type, input.targetType),
+    target_id: string(input.target_id, input.targetId),
+    field: string(input.field),
+    before: input.before ?? null,
+    after: input.after ?? null,
+    created_by: string(input.created_by, input.createdBy, "user"),
+    created_at: string(input.created_at, input.createdAt),
+  }
+}
+
 function normalizeSourceSpan(input: any): SourceSpan {
   return {
     ...input,
@@ -2456,6 +2963,9 @@ function normalizeSourceSpan(input: any): SourceSpan {
     byte_end: nullableNumber(input.byte_end, input.byteEnd),
     char_start: nullableNumber(input.char_start, input.charStart),
     char_end: nullableNumber(input.char_end, input.charEnd),
+    time_start_ms: nullableNumber(input.time_start_ms, input.timeStartMs),
+    time_end_ms: nullableNumber(input.time_end_ms, input.timeEndMs),
+    speaker_label: input.speaker_label ?? input.speakerLabel ?? null,
     quote: input.quote ?? null,
     extraction_method: string(input.extraction_method, input.extractionMethod, "unknown"),
     confidence: number(input.confidence),
@@ -2902,6 +3412,7 @@ function normalizeWorkProductDocument(
     rule_findings: array(input.rule_findings, input.ruleFindings).length
       ? array(input.rule_findings, input.ruleFindings).map(normalizeWorkProductFinding)
       : context.fallbackFindings,
+    tombstones: array(input.tombstones).map((block) => normalizeWorkProductBlock(block, context.workProductId)),
     created_at: string(input.created_at, input.createdAt),
     updated_at: string(input.updated_at, input.updatedAt),
   }
@@ -2909,6 +3420,8 @@ function normalizeWorkProductDocument(
 
 function normalizeWorkProductMetadata(input: any) {
   return {
+    work_product_type: input.work_product_type ?? input.workProductType ?? null,
+    document_title: input.document_title ?? input.documentTitle ?? null,
     jurisdiction: input.jurisdiction ?? null,
     court: input.court ?? null,
     county: input.county ?? null,
@@ -2925,6 +3438,10 @@ function normalizeWorkProductMetadata(input: any) {
         }
       : null,
     status: string(input.status, "draft"),
+    created_at: input.created_at ?? input.createdAt ?? null,
+    updated_at: input.updated_at ?? input.updatedAt ?? null,
+    created_by: input.created_by ?? input.createdBy ?? null,
+    last_modified_by: input.last_modified_by ?? input.lastModifiedBy ?? null,
   }
 }
 
@@ -2968,6 +3485,7 @@ function normalizeWorkProductBlock(input: any, workProductId: string): WorkProdu
     rule_finding_ids: array(input.rule_finding_ids, input.ruleFindingIds),
     paragraph_number: input.paragraph_number ?? input.paragraphNumber ?? null,
     sentence_index: input.sentence_index ?? input.sentenceIndex ?? null,
+    sentence_id: input.sentence_id ?? input.sentenceId ?? null,
     section_kind: input.section_kind ?? input.sectionKind ?? null,
     count_number: input.count_number ?? input.countNumber ?? null,
     claim_type: input.claim_type ?? input.claimType ?? null,
@@ -2981,6 +3499,13 @@ function normalizeWorkProductBlock(input: any, workProductId: string): WorkProdu
     authorities: array(input.authorities),
     mark_ids: array(input.mark_ids),
     locked: Boolean(input.locked),
+    tombstoned: Boolean(input.tombstoned),
+    deleted_at: input.deleted_at ?? input.deletedAt ?? null,
+    source_document_id: input.source_document_id ?? input.sourceDocumentId ?? null,
+    source_span_id: input.source_span_id ?? input.sourceSpanId ?? null,
+    created_by: input.created_by ?? input.createdBy ?? null,
+    last_modified_by: input.last_modified_by ?? input.lastModifiedBy ?? null,
+    provenance: input.provenance ?? null,
     review_status: string(input.review_status, "needs_review"),
     prosemirror_json: input.prosemirror_json ?? null,
   }
@@ -3092,6 +3617,9 @@ function normalizeWorkProductFinding(input: any): WorkProductFinding {
     matter_id: string(input.matter_id),
     work_product_id: string(input.work_product_id),
     rule_id: string(input.rule_id),
+    rule_pack_id: input.rule_pack_id ?? input.rulePackId ?? null,
+    source_citation: input.source_citation ?? input.sourceCitation ?? null,
+    source_url: input.source_url ?? input.sourceUrl ?? null,
     category: string(input.category, "rules"),
     severity: string(input.severity, "warning"),
     target_type: string(input.target_type, "work_product"),
@@ -3099,6 +3627,7 @@ function normalizeWorkProductFinding(input: any): WorkProductFinding {
     message: string(input.message),
     explanation: string(input.explanation),
     suggested_fix: string(input.suggested_fix),
+    auto_fix_available: Boolean(input.auto_fix_available ?? input.autoFixAvailable),
     primary_action: input.primary_action ?? {
       action_id: "action:open",
       label: "Open editor",
@@ -3294,6 +3823,8 @@ function normalizeAstValidationIssue(input: any) {
   return {
     code: string(input.code),
     message: string(input.message),
+    severity: input.severity ?? null,
+    blocking: Boolean(input.blocking),
     target_type: input.target_type ?? input.targetType ?? null,
     target_id: input.target_id ?? input.targetId ?? null,
   }
