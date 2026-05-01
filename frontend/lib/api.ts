@@ -19,16 +19,13 @@ import {
   mockSystemHealth, 
   mockGraphInsights, 
   mockFeaturedStatutes,
-  statuteIndex,
-  recentItems,
-  savedSearches,
-  getStatuteByCanonicalId,
   getProvisionById,
   askAnswer as mockAskAnswer,
 } from './mock-data';
 import { getSourceById as getDemoSourceById, sourceIndex as demoSourceIndex } from "./mock-sources";
 import type { GraphNeighborhoodParams, GraphViewerResponse } from '@/components/graph/types';
 import {
+  classifyApiFailureSource,
   classifyFallbackSource,
   dataErrorMessage,
   DEMO_MODE,
@@ -37,7 +34,19 @@ import {
 } from "./data-state";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_ORS_API_BASE_URL || 'http://localhost:8080/api/v1';
+const API_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_ORS_API_TIMEOUT_MS || 5000);
 const reportedFallbacks = new Set<string>();
+
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly endpoint: string,
+  ) {
+    super(message)
+    this.name = "ApiRequestError"
+  }
+}
 
 export type SearchMode = 'auto' | 'hybrid' | 'keyword' | 'semantic' | 'citation'
 
@@ -63,27 +72,65 @@ async function fetchApi<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
-  const response = await fetch(url, {
-    cache: 'no-store',
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  });
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, API_TIMEOUT_MS);
+  const parentSignal = options.signal;
+  const abortFromParent = () => controller.abort();
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(error.error || `API error: ${response.status}`);
+  if (parentSignal?.aborted) {
+    controller.abort();
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
   }
 
-  return response.json();
+  try {
+    const response = await fetch(url, {
+      cache: 'no-store',
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new ApiRequestError(error.error || `API error: ${response.status}`, response.status, endpoint);
+    }
+
+    return response.json();
+  } catch (error) {
+    if (timedOut && isAbortError(error)) {
+      throw new Error(`API request timed out after ${Math.round(API_TIMEOUT_MS / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", abortFromParent);
+  }
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : error instanceof Error && error.name === "AbortError";
 }
 
 function reportFallback(endpoint: string, error: unknown) {
   if (reportedFallbacks.has(endpoint)) return;
   reportedFallbacks.add(endpoint);
   console.info(`[ORSGraph] ${endpoint} unavailable; using fallback path (${dataErrorMessage(error)})`);
+}
+
+function reportApiFailure(endpoint: string, error: unknown) {
+  if (reportedFallbacks.has(endpoint)) return;
+  reportedFallbacks.add(endpoint);
+  console.info(`[ORSGraph] ${endpoint} unavailable (${dataErrorMessage(error)})`);
 }
 
 function fallbackState<T>(
@@ -93,6 +140,16 @@ function fallbackState<T>(
   source: DataSource = classifyFallbackSource(error),
 ): DataState<T> {
   reportFallback(endpoint, error);
+  return { source, data, error: dataErrorMessage(error) };
+}
+
+function apiFailureState<T>(
+  endpoint: string,
+  data: T,
+  error: unknown,
+  source: DataSource = classifyApiFailureSource(error),
+): DataState<T> {
+  reportApiFailure(endpoint, error);
   return { source, data, error: dataErrorMessage(error) };
 }
 
@@ -299,10 +356,13 @@ export async function getStatuteIndex(paramsInput: StatuteIndexParams = {}): Pro
 }
 
 export async function getStatuteIndexState(paramsInput: StatuteIndexParams = {}): Promise<DataState<StatuteIndexResult>> {
+  const limit = paramsInput.limit ?? 60
+  const offset = paramsInput.offset ?? 0
+
   try {
     const params = new URLSearchParams({
-      limit: String(paramsInput.limit ?? 60),
-      offset: String(paramsInput.offset ?? 0),
+      limit: String(limit),
+      offset: String(offset),
     })
     if (paramsInput.q) params.set("q", paramsInput.q)
     if (paramsInput.chapter) params.set("chapter", paramsInput.chapter)
@@ -314,12 +374,12 @@ export async function getStatuteIndexState(paramsInput: StatuteIndexParams = {})
       data: {
         items: response.items.map(mapStatuteIndexItem),
         total: Number(response.total ?? response.items.length),
-        limit: Number(response.limit ?? paramsInput.limit ?? 60),
-        offset: Number(response.offset ?? paramsInput.offset ?? 0),
+        limit: Number(response.limit ?? limit),
+        offset: Number(response.offset ?? offset),
       },
     }
   } catch (error) {
-    return fallbackState("/statutes", filterFallbackStatuteIndex(paramsInput), error)
+    return apiFailureState("/statutes", { items: [], total: 0, limit, offset }, error)
   }
 }
 
@@ -396,36 +456,12 @@ function mapStatuteIndexItem(item: StatuteIndexApiItem): StatuteIdentity {
   }
 }
 
-function filterFallbackStatuteIndex(paramsInput: StatuteIndexParams): StatuteIndexResult {
-  const q = paramsInput.q?.trim().toLowerCase()
-  const chapter = paramsInput.chapter?.trim()
-  const status = paramsInput.status && paramsInput.status !== "all" ? paramsInput.status : undefined
-  const limit = paramsInput.limit ?? 60
-  const offset = paramsInput.offset ?? 0
-  const filtered = statuteIndex.filter((statute) => {
-    const matchesQuery = !q
-      || statute.citation.toLowerCase().includes(q)
-      || statute.canonical_id.toLowerCase().includes(q)
-      || statute.title.toLowerCase().includes(q)
-    const matchesChapter = !chapter || statute.chapter === chapter
-    const matchesStatus = !status || statute.status === status
-    return matchesQuery && matchesChapter && matchesStatus
-  })
-
-  return {
-    items: filtered.slice(offset, offset + limit),
-    total: filtered.length,
-    limit,
-    offset,
-  }
-}
-
-export async function getSidebarState(): Promise<DataState<SidebarData>> {
+export async function getSidebarState(): Promise<DataState<SidebarData | null>> {
   try {
     const response = await fetchApi<SidebarData>("/sidebar")
     return { source: "live", data: normalizeSidebarData(response) }
   } catch (error) {
-    return fallbackState("/sidebar", buildFallbackSidebarData(), error)
+    return apiFailureState("/sidebar", null, error)
   }
 }
 
@@ -547,43 +583,13 @@ export async function getStatutePageDataState(citationOrCanonicalId: string): Pr
   try {
     const page = await fetchApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)
     return { source: "live", data: mapStatuteCompactPage(page) }
-  } catch (pageError) {
-    try {
-      const [detail, provisions, citations, semantics, history] = await Promise.all([
-        getStatute(citationOrCanonicalId),
-        getProvisions(citationOrCanonicalId),
-        getCitations(citationOrCanonicalId),
-        getSemantics(citationOrCanonicalId),
-        getHistory(citationOrCanonicalId),
-      ])
-
-      return { source: "live", data: mapStatutePage(detail, provisions, citations, semantics, history) }
-    } catch (legacyError) {
-      const fallback = getStatuteByCanonicalId(citationOrCanonicalId)
-      return fallbackState(
-        `/statutes/${citationOrCanonicalId}`,
-        fallback,
-        legacyError,
-        fallback ? classifyFallbackSource(pageError) : "error",
-      )
-    }
-  }
-}
-
-export async function getStatutePageDataLegacyState(citationOrCanonicalId: string): Promise<DataState<StatutePageResponse | null>> {
-  try {
-    const [detail, provisions, citations, semantics, history] = await Promise.all([
-      getStatute(citationOrCanonicalId),
-      getProvisions(citationOrCanonicalId),
-      getCitations(citationOrCanonicalId),
-      getSemantics(citationOrCanonicalId),
-      getHistory(citationOrCanonicalId),
-    ])
-
-    return { source: "live", data: mapStatutePage(detail, provisions, citations, semantics, history) }
   } catch (error) {
-    const fallback = getStatuteByCanonicalId(citationOrCanonicalId)
-    return fallbackState(`/statutes/${citationOrCanonicalId}`, fallback, error, fallback ? classifyFallbackSource(error) : "error")
+    return apiFailureState(
+      `/statutes/${citationOrCanonicalId}/page`,
+      null,
+      error,
+      error instanceof ApiRequestError && error.status === 404 ? "empty" : classifyApiFailureSource(error),
+    )
   }
 }
 
@@ -879,113 +885,6 @@ function mapStatuteCompactPage(page: any): StatutePageResponse {
   }
 }
 
-function mapStatutePage(detail: any, provisionsResponse: any, citations: any, semantics: any, history: any): StatutePageResponse {
-  const identity = {
-    canonical_id: detail.identity.canonical_id,
-    citation: detail.identity.citation,
-    title: detail.identity.title ?? detail.identity.citation,
-    jurisdiction: "Oregon",
-    corpus: "ORS",
-    chapter: detail.identity.chapter,
-    status: normalizeLegalStatus(detail.identity.status),
-    edition: detail.source_document?.edition_year ?? 2025,
-  }
-
-  const currentVersion = {
-    ...detail.current_version,
-    source_documents: [detail.source_document?.source_id].filter(Boolean),
-  }
-
-  const provisions: Provision[] = (provisionsResponse.provisions ?? []).map((p: any) => mapProvision(p))
-  const outbound = (citations.outbound ?? []).map((c: any) => ({
-    target_canonical_id: c.target_canonical_id,
-    target_citation: c.target_citation,
-    context_snippet: c.context_snippet,
-    source_provision: c.source_provision,
-    resolved: Boolean(c.resolved),
-  }))
-  const inbound = (citations.inbound ?? []).map((c: any) => ({
-    source_canonical_id: c.target_canonical_id ?? "",
-    source_citation: c.target_citation,
-    source_title: c.target_citation,
-    source_provision: c.source_provision,
-    context_snippet: c.context_snippet,
-  }))
-
-  return {
-    identity,
-    current_version: currentVersion,
-    versions: [currentVersion],
-    provisions,
-    chunks: [],
-    definitions: (semantics.definitions ?? []).map((d: any, index: number) => ({
-      definition_id: `definition:${index}`,
-      term: d.term,
-      text: d.text,
-      source_provision: d.source_provision,
-      scope: d.scope ?? identity.citation,
-    })),
-    exceptions: (semantics.exceptions ?? []).map((e: any, index: number) => ({
-      exception_id: `exception:${index}`,
-      text: e.text,
-      applies_to_provision: e.source_provision,
-      source_provision: e.source_provision,
-    })),
-    deadlines: (semantics.deadlines ?? []).map((d: any, index: number) => ({
-      deadline_id: `deadline:${index}`,
-      description: d.description,
-      duration: d.duration,
-      trigger: d.trigger,
-      source_provision: d.source_provision,
-    })),
-    penalties: (semantics.penalties ?? []).map((p: any, index: number) => ({
-      penalty_id: `penalty:${index}`,
-      description: p.text,
-      category: "administrative",
-      source_provision: p.source_provision,
-    })),
-    outbound_citations: outbound,
-    inbound_citations: inbound,
-    source_documents: [{
-      source_id: detail.source_document?.source_id ?? "",
-      url: detail.source_document?.url ?? "",
-      retrieved_at: "",
-      raw_hash: "",
-      normalized_hash: "",
-      edition_year: detail.source_document?.edition_year ?? 2025,
-      parser_profile: "orsgraph-api",
-      parser_warnings: [],
-    }],
-    qc: {
-      status: history.source_notes?.length ? "warning" : "pass",
-      passed_checks: history.source_notes?.length ? 1 : 2,
-      total_checks: 2,
-      notes: (history.source_notes ?? []).map((message: string, index: number) => ({
-        note_id: `source-note:${index}`,
-        level: "info",
-        category: "source",
-        message,
-        related_id: detail.identity.canonical_id,
-      })),
-    },
-    summary_counts: {
-      provision_count: detail.provision_count ?? countMappedProvisions(provisions),
-      citation_counts: {
-        outbound: detail.citation_counts?.outbound ?? outbound.length,
-        inbound: detail.citation_counts?.inbound ?? inbound.length,
-      },
-      semantic_counts: {
-        obligations: detail.semantic_counts?.obligations ?? 0,
-        exceptions: detail.semantic_counts?.exceptions ?? semantics.exceptions?.length ?? 0,
-        deadlines: detail.semantic_counts?.deadlines ?? semantics.deadlines?.length ?? 0,
-        penalties: detail.semantic_counts?.penalties ?? semantics.penalties?.length ?? 0,
-        definitions: detail.semantic_counts?.definitions ?? semantics.definitions?.length ?? 0,
-      },
-    },
-    source_notes: history.source_notes ?? [],
-  }
-}
-
 function mapProvision(p: any): Provision {
   return {
     provision_id: p.provision_id,
@@ -1086,69 +985,6 @@ function normalizeSidebarStatute(item: SidebarStatute): SidebarStatute {
   }
 }
 
-function buildFallbackSidebarData(): SidebarData {
-  const chapters = statuteIndex.reduce<Map<string, SidebarChapter>>((acc, statute) => {
-    const chapter = acc.get(statute.chapter) ?? {
-      chapter: statute.chapter,
-      label: `Chapter ${statute.chapter}`,
-      count: 0,
-      items: [],
-    }
-    chapter.count += 1
-    if (chapter.items.length < 8) {
-      chapter.items.push(sidebarStatuteFromIdentity(statute))
-    }
-    acc.set(statute.chapter, chapter)
-    return acc
-  }, new Map())
-
-  return {
-    corpus: {
-      jurisdiction: "Oregon",
-      corpus: "ORS",
-      edition_year: 2025,
-      total_statutes: statuteIndex.length,
-      chapters: Array.from(chapters.values()),
-    },
-    saved_searches: savedSearches.map((search) => ({
-      saved_search_id: search.id,
-      query: search.query,
-      results: search.results,
-      created_at: "",
-      updated_at: "",
-    })),
-    saved_statutes: recentItems.slice(0, 3).map(sidebarStatuteFromRecent),
-    recent_statutes: recentItems.map(sidebarStatuteFromRecent),
-    active_matter: null,
-    updated_at: new Date().toISOString(),
-  }
-}
-
-function sidebarStatuteFromRecent(item: { canonical_id: string; citation: string; title: string }): SidebarStatute {
-  const identity = statuteIndex.find((statute) => statute.canonical_id === item.canonical_id)
-  return identity
-    ? sidebarStatuteFromIdentity(identity)
-    : {
-        canonical_id: item.canonical_id,
-        citation: item.citation,
-        title: item.title,
-        chapter: "",
-        status: "active",
-        edition_year: 2025,
-      }
-}
-
-function sidebarStatuteFromIdentity(item: StatuteIdentity): SidebarStatute {
-  return {
-    canonical_id: item.canonical_id,
-    citation: item.citation,
-    title: item.title,
-    chapter: item.chapter,
-    status: normalizeLegalStatus(item.status),
-    edition_year: item.edition,
-  }
-}
-
 function normalizeLegalStatus(status?: string) {
   const value = (status ?? "active").toLowerCase()
   return ["active", "repealed", "renumbered", "amended"].includes(value) ? value as any : "active"
@@ -1179,14 +1015,4 @@ function provisionTypeForDepth(depth?: number) {
 
 function previewText(text: string, max: number) {
   return text.length > max ? `${text.slice(0, max).trim()}...` : text
-}
-
-function countMappedProvisions(provisions: Provision[]) {
-  let count = 0
-  const walk = (provision: Provision) => {
-    count += 1
-    provision.children?.forEach(walk)
-  }
-  provisions.forEach(walk)
-  return count
 }

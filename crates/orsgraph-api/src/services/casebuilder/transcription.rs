@@ -7,6 +7,7 @@ impl CaseBuilderService {
         document_id: &str,
         request: CreateTranscriptionRequest,
     ) -> ApiResult<TranscriptionJobResponse> {
+        validate_assemblyai_transcription_request(&request)?;
         let mut document = self.get_document(matter_id, document_id).await?;
         if !document_is_media(&document) {
             return Err(ApiError::BadRequest(
@@ -37,6 +38,12 @@ impl CaseBuilderService {
         let now = now_string();
         let speech_models = assemblyai_speech_models();
         let new_job_id = transcription_job_id(document_id, now_secs());
+        let speaker_labels = request.speaker_labels.unwrap_or(true);
+        let (speakers_expected, speaker_options) = normalize_assemblyai_speaker_config(
+            speaker_labels,
+            request.speakers_expected,
+            request.speaker_options.as_ref(),
+        )?;
         let mut job = TranscriptionJob {
             transcription_job_id: new_job_id.clone(),
             id: new_job_id,
@@ -63,6 +70,7 @@ impl CaseBuilderService {
             raw_artifact_version_id: None,
             normalized_artifact_version_id: None,
             redacted_artifact_version_id: None,
+            redacted_audio_version_id: None,
             reviewed_document_version_id: None,
             caption_vtt_version_id: None,
             caption_srt_version_id: None,
@@ -71,6 +79,19 @@ impl CaseBuilderService {
             speaker_count: 0,
             segment_count: 0,
             word_count: 0,
+            speakers_expected,
+            speaker_options,
+            word_search_terms: sanitize_assemblyai_word_search_terms(
+                request.word_search_terms.iter().map(String::as_str),
+            ),
+            prompt_preset: normalize_assemblyai_prompt_preset(request.prompt_preset.as_deref())?,
+            prompt: assemblyai_effective_prompt(&request)?,
+            keyterms_prompt: sanitize_assemblyai_keyterms(
+                request.keyterms_prompt.iter().map(String::as_str),
+            ),
+            remove_audio_tags: normalize_assemblyai_remove_audio_tags(
+                request.remove_audio_tags.as_deref(),
+            )?,
             redact_pii: request.redact_pii.unwrap_or(true),
             speech_models,
             retryable: false,
@@ -415,6 +436,7 @@ impl CaseBuilderService {
             job.document_version_id.clone(),
             job.object_blob_id.clone(),
             "approved",
+            "assemblyai_transcript_reviewed_segment",
         );
         let document = self
             .merge_node(matter_id, document_spec(), document_id, &document)
@@ -579,6 +601,9 @@ impl CaseBuilderService {
         let redacted_artifact_version = self
             .optional_document_version(matter_id, &job.redacted_artifact_version_id)
             .await?;
+        let redacted_audio_version = self
+            .optional_document_version(matter_id, &job.redacted_audio_version_id)
+            .await?;
         let reviewed_document_version = self
             .optional_document_version(matter_id, &job.reviewed_document_version_id)
             .await?;
@@ -612,6 +637,7 @@ impl CaseBuilderService {
             raw_artifact_version,
             normalized_artifact_version,
             redacted_artifact_version,
+            redacted_audio_version,
             reviewed_document_version,
             caption_vtt_version,
             caption_srt_version,
@@ -709,6 +735,228 @@ impl CaseBuilderService {
         Ok(response.json::<AssemblyAiTranscriptResponse>().await?)
     }
 
+    pub async fn list_assemblyai_transcripts(
+        &self,
+        query: AssemblyAiTranscriptListQuery,
+    ) -> ApiResult<AssemblyAiTranscriptListResponse> {
+        let query = normalize_assemblyai_transcript_list_query(query)?;
+        self.assemblyai_fetch_transcript_list(&query).await
+    }
+
+    pub async fn delete_assemblyai_transcript(
+        &self,
+        transcript_id: &str,
+    ) -> ApiResult<AssemblyAiTranscriptDeleteResponse> {
+        let transcript_id = normalize_assemblyai_transcript_id(transcript_id)?;
+        self.assemblyai_delete_transcript(&transcript_id).await
+    }
+
+    pub(super) async fn assemblyai_fetch_transcript_list(
+        &self,
+        query: &AssemblyAiTranscriptListQuery,
+    ) -> ApiResult<AssemblyAiTranscriptListResponse> {
+        let api_key = self.assemblyai_api_key()?;
+        let mut request = self
+            .http_client
+            .get(format!("{}/v2/transcript", self.assemblyai.base_url))
+            .header("Authorization", api_key)
+            .timeout(Duration::from_millis(self.assemblyai.timeout_ms));
+        for (key, value) in assemblyai_transcript_list_query_pairs(query) {
+            request = request.query(&[(key, value)]);
+        }
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            return Err(assemblyai_http_error(
+                "transcript list fetch",
+                response.status(),
+            ));
+        }
+        Ok(response.json::<AssemblyAiTranscriptListResponse>().await?)
+    }
+
+    pub(super) async fn assemblyai_delete_transcript(
+        &self,
+        transcript_id: &str,
+    ) -> ApiResult<AssemblyAiTranscriptDeleteResponse> {
+        let transcript_id = normalize_assemblyai_transcript_id(transcript_id)?;
+        let api_key = self.assemblyai_api_key()?;
+        let response = self
+            .http_client
+            .delete(format!(
+                "{}/v2/transcript/{}",
+                self.assemblyai.base_url, transcript_id
+            ))
+            .header("Authorization", api_key)
+            .timeout(Duration::from_millis(self.assemblyai.timeout_ms))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(assemblyai_http_error(
+                "transcript delete",
+                response.status(),
+            ));
+        }
+        let provider_response = response.json::<serde_json::Value>().await?;
+        Ok(assemblyai_transcript_delete_response(
+            &transcript_id,
+            provider_response,
+        ))
+    }
+
+    pub(super) async fn assemblyai_fetch_sentences(
+        &self,
+        transcript_id: &str,
+    ) -> ApiResult<AssemblyAiSentencesResponse> {
+        let api_key = self.assemblyai_api_key()?;
+        let response = self
+            .http_client
+            .get(format!(
+                "{}/v2/transcript/{}/sentences",
+                self.assemblyai.base_url,
+                sanitize_path_segment(transcript_id)
+            ))
+            .header("Authorization", api_key)
+            .timeout(Duration::from_millis(self.assemblyai.timeout_ms))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(assemblyai_http_error("sentence fetch", response.status()));
+        }
+        Ok(response.json::<AssemblyAiSentencesResponse>().await?)
+    }
+
+    pub(super) async fn assemblyai_fetch_paragraphs(
+        &self,
+        transcript_id: &str,
+    ) -> ApiResult<AssemblyAiParagraphsResponse> {
+        let api_key = self.assemblyai_api_key()?;
+        let response = self
+            .http_client
+            .get(format!(
+                "{}/v2/transcript/{}/paragraphs",
+                self.assemblyai.base_url,
+                sanitize_path_segment(transcript_id)
+            ))
+            .header("Authorization", api_key)
+            .timeout(Duration::from_millis(self.assemblyai.timeout_ms))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(assemblyai_http_error("paragraph fetch", response.status()));
+        }
+        Ok(response.json::<AssemblyAiParagraphsResponse>().await?)
+    }
+
+    pub(super) async fn assemblyai_fetch_subtitle(
+        &self,
+        transcript_id: &str,
+        format: AssemblyAiSubtitleFormat,
+        chars_per_caption: Option<u64>,
+    ) -> ApiResult<String> {
+        let api_key = self.assemblyai_api_key()?;
+        let mut request = self
+            .http_client
+            .get(format!(
+                "{}/v2/transcript/{}/{}",
+                self.assemblyai.base_url,
+                sanitize_path_segment(transcript_id),
+                format.as_str()
+            ))
+            .header("Authorization", api_key)
+            .timeout(Duration::from_millis(self.assemblyai.timeout_ms));
+        if let Some(chars_per_caption) = chars_per_caption {
+            request = request.query(&[("chars_per_caption", chars_per_caption)]);
+        }
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            return Err(assemblyai_http_error("subtitle fetch", response.status()));
+        }
+        Ok(response.text().await?)
+    }
+
+    pub(super) async fn assemblyai_fetch_word_search(
+        &self,
+        transcript_id: &str,
+        words: &[String],
+    ) -> ApiResult<AssemblyAiWordSearchResponse> {
+        let words = sanitize_assemblyai_word_search_terms(words.iter().map(String::as_str));
+        if words.is_empty() {
+            return Err(ApiError::BadRequest(
+                "AssemblyAI word search requires at least one search term.".to_string(),
+            ));
+        }
+        let api_key = self.assemblyai_api_key()?;
+        let mut request = self
+            .http_client
+            .get(format!(
+                "{}/v2/transcript/{}/word-search",
+                self.assemblyai.base_url,
+                sanitize_path_segment(transcript_id)
+            ))
+            .header("Authorization", api_key)
+            .timeout(Duration::from_millis(self.assemblyai.timeout_ms));
+        for word in &words {
+            request = request.query(&[("words", word.as_str())]);
+        }
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            return Err(assemblyai_http_error(
+                "word search fetch",
+                response.status(),
+            ));
+        }
+        Ok(response.json::<AssemblyAiWordSearchResponse>().await?)
+    }
+
+    pub(super) async fn assemblyai_fetch_redacted_audio(
+        &self,
+        transcript_id: &str,
+    ) -> ApiResult<AssemblyAiRedactedAudioResponse> {
+        let api_key = self.assemblyai_api_key()?;
+        let response = self
+            .http_client
+            .get(format!(
+                "{}/v2/transcript/{}/redacted-audio",
+                self.assemblyai.base_url,
+                sanitize_path_segment(transcript_id)
+            ))
+            .header("Authorization", api_key)
+            .timeout(Duration::from_millis(self.assemblyai.timeout_ms))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(assemblyai_http_error(
+                "redacted audio fetch",
+                response.status(),
+            ));
+        }
+        Ok(response.json::<AssemblyAiRedactedAudioResponse>().await?)
+    }
+
+    pub(super) async fn download_assemblyai_redacted_audio(
+        &self,
+        url: &str,
+    ) -> ApiResult<(Bytes, Option<String>)> {
+        let response = self
+            .http_client
+            .get(url)
+            .timeout(Duration::from_millis(self.assemblyai.timeout_ms))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(assemblyai_http_error(
+                "redacted audio download",
+                response.status(),
+            ));
+        }
+        let mime_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        Ok((response.bytes().await?, mime_type))
+    }
+
     pub(super) fn assemblyai_api_key(&self) -> ApiResult<&str> {
         self.assemblyai
             .api_key
@@ -725,8 +973,67 @@ impl CaseBuilderService {
         provider: AssemblyAiTranscriptResponse,
     ) -> ApiResult<TranscriptionJobResponse> {
         let now = now_string();
-        let (mut segments, speakers) =
-            transcript_segments_from_provider(matter_id, &document, &job, &provider, &now);
+        let sentence_response = self.assemblyai_fetch_sentences(&provider.id).await?;
+        let paragraph_response = self.assemblyai_fetch_paragraphs(&provider.id).await?;
+        let word_search_terms = if job.word_search_terms.is_empty() {
+            assemblyai_default_word_search_terms(&provider, &sentence_response, &paragraph_response)
+        } else {
+            sanitize_assemblyai_word_search_terms(job.word_search_terms.iter().map(String::as_str))
+        };
+        job.word_search_terms = word_search_terms.clone();
+        let word_search_response = if word_search_terms.is_empty() {
+            None
+        } else {
+            self.assemblyai_fetch_word_search(&provider.id, &word_search_terms)
+                .await
+                .ok()
+        };
+        let use_provider_subtitles = should_use_assemblyai_subtitles(&provider, job.redact_pii);
+        let provider_vtt = if use_provider_subtitles {
+            self.assemblyai_fetch_subtitle(
+                &provider.id,
+                AssemblyAiSubtitleFormat::Vtt,
+                Some(ASSEMBLYAI_CAPTION_CHARS_PER_CAPTION),
+            )
+            .await
+            .ok()
+        } else {
+            None
+        };
+        let provider_srt = if use_provider_subtitles {
+            self.assemblyai_fetch_subtitle(
+                &provider.id,
+                AssemblyAiSubtitleFormat::Srt,
+                Some(ASSEMBLYAI_CAPTION_CHARS_PER_CAPTION),
+            )
+            .await
+            .ok()
+        } else {
+            None
+        };
+        let redacted_audio_response =
+            if job.redact_pii && assemblyai_provider_has_redaction(&provider) {
+                self.assemblyai_fetch_redacted_audio(&provider.id)
+                    .await
+                    .ok()
+                    .filter(|response| response.status == "redacted_audio_ready")
+            } else {
+                None
+            };
+        let segment_extraction_method = if sentence_response.sentences.is_empty() {
+            "assemblyai_transcript_segment"
+        } else {
+            "assemblyai_transcript_sentence"
+        };
+        let (mut segments, speakers) = transcript_segments_from_provider(
+            matter_id,
+            &document,
+            &job,
+            &provider,
+            &sentence_response,
+            &paragraph_response,
+            &now,
+        );
         let source_spans = transcript_source_spans(
             matter_id,
             &document.document_id,
@@ -735,12 +1042,28 @@ impl CaseBuilderService {
             job.document_version_id.clone(),
             job.object_blob_id.clone(),
             "unreviewed",
+            segment_extraction_method,
         );
         for (segment, span) in segments.iter_mut().zip(source_spans.iter()) {
             segment.source_span_id = Some(span.source_span_id.clone());
         }
-        let raw_bytes =
-            serde_json::to_vec(&provider).map_err(|error| ApiError::Internal(error.to_string()))?;
+        let raw_provider_payload = serde_json::json!({
+            "transcript": provider.clone(),
+            "sentences": sentence_response.clone(),
+            "paragraphs": paragraph_response.clone(),
+            "subtitles": {
+                "chars_per_caption": ASSEMBLYAI_CAPTION_CHARS_PER_CAPTION,
+                "vtt": provider_vtt.clone(),
+                "srt": provider_srt.clone(),
+            },
+            "word_search": {
+                "terms": word_search_terms.clone(),
+                "response": word_search_response.clone(),
+            },
+            "redacted_audio": redacted_audio_response.clone(),
+        });
+        let raw_bytes = serde_json::to_vec(&raw_provider_payload)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
         let raw_artifact = self
             .store_document_artifact_version(
                 matter_id,
@@ -753,13 +1076,56 @@ impl CaseBuilderService {
                 false,
             )
             .await?;
+        let redacted_audio_artifact = if let Some(response) = redacted_audio_response.as_ref() {
+            match self
+                .download_assemblyai_redacted_audio(&response.redacted_audio_url)
+                .await
+            {
+                Ok((bytes, mime_type)) => self
+                    .store_document_artifact_version(
+                        matter_id,
+                        &document,
+                        bytes,
+                        mime_type.or_else(|| Some("audio/mpeg".to_string())),
+                        "transcript_redacted_audio",
+                        "transcript_redacted_audio",
+                        ASSEMBLYAI_REDACTED_AUDIO_QUALITY,
+                        false,
+                    )
+                    .await
+                    .ok(),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+        if let Some(redacted_audio_artifact) = redacted_audio_artifact.as_ref() {
+            job.redacted_audio_version_id =
+                Some(redacted_audio_artifact.document_version_id.clone());
+        }
         let normalized_payload = serde_json::json!({
             "job": job.clone(),
             "segments": segments.clone(),
             "speakers": speakers.clone(),
             "provider_status": provider.status.clone(),
             "language_code": provider.language_code.clone(),
-            "audio_duration": provider.audio_duration,
+            "audio_duration": provider.audio_duration.or(sentence_response.audio_duration).or(paragraph_response.audio_duration),
+            "provider_sentence_count": sentence_response.sentences.len(),
+            "provider_paragraph_count": paragraph_response.paragraphs.len(),
+            "segment_extraction_method": segment_extraction_method,
+            "paragraphs": transcript_paragraph_payloads(&provider, &paragraph_response, job.redact_pii),
+            "captions": {
+                "chars_per_caption": ASSEMBLYAI_CAPTION_CHARS_PER_CAPTION,
+                "vtt_source": if provider_vtt.as_ref().map(|text| !text.trim().is_empty()).unwrap_or(false) { "assemblyai_subtitles" } else { "casebuilder_local" },
+                "srt_source": if provider_srt.as_ref().map(|text| !text.trim().is_empty()).unwrap_or(false) { "assemblyai_subtitles" } else { "casebuilder_local" },
+            },
+            "word_search": assemblyai_word_search_payload(&word_search_terms, word_search_response.as_ref()),
+            "redacted_audio": {
+                "status": redacted_audio_response.as_ref().map(|response| response.status.clone()),
+                "stored": redacted_audio_artifact.is_some(),
+                "document_version_id": redacted_audio_artifact.as_ref().map(|version| version.document_version_id.clone()),
+                "expires_after_hours": 24,
+            },
         });
         let normalized_bytes = serde_json::to_vec(&normalized_payload)
             .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -788,8 +1154,10 @@ impl CaseBuilderService {
             "segments": segments.iter().map(|segment| serde_json::json!({
                 "segment_id": segment.segment_id,
                 "ordinal": segment.ordinal,
+                "paragraph_ordinal": segment.paragraph_ordinal,
                 "speaker_label": segment.speaker_label,
                 "speaker_name": segment.speaker_name,
+                "channel": segment.channel,
                 "text": segment.redacted_text.clone().unwrap_or_else(|| redact_transcript_text(&segment.text)),
                 "time_start_ms": segment.time_start_ms,
                 "time_end_ms": segment.time_end_ms,
@@ -811,7 +1179,8 @@ impl CaseBuilderService {
                 false,
             )
             .await?;
-        let vtt = transcript_segments_to_vtt(&segments, true);
+        let local_vtt = transcript_segments_to_vtt(&segments, true);
+        let (vtt, _vtt_source) = provider_subtitle_or_local(provider_vtt, local_vtt);
         let vtt_artifact = self
             .store_document_artifact_version(
                 matter_id,
@@ -824,7 +1193,8 @@ impl CaseBuilderService {
                 false,
             )
             .await?;
-        let srt = transcript_segments_to_srt(&segments, true);
+        let local_srt = transcript_segments_to_srt(&segments, true);
+        let (srt, _srt_source) = provider_subtitle_or_local(provider_srt, local_srt);
         let srt_artifact = self
             .store_document_artifact_version(
                 matter_id,
@@ -849,10 +1219,13 @@ impl CaseBuilderService {
         job.language_code = provider.language_code.clone();
         job.duration_ms = provider
             .audio_duration
+            .or(sentence_response.audio_duration)
+            .or(paragraph_response.audio_duration)
             .map(|seconds| (seconds * 1000.0) as u64);
         job.segment_count = segments.len() as u64;
         job.speaker_count = speakers.len() as u64;
-        job.word_count = assemblyai_raw_words(&provider).len() as u64;
+        job.word_count =
+            assemblyai_word_count(&provider, &sentence_response, &paragraph_response) as u64;
         job.retryable = false;
         job.error_code = None;
         job.error_message = None;

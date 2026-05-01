@@ -271,22 +271,26 @@ pub(crate) fn markdown_to_work_product_ast(
 
     let mut document = work_product_document_from_projection(product, blocks);
     apply_frontmatter(&mut document, product, &frontmatter, &mut warnings);
-    if !document_meta.links.is_empty() {
-        document.links = document_meta.links;
+    if document_meta_seen {
+        if !document_meta.links.is_empty() {
+            document.links = document_meta.links;
+        }
+        if !document_meta.citations.is_empty() {
+            document.citations = document_meta.citations;
+        }
+        if !document_meta.exhibits.is_empty() {
+            document.exhibits = document_meta.exhibits;
+        }
+        if !document_meta.rule_findings.is_empty() {
+            document.rule_findings = document_meta.rule_findings;
+        }
+        if !document_meta.tombstones.is_empty() {
+            document.tombstones = document_meta.tombstones;
+        }
+        rehydrate_block_refs_from_document_records(&mut document);
+    } else {
+        clear_sidecar_metadata(&mut document);
     }
-    if !document_meta.citations.is_empty() {
-        document.citations = document_meta.citations;
-    }
-    if !document_meta.exhibits.is_empty() {
-        document.exhibits = document_meta.exhibits;
-    }
-    if !document_meta.rule_findings.is_empty() {
-        document.rule_findings = document_meta.rule_findings;
-    }
-    if !document_meta.tombstones.is_empty() {
-        document.tombstones = document_meta.tombstones;
-    }
-    rehydrate_block_refs_from_document_records(&mut document);
     (document, warnings)
 }
 
@@ -409,6 +413,25 @@ fn rehydrate_block_refs_from_document_records(document: &mut WorkProductDocument
         if let Some(block) = find_ast_block_mut(&mut document.blocks, &block_id) {
             push_unique_ref(&mut block.rule_finding_ids, finding_id);
         }
+    }
+}
+
+fn clear_sidecar_metadata(document: &mut WorkProductDocument) {
+    document.links.clear();
+    document.citations.clear();
+    document.exhibits.clear();
+    document.rule_findings.clear();
+    document.tombstones.clear();
+    clear_block_sidecar_refs(&mut document.blocks);
+}
+
+fn clear_block_sidecar_refs(blocks: &mut [WorkProductBlock]) {
+    for block in blocks {
+        block.links.clear();
+        block.citations.clear();
+        block.exhibits.clear();
+        block.rule_finding_ids.clear();
+        clear_block_sidecar_refs(&mut block.children);
     }
 }
 
@@ -691,12 +714,17 @@ mod tests {
     fn markdown_without_sidecar_warns_about_metadata_loss() {
         let product = product();
         let markdown = "# Test\n\n1. A supported fact.";
-        let (_document, warnings) = markdown_to_work_product_ast(&product, markdown);
+        let (document, warnings) = markdown_to_work_product_ast(&product, markdown);
         assert!(warnings
             .iter()
             .any(|warning| warning.contains("sidecar metadata")));
         assert!(warnings
             .iter()
             .any(|warning| warning.contains("block metadata comments")));
+        assert!(document.links.is_empty());
+        assert!(document.citations.is_empty());
+        assert!(document.exhibits.is_empty());
+        assert!(document.blocks[0].links.is_empty());
+        assert!(document.blocks[0].citations.is_empty());
     }
 }

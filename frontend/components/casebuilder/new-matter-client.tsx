@@ -261,9 +261,10 @@ export function NewMatterClient({ initialIntent }: { initialIntent: Intent }) {
               <div className="flex items-center gap-2">
                 <Link
                   href={matterHref("matter:smith-abc")}
+                  title="Open the seeded CaseBuilder demo matter"
                   className="rounded border border-border px-3 py-2 font-mono text-xs uppercase tracking-wider text-muted-foreground hover:bg-muted hover:text-foreground"
                 >
-                  open demo
+                  open seeded demo
                 </Link>
                 <button
                   type="button"

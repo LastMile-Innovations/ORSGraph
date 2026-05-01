@@ -732,35 +732,36 @@ impl AdminService {
 
         match kind {
             AdminJobKind::Crawl => {
-                crawler_args.push("crawl".to_string());
-                push_arg(&mut crawler_args, "--out", &out_dir);
+                let source_out = self.safe_path_param(
+                    "out_dir",
+                    params
+                        .out_dir
+                        .as_deref()
+                        .unwrap_or(sources_default.as_str()),
+                )?;
+                crawler_args.push("source-ingest".to_string());
+                push_arg(&mut crawler_args, "--source-id", "or_leg_ors_html");
+                push_arg(&mut crawler_args, "--out", &source_out);
                 push_arg(
                     &mut crawler_args,
                     "--edition-year",
                     edition_year.to_string(),
                 );
                 if let Some(max) = params.max_chapters {
-                    push_arg(&mut crawler_args, "--max-chapters", max.to_string());
+                    push_arg(&mut crawler_args, "--max-items", max.to_string());
                 }
                 if let Some(chapters) = params.chapters.as_deref().filter(|v| !v.trim().is_empty())
                 {
                     push_arg(&mut crawler_args, "--chapters", chapters);
                 }
-                if params.fetch_only.unwrap_or(false) {
-                    crawler_args.push("--fetch-only".to_string());
-                }
-                if params.skip_citation_resolution.unwrap_or(false) {
-                    crawler_args.push("--skip-citation-resolution".to_string());
-                }
-                output_paths.insert("out_dir".to_string(), out_dir.to_string());
-                output_paths.insert("graph_dir".to_string(), format!("{out_dir}/graph"));
+                output_paths.insert("sources_dir".to_string(), source_out.to_string());
             }
             AdminJobKind::Parse => {
                 let chapters = params.chapters.as_deref().ok_or_else(|| {
                     ApiError::BadRequest("parse jobs require params.chapters".to_string())
                 })?;
                 let raw_dir = join_path_display(&data_dir, "raw/official");
-                crawler_args.push("parse-cached".to_string());
+                crawler_args.push("import-ors-cache".to_string());
                 push_arg(&mut crawler_args, "--raw-dir", raw_dir);
                 push_arg(&mut crawler_args, "--out", &out_dir);
                 push_arg(&mut crawler_args, "--chapters", chapters);
@@ -988,6 +989,12 @@ impl AdminService {
         match kind {
             AdminJobKind::Crawl => {
                 reject_param(params.graph_dir.is_some(), "graph_dir", kind)?;
+                reject_param(params.fetch_only.is_some(), "fetch_only", kind)?;
+                reject_param(
+                    params.skip_citation_resolution.is_some(),
+                    "skip_citation_resolution",
+                    kind,
+                )?;
                 reject_param(params.dry_run.is_some(), "dry_run", kind)?;
                 reject_param(params.embed.is_some(), "embed", kind)?;
                 reject_param(
@@ -1720,21 +1727,21 @@ mod tests {
     }
 
     #[test]
-    fn builds_allowlisted_crawl_command() {
+    fn builds_registry_backed_crawl_command() {
         let service = test_service(test_config());
         let command = service
             .build_command(
                 AdminJobKind::Crawl,
                 &AdminJobParams {
                     max_chapters: Some(2),
-                    fetch_only: Some(true),
                     ..Default::default()
                 },
             )
             .unwrap();
         assert_eq!(command.program, "cargo");
-        assert!(command.args.contains(&"crawl".to_string()));
-        assert!(command.args.contains(&"--fetch-only".to_string()));
+        assert!(command.args.contains(&"source-ingest".to_string()));
+        assert!(command.args.contains(&"or_leg_ors_html".to_string()));
+        assert!(command.args.contains(&"--max-items".to_string()));
         assert!(!command.display.iter().any(|arg| arg == "secret"));
     }
 
@@ -1876,12 +1883,12 @@ mod tests {
                 .await
                 .unwrap()
                 .lines;
-            if logs.iter().any(|line| line.contains("crawl")) {
+            if logs.iter().any(|line| line.contains("source-ingest")) {
                 break;
             }
             sleep(Duration::from_millis(10)).await;
         }
-        assert!(logs.iter().any(|line| line.contains("crawl")));
+        assert!(logs.iter().any(|line| line.contains("source-ingest")));
 
         let _ = fs::remove_dir_all(jobs_dir).await;
     }

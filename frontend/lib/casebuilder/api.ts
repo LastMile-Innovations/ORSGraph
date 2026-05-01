@@ -2,6 +2,10 @@ import type {
   AuditEvent,
   CaseAiActionResponse,
   AIEditAudit,
+  AssemblyAiSpeakerOptions,
+  AssemblyAiTranscriptDeleteResponse,
+  AssemblyAiTranscriptListQuery,
+  AssemblyAiTranscriptListResponse,
   AstDocumentResponse,
   AstMarkdownResponse,
   AstPatch,
@@ -82,6 +86,11 @@ import { decodeMatterRouteId } from "./routes"
 const API_BASE_URL = process.env.NEXT_PUBLIC_ORS_API_BASE_URL || "http://localhost:8080/api/v1"
 const API_KEY = process.env.NEXT_PUBLIC_ORS_API_KEY
 const DEMO_MODE = process.env.NEXT_PUBLIC_ORS_DEMO_MODE === "true"
+const API_TIMEOUT_MS = Number(
+  process.env.NEXT_PUBLIC_ORS_CASEBUILDER_API_TIMEOUT_MS ||
+    process.env.NEXT_PUBLIC_ORS_API_TIMEOUT_MS ||
+    5000,
+)
 
 function documentContentProxyUrl(matterId: string, documentId: string, contentUrl?: string | null): string | null {
   if (!contentUrl) return null
@@ -226,6 +235,13 @@ export interface CreateTranscriptionInput {
   language_code?: string | null
   redact_pii?: boolean
   speaker_labels?: boolean
+  speakers_expected?: number | null
+  speaker_options?: AssemblyAiSpeakerOptions | null
+  word_search_terms?: string[]
+  prompt_preset?: string | null
+  prompt?: string | null
+  keyterms_prompt?: string[]
+  remove_audio_tags?: "all" | string | null
 }
 
 export interface PatchTranscriptSegmentInput {
@@ -622,7 +638,9 @@ export async function getMatterSummariesState(): Promise<LoadState<MatterSummary
     const live = await fetchCaseBuilder<MatterSummary[]>("/matters")
     return { source: "live", data: live.map(normalizeMatterSummary) }
   } catch (error) {
-    if (DEMO_MODE) return { source: "demo", data: demoMatters, error: errorMessage(error) }
+    if (shouldUseDemoMatterFallback(error)) {
+      return { source: "demo", data: demoMatters, error: errorMessage(error) }
+    }
     return { source: "error", data: [], error: errorMessage(error) }
   }
 }
@@ -633,11 +651,11 @@ export async function getMatterState(id: string): Promise<LoadState<Matter | nul
     const live = await fetchCaseBuilder<unknown>(`/matters/${encodeURIComponent(matterId)}`)
     return { source: "live", data: normalizeMatter(live) }
   } catch (error) {
-    if (!DEMO_MODE) {
-      return { source: "error", data: null, error: errorMessage(error) }
-    }
     const demo = getDemoMatterById(matterId) ?? null
-    return { source: demo ? "demo" : "error", data: demo, error: errorMessage(error) }
+    if (demo && shouldUseDemoMatterFallback(error, { allowNotFound: true })) {
+      return { source: "demo", data: demo, error: errorMessage(error) }
+    }
+    return { source: "error", data: null, error: errorMessage(error) }
   }
 }
 
@@ -746,17 +764,20 @@ export async function getDocumentWorkspace(
   documentId: string,
 ): Promise<LoadState<DocumentWorkspace | null>> {
   const decodedMatterId = decodeMatterRouteId(matterId)
+  const decodedDocumentId = decodeRouteSegment(documentId)
   try {
     const live = await fetchCaseBuilder<unknown>(
-      `/matters/${encodeURIComponent(decodedMatterId)}/documents/${encodeURIComponent(documentId)}/workspace`,
+      `/matters/${encodeURIComponent(decodedMatterId)}/documents/${encodeURIComponent(decodedDocumentId)}/workspace`,
     )
     return { source: "live", data: normalizeDocumentWorkspace(live) }
   } catch (error) {
-    if (!DEMO_MODE) {
+    if (!shouldUseDemoMatterFallback(error, { allowNotFound: true })) {
       return { source: "error", data: null, error: errorMessage(error) }
     }
     const matter = getDemoMatterById(decodedMatterId)
-    const document = matter?.documents.find((candidate) => candidate.id === documentId || candidate.document_id === documentId)
+    const document = matter?.documents.find(
+      (candidate) => candidate.id === decodedDocumentId || candidate.document_id === decodedDocumentId,
+    )
     if (!matter || !document) {
       return { source: "error", data: null, error: errorMessage(error) }
     }
@@ -905,6 +926,38 @@ export function listTranscriptions(
     {
       method: "GET",
       normalize: (raw) => array(raw).map(normalizeTranscriptionJobResponse),
+    },
+  )
+}
+
+export function listAssemblyAiTranscripts(
+  input: AssemblyAiTranscriptListQuery = {},
+): Promise<ActionState<AssemblyAiTranscriptListResponse>> {
+  const params = new URLSearchParams()
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  if (input.status) params.set("status", input.status)
+  if (input.created_on) params.set("created_on", input.created_on)
+  if (input.before_id) params.set("before_id", input.before_id)
+  if (input.after_id) params.set("after_id", input.after_id)
+  if (input.throttled_only !== undefined) params.set("throttled_only", String(input.throttled_only))
+  const query = params.toString()
+  return runCaseBuilderAction(
+    `/casebuilder/providers/assemblyai/transcripts${query ? `?${query}` : ""}`,
+    {
+      method: "GET",
+      normalize: normalizeAssemblyAiTranscriptListResponse,
+    },
+  )
+}
+
+export function deleteAssemblyAiTranscript(
+  transcriptId: string,
+): Promise<ActionState<AssemblyAiTranscriptDeleteResponse>> {
+  return runCaseBuilderAction(
+    `/casebuilder/providers/assemblyai/transcripts/${encodeURIComponent(transcriptId)}`,
+    {
+      method: "DELETE",
+      normalize: normalizeAssemblyAiTranscriptDeleteResponse,
     },
   )
 }
@@ -1285,7 +1338,7 @@ export async function getWorkProductsState(
     )
     return { source: "live", data: live.map(normalizeWorkProduct) }
   } catch (error) {
-    if (!DEMO_MODE) {
+    if (!shouldUseDemoMatterFallback(error, { allowNotFound: true })) {
       return { source: "error", data: [], error: errorMessage(error) }
     }
     const demo = getDemoMatterById(decodedMatterId)
@@ -1318,7 +1371,7 @@ export async function getWorkProductState(
     const products = live.map(normalizeWorkProduct).filter((product) => product.product_type !== "complaint")
     return { source: "live", data: products[0] ?? null }
   } catch (error) {
-    if (!DEMO_MODE) {
+    if (!shouldUseDemoMatterFallback(error, { allowNotFound: true })) {
       return { source: "error", data: null, error: errorMessage(error) }
     }
     const demo = getDemoMatterById(decodedMatterId)
@@ -1804,7 +1857,7 @@ export async function getComplaintState(
     const complaints = live.map(normalizeComplaint)
     return { source: "live", data: complaints[0] ?? null }
   } catch (error) {
-    if (!DEMO_MODE) {
+    if (!shouldUseDemoMatterFallback(error, { allowNotFound: true })) {
       return { source: "error", data: null, error: errorMessage(error) }
     }
     const demo = getDemoMatterById(decodedMatterId)
@@ -2107,16 +2160,42 @@ async function fetchCaseBuilder<T>(endpoint: string, options: RequestInit = {}):
   if (API_KEY && !headers.has("x-api-key")) {
     headers.set("x-api-key", API_KEY)
   }
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    cache: "no-store",
-    ...options,
-    headers,
-  })
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    throw new Error(body.error || `CaseBuilder API error: ${response.status}`)
+  const controller = new AbortController()
+  let timedOut = false
+  const timeout = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, API_TIMEOUT_MS)
+  const parentSignal = options.signal
+  const abortFromParent = () => controller.abort()
+
+  if (parentSignal?.aborted) {
+    controller.abort()
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true })
   }
-  return response.json()
+
+  try {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      cache: "no-store",
+      ...options,
+      signal: controller.signal,
+      headers,
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      throw new Error(body.error || `CaseBuilder API error: ${response.status}`)
+    }
+    return response.json()
+  } catch (error) {
+    if (timedOut && isAbortError(error)) {
+      throw new Error(`CaseBuilder API request timed out after ${Math.round(API_TIMEOUT_MS / 1000)}s`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+    parentSignal?.removeEventListener("abort", abortFromParent)
+  }
 }
 
 function normalizeAiAction<T>(input: unknown, normalizeResult: (raw: unknown) => T): CaseAiActionResponse<T> {
@@ -2840,12 +2919,56 @@ function normalizeTranscriptionJobResponse(input: any): TranscriptionJobResponse
     raw_artifact_version: input.raw_artifact_version ? normalizeDocumentVersion(input.raw_artifact_version) : null,
     normalized_artifact_version: input.normalized_artifact_version ? normalizeDocumentVersion(input.normalized_artifact_version) : null,
     redacted_artifact_version: input.redacted_artifact_version ? normalizeDocumentVersion(input.redacted_artifact_version) : null,
+    redacted_audio_version: input.redacted_audio_version || input.redactedAudioVersion ? normalizeDocumentVersion(input.redacted_audio_version ?? input.redactedAudioVersion) : null,
     reviewed_document_version: input.reviewed_document_version ? normalizeDocumentVersion(input.reviewed_document_version) : null,
     caption_vtt_version: input.caption_vtt_version ? normalizeDocumentVersion(input.caption_vtt_version) : null,
     caption_srt_version: input.caption_srt_version ? normalizeDocumentVersion(input.caption_srt_version) : null,
     caption_vtt: input.caption_vtt ?? input.captionVtt ?? null,
     caption_srt: input.caption_srt ?? input.captionSrt ?? null,
     warnings: array(input.warnings),
+  }
+}
+
+function normalizeAssemblyAiTranscriptListResponse(input: any): AssemblyAiTranscriptListResponse {
+  const pageDetails = input.page_details ?? input.pageDetails ?? {}
+  return {
+    page_details: {
+      limit: number(pageDetails.limit),
+      result_count: number(pageDetails.result_count, pageDetails.resultCount),
+      current_url: string(pageDetails.current_url, pageDetails.currentUrl),
+      prev_url: pageDetails.prev_url ?? pageDetails.prevUrl ?? null,
+      next_url: pageDetails.next_url ?? pageDetails.nextUrl ?? null,
+    },
+    transcripts: array(input.transcripts).map((transcript: any) => ({
+      id: string(transcript.id),
+      resource_url: string(transcript.resource_url, transcript.resourceUrl),
+      status: string(transcript.status),
+      created: string(transcript.created),
+      completed: transcript.completed ?? null,
+      audio_url: string(transcript.audio_url, transcript.audioUrl),
+      error: transcript.error ?? null,
+    })),
+  }
+}
+
+function normalizeAssemblyAiTranscriptDeleteResponse(input: any): AssemblyAiTranscriptDeleteResponse {
+  const providerResponse = input.provider_response ?? input.providerResponse ?? {}
+  return {
+    id: string(input.id, providerResponse.id),
+    status: string(input.status, providerResponse.status, "deleted"),
+    deleted: Boolean(input.deleted ?? input.status === "deleted" ?? providerResponse.status === "deleted"),
+    provider_response: providerResponse,
+  }
+}
+
+function normalizeAssemblyAiSpeakerOptions(input: any): AssemblyAiSpeakerOptions | null {
+  if (!input || typeof input !== "object") return null
+  const min = nullableNumber(input.min_speakers_expected, input.minSpeakersExpected)
+  const max = nullableNumber(input.max_speakers_expected, input.maxSpeakersExpected)
+  if (min == null && max == null) return null
+  return {
+    min_speakers_expected: min,
+    max_speakers_expected: max,
   }
 }
 
@@ -2867,6 +2990,7 @@ function normalizeTranscriptionJob(input: any): TranscriptionJob {
     raw_artifact_version_id: input.raw_artifact_version_id ?? input.rawArtifactVersionId ?? null,
     normalized_artifact_version_id: input.normalized_artifact_version_id ?? input.normalizedArtifactVersionId ?? null,
     redacted_artifact_version_id: input.redacted_artifact_version_id ?? input.redactedArtifactVersionId ?? null,
+    redacted_audio_version_id: input.redacted_audio_version_id ?? input.redactedAudioVersionId ?? null,
     reviewed_document_version_id: input.reviewed_document_version_id ?? input.reviewedDocumentVersionId ?? null,
     caption_vtt_version_id: input.caption_vtt_version_id ?? input.captionVttVersionId ?? null,
     caption_srt_version_id: input.caption_srt_version_id ?? input.captionSrtVersionId ?? null,
@@ -2875,6 +2999,13 @@ function normalizeTranscriptionJob(input: any): TranscriptionJob {
     speaker_count: number(input.speaker_count, input.speakerCount),
     segment_count: number(input.segment_count, input.segmentCount),
     word_count: number(input.word_count, input.wordCount),
+    speakers_expected: nullableNumber(input.speakers_expected, input.speakersExpected),
+    speaker_options: normalizeAssemblyAiSpeakerOptions(input.speaker_options ?? input.speakerOptions),
+    word_search_terms: array(input.word_search_terms, input.wordSearchTerms).map(String),
+    prompt_preset: input.prompt_preset ?? input.promptPreset ?? null,
+    prompt: input.prompt ?? null,
+    keyterms_prompt: array(input.keyterms_prompt, input.keytermsPrompt).map(String),
+    remove_audio_tags: input.remove_audio_tags ?? input.removeAudioTags ?? null,
     redact_pii: Boolean(input.redact_pii ?? input.redactPii ?? true),
     speech_models: array(input.speech_models, input.speechModels).map(String),
     retryable: Boolean(input.retryable),
@@ -2897,8 +3028,10 @@ function normalizeTranscriptSegment(input: any): TranscriptSegment {
     transcription_job_id: string(input.transcription_job_id, input.transcriptionJobId),
     source_span_id: input.source_span_id ?? input.sourceSpanId ?? null,
     ordinal: number(input.ordinal),
+    paragraph_ordinal: nullableNumber(input.paragraph_ordinal, input.paragraphOrdinal),
     speaker_label: input.speaker_label ?? input.speakerLabel ?? null,
     speaker_name: input.speaker_name ?? input.speakerName ?? null,
+    channel: input.channel ?? null,
     text: string(input.text),
     redacted_text: input.redacted_text ?? input.redactedText ?? null,
     time_start_ms: number(input.time_start_ms, input.timeStartMs),
@@ -4062,4 +4195,33 @@ function titleFromFilename(filename?: string) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function shouldUseDemoMatterFallback(error: unknown, options: { allowNotFound?: boolean } = {}) {
+  return DEMO_MODE || isOfflineCaseBuilderError(error) || Boolean(options.allowNotFound && isNotFoundError(error))
+}
+
+function isOfflineCaseBuilderError(error: unknown) {
+  const message = errorMessage(error).toLowerCase()
+  return (
+    message.includes("fetch failed") ||
+    message.includes("failed to fetch") ||
+    message.includes("econnrefused") ||
+    message.includes("enotfound") ||
+    message.includes("network") ||
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("aborted")
+  )
+}
+
+function isNotFoundError(error: unknown) {
+  const message = errorMessage(error).toLowerCase()
+  return message.includes("api error: 404") || message.includes("not found")
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : error instanceof Error && error.name === "AbortError"
 }

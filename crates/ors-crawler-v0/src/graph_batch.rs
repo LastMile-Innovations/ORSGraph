@@ -37,6 +37,10 @@ impl GraphBatch {
         Ok(())
     }
 
+    pub fn ensure_file(&mut self, file_name: impl Into<String>) {
+        self.files.entry(file_name.into()).or_default();
+    }
+
     pub fn extend_parsed_chapter(&mut self, parsed: &models::ParsedChapter) -> Result<()> {
         self.push("source_documents.jsonl", &parsed.source_document)?;
         self.extend("legal_text_identities.jsonl", &parsed.identities)?;
@@ -52,18 +56,40 @@ impl GraphBatch {
         self.extend("chapter_toc_entries.jsonl", &parsed.chapter_toc_entries)?;
         self.extend("reserved_ranges.jsonl", &parsed.reserved_ranges)?;
         self.extend("parser_diagnostics.jsonl", &parsed.parser_diagnostic_rows)?;
+        self.ensure_file("cites_edges.jsonl");
         self.extend_derived_nodes(parsed)?;
         Ok(())
     }
 
+    pub fn from_parsed_chapter(parsed: &models::ParsedChapter) -> Result<Self> {
+        let mut batch = Self::default();
+        batch.extend_parsed_chapter(parsed)?;
+        Ok(batch)
+    }
+
     pub fn write_to_dir(&self, dir: impl AsRef<Path>) -> Result<()> {
+        self.write_to_dir_with_mode(dir, false)
+    }
+
+    pub fn append_to_dir(&self, dir: impl AsRef<Path>) -> Result<()> {
+        self.write_to_dir_with_mode(dir, true)
+    }
+
+    fn write_to_dir_with_mode(&self, dir: impl AsRef<Path>, append: bool) -> Result<()> {
         fs::create_dir_all(dir.as_ref())?;
         for (file_name, rows) in &self.files {
             let path = dir.as_ref().join(file_name);
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            let file = fs::File::create(path)?;
+            let file = if append {
+                fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)?
+            } else {
+                fs::File::create(path)?
+            };
             let mut writer = std::io::BufWriter::new(file);
             for row in rows {
                 writer.write_all(serde_json::to_string(row)?.as_bytes())?;

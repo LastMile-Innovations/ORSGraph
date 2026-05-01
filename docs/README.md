@@ -1,5 +1,9 @@
 # ORSGraph Docs
 
+## Operations
+
+- [Crawler And API Overview](crawler-api-overview.md): Current operating map for the crawler CLI, graph JSONL flow, admin job runner, Neo4j lifecycle, Docker entrypoint, API server boundary, CaseBuilder transcription boundary, and verification commands.
+
 ## Data Model
 
 - [Full Data Model](data-model/full-data-model.md): Top-down legal graph model for jurisdictions, courts, corpora, legal text, registry/currentness overlays, procedural rule packs, CaseBuilder matters, WorkProduct ASTs, history, JSONL files, API surfaces, and expansion rules for Oregon, other states, and federal law.

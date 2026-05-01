@@ -328,6 +328,7 @@ pub fn combine_graph(
                 .ok_or_else(|| anyhow!("invalid graph file name {}", path.display()))?
                 .to_string();
             let lines = fs::read_to_string(&path)?;
+            by_file.entry(file_name.clone()).or_default();
             for line in lines.lines().map(str::trim).filter(|line| !line.is_empty()) {
                 by_file
                     .entry(file_name.clone())

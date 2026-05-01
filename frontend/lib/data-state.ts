@@ -20,11 +20,18 @@ export function classifyFallbackSource(error: unknown): DataSource {
     message.includes("fetch failed") ||
     message.includes("econnrefused") ||
     message.includes("enotfound") ||
-    message.includes("network")
+    message.includes("network") ||
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("aborted")
   ) {
     return "offline"
   }
   return "mock"
+}
+
+export function classifyApiFailureSource(error: unknown): DataSource {
+  return classifyFallbackSource(error) === "offline" ? "offline" : "error"
 }
 
 export function isFallbackSource(source?: DataSource): boolean {

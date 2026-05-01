@@ -9,10 +9,11 @@ interface PageProps {
 
 export default async function DraftPage({ params }: PageProps) {
   const { id, draftId } = await params
+  const decodedDraftId = decodeRouteSegment(draftId)
   const matterState = await getMatterState(id)
   const matter = matterState.data
   if (!matter) notFound()
-  const draft = matter.drafts.find((d) => d.id === draftId)
+  const draft = matter.drafts.find((d) => d.id === decodedDraftId || d.draft_id === decodedDraftId)
   if (!draft) notFound()
 
   return (
@@ -20,4 +21,12 @@ export default async function DraftPage({ params }: PageProps) {
       <DraftEditor matter={matter} draft={draft} />
     </MatterShell>
   )
+}
+
+function decodeRouteSegment(value: string) {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
 }

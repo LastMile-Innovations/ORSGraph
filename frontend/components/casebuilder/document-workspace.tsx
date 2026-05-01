@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useRef, useState, type ReactNode } from "react"
+import { useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
@@ -28,10 +28,12 @@ import type {
   DocumentAnnotation,
   DocumentWorkspace as DocumentWorkspaceState,
   Matter,
+  TranscriptionJob,
   TranscriptSegment,
   TranscriptionJobResponse,
 } from "@/lib/casebuilder/types"
 import {
+  type CreateTranscriptionInput,
   createEvidence,
   createFact,
   createTimelineEvent,
@@ -50,9 +52,11 @@ import { matterHref, matterWorkProductHref } from "@/lib/casebuilder/routes"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -67,6 +71,50 @@ interface DocumentWorkspaceProps {
 type WorkspaceTab = "links" | "annotations" | "provenance" | "speakers" | "privacy"
 type SelectedTextRange = { start: number; end: number; quote: string }
 type TranscriptView = "redacted" | "raw"
+type SpeakerMode = "auto" | "exact" | "range"
+type PromptMode = "default" | "preset" | "custom" | "keyterms"
+
+type TranscriptionSettings = {
+  redactPii: boolean
+  speakerLabels: boolean
+  speakerMode: SpeakerMode
+  speakersExpected: string
+  minSpeakersExpected: string
+  maxSpeakersExpected: string
+  promptMode: PromptMode
+  promptPreset: string
+  prompt: string
+  keyterms: string
+  wordSearchTerms: string
+  removeAudioTags: boolean
+}
+
+const promptPresetOptions = [
+  { value: "verbatim_multilingual", label: "Verbatim multilingual" },
+  { value: "unclear_masked", label: "Unclear as [masked]" },
+  { value: "unclear", label: "Unclear as [unclear]" },
+  { value: "legal", label: "Legal" },
+  { value: "medical", label: "Medical" },
+  { value: "financial", label: "Financial" },
+  { value: "technical", label: "Technical" },
+  { value: "code_switching", label: "Code switching" },
+  { value: "customer_support", label: "Customer support" },
+]
+
+const defaultTranscriptionSettings: TranscriptionSettings = {
+  redactPii: true,
+  speakerLabels: true,
+  speakerMode: "auto",
+  speakersExpected: "",
+  minSpeakersExpected: "",
+  maxSpeakersExpected: "",
+  promptMode: "default",
+  promptPreset: "unclear",
+  prompt: "",
+  keyterms: "",
+  wordSearchTerms: "",
+  removeAudioTags: true,
+}
 
 export function DocumentWorkspace({ matter, workspace: initialWorkspace }: DocumentWorkspaceProps) {
   const router = useRouter()
@@ -83,6 +131,9 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
   const [selectedTextRange, setSelectedTextRange] = useState<SelectedTextRange | null>(null)
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null)
   const [transcriptView, setTranscriptView] = useState<TranscriptView>("redacted")
+  const [transcriptionSettings, setTranscriptionSettings] = useState<TranscriptionSettings>(
+    defaultTranscriptionSettings,
+  )
 
   const document = workspace.document
   const filename = document.filename.toLowerCase()
@@ -182,7 +233,7 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
   async function onStartTranscription() {
     await runAction(
       "transcribe",
-      () => createTranscription(matter.id, document.document_id, { redact_pii: true, speaker_labels: true }),
+      () => createTranscription(matter.id, document.document_id, buildCreateTranscriptionInput(transcriptionSettings)),
       (data) => {
         replaceTranscription(data)
         setMessage(data.warnings[0] ?? "Transcription job updated.")
@@ -457,6 +508,7 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
               busy={busy}
               selectedSegmentId={selectedSegmentId}
               transcriptReviewed={Boolean(activeTranscription?.job.status === "processed")}
+              transcriptionSettings={transcriptionSettings}
               transcriptView={transcriptView}
               textDraft={textDraft}
               workspace={workspace}
@@ -468,6 +520,7 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
               onReviewTranscription={onReviewTranscript}
               onSelectSegment={setSelectedSegmentId}
               onStartTranscription={onStartTranscription}
+              onTranscriptionSettingsChange={setTranscriptionSettings}
               onSyncTranscription={onSyncTranscription}
               onTextChange={setTextDraft}
               onTextSelection={setSelectedTextRange}
@@ -616,6 +669,11 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
                       <div className="mt-3 space-y-2 text-xs text-muted-foreground">
                         <KeyValue label="Raw" value={activeTranscription?.raw_artifact_version?.document_version_id ?? "none"} />
                         <KeyValue label="Redacted" value={activeTranscription?.redacted_artifact_version?.document_version_id ?? "none"} />
+                        <KeyValue label="Redacted Audio" value={activeTranscription?.redacted_audio_version?.document_version_id ?? "none"} />
+                        <KeyValue label="Prompt" value={transcriptionPromptSummary(activeTranscription?.job)} />
+                        <KeyValue label="Speakers" value={transcriptionSpeakerSummary(activeTranscription?.job)} />
+                        <KeyValue label="Word Search" value={activeTranscription?.job.word_search_terms.length ? `${activeTranscription.job.word_search_terms.length} terms` : "none"} />
+                        <KeyValue label="Audio Tags" value={activeTranscription?.job.remove_audio_tags ?? "kept"} />
                         <KeyValue label="Reviewed" value={activeTranscription?.reviewed_document_version?.document_version_id ?? "none"} />
                       </div>
                     </InspectorSection>
@@ -654,6 +712,7 @@ function DocumentCenterPane({
   isPdf,
   selectedSegmentId,
   transcriptReviewed,
+  transcriptionSettings,
   transcriptView,
   textDraft,
   workspace,
@@ -665,6 +724,7 @@ function DocumentCenterPane({
   onReviewTranscription,
   onSelectSegment,
   onStartTranscription,
+  onTranscriptionSettingsChange,
   onSyncTranscription,
   onTextChange,
   onTextSelection,
@@ -682,6 +742,7 @@ function DocumentCenterPane({
   isPdf: boolean
   selectedSegmentId: string | null
   transcriptReviewed: boolean
+  transcriptionSettings: TranscriptionSettings
   transcriptView: TranscriptView
   textDraft: string
   workspace: DocumentWorkspaceState
@@ -693,6 +754,7 @@ function DocumentCenterPane({
   onReviewTranscription: () => void
   onSelectSegment: (segmentId: string | null) => void
   onStartTranscription: () => void
+  onTranscriptionSettingsChange: Dispatch<SetStateAction<TranscriptionSettings>>
   onSyncTranscription: () => void
   onTextChange: (value: string) => void
   onTextSelection: (range: SelectedTextRange | null) => void
@@ -719,6 +781,7 @@ function DocumentCenterPane({
         documentTitle={documentTitle}
         selectedSegmentId={selectedSegmentId}
         transcriptReviewed={transcriptReviewed}
+        transcriptionSettings={transcriptionSettings}
         transcriptView={transcriptView}
         workspace={workspace}
         onCreateAnnotation={onCreateAnnotation}
@@ -729,6 +792,7 @@ function DocumentCenterPane({
         onReviewTranscription={onReviewTranscription}
         onSelectSegment={onSelectSegment}
         onStartTranscription={onStartTranscription}
+        onTranscriptionSettingsChange={onTranscriptionSettingsChange}
         onSyncTranscription={onSyncTranscription}
       />
     )
@@ -779,6 +843,7 @@ function MediaTranscriptPane({
   documentTitle,
   selectedSegmentId,
   transcriptReviewed,
+  transcriptionSettings,
   transcriptView,
   workspace,
   onCreateAnnotation,
@@ -789,6 +854,7 @@ function MediaTranscriptPane({
   onReviewTranscription,
   onSelectSegment,
   onStartTranscription,
+  onTranscriptionSettingsChange,
   onSyncTranscription,
 }: {
   activeTranscription: TranscriptionJobResponse | null
@@ -797,6 +863,7 @@ function MediaTranscriptPane({
   documentTitle: string
   selectedSegmentId: string | null
   transcriptReviewed: boolean
+  transcriptionSettings: TranscriptionSettings
   transcriptView: TranscriptView
   workspace: DocumentWorkspaceState
   onCreateAnnotation: (segment: TranscriptSegment) => void
@@ -807,6 +874,7 @@ function MediaTranscriptPane({
   onReviewTranscription: () => void
   onSelectSegment: (segmentId: string | null) => void
   onStartTranscription: () => void
+  onTranscriptionSettingsChange: Dispatch<SetStateAction<TranscriptionSettings>>
   onSyncTranscription: () => void
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -826,7 +894,7 @@ function MediaTranscriptPane({
 
   return (
     <div className="grid h-full min-h-[640px] grid-rows-[auto_minmax(0,1fr)] bg-background">
-      <div className="border-b bg-muted/30 p-4">
+      <div className="space-y-3 border-b bg-muted/30 p-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
           <div className="min-w-0 flex-1">
             {isAudio ? (
@@ -875,8 +943,16 @@ function MediaTranscriptPane({
             <span>{activeTranscription.job.segment_count || segments.length} segment(s)</span>
             <span>{activeTranscription.job.speaker_count} speaker(s)</span>
             <span>{transcriptView === "redacted" ? "redacted view" : "raw review view"}</span>
+            {transcriptionSettingsSummary(activeTranscription.job).map((item) => (
+              <span key={item}>{item}</span>
+            ))}
           </div>
         )}
+        <TranscriptionSettingsPanel
+          disabled={busy === "transcribe"}
+          settings={transcriptionSettings}
+          onChange={onTranscriptionSettingsChange}
+        />
       </div>
       <ScrollArea className="min-h-0">
         <div className="space-y-3 p-4">
@@ -899,9 +975,10 @@ function MediaTranscriptPane({
               <section key={segment.segment_id} className={cn("rounded-md border bg-card p-3", selected && "border-primary ring-1 ring-primary")}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <button className="text-left text-xs font-medium text-foreground" onClick={() => jump(segment)}>
-                    {segment.speaker_name || segment.speaker_label || "Speaker"} · {formatMs(segment.time_start_ms)}-{formatMs(segment.time_end_ms)}
+                    {segmentSpeaker(segment)} · {formatMs(segment.time_start_ms)}-{formatMs(segment.time_end_ms)}
                   </button>
                   <div className="flex flex-wrap items-center gap-1">
+                    {segment.paragraph_ordinal ? <Badge variant="secondary">P{segment.paragraph_ordinal}</Badge> : null}
                     <Badge variant="outline">{segment.review_status}</Badge>
                     <IconButton label="Annotate segment" onClick={() => onCreateAnnotation(segment)}>
                       <Highlighter className="h-4 w-4" />
@@ -934,6 +1011,188 @@ function MediaTranscriptPane({
         </div>
       </ScrollArea>
     </div>
+  )
+}
+
+function TranscriptionSettingsPanel({
+  disabled,
+  settings,
+  onChange,
+}: {
+  disabled: boolean
+  settings: TranscriptionSettings
+  onChange: Dispatch<SetStateAction<TranscriptionSettings>>
+}) {
+  const update = (patch: Partial<TranscriptionSettings>) => {
+    onChange((current) => ({ ...current, ...patch }))
+  }
+
+  return (
+    <div className="grid gap-3 rounded-md border bg-background/80 p-3 text-xs lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="space-y-3">
+        <div className="grid grid-cols-3 gap-2">
+          <SwitchField
+            checked={settings.redactPii}
+            disabled={disabled}
+            label="PII"
+            onCheckedChange={(checked) => update({ redactPii: checked })}
+          />
+          <SwitchField
+            checked={settings.speakerLabels}
+            disabled={disabled}
+            label="Speakers"
+            onCheckedChange={(checked) => update({ speakerLabels: checked })}
+          />
+          <SwitchField
+            checked={settings.removeAudioTags}
+            disabled={disabled}
+            label="Tags"
+            onCheckedChange={(checked) => update({ removeAudioTags: checked })}
+          />
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-[140px_minmax(0,1fr)]">
+          <Select
+            value={settings.speakerMode}
+            onValueChange={(value) => update({ speakerMode: value as SpeakerMode })}
+            disabled={disabled || !settings.speakerLabels}
+          >
+            <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Auto speakers</SelectItem>
+              <SelectItem value="exact">Exact count</SelectItem>
+              <SelectItem value="range">Count range</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {settings.speakerMode === "exact" ? (
+            <Input
+              value={settings.speakersExpected}
+              onChange={(event) => update({ speakersExpected: event.target.value })}
+              inputMode="numeric"
+              placeholder="Speakers expected"
+              disabled={disabled || !settings.speakerLabels}
+              className="h-8"
+            />
+          ) : settings.speakerMode === "range" ? (
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                value={settings.minSpeakersExpected}
+                onChange={(event) => update({ minSpeakersExpected: event.target.value })}
+                inputMode="numeric"
+                placeholder="Min"
+                disabled={disabled || !settings.speakerLabels}
+                className="h-8"
+              />
+              <Input
+                value={settings.maxSpeakersExpected}
+                onChange={(event) => update({ maxSpeakersExpected: event.target.value })}
+                inputMode="numeric"
+                placeholder="Max"
+                disabled={disabled || !settings.speakerLabels}
+                className="h-8"
+              />
+            </div>
+          ) : (
+            <div className="flex h-8 items-center rounded-md border bg-muted/30 px-3 text-muted-foreground">
+              Provider clustering
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)]">
+          <Select
+            value={settings.promptMode}
+            onValueChange={(value) => update({ promptMode: value as PromptMode })}
+            disabled={disabled}
+          >
+            <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="default">Default prompt</SelectItem>
+              <SelectItem value="preset">Preset prompt</SelectItem>
+              <SelectItem value="custom">Custom prompt</SelectItem>
+              <SelectItem value="keyterms">Keyterms</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {settings.promptMode === "preset" ? (
+            <Select
+              value={settings.promptPreset}
+              onValueChange={(value) => update({ promptPreset: value })}
+              disabled={disabled}
+            >
+              <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {promptPresetOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input
+              value={settings.wordSearchTerms}
+              onChange={(event) => update({ wordSearchTerms: event.target.value })}
+              placeholder="Word search terms"
+              disabled={disabled}
+              className="h-8"
+            />
+          )}
+        </div>
+
+        {settings.promptMode === "custom" && (
+          <Textarea
+            value={settings.prompt}
+            onChange={(event) => update({ prompt: event.target.value })}
+            placeholder="Prompt"
+            rows={3}
+            disabled={disabled}
+            className="min-h-20 resize-y"
+          />
+        )}
+
+        {settings.promptMode === "keyterms" && (
+          <Textarea
+            value={settings.keyterms}
+            onChange={(event) => update({ keyterms: event.target.value })}
+            placeholder="Keyterms"
+            rows={3}
+            disabled={disabled}
+            className="min-h-20 resize-y"
+          />
+        )}
+
+        {settings.promptMode === "preset" && (
+          <Input
+            value={settings.wordSearchTerms}
+            onChange={(event) => update({ wordSearchTerms: event.target.value })}
+            placeholder="Word search terms"
+            disabled={disabled}
+            className="h-8"
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SwitchField({
+  checked,
+  disabled,
+  label,
+  onCheckedChange,
+}: {
+  checked: boolean
+  disabled: boolean
+  label: string
+  onCheckedChange: (checked: boolean) => void
+}) {
+  return (
+    <Label className="flex h-8 items-center justify-between rounded-md border bg-muted/20 px-2 text-xs">
+      <span>{label}</span>
+      <Switch checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
+    </Label>
   )
 }
 
@@ -1020,10 +1279,117 @@ function segmentText(segment: TranscriptSegment, view: TranscriptView) {
   return segment.text
 }
 
+function segmentSpeaker(segment: TranscriptSegment) {
+  return segment.speaker_name || segment.speaker_label || (segment.channel ? `Channel ${segment.channel}` : "Speaker")
+}
+
 function transcriptText(segments: TranscriptSegment[], redacted: boolean) {
-  return segments
-    .map((segment) => `${segment.speaker_name || segment.speaker_label || "Speaker"}: ${redacted ? segment.redacted_text || segment.text : segment.text}`)
-    .join("\n")
+  const paragraphs: string[] = []
+  let currentParagraph: number | null | undefined = null
+  let currentLines: string[] = []
+  for (const segment of segments) {
+    if (currentLines.length && segment.paragraph_ordinal && segment.paragraph_ordinal !== currentParagraph) {
+      paragraphs.push(currentLines.join("\n"))
+      currentLines = []
+    }
+    currentParagraph = segment.paragraph_ordinal
+    currentLines.push(`${segmentSpeaker(segment)}: ${redacted ? segment.redacted_text || segment.text : segment.text}`)
+  }
+  if (currentLines.length) paragraphs.push(currentLines.join("\n"))
+  return paragraphs.join("\n\n")
+}
+
+function buildCreateTranscriptionInput(settings: TranscriptionSettings): CreateTranscriptionInput {
+  const wordSearchTerms = listFromText(settings.wordSearchTerms)
+  const input: CreateTranscriptionInput = {
+    redact_pii: settings.redactPii,
+    speaker_labels: settings.speakerLabels,
+    remove_audio_tags: settings.removeAudioTags ? "all" : null,
+  }
+
+  if (settings.speakerLabels && settings.speakerMode === "exact") {
+    const speakersExpected = positiveInteger(settings.speakersExpected)
+    if (speakersExpected) input.speakers_expected = speakersExpected
+  }
+
+  if (settings.speakerLabels && settings.speakerMode === "range") {
+    const minSpeakersExpected = positiveInteger(settings.minSpeakersExpected)
+    const maxSpeakersExpected = positiveInteger(settings.maxSpeakersExpected)
+    if (minSpeakersExpected || maxSpeakersExpected) {
+      input.speaker_options = {
+        min_speakers_expected: minSpeakersExpected,
+        max_speakers_expected: maxSpeakersExpected,
+      }
+    }
+  }
+
+  if (wordSearchTerms.length) {
+    input.word_search_terms = wordSearchTerms
+  }
+
+  if (settings.promptMode === "preset") {
+    input.prompt_preset = settings.promptPreset
+  } else if (settings.promptMode === "custom") {
+    const prompt = settings.prompt.trim()
+    if (prompt) input.prompt = prompt
+  } else if (settings.promptMode === "keyterms") {
+    const keyterms = listFromText(settings.keyterms)
+    if (keyterms.length) input.keyterms_prompt = keyterms
+  }
+
+  return input
+}
+
+function positiveInteger(value: string) {
+  const parsed = Number.parseInt(value.trim(), 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+function listFromText(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .split(/[\n,]+/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  )
+}
+
+function transcriptionSettingsSummary(job: TranscriptionJob) {
+  const items: string[] = []
+  if (job.speakers_expected) {
+    items.push(`${job.speakers_expected} expected`)
+  } else if (job.speaker_options) {
+    const min = job.speaker_options.min_speakers_expected ?? "?"
+    const max = job.speaker_options.max_speakers_expected ?? "?"
+    items.push(`${min}-${max} expected`)
+  }
+  if (job.prompt_preset) items.push(`prompt ${job.prompt_preset}`)
+  if (job.prompt && !job.prompt_preset) items.push("custom prompt")
+  if (job.keyterms_prompt.length) items.push(`${job.keyterms_prompt.length} keyterm(s)`)
+  if (job.word_search_terms.length) items.push(`${job.word_search_terms.length} search term(s)`)
+  if (job.remove_audio_tags) items.push("tags removed")
+  return items
+}
+
+function transcriptionPromptSummary(job?: TranscriptionJob | null) {
+  if (!job) return "none"
+  if (job.prompt_preset) return job.prompt_preset
+  if (job.prompt) return "custom"
+  if (job.keyterms_prompt.length) return `${job.keyterms_prompt.length} keyterms`
+  return "default"
+}
+
+function transcriptionSpeakerSummary(job?: TranscriptionJob | null) {
+  if (!job) return "none"
+  if (job.speakers_expected) return `${job.speakers_expected} expected`
+  if (job.speaker_options) {
+    const min = job.speaker_options.min_speakers_expected ?? "?"
+    const max = job.speaker_options.max_speakers_expected ?? "?"
+    return `${min}-${max} expected`
+  }
+  return "auto"
 }
 
 function formatMs(ms: number) {

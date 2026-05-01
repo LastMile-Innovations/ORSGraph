@@ -52,7 +52,7 @@ if [ -n "$NEO4J_URI" ] && [ -n "$NEO4J_PASSWORD" ]; then
 
                 if [ "$CHAPTER_COUNT" -ge "$CHUNK_SIZE" ]; then
                     PARSE_ARGS=(
-                        parse-cached
+                        import-ors-cache
                         --raw-dir /app/data/raw/official
                         --out /app/data
                         --chapters "$CHAPTER_CHUNK"
@@ -70,7 +70,7 @@ if [ -n "$NEO4J_URI" ] && [ -n "$NEO4J_PASSWORD" ]; then
 
             if [ -n "$CHAPTER_CHUNK" ]; then
                 PARSE_ARGS=(
-                    parse-cached
+                    import-ors-cache
                     --raw-dir /app/data/raw/official
                     --out /app/data
                     --chapters "$CHAPTER_CHUNK"

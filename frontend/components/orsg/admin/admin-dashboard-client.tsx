@@ -66,20 +66,20 @@ const WORKFLOWS: Array<{
   disabled?: boolean
 }> = [
   {
-    id: "crawl-smoke",
-    label: "ORS crawl smoke",
-    description: "Fetch and parse two ORS chapters into the default data directory.",
+    id: "ors-registry-smoke",
+    label: "ORS registry smoke",
+    description: "Ingest two ORS chapters through the source registry.",
     icon: SearchCode,
     kind: "crawl",
-    params: { out_dir: "data", max_chapters: 2, edition_year: 2025 },
+    params: { out_dir: "data/sources", max_chapters: 2, edition_year: 2025 },
   },
   {
-    id: "crawl-fetch",
-    label: "Fetch only",
-    description: "Refresh raw ORS chapter artifacts without parsing.",
+    id: "combine-graph",
+    label: "Combine graph",
+    description: "Merge source graph JSONL into the canonical graph directory.",
     icon: Layers,
-    kind: "crawl",
-    params: { out_dir: "data", max_chapters: 2, edition_year: 2025, fetch_only: true },
+    kind: "combine_graph",
+    params: { out_dir: "data/sources", graph_dir: "data/graph" },
   },
   {
     id: "qc",
@@ -218,6 +218,8 @@ export function AdminDashboardClient() {
     if (!overview?.graph.rows) return 0
     return Math.min(100, Math.round((overview.graph.jsonl_files / 70) * 100))
   }, [overview])
+  const apiMetricValue = overview?.health.api ?? (error ? "offline" : loading ? "checking" : "unavailable")
+  const neo4jMetricValue = overview?.health.neo4j ?? (error ? "unknown" : "checking")
 
   async function startWorkflow(workflow: (typeof WORKFLOWS)[number]) {
     if (workflow.disabled) return
@@ -229,11 +231,12 @@ export function AdminDashboardClient() {
     try {
       const params = { ...workflow.params }
       if (params.out_dir === "data") params.out_dir = overview.paths.data_dir
+      if (params.out_dir === "data/sources") params.out_dir = `${overview.paths.data_dir.replace(/\/$/, "")}/sources`
       if (params.graph_dir === "data/graph") params.graph_dir = overview.paths.graph_dir
       if (workflow.id === "qc" && params.out_dir === "data/admin/qc") {
         params.out_dir = `${overview.paths.data_dir.replace(/\/$/, "")}/admin/qc`
       }
-      if (workflow.id.startsWith("crawl")) {
+      if (workflow.kind === "crawl") {
         params.max_chapters = Number(maxChapters) || 0
         if (chapters.trim()) params.chapters = chapters.trim()
       }
@@ -308,7 +311,7 @@ export function AdminDashboardClient() {
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard icon={Activity} label="API" value={overview?.health.api ?? "checking"} hint={`Neo4j ${overview?.health.neo4j ?? "unknown"}`} />
+          <MetricCard icon={Activity} label="API" value={apiMetricValue} hint={`Neo4j ${neo4jMetricValue}`} />
           <MetricCard icon={FileSearch} label="Sources" value={formatNumber(sourceRegistry?.totals.sources ?? overview?.sources.registry_sources)} hint={`${formatNumber(sourceRegistry?.totals.p0_sources)} P0, ${formatNumber(overview?.sources.source_dirs)} local dirs`} />
           <MetricCard icon={Database} label="Graph rows" value={formatNumber(overview?.graph.rows)} hint={`${formatNumber(overview?.graph.jsonl_files)} JSONL files`} />
           <MetricCard icon={Sparkles} label="Indexing" value={overview?.indexing.vector_search_enabled ? "enabled" : "off"} hint={overview?.indexing.vector_index ?? "no vector index"} />

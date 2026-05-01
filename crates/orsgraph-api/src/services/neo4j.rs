@@ -1181,6 +1181,7 @@ impl Neo4jService {
         let offset = offset.unwrap_or(0);
         let q = normalized_filter(q);
         let status = normalized_filter(status);
+        let end = offset.saturating_add(limit);
         let mut result = self
             .graph
             .execute(
@@ -1194,34 +1195,23 @@ impl Neo4jService {
                          OR toLower(coalesce(i.canonical_id, '')) CONTAINS $q
                          OR toLower(coalesce(i.title, '')) CONTAINS $q
                        )
-                     WITH count(i) AS total
-                     MATCH (i:LegalTextIdentity)
-                     WHERE ($chapter IS NULL OR i.chapter = $chapter)
-                       AND ($status IS NULL OR toLower(coalesce(i.status, 'active')) = $status)
-                       AND (
-                         $q IS NULL
-                         OR toLower(coalesce(i.citation, '')) CONTAINS $q
-                         OR toLower(coalesce(i.canonical_id, '')) CONTAINS $q
-                         OR toLower(coalesce(i.title, '')) CONTAINS $q
-                       )
-                     WITH i, total
-                     ORDER BY i.chapter, i.citation
-                     SKIP $offset
-                     LIMIT $limit
-                     RETURN total, collect({
+                     WITH i
+                     ORDER BY coalesce(i.chapter, ''), coalesce(i.citation, '')
+                     WITH collect({
                        canonical_id: i.canonical_id,
                        citation: i.citation,
                        title: i.title,
-                       chapter: i.chapter,
+                       chapter: coalesce(i.chapter, ''),
                        status: coalesce(i.status, 'active'),
                        edition_year: coalesce(i.edition_year, 2025)
-                     }) as items",
+                     }) AS matched
+                     RETURN size(matched) AS total, matched[$offset..$end] AS items",
                 )
                 .param("q", q)
                 .param("chapter", chapter.map(|value| value.to_string()))
                 .param("status", status)
                 .param("offset", offset as i64)
-                .param("limit", limit as i64),
+                .param("end", end as i64),
             )
             .await
             .map_err(ApiError::Neo4jConnection)?;

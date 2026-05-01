@@ -9,7 +9,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{header, HeaderMap, HeaderValue},
     response::{IntoResponse, Response},
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -111,6 +111,14 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/casebuilder/webhooks/assemblyai",
             post(assemblyai_webhook),
+        )
+        .route(
+            "/casebuilder/providers/assemblyai/transcripts",
+            get(list_assemblyai_transcripts),
+        )
+        .route(
+            "/casebuilder/providers/assemblyai/transcripts/:transcript_id",
+            delete(delete_assemblyai_transcript),
         )
         .route(
             "/matters/:matter_id/documents/:document_id/import-complaint",
@@ -772,6 +780,30 @@ async fn list_transcriptions(
         state
             .casebuilder_service
             .list_transcriptions(&matter_id, &document_id)
+            .await?,
+    ))
+}
+
+async fn list_assemblyai_transcripts(
+    State(state): State<AppState>,
+    Query(query): Query<AssemblyAiTranscriptListQuery>,
+) -> ApiResult<Json<AssemblyAiTranscriptListResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .list_assemblyai_transcripts(query)
+            .await?,
+    ))
+}
+
+async fn delete_assemblyai_transcript(
+    State(state): State<AppState>,
+    Path(transcript_id): Path<String>,
+) -> ApiResult<Json<AssemblyAiTranscriptDeleteResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .delete_assemblyai_transcript(&transcript_id)
             .await?,
     ))
 }

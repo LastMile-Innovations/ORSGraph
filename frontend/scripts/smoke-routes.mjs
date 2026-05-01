@@ -1,4 +1,6 @@
-const baseUrl = (process.env.SMOKE_BASE_URL || process.argv[2] || "http://localhost:3000").replace(/\/$/, "")
+const cliBaseUrl = process.argv.slice(2).find((value) => value !== "--")
+const baseUrl = (process.env.SMOKE_BASE_URL || cliBaseUrl || "http://localhost:3000").replace(/\/$/, "")
+const seededMatterText = "Smith v. ABC Property"
 
 const routes = [
   { path: "/" },
@@ -18,31 +20,31 @@ const routes = [
   { path: "/statutes/or:ors:3.275" },
   { path: "/casebuilder" },
   { path: "/casebuilder/new" },
-  { path: "/casebuilder/matters/smith-abc" },
-  { path: "/casebuilder/matters/matter%3Asmith-abc" },
-  { path: "/casebuilder/matters/smith-abc/documents" },
-  { path: "/casebuilder/matters/smith-abc/documents/doc%3Acomplaint" },
-  { path: "/casebuilder/matters/smith-abc/facts" },
-  { path: "/casebuilder/matters/smith-abc/timeline" },
-  { path: "/casebuilder/matters/smith-abc/claims" },
-  { path: "/casebuilder/matters/smith-abc/evidence" },
-  { path: "/casebuilder/matters/smith-abc/deadlines" },
-  { path: "/casebuilder/matters/smith-abc/complaint" },
-  { path: "/casebuilder/matters/smith-abc/complaint/editor" },
-  { path: "/casebuilder/matters/smith-abc/complaint/outline" },
-  { path: "/casebuilder/matters/smith-abc/complaint/claims" },
-  { path: "/casebuilder/matters/smith-abc/complaint/evidence" },
-  { path: "/casebuilder/matters/smith-abc/complaint/qc" },
-  { path: "/casebuilder/matters/smith-abc/complaint/preview" },
-  { path: "/casebuilder/matters/smith-abc/complaint/export" },
-  { path: "/casebuilder/matters/smith-abc/work-products" },
-  { path: "/casebuilder/matters/smith-abc/work-products/new" },
-  { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo" },
-  { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/editor" },
-  { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/qc" },
-  { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/preview" },
-  { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/export" },
-  { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/history" },
+  { path: "/casebuilder/matters/smith-abc", expectText: seededMatterText },
+  { path: "/casebuilder/matters/matter%3Asmith-abc", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/documents", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/documents/doc%3Acomplaint", expectText: "FED_Complaint_Northpoint_v_Smith.pdf" },
+  { path: "/casebuilder/matters/smith-abc/facts", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/timeline", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/claims", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/evidence", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/deadlines", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/complaint", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/complaint/editor", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/complaint/outline", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/complaint/claims", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/complaint/evidence", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/complaint/qc", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/complaint/preview", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/complaint/export", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/work-products", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/work-products/new", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/editor", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/qc", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/preview", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/export", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/history", expectText: seededMatterText },
   {
     path: "/casebuilder/matters/smith-abc/answer",
     redirectTo: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/editor",
@@ -50,11 +52,11 @@ const routes = [
   { path: "/casebuilder/matters/smith-abc/motion", redirectTo: "/casebuilder/matters/smith-abc/work-products/new" },
   { path: "/casebuilder/matters/smith-abc/declaration", redirectTo: "/casebuilder/matters/smith-abc/work-products/new" },
   { path: "/casebuilder/matters/smith-abc/memo", redirectTo: "/casebuilder/matters/smith-abc/work-products/new" },
-  { path: "/casebuilder/matters/smith-abc/drafts" },
-  { path: "/casebuilder/matters/smith-abc/drafts/draft%3Aanswer-v3" },
-  { path: "/casebuilder/matters/smith-abc/ask" },
-  { path: "/casebuilder/matters/smith-abc/authorities" },
-  { path: "/casebuilder/matters/smith-abc/tasks" },
+  { path: "/casebuilder/matters/smith-abc/drafts", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/drafts/draft%3Aanswer-v3", expectText: "Draft Answer + Counterclaims (v3)" },
+  { path: "/casebuilder/matters/smith-abc/ask", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/authorities", expectText: seededMatterText },
+  { path: "/casebuilder/matters/smith-abc/tasks", expectText: seededMatterText },
   { path: "/matters", redirectTo: "/casebuilder" },
   { path: "/matters/new", redirectTo: "/casebuilder/new" },
   { path: "/matters/smith-abc", redirectTo: "/casebuilder/matters/smith-abc" },
@@ -75,25 +77,38 @@ for (const route of routes) {
     }
     const isOk = response.status >= 200 && response.status < 300
     const expectedRedirect = route.redirectTo ? new URL(route.redirectTo, baseUrl) : null
+    const metaRefreshPath = extractMetaRefreshPath(html)
     const isExpectedRedirect = Boolean(
       expectedRedirect &&
-        response.status >= 300 &&
-        response.status < 400 &&
-        location &&
-        new URL(location, baseUrl).pathname === expectedRedirect.pathname,
+        ((response.status >= 300 &&
+          response.status < 400 &&
+          location &&
+          new URL(location, baseUrl).pathname === expectedRedirect.pathname) ||
+          (metaRefreshPath && new URL(metaRefreshPath, baseUrl).pathname === expectedRedirect.pathname)),
     )
     const hasNext404 = html.includes("This page could not be found")
     const hasAppNotFound = html.includes("No matter matches this route.")
+    const isMissingExpectedText = Boolean(route.expectText && !html.includes(route.expectText))
 
-    if ((!isOk && !isExpectedRedirect) || (!expectedRedirect && location) || hasNext404 || hasAppNotFound) {
+    if (
+      (!isOk && !isExpectedRedirect) ||
+      (!expectedRedirect && location) ||
+      hasNext404 ||
+      isMissingExpectedText ||
+      (!route.expectText && !isExpectedRedirect && hasAppNotFound)
+    ) {
       failures.push({
         route: route.path,
         status: response.status,
         redirect: location,
-        reason: hasNext404 || hasAppNotFound ? "not-found body" : "non-2xx or redirect",
+        reason: isMissingExpectedText
+          ? `missing expected text: ${route.expectText}`
+          : hasNext404 || hasAppNotFound
+            ? "not-found body"
+            : "non-2xx or redirect",
       })
     } else {
-      console.log(`ok ${response.status} ${route.path}${location ? ` -> ${location}` : ""}`)
+      console.log(`ok ${response.status} ${route.path}${location || metaRefreshPath ? ` -> ${location ?? metaRefreshPath}` : ""}`)
     }
   } catch (error) {
     failures.push({
@@ -152,6 +167,11 @@ async function smokeHomeLinks() {
       })
     }
   }
+}
+
+function extractMetaRefreshPath(html) {
+  const match = html.match(/http-equiv="refresh"\s+content="\d+;url=([^"]+)"/i)
+  return match ? decodeHtml(match[1]) : null
 }
 
 function extractLocalHrefs(html) {

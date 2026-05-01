@@ -1,8 +1,8 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useState } from "react"
-import { AlertTriangle, ArrowLeft, Ban, RefreshCcw, ShieldAlert, Square, Terminal } from "lucide-react"
+import { useCallback, useEffect, useState } from "react"
+import { AlertTriangle, ArrowLeft, Ban, RefreshCcw, ShieldAlert, Terminal } from "lucide-react"
 import {
   cancelAdminJob,
   getAdminJobDetail,
@@ -34,7 +34,7 @@ export function AdminJobDetailClient({ jobId }: { jobId: string }) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       const next = await getAdminJobDetail(jobId)
       setDetail(next)
@@ -42,17 +42,19 @@ export function AdminJobDetailClient({ jobId }: { jobId: string }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load job")
     }
-  }
-
-  useEffect(() => {
-    load()
   }, [jobId])
 
   useEffect(() => {
-    if (!detail || isTerminalJob(detail.job.status)) return
+    load()
+  }, [load])
+
+  const jobStatus = detail?.job.status
+
+  useEffect(() => {
+    if (!jobStatus || isTerminalJob(jobStatus)) return
     const interval = window.setInterval(load, REFRESH_MS)
     return () => window.clearInterval(interval)
-  }, [detail?.job.status, jobId])
+  }, [jobStatus, load])
 
   async function runAction(action: "cancel" | "kill") {
     if (!detail) return

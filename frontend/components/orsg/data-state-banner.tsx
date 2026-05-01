@@ -28,7 +28,7 @@ export function DataStateBanner({ source, label, error, className }: DataStateBa
     offline: {
       icon: WifiOff,
       label: label ?? "API offline",
-      body: "The live API could not be reached. Any visible sample data is read-only.",
+      body: "The live API could not be reached. This view is limited to data the API already returned.",
       cls: "border-destructive/30 bg-destructive/10 text-destructive",
     },
     empty: {
