@@ -1,0 +1,17 @@
+# ORSGraph Docs
+
+## Data Model
+
+- [Full Data Model](data-model/full-data-model.md): Top-down legal graph model for jurisdictions, courts, corpora, legal text, registry/currentness overlays, procedural rule packs, CaseBuilder matters, WorkProduct ASTs, history, JSONL files, API surfaces, and expansion rules for Oregon, other states, and federal law.
+
+## Legal Corpora
+
+- [2025 UTCR Graph Ingestion](legal-corpora/2025-utcr-ingestion.md): How the Oregon Uniform Trial Court Rules PDF becomes a first-class court-rule corpus, procedural requirement graph, WorkProduct rule-pack source, search authority family, and seedable JSONL output.
+- [Court Rules Registry Layer](legal-corpora/court-rules-registry-layer.md): How SLR/CJO/PJO registry tables become source-backed currentness, applicability, supersession, and WorkProduct authority overlays.
+- [Local SLR PDF Ingestion](legal-corpora/local-slr-pdf-ingestion.md): How local Supplementary Local Rule PDFs become source-backed SLR corpora with provisions, citations, source pages, and retrieval chunks.
+- [Top-Down Expansion Roadmap](legal-corpora/top-down-expansion-roadmap.md): Oregon-first expansion plan for all county SLRs and later every state and federal law/rule stack.
+
+## Product Backlogs
+
+- [CaseBuilder Backlog](casebuilder-backlog/README.md): Current CaseBuilder implementation status and roadmap.
+- [Frontend Backlog](frontend-backlog/README.md): Frontend stabilization, navigation, API integration, workflows, UX, and quality work.

@@ -5,6 +5,7 @@ pub mod graph;
 pub mod health;
 pub mod home;
 pub mod qc;
+pub mod rules;
 pub mod search;
 pub mod sidebar;
 pub mod stats;
@@ -17,6 +18,7 @@ pub fn create_routes() -> Router<AppState> {
     Router::new()
         .merge(sidebar::routes())
         .merge(casebuilder::routes())
+        .merge(rules::routes())
         .route("/home", axum::routing::get(home::get_home))
         .route(
             "/featured-statutes",
@@ -35,6 +37,10 @@ pub fn create_routes() -> Router<AppState> {
         .route(
             "/statutes/:citation",
             axum::routing::get(statutes::get_statute),
+        )
+        .route(
+            "/statutes/:citation/page",
+            axum::routing::get(statutes::get_statute_page),
         )
         .route(
             "/statutes/:citation/provisions",

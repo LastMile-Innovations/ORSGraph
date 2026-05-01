@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct SearchQuery {
     pub q: String,
     pub r#type: Option<String>,
+    pub authority_family: Option<String>,
     pub chapter: Option<String>,
     pub status: Option<String>,
     pub mode: Option<SearchMode>,
@@ -22,6 +23,7 @@ pub struct SearchQuery {
 #[derive(Debug, Clone, Default)]
 pub struct SearchRetrievalFilters {
     pub result_type: Option<String>,
+    pub authority_family: Option<String>,
     pub chapter: Option<String>,
     pub status: Option<String>,
     pub semantic_type: Option<String>,
@@ -37,6 +39,7 @@ impl SearchRetrievalFilters {
     pub fn from_query(query: &SearchQuery) -> Self {
         Self {
             result_type: normalized_filter(query.r#type.as_deref()),
+            authority_family: normalized_authority_filter(query.authority_family.as_deref()),
             chapter: query
                 .chapter
                 .as_deref()
@@ -58,6 +61,9 @@ impl SearchRetrievalFilters {
         let mut names = Vec::new();
         if self.result_type.is_some() {
             names.push("type".to_string());
+        }
+        if self.authority_family.is_some() {
+            names.push("authority_family".to_string());
         }
         if self.chapter.is_some() {
             names.push("chapter".to_string());
@@ -109,6 +115,17 @@ impl SearchRetrievalFilters {
             Some("deadline") => Some("deadline_block"),
             Some("penalty") => Some("penalty_block"),
             Some("notice") | Some("requirednotice") => Some("contextual_provision"),
+            Some("formatting") | Some("formattingrequirement") => Some("formatting_requirement"),
+            Some("filing") | Some("filingrequirement") => Some("filing_requirement"),
+            Some("service") | Some("servicerequirement") => Some("service_requirement"),
+            Some("efiling") | Some("efilingrequirement") => Some("efiling_requirement"),
+            Some("certificate") | Some("certificateofservicerequirement") => {
+                Some("certificate_requirement")
+            }
+            Some("exhibit") | Some("exhibitrequirement") => Some("exhibit_requirement"),
+            Some("protected_info") | Some("protectedinformationrequirement") => {
+                Some("protected_info_requirement")
+            }
             _ => None,
         }
     }
@@ -119,6 +136,19 @@ fn normalized_filter(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("all"))
         .map(ToString::to_string)
+}
+
+pub fn normalized_authority_filter(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("all"))
+        .and_then(|value| match value.to_ascii_lowercase().as_str() {
+            "ors" | "or:ors" | "statute" | "statutes" => Some("ORS".to_string()),
+            "utcr" | "or:utcr" | "court_rule" | "court_rules" | "rule" | "rules" => {
+                Some("UTCR".to_string())
+            }
+            _ => Some(value.to_ascii_uppercase()),
+        })
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +187,7 @@ pub struct SearchResponse {
 pub struct SearchAnalysis {
     pub normalized_query: String,
     pub intent: String,
+    pub inferred_authority_family: Option<String>,
     pub citations: Vec<QueryCitation>,
     pub ranges: Vec<QueryCitationRange>,
     pub inferred_chapter: Option<String>,
@@ -178,6 +209,7 @@ pub struct SearchTimingInfo {
 #[derive(Debug, Serialize, Clone)]
 pub struct QueryCitation {
     pub raw: String,
+    pub authority_family: String,
     pub normalized: String,
     pub base: String,
     pub chapter: String,
@@ -189,6 +221,7 @@ pub struct QueryCitation {
 #[derive(Debug, Serialize, Clone)]
 pub struct QueryCitationRange {
     pub raw: String,
+    pub authority_family: String,
     pub start: String,
     pub end: String,
     pub chapter: String,
@@ -236,6 +269,9 @@ pub struct RerankInfo {
 pub struct SearchResult {
     pub id: String,
     pub kind: String,
+    pub authority_family: Option<String>,
+    pub authority_type: Option<String>,
+    pub corpus_id: Option<String>,
     pub citation: Option<String>,
     pub title: Option<String>,
     pub chapter: Option<String>,

@@ -755,6 +755,7 @@ export interface WorkProduct {
   created_at: string
   updated_at: string
   profile: WorkProductProfile
+  document_ast: WorkProductDocument
   blocks: WorkProductBlock[]
   marks: WorkProductMark[]
   anchors: WorkProductAnchor[]
@@ -764,6 +765,84 @@ export interface WorkProduct {
   ai_commands: WorkProductAiCommandState[]
   formatting_profile: FormattingProfile
   rule_pack: RulePack
+}
+
+export interface WorkProductDocument {
+  schema_version: string
+  document_id: string
+  work_product_id: string
+  matter_id: string
+  product_type: string
+  title: string
+  metadata: WorkProductMetadata
+  blocks: WorkProductBlock[]
+  links: WorkProductLink[]
+  citations: WorkProductCitationUse[]
+  exhibits: WorkProductExhibitReference[]
+  rule_findings: WorkProductFinding[]
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkProductMetadata {
+  jurisdiction?: string | null
+  court?: string | null
+  county?: string | null
+  case_number?: string | null
+  rule_pack_id?: string | null
+  template_id?: string | null
+  formatting_profile_id?: string | null
+  parties?: {
+    plaintiffs: string[]
+    defendants: string[]
+    petitioners: string[]
+    respondents: string[]
+  } | null
+  status: string
+}
+
+export interface TextRange {
+  start_offset: number
+  end_offset: number
+  quote?: string | null
+}
+
+export interface WorkProductLink {
+  link_id: string
+  source_block_id: string
+  source_text_range?: TextRange | null
+  target_type: string
+  target_id: string
+  relation: string
+  confidence?: number | null
+  created_by: string
+  created_at: string
+}
+
+export interface WorkProductCitationUse {
+  citation_use_id: string
+  source_block_id: string
+  source_text_range?: TextRange | null
+  raw_text: string
+  normalized_citation?: string | null
+  target_type: string
+  target_id?: string | null
+  pinpoint?: string | null
+  status: string
+  resolver_message?: string | null
+  created_at: string
+}
+
+export interface WorkProductExhibitReference {
+  exhibit_reference_id: string
+  source_block_id: string
+  source_text_range?: TextRange | null
+  label: string
+  exhibit_id?: string | null
+  document_id?: string | null
+  page_range?: string | null
+  status: string
+  created_at: string
 }
 
 export interface LegalImpactSummary {
@@ -984,6 +1063,18 @@ export interface VersionTextDiff {
   after?: string | null
 }
 
+export interface VersionLayerDiff {
+  layer: string
+  target_type: string
+  target_id: string
+  title: string
+  status: string
+  before_hash?: string | null
+  after_hash?: string | null
+  before_summary?: string | null
+  after_summary?: string | null
+}
+
 export interface CompareVersionsResponse {
   matter_id: string
   subject_id: string
@@ -992,6 +1083,7 @@ export interface CompareVersionsResponse {
   layers: string[]
   summary: VersionChangeSummary
   text_diffs: VersionTextDiff[]
+  layer_diffs: VersionLayerDiff[]
 }
 
 export interface WorkProductProfile {
@@ -1011,12 +1103,30 @@ export interface WorkProductBlock {
   id: string
   matter_id: string
   work_product_id: string
+  type: string
   block_type: string
   role: string
   title: string
   text: string
+  order_index: number
   ordinal: number
   parent_block_id?: string | null
+  parent_id?: string | null
+  children: WorkProductBlock[]
+  links: string[]
+  citations: string[]
+  exhibits: string[]
+  rule_finding_ids: string[]
+  paragraph_number?: number | null
+  sentence_index?: number | null
+  section_kind?: string | null
+  count_number?: number | null
+  claim_type?: string | null
+  defendants: string[]
+  requested_relief: string[]
+  support_status?: string | null
+  created_at: string
+  updated_at: string
   fact_ids: string[]
   evidence_ids: string[]
   authorities: { citation: string; canonical_id: string; reason?: string; pinpoint?: string }[]
@@ -1024,6 +1134,66 @@ export interface WorkProductBlock {
   locked: boolean
   review_status: string
   prosemirror_json?: Record<string, unknown> | null
+}
+
+export interface AstPatch {
+  patch_id: string
+  draft_id?: string | null
+  work_product_id?: string | null
+  base_document_hash?: string | null
+  base_snapshot_id?: string | null
+  created_by: "user" | "ai" | "system" | string
+  reason?: string | null
+  operations: AstOperation[]
+  created_at: string
+}
+
+export type AstOperation =
+  | { op: "insert_block"; parent_id?: string | null; after_block_id?: string | null; block: WorkProductBlock }
+  | { op: "update_block"; block_id: string; before?: Record<string, unknown> | null; after: Record<string, unknown> }
+  | { op: "delete_block"; block_id: string; tombstone?: boolean }
+  | { op: "move_block"; block_id: string; parent_id?: string | null; after_block_id?: string | null }
+  | { op: "split_block"; block_id: string; offset: number; new_block_id: string }
+  | { op: "merge_blocks"; first_block_id: string; second_block_id: string }
+  | { op: "renumber_paragraphs" }
+  | { op: "add_link"; link: WorkProductLink }
+  | { op: "remove_link"; link_id: string }
+  | { op: "add_citation"; citation: WorkProductCitationUse }
+  | { op: "resolve_citation"; citation_use_id: string; normalized_citation?: string; target_type?: string; target_id?: string; status?: string }
+  | { op: "remove_citation"; citation_use_id: string }
+  | { op: "add_exhibit_reference"; exhibit: WorkProductExhibitReference }
+  | { op: "resolve_exhibit_reference"; exhibit_reference_id: string; exhibit_id?: string; status?: string }
+  | { op: "add_rule_finding"; finding: WorkProductFinding }
+  | { op: "resolve_rule_finding"; finding_id: string; status: string }
+  | { op: "apply_template"; template_id: string }
+
+export interface AstValidationIssue {
+  code: string
+  message: string
+  target_type?: string | null
+  target_id?: string | null
+}
+
+export interface AstValidationResponse {
+  valid: boolean
+  errors: AstValidationIssue[]
+  warnings: AstValidationIssue[]
+}
+
+export interface AstMarkdownResponse {
+  markdown: string
+  warnings: string[]
+}
+
+export interface AstDocumentResponse {
+  document_ast: WorkProductDocument
+  warnings: string[]
+}
+
+export interface AstRenderedResponse {
+  html?: string | null
+  plain_text?: string | null
+  warnings: string[]
 }
 
 export interface WorkProductMark {
@@ -1106,6 +1276,10 @@ export interface WorkProductArtifact {
   qc_status_at_export?: string | null
   changed_since_export?: boolean | null
   immutable?: boolean | null
+  object_blob_id?: string | null
+  size_bytes?: number | null
+  mime_type?: string | null
+  storage_status?: string | null
 }
 
 export interface WorkProductHistoryEvent {
@@ -1363,7 +1537,22 @@ export interface RulePack {
   jurisdiction: string
   version: string
   effective_date: string
+  rule_profile: RuleProfileSummary
   rules: RuleDefinition[]
+}
+
+export interface RuleProfileSummary {
+  jurisdiction_id: string
+  court_id?: string | null
+  court?: string | null
+  filing_date?: string | null
+  utcr_edition_id?: string | null
+  slr_edition_id?: string | null
+  active_statewide_order_ids: string[]
+  active_local_order_ids: string[]
+  active_out_of_cycle_amendment_ids: string[]
+  currentness_warnings: string[]
+  resolver_endpoint: string
 }
 
 export interface RuleDefinition {
@@ -1432,6 +1621,10 @@ export interface ExportArtifact {
   generated_at: string
   warnings: string[]
   content_preview: string
+  object_blob_id?: string | null
+  size_bytes?: number | null
+  mime_type?: string | null
+  storage_status?: string | null
 }
 
 export interface ComplaintHistoryEvent {

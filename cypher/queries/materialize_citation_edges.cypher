@@ -37,7 +37,15 @@ CALL {
 
 CALL {
     MATCH (cm:CitationMention)
-    WHERE cm.resolver_status = 'resolved_external' AND cm.external_citation_id IS NOT NULL
+    WHERE cm.resolver_status IN ['resolved_external', 'resolved_external_placeholder'] AND cm.external_citation_id IS NOT NULL
     MATCH (elc:ExternalLegalCitation {external_citation_id: cm.external_citation_id})
     MERGE (cm)-[:RESOLVES_TO_EXTERNAL]->(elc)
+} IN TRANSACTIONS OF 5000 ROWS;
+
+CALL {
+    MATCH (cm:CitationMention)
+    WHERE cm.resolver_status IN ['resolved_external', 'resolved_external_placeholder'] AND cm.external_citation_id IS NOT NULL
+    MATCH (p:Provision {provision_id: cm.source_provision_id})
+    MATCH (elc:ExternalLegalCitation {external_citation_id: cm.external_citation_id})
+    MERGE (p)-[:CITES_EXTERNAL]->(elc)
 } IN TRANSACTIONS OF 5000 ROWS;

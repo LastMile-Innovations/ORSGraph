@@ -132,9 +132,9 @@ V0 foundation makes CaseBuilder trustworthy: canonical routing, durable data, pr
 - Priority: P0
 - Area: Storage/graph architecture
 - Problem: CaseBuilder needs a clean boundary between immutable heavy artifacts and queryable legal/case meaning.
-- Expected behavior: R2 stores original uploads, extracted text JSON, OCR output, page thumbnails, redacted copies, exhibit bundles, export artifacts, and ingestion manifests; Neo4j stores matter/document/version/blob/page/chunk/evidence/fact/entity/claim/draft/authority/run structure.
-- Implementation notes: Treat R2 and Neo4j as two halves of one provenance system. Neo4j nodes should hold stable IDs, hashes, metadata, and relationships, not large binary or artifact payloads.
-- Acceptance checks: Architecture docs, DTOs, and service boundaries make it clear which data lives in R2 versus Neo4j, and no new large extracted artifact is stored only as a graph payload.
+- Expected behavior: R2/local `ObjectStore` stores original uploads, extracted text JSON, OCR output, page thumbnails, redacted copies, exhibit bundles, export artifacts, AST snapshot/projection artifacts, and ingestion manifests; Neo4j stores matter/document/version/blob/page/chunk/evidence/fact/entity/claim/work-product/authority/run meaning and relationships.
+- Implementation notes: Treat R2 and Neo4j as two halves of one provenance system. Neo4j nodes should hold stable IDs, hashes, metadata, search excerpts, ownership edges, and relationships, not large binary or immutable artifact payloads.
+- Acceptance checks: Architecture docs, DTOs, and service boundaries make it clear which data lives in R2 versus Neo4j, and no new large extracted or AST/export artifact is stored only as a graph payload.
 - Dependencies: `CB-V0F-005`, `CB-V0F-006`, `CB-X-013`.
 - Status: Todo
 
@@ -171,14 +171,14 @@ V0 foundation makes CaseBuilder trustworthy: canonical routing, durable data, pr
 - Acceptance checks: New uploads produce opaque storage keys, tests reject keys containing raw filenames, and existing slug IDs remain readable only as legacy records.
 - Dependencies: `CB-V0F-006`, `CB-V0F-014`.
 - Status: Partial
-- Progress: New CaseBuilder document uploads now use opaque generated document IDs, so generated object keys no longer include raw filenames; tests cover raw filename leakage in new object keys. Existing slug-shaped IDs remain readable as legacy records.
-- Still needed: Apply the same opaque-key policy to future artifact, manifest, export, thumbnail, redaction, archive-child, and OCR object keys.
+- Progress: New CaseBuilder document uploads now use opaque generated document IDs, and AST snapshot/export object keys are hash scoped, so generated object keys no longer include raw filenames; tests cover raw filename leakage in new object keys. Existing slug-shaped IDs remain readable as legacy records.
+- Still needed: Apply the same opaque-key policy to future thumbnail, redaction, archive-child, OCR, and all extraction-manifest object keys.
 
 ## CB-V0F-017 - R2 artifact manifest layout
 - Priority: P0
 - Area: Ingestion artifacts
 - Problem: Derived extraction artifacts need reproducible storage outside Neo4j.
-- Expected behavior: Each document/version has R2 artifacts for `original`, `text.normalized.json`, `pages.json`, `ocr.json` when present, `manifest.json`, and later thumbnails/redactions/export outputs.
+- Expected behavior: Each document/version has R2 artifacts for `original`, `text.normalized.json`, `pages.json`, `ocr.json` when present, `manifest.json`, and later thumbnails/redactions/export outputs; WorkProduct AST snapshots and exports use the same object/blob reference pattern.
 - Implementation notes: The manifest should record object keys, sha256 hashes, extractor versions, model/provider metadata when used, produced graph node IDs, and error state.
 - Acceptance checks: Re-running extraction can use the manifest to verify inputs, outputs, and produced graph nodes without reading large payloads from Neo4j.
 - Dependencies: `CB-V0F-013`, `CB-V0F-014`, `CB-V0F-015`, `CB-V0-019`.

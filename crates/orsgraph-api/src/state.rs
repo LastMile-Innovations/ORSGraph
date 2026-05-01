@@ -8,6 +8,7 @@ use crate::services::home::HomeService;
 use crate::services::neo4j::Neo4jService;
 use crate::services::object_store::object_store_from_config;
 use crate::services::rerank::RerankService;
+use crate::services::rules::RuleApplicabilityResolver;
 use crate::services::search::SearchService;
 use crate::services::stats::StatsService;
 use crate::services::vector_search::VectorSearchService;
@@ -28,6 +29,7 @@ pub struct AppState {
     pub analytics_service: Arc<AnalyticsService>,
     pub home_service: Arc<HomeService>,
     pub casebuilder_service: Arc<CaseBuilderService>,
+    pub rule_applicability_resolver: Arc<RuleApplicabilityResolver>,
     pub config: Arc<ApiConfig>,
 }
 
@@ -103,6 +105,7 @@ impl AppState {
             health_service.clone(),
             analytics_service.clone(),
         ));
+        let rule_applicability_resolver = Arc::new(RuleApplicabilityResolver::new(neo4j.clone()));
         let object_store = object_store_from_config(&config).await?;
         let casebuilder_service = Arc::new(CaseBuilderService::new(
             neo4j_service.clone(),
@@ -110,6 +113,9 @@ impl AppState {
             config.r2_upload_ttl_seconds,
             config.r2_download_ttl_seconds,
             config.r2_max_upload_bytes,
+            config.casebuilder_ast_entity_inline_bytes,
+            config.casebuilder_ast_snapshot_inline_bytes,
+            config.casebuilder_ast_block_inline_bytes,
         ));
 
         if let Err(e) = casebuilder_service.ensure_indexes().await {
@@ -129,6 +135,7 @@ impl AppState {
             analytics_service,
             home_service,
             casebuilder_service,
+            rule_applicability_resolver,
             config: Arc::new(config),
         })
     }

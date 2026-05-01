@@ -1,6 +1,11 @@
 import type {
   CaseAiActionResponse,
   AIEditAudit,
+  AstDocumentResponse,
+  AstMarkdownResponse,
+  AstPatch,
+  AstRenderedResponse,
+  AstValidationResponse,
   AuthorityAttachmentResponse,
   AuthorityTargetType,
   CaseAuthoritySearchResponse,
@@ -44,10 +49,15 @@ import type {
   WorkProductAnchor,
   WorkProductArtifact,
   WorkProductBlock,
+  WorkProductCitationUse,
+  WorkProductDocument,
+  WorkProductExhibitReference,
   WorkProductFinding,
+  WorkProductLink,
   WorkProductMark,
   WorkProductPreviewResponse,
   VersionChangeSummary,
+  VersionLayerDiff,
   VersionSnapshot,
   VersionTextDiff,
 } from "./types"
@@ -297,11 +307,20 @@ export interface PatchWorkProductInput {
   status?: string
   review_status?: string
   setup_stage?: string
+  document_ast?: WorkProductDocument
   blocks?: WorkProductBlock[]
   marks?: WorkProductMark[]
   anchors?: WorkProductAnchor[]
   formatting_profile?: FormattingProfile
 }
+
+export interface GetWorkProductsOptions {
+  includeDocumentAst?: boolean
+}
+
+export type AstPatchConcurrency =
+  | { base_document_hash: string; base_snapshot_id?: string | null }
+  | { base_document_hash?: string | null; base_snapshot_id: string }
 
 export interface CreateWorkProductBlockInput {
   block_type?: string
@@ -352,6 +371,10 @@ export interface WorkProductAiCommandInput {
   command: string
   target_id?: string
   prompt?: string
+}
+
+export interface MarkdownToAstInput {
+  markdown: string
 }
 
 export interface CreateVersionSnapshotInput {
@@ -761,11 +784,20 @@ export function citationCheckDraft(
   )
 }
 
-export async function getWorkProductsState(matterId: string): Promise<LoadState<WorkProduct[]>> {
+function workProductListQuery(options: GetWorkProductsOptions = {}) {
+  if (!options.includeDocumentAst) return ""
+  return "?include=document_ast"
+}
+
+export async function getWorkProductsState(
+  matterId: string,
+  options: GetWorkProductsOptions = {},
+): Promise<LoadState<WorkProduct[]>> {
   const decodedMatterId = decodeMatterRouteId(matterId)
   try {
+    const query = workProductListQuery(options)
     const live = await fetchCaseBuilder<unknown[]>(
-      `/matters/${encodeURIComponent(decodedMatterId)}/work-products`,
+      `/matters/${encodeURIComponent(decodedMatterId)}/work-products${query}`,
     )
     return { source: "live", data: live.map(normalizeWorkProduct) }
   } catch (error) {
@@ -781,6 +813,7 @@ export async function getWorkProductsState(matterId: string): Promise<LoadState<
 export async function getWorkProductState(
   matterId: string,
   workProductId?: string,
+  options: GetWorkProductsOptions = {},
 ): Promise<LoadState<WorkProduct | null>> {
   const decodedMatterId = decodeMatterRouteId(matterId)
   try {
@@ -790,8 +823,9 @@ export async function getWorkProductState(
       )
       return { source: "live", data: normalizeWorkProduct(live) }
     }
+    const query = workProductListQuery(options)
     const live = await fetchCaseBuilder<unknown[]>(
-      `/matters/${encodeURIComponent(decodedMatterId)}/work-products`,
+      `/matters/${encodeURIComponent(decodedMatterId)}/work-products${query}`,
     )
     const products = live.map(normalizeWorkProduct).filter((product) => product.product_type !== "complaint")
     return { source: "live", data: products[0] ?? null }
@@ -876,6 +910,95 @@ export function linkWorkProductSupport(
       method: "POST",
       body: JSON.stringify(input),
       normalize: normalizeWorkProduct,
+    },
+  )
+}
+
+export function applyWorkProductAstPatch(
+  matterId: string,
+  workProductId: string,
+  input: AstPatch & AstPatchConcurrency,
+): Promise<ActionState<WorkProduct>> {
+  if (!input.base_document_hash && !input.base_snapshot_id) {
+    return Promise.resolve({
+      source: "error",
+      data: null,
+      error: "AST patch requires base_document_hash or base_snapshot_id.",
+    })
+  }
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/work-products/${encodeURIComponent(workProductId)}/ast/patch`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      normalize: normalizeWorkProduct,
+    },
+  )
+}
+
+export function validateWorkProductAst(
+  matterId: string,
+  workProductId: string,
+): Promise<ActionState<AstValidationResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/work-products/${encodeURIComponent(workProductId)}/ast/validate`,
+    {
+      method: "POST",
+      normalize: normalizeAstValidationResponse,
+    },
+  )
+}
+
+export function workProductAstToMarkdown(
+  matterId: string,
+  workProductId: string,
+): Promise<ActionState<AstMarkdownResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/work-products/${encodeURIComponent(workProductId)}/ast/to-markdown`,
+    {
+      method: "POST",
+      normalize: normalizeAstMarkdownResponse,
+    },
+  )
+}
+
+export function workProductAstFromMarkdown(
+  matterId: string,
+  workProductId: string,
+  input: MarkdownToAstInput,
+): Promise<ActionState<AstDocumentResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/work-products/${encodeURIComponent(workProductId)}/ast/from-markdown`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      normalize: normalizeAstDocumentResponse,
+    },
+  )
+}
+
+export function workProductAstToHtml(
+  matterId: string,
+  workProductId: string,
+): Promise<ActionState<AstRenderedResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/work-products/${encodeURIComponent(workProductId)}/ast/to-html`,
+    {
+      method: "POST",
+      normalize: normalizeAstRenderedResponse,
+    },
+  )
+}
+
+export function workProductAstToPlainText(
+  matterId: string,
+  workProductId: string,
+): Promise<ActionState<AstRenderedResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/work-products/${encodeURIComponent(workProductId)}/ast/to-plain-text`,
+    {
+      method: "POST",
+      normalize: normalizeAstRenderedResponse,
     },
   )
 }
@@ -2188,6 +2311,14 @@ function normalizeDraftParagraph(input: any): DraftParagraph {
 
 function normalizeWorkProduct(input: any): WorkProduct {
   const workProductId = string(input.work_product_id, input.id, "work-product:demo")
+  const documentAst = normalizeWorkProductDocument(input.document_ast ?? input.documentAst ?? {}, {
+    workProductId,
+    matterId: string(input.matter_id, "matter:demo"),
+    productType: string(input.product_type, "motion"),
+    title: string(input.title, "Work product"),
+    fallbackBlocks: array(input.blocks).map((block) => normalizeWorkProductBlock(block, workProductId)),
+    fallbackFindings: array(input.findings).map(normalizeWorkProductFinding),
+  })
   return {
     ...input,
     work_product_id: workProductId,
@@ -2203,10 +2334,13 @@ function normalizeWorkProduct(input: any): WorkProduct {
     created_at: string(input.created_at, ""),
     updated_at: string(input.updated_at, ""),
     profile: normalizeWorkProductProfile(input.profile ?? {}, string(input.product_type, "motion")),
-    blocks: array(input.blocks).map((block) => normalizeWorkProductBlock(block, workProductId)),
+    document_ast: documentAst,
+    blocks: flattenWorkProductBlocks(documentAst.blocks),
     marks: array(input.marks).map(normalizeWorkProductMark),
     anchors: array(input.anchors).map(normalizeWorkProductAnchor),
-    findings: array(input.findings).map(normalizeWorkProductFinding),
+    findings: documentAst.rule_findings.length
+      ? documentAst.rule_findings
+      : array(input.findings).map(normalizeWorkProductFinding),
     artifacts: array(input.artifacts).map(normalizeWorkProductArtifact),
     history: array(input.history).map(normalizeChangeSet),
     ai_commands: array(input.ai_commands, input.aiCommands).map((command: any) => ({
@@ -2219,6 +2353,61 @@ function normalizeWorkProduct(input: any): WorkProduct {
     })),
     formatting_profile: normalizeFormattingProfile(input.formatting_profile ?? {}),
     rule_pack: normalizeRulePack(input.rule_pack ?? {}),
+  }
+}
+
+function normalizeWorkProductDocument(
+  input: any,
+  context: {
+    workProductId: string
+    matterId: string
+    productType: string
+    title: string
+    fallbackBlocks: WorkProductBlock[]
+    fallbackFindings: WorkProductFinding[]
+  },
+): WorkProductDocument {
+  const blocks = array(input.blocks).length
+    ? array(input.blocks).map((block) => normalizeWorkProductBlock(block, context.workProductId))
+    : context.fallbackBlocks
+  return {
+    schema_version: string(input.schema_version, input.schemaVersion, "work-product-ast-v1"),
+    document_id: string(input.document_id, input.documentId, `${context.workProductId}:document`),
+    work_product_id: string(input.work_product_id, input.workProductId, context.workProductId),
+    matter_id: string(input.matter_id, input.matterId, context.matterId),
+    product_type: string(input.product_type, input.type, context.productType),
+    title: string(input.title, context.title),
+    metadata: normalizeWorkProductMetadata(input.metadata ?? {}),
+    blocks,
+    links: array(input.links).map(normalizeWorkProductLink),
+    citations: array(input.citations).map(normalizeWorkProductCitationUse),
+    exhibits: array(input.exhibits).map(normalizeWorkProductExhibitReference),
+    rule_findings: array(input.rule_findings, input.ruleFindings).length
+      ? array(input.rule_findings, input.ruleFindings).map(normalizeWorkProductFinding)
+      : context.fallbackFindings,
+    created_at: string(input.created_at, input.createdAt),
+    updated_at: string(input.updated_at, input.updatedAt),
+  }
+}
+
+function normalizeWorkProductMetadata(input: any) {
+  return {
+    jurisdiction: input.jurisdiction ?? null,
+    court: input.court ?? null,
+    county: input.county ?? null,
+    case_number: input.case_number ?? input.caseNumber ?? null,
+    rule_pack_id: input.rule_pack_id ?? input.rulePackId ?? null,
+    template_id: input.template_id ?? input.templateId ?? null,
+    formatting_profile_id: input.formatting_profile_id ?? input.formattingProfileId ?? null,
+    parties: input.parties
+      ? {
+          plaintiffs: array(input.parties.plaintiffs),
+          defendants: array(input.parties.defendants),
+          petitioners: array(input.parties.petitioners),
+          respondents: array(input.parties.respondents),
+        }
+      : null,
+    status: string(input.status, "draft"),
   }
 }
 
@@ -2238,18 +2427,38 @@ function normalizeWorkProductProfile(input: any, productType: string) {
 
 function normalizeWorkProductBlock(input: any, workProductId: string): WorkProductBlock {
   const blockId = string(input.block_id, input.id)
+  const blockType = string(input.type, input.block_type, "section")
+  const orderIndex = number(input.order_index, input.orderIndex, input.ordinal)
   return {
     ...input,
     block_id: blockId,
     id: string(input.id, blockId),
     matter_id: string(input.matter_id),
     work_product_id: string(input.work_product_id, workProductId),
-    block_type: string(input.block_type, "section"),
+    type: blockType,
+    block_type: blockType,
     role: string(input.role, "custom"),
     title: string(input.title, input.role, "Section"),
     text: string(input.text),
-    ordinal: number(input.ordinal),
+    order_index: orderIndex,
+    ordinal: orderIndex,
     parent_block_id: input.parent_block_id ?? null,
+    parent_id: input.parent_id ?? input.parent_block_id ?? null,
+    children: array(input.children).map((child) => normalizeWorkProductBlock(child, workProductId)),
+    links: array(input.links),
+    citations: array(input.citations),
+    exhibits: array(input.exhibits),
+    rule_finding_ids: array(input.rule_finding_ids, input.ruleFindingIds),
+    paragraph_number: input.paragraph_number ?? input.paragraphNumber ?? null,
+    sentence_index: input.sentence_index ?? input.sentenceIndex ?? null,
+    section_kind: input.section_kind ?? input.sectionKind ?? null,
+    count_number: input.count_number ?? input.countNumber ?? null,
+    claim_type: input.claim_type ?? input.claimType ?? null,
+    defendants: array(input.defendants),
+    requested_relief: array(input.requested_relief, input.requestedRelief),
+    support_status: input.support_status ?? input.supportStatus ?? null,
+    created_at: string(input.created_at, input.createdAt),
+    updated_at: string(input.updated_at, input.updatedAt),
     fact_ids: array(input.fact_ids),
     evidence_ids: array(input.evidence_ids),
     authorities: array(input.authorities),
@@ -2257,6 +2466,66 @@ function normalizeWorkProductBlock(input: any, workProductId: string): WorkProdu
     locked: Boolean(input.locked),
     review_status: string(input.review_status, "needs_review"),
     prosemirror_json: input.prosemirror_json ?? null,
+  }
+}
+
+function flattenWorkProductBlocks(blocks: WorkProductBlock[]): WorkProductBlock[] {
+  return blocks.flatMap((block) => {
+    const { children, ...rest } = block
+    return [{ ...rest, children }, ...flattenWorkProductBlocks(children)]
+  })
+}
+
+function normalizeTextRange(input: any) {
+  if (!input) return null
+  return {
+    start_offset: number(input.start_offset, input.startOffset),
+    end_offset: number(input.end_offset, input.endOffset),
+    quote: input.quote ?? null,
+  }
+}
+
+function normalizeWorkProductLink(input: any): WorkProductLink {
+  return {
+    link_id: string(input.link_id, input.linkId, input.id),
+    source_block_id: string(input.source_block_id, input.sourceBlockId),
+    source_text_range: normalizeTextRange(input.source_text_range ?? input.sourceTextRange),
+    target_type: string(input.target_type, input.targetType),
+    target_id: string(input.target_id, input.targetId),
+    relation: string(input.relation, "supports"),
+    confidence: input.confidence ?? null,
+    created_by: string(input.created_by, input.createdBy, "system"),
+    created_at: string(input.created_at, input.createdAt),
+  }
+}
+
+function normalizeWorkProductCitationUse(input: any): WorkProductCitationUse {
+  return {
+    citation_use_id: string(input.citation_use_id, input.citationUseId, input.id),
+    source_block_id: string(input.source_block_id, input.sourceBlockId),
+    source_text_range: normalizeTextRange(input.source_text_range ?? input.sourceTextRange),
+    raw_text: string(input.raw_text, input.rawText, input.citation),
+    normalized_citation: input.normalized_citation ?? input.normalizedCitation ?? input.citation ?? null,
+    target_type: string(input.target_type, input.targetType, "unknown"),
+    target_id: input.target_id ?? input.targetId ?? input.canonical_id ?? null,
+    pinpoint: input.pinpoint ?? null,
+    status: string(input.status, "needs_review"),
+    resolver_message: input.resolver_message ?? input.resolverMessage ?? null,
+    created_at: string(input.created_at, input.createdAt),
+  }
+}
+
+function normalizeWorkProductExhibitReference(input: any): WorkProductExhibitReference {
+  return {
+    exhibit_reference_id: string(input.exhibit_reference_id, input.exhibitReferenceId, input.id),
+    source_block_id: string(input.source_block_id, input.sourceBlockId),
+    source_text_range: normalizeTextRange(input.source_text_range ?? input.sourceTextRange),
+    label: string(input.label, input.exhibit_label, "Exhibit"),
+    exhibit_id: input.exhibit_id ?? input.exhibitId ?? null,
+    document_id: input.document_id ?? input.documentId ?? null,
+    page_range: input.page_range ?? input.pageRange ?? null,
+    status: string(input.status, "needs_review"),
+    created_at: string(input.created_at, input.createdAt),
   }
 }
 
@@ -2349,6 +2618,10 @@ function normalizeWorkProductArtifact(input: any): WorkProductArtifact {
     changed_since_export:
       typeof input.changed_since_export === "boolean" ? input.changed_since_export : input.changed_since_export ?? null,
     immutable: typeof input.immutable === "boolean" ? input.immutable : input.immutable ?? null,
+    object_blob_id: input.object_blob_id ?? input.objectBlobId ?? null,
+    size_bytes: typeof input.size_bytes === "number" ? input.size_bytes : input.sizeBytes ?? null,
+    mime_type: input.mime_type ?? input.mimeType ?? null,
+    storage_status: input.storage_status ?? input.storageStatus ?? null,
   }
 }
 
@@ -2454,6 +2727,20 @@ function normalizeVersionTextDiff(input: any): VersionTextDiff {
   }
 }
 
+function normalizeVersionLayerDiff(input: any): VersionLayerDiff {
+  return {
+    layer: string(input.layer, "support"),
+    target_type: string(input.target_type, "work_product"),
+    target_id: string(input.target_id),
+    title: string(input.title, "Change"),
+    status: string(input.status, "modified"),
+    before_hash: input.before_hash ?? input.beforeHash ?? null,
+    after_hash: input.after_hash ?? input.afterHash ?? null,
+    before_summary: input.before_summary ?? input.beforeSummary ?? null,
+    after_summary: input.after_summary ?? input.afterSummary ?? null,
+  }
+}
+
 function normalizeCompareVersionsResponse(input: any): CompareVersionsResponse {
   return {
     matter_id: string(input.matter_id),
@@ -2463,6 +2750,7 @@ function normalizeCompareVersionsResponse(input: any): CompareVersionsResponse {
     layers: array(input.layers, ["text"]),
     summary: normalizeVersionChangeSummary(input.summary ?? {}),
     text_diffs: array(input.text_diffs).map(normalizeVersionTextDiff),
+    layer_diffs: array(input.layer_diffs, input.layerDiffs).map(normalizeVersionLayerDiff),
   }
 }
 
@@ -2474,6 +2762,54 @@ function normalizeRestoreVersionResponse(input: any): RestoreVersionResponse {
     snapshot_id: string(input.snapshot_id),
     change_set: input.change_set ? normalizeChangeSet(input.change_set) : null,
     result: input.result ? normalizeWorkProduct(input.result) : null,
+  }
+}
+
+function normalizeAstValidationResponse(input: any): AstValidationResponse {
+  return {
+    valid: Boolean(input.valid),
+    errors: array(input.errors).map(normalizeAstValidationIssue),
+    warnings: array(input.warnings).map(normalizeAstValidationIssue),
+  }
+}
+
+function normalizeAstValidationIssue(input: any) {
+  return {
+    code: string(input.code),
+    message: string(input.message),
+    target_type: input.target_type ?? input.targetType ?? null,
+    target_id: input.target_id ?? input.targetId ?? null,
+  }
+}
+
+function normalizeAstMarkdownResponse(input: any): AstMarkdownResponse {
+  return {
+    markdown: string(input.markdown),
+    warnings: array(input.warnings),
+  }
+}
+
+function normalizeAstDocumentResponse(input: any): AstDocumentResponse {
+  const raw = input.document_ast ?? input.documentAst ?? {}
+  const workProductId = string(raw.work_product_id, raw.workProductId, "work-product:ast")
+  return {
+    document_ast: normalizeWorkProductDocument(raw, {
+      workProductId,
+      matterId: string(raw.matter_id, raw.matterId),
+      productType: string(raw.product_type, raw.type, "custom"),
+      title: string(raw.title, "Work product"),
+      fallbackBlocks: [],
+      fallbackFindings: [],
+    }),
+    warnings: array(input.warnings),
+  }
+}
+
+function normalizeAstRenderedResponse(input: any): AstRenderedResponse {
+  return {
+    html: input.html ?? null,
+    plain_text: input.plain_text ?? input.plainText ?? null,
+    warnings: array(input.warnings),
   }
 }
 
@@ -2541,6 +2877,7 @@ function normalizeRulePack(input: any): RulePack {
     jurisdiction: string(input.jurisdiction, "Oregon"),
     version: string(input.version, "provider-free"),
     effective_date: string(input.effective_date, ""),
+    rule_profile: normalizeRuleProfileSummary(input.rule_profile ?? {}),
     rules: array(input.rules).map((rule: any) => ({
       rule_id: string(rule.rule_id),
       source_citation: string(rule.source_citation),
@@ -2553,6 +2890,25 @@ function normalizeRulePack(input: any): RulePack {
       suggested_fix: string(rule.suggested_fix),
       auto_fix_available: Boolean(rule.auto_fix_available),
     })),
+  }
+}
+
+function normalizeRuleProfileSummary(input: any) {
+  return {
+    jurisdiction_id: string(input.jurisdiction_id, "or:state"),
+    court_id: input.court_id ?? null,
+    court: input.court ?? null,
+    filing_date: input.filing_date ?? null,
+    utcr_edition_id: input.utcr_edition_id ?? "or:utcr@2025",
+    slr_edition_id: input.slr_edition_id ?? null,
+    active_statewide_order_ids: array(input.active_statewide_order_ids).map((id: any) => string(id)),
+    active_local_order_ids: array(input.active_local_order_ids).map((id: any) => string(id)),
+    active_out_of_cycle_amendment_ids: array(input.active_out_of_cycle_amendment_ids).map((id: any) => string(id)),
+    currentness_warnings: array(input.currentness_warnings).map((warning: any) => string(warning)),
+    resolver_endpoint: string(
+      input.resolver_endpoint,
+      "/api/v1/rules/applicable?jurisdiction=Linn&date=YYYY-MM-DD&type=complaint",
+    ),
   }
 }
 

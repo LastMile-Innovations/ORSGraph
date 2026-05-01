@@ -8,7 +8,9 @@ use axum::Json;
 pub struct StatuteListParams {
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+    pub q: Option<String>,
     pub chapter: Option<String>,
+    pub status: Option<String>,
 }
 
 pub async fn list_statutes(
@@ -17,9 +19,23 @@ pub async fn list_statutes(
 ) -> ApiResult<Json<StatuteIndexResponse>> {
     let statutes = state
         .neo4j_service
-        .list_statutes(params.limit, params.offset, params.chapter.as_deref())
+        .list_statutes(
+            params.limit,
+            params.offset,
+            params.q.as_deref(),
+            params.chapter.as_deref(),
+            params.status.as_deref(),
+        )
         .await?;
     Ok(Json(statutes))
+}
+
+pub async fn get_statute_page(
+    Path(citation): Path<String>,
+    State(state): State<AppState>,
+) -> ApiResult<Json<StatutePageResponse>> {
+    let statute = state.neo4j_service.get_statute_page(&citation).await?;
+    Ok(Json(statute))
 }
 
 pub async fn get_statute(

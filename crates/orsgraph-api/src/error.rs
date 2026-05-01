@@ -26,6 +26,9 @@ pub enum ApiError {
     #[error("Bad request: {0}")]
     BadRequest(String),
 
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
     #[error("Internal server error: {0}")]
     Internal(String),
 
@@ -63,6 +66,7 @@ impl IntoResponse for ApiError {
             }
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
             ApiError::Internal(msg) => {
                 tracing::error!("Internal error: {}", msg);
                 (StatusCode::INTERNAL_SERVER_ERROR, msg)

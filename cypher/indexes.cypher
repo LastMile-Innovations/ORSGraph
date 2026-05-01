@@ -7,6 +7,8 @@ CREATE CONSTRAINT edition_id IF NOT EXISTS FOR (n:CorpusEdition) REQUIRE n.editi
 CREATE CONSTRAINT chapter_id IF NOT EXISTS FOR (n:ChapterVersion) REQUIRE n.chapter_id IS UNIQUE;
 CREATE CONSTRAINT heading_id IF NOT EXISTS FOR (n:ChapterHeading) REQUIRE n.heading_id IS UNIQUE;
 CREATE CONSTRAINT source_document_id IF NOT EXISTS FOR (n:SourceDocument) REQUIRE n.source_document_id IS UNIQUE;
+CREATE CONSTRAINT source_page_id IF NOT EXISTS FOR (n:SourcePage) REQUIRE n.source_page_id IS UNIQUE;
+CREATE CONSTRAINT source_toc_entry_id IF NOT EXISTS FOR (n:SourceTocEntry) REQUIRE n.source_toc_entry_id IS UNIQUE;
 CREATE CONSTRAINT html_paragraph_id IF NOT EXISTS FOR (n:HtmlParagraph) REQUIRE n.paragraph_id IS UNIQUE;
 CREATE CONSTRAINT chapter_front_matter_id IF NOT EXISTS FOR (n:ChapterFrontMatter) REQUIRE n.front_matter_id IS UNIQUE;
 CREATE CONSTRAINT title_chapter_entry_id IF NOT EXISTS FOR (n:TitleChapterEntry) REQUIRE n.title_chapter_entry_id IS UNIQUE;
@@ -42,6 +44,20 @@ CREATE CONSTRAINT rate_limit_id IF NOT EXISTS FOR (n:RateLimit) REQUIRE n.rate_l
 CREATE CONSTRAINT required_notice_id IF NOT EXISTS FOR (n:RequiredNotice) REQUIRE n.required_notice_id IS UNIQUE;
 CREATE CONSTRAINT form_text_id IF NOT EXISTS FOR (n:FormText) REQUIRE n.form_text_id IS UNIQUE;
 CREATE CONSTRAINT external_legal_citation_id IF NOT EXISTS FOR (n:ExternalLegalCitation) REQUIRE n.external_citation_id IS UNIQUE;
+CREATE CONSTRAINT reporter_note_id IF NOT EXISTS FOR (n:ReporterNote) REQUIRE n.reporter_note_id IS UNIQUE;
+CREATE CONSTRAINT commentary_id IF NOT EXISTS FOR (n:Commentary) REQUIRE n.commentary_id IS UNIQUE;
+CREATE CONSTRAINT procedural_requirement_id IF NOT EXISTS FOR (n:ProceduralRequirement) REQUIRE n.requirement_id IS UNIQUE;
+CREATE CONSTRAINT work_product_rule_pack_id IF NOT EXISTS FOR (n:WorkProductRulePack) REQUIRE n.rule_pack_id IS UNIQUE;
+CREATE CONSTRAINT formatting_profile_id IF NOT EXISTS FOR (n:FormattingProfile) REQUIRE n.formatting_profile_id IS UNIQUE;
+CREATE CONSTRAINT rule_pack_membership_id IF NOT EXISTS FOR (n:RulePackMembership) REQUIRE n.membership_id IS UNIQUE;
+CREATE CONSTRAINT court_id IF NOT EXISTS FOR (n:Court) REQUIRE n.court_id IS UNIQUE;
+CREATE CONSTRAINT court_rules_registry_source_id IF NOT EXISTS FOR (n:CourtRulesRegistrySource) REQUIRE n.registry_source_id IS UNIQUE;
+CREATE CONSTRAINT court_rules_registry_snapshot_id IF NOT EXISTS FOR (n:CourtRulesRegistrySnapshot) REQUIRE n.registry_snapshot_id IS UNIQUE;
+CREATE CONSTRAINT rule_publication_entry_id IF NOT EXISTS FOR (n:RulePublicationEntry) REQUIRE n.publication_entry_id IS UNIQUE;
+CREATE CONSTRAINT rule_authority_document_id IF NOT EXISTS FOR (n:RuleAuthorityDocument) REQUIRE n.authority_document_id IS UNIQUE;
+CREATE CONSTRAINT effective_interval_id IF NOT EXISTS FOR (n:EffectiveInterval) REQUIRE n.effective_interval_id IS UNIQUE;
+CREATE CONSTRAINT rule_topic_id IF NOT EXISTS FOR (n:RuleTopic) REQUIRE n.rule_topic_id IS UNIQUE;
+CREATE CONSTRAINT work_product_rule_pack_authority_id IF NOT EXISTS FOR (n:WorkProductRulePackAuthority) REQUIRE n.rule_pack_authority_id IS UNIQUE;
 
 // Edge constraints for re-seed idempotency
 CREATE CONSTRAINT cites_edge_id IF NOT EXISTS FOR ()-[r:CITES]-() REQUIRE r.edge_id IS UNIQUE;
@@ -79,6 +95,9 @@ CREATE INDEX lineageEventLookup IF NOT EXISTS FOR (n:LineageEvent) ON (n.current
 CREATE INDEX chapterLookup IF NOT EXISTS FOR (n:ChapterVersion) ON (n.chapter);
 CREATE INDEX chapterVersionLookup IF NOT EXISTS FOR (n:ChapterVersion) ON (n.chapter, n.edition_year);
 CREATE INDEX sourceDocumentLookup IF NOT EXISTS FOR (n:SourceDocument) ON (n.chapter, n.edition_year);
+CREATE INDEX sourceDocumentCorpusLookup IF NOT EXISTS FOR (n:SourceDocument) ON (n.corpus_id, n.edition_id, n.authority_family);
+CREATE INDEX sourcePageLookup IF NOT EXISTS FOR (n:SourcePage) ON (n.source_document_id, n.page_number);
+CREATE INDEX sourceTocLookup IF NOT EXISTS FOR (n:SourceTocEntry) ON (n.source_document_id, n.entry_type, n.citation);
 CREATE INDEX htmlParagraphSourceLookup IF NOT EXISTS FOR (n:HtmlParagraph) ON (n.source_document_id, n.order_index);
 CREATE INDEX frontMatterSourceLookup IF NOT EXISTS FOR (n:ChapterFrontMatter) ON (n.source_document_id, n.source_paragraph_order);
 CREATE INDEX titleChapterEntryLookup IF NOT EXISTS FOR (n:TitleChapterEntry) ON (n.title_number, n.chapter_number);
@@ -91,6 +110,13 @@ CREATE INDEX taxRuleSourceLookup IF NOT EXISTS FOR (n:TaxRule) ON (n.source_prov
 CREATE INDEX rateLimitSourceLookup IF NOT EXISTS FOR (n:RateLimit) ON (n.source_provision_id, n.rate_type);
 CREATE INDEX requiredNoticeSourceLookup IF NOT EXISTS FOR (n:RequiredNotice) ON (n.source_provision_id, n.notice_type);
 CREATE INDEX formTextSourceLookup IF NOT EXISTS FOR (n:FormText) ON (n.source_provision_id, n.form_type);
+CREATE INDEX proceduralRequirementSourceLookup IF NOT EXISTS FOR (n:ProceduralRequirement) ON (n.semantic_type, n.source_provision_id);
+CREATE INDEX proceduralRequirementTypeLookup IF NOT EXISTS FOR (n:ProceduralRequirement) ON (n.requirement_type, n.severity_default);
+CREATE INDEX rulePackMembershipLookup IF NOT EXISTS FOR (n:RulePackMembership) ON (n.rule_pack_id, n.requirement_id);
+CREATE INDEX ruleAuthorityApplicabilityLookup IF NOT EXISTS FOR (n:RuleAuthorityDocument) ON (n.jurisdiction_id, n.effective_start_date, n.effective_end_date);
+CREATE INDEX ruleAuthorityKindLookup IF NOT EXISTS FOR (n:RuleAuthorityDocument) ON (n.authority_kind, n.date_status);
+CREATE INDEX rulePublicationEntryLookup IF NOT EXISTS FOR (n:RulePublicationEntry) ON (n.jurisdiction_id, n.publication_bucket);
+CREATE INDEX courtRulesRegistrySnapshotLookup IF NOT EXISTS FOR (n:CourtRulesRegistrySnapshot) ON (n.jurisdiction_id, n.snapshot_date);
 
 // ── Fulltext Index ───────────────────────────────────────────────────────────────────
 

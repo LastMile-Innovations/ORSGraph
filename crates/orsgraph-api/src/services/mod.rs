@@ -7,6 +7,7 @@ pub mod home;
 pub mod neo4j;
 pub mod object_store;
 pub mod rerank;
+pub mod rules;
 pub mod search;
 pub mod stats;
 pub mod vector_search;

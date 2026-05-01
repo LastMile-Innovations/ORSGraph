@@ -37,9 +37,9 @@ V1 turns CaseBuilder from a single-user internal workbench into a reviewable leg
 - Area: Collaboration
 - Problem: Draft review needs structured comments and revisions.
 - Expected behavior: Inline comments, suggested edits, redlines, resolve/reopen, and version snapshots.
-- Implementation notes: Use DraftSection/DraftParagraph IDs for stable anchors.
-- Acceptance checks: Comments survive edits and link to draft versions.
-- Dependencies: Stable drafting model.
+- Implementation notes: Use stable WorkProduct AST block IDs and text ranges for anchors. Legacy DraftSection/DraftParagraph IDs can be supported only as projections during migration.
+- Acceptance checks: Comments survive edits and link to WorkProduct snapshots.
+- Dependencies: Stable WorkProduct AST editor model.
 - Status: Deferred
 
 ## CB-V1-005 - Audit log

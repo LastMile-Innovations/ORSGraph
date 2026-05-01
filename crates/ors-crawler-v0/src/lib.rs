@@ -1,9 +1,11 @@
 pub mod chunks;
 pub mod citations;
+pub mod court_rules_registry_parser;
 pub mod embedding_profiles;
 pub mod embeddings;
 pub mod hash;
 pub mod io_jsonl;
+pub mod local_rule_pdf_parser;
 pub mod models;
 pub mod neo4j_loader;
 pub mod ors_dom_parser;
@@ -14,4 +16,5 @@ pub mod rag;
 pub mod resolver;
 pub mod semantic;
 pub mod text;
+pub mod utcr_pdf_parser;
 pub mod voyage;

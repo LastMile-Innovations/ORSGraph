@@ -14,6 +14,7 @@ pub async fn ask(
         .search(SearchQuery {
             q: request.question.clone(),
             r#type: Some("all".to_string()),
+            authority_family: None,
             chapter: None,
             status: None,
             mode: Some(SearchMode::Auto),

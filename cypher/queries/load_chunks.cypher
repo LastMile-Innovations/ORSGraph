@@ -8,6 +8,8 @@ CALL (row) {
     MERGE (c:RetrievalChunk {chunk_id: chunkId})
     SET c += row { .chunk_type, .text, .breadcrumb, .source_provision_id, .source_version_id, .parent_version_id,
                  .canonical_id, .citation, .jurisdiction_id, .authority_level, .edition_year,
+                 .authority_family, .corpus_id, .authority_type, .effective_date, .chapter,
+                 .source_page_start, .source_page_end,
                  .embedding_input_hash, .embedding_policy, .answer_policy, .chunk_schema_version,
                  .retrieval_profile, .search_weight, .source_kind, .source_id,
                  .token_count, .max_tokens, .context_window, .chunking_strategy, .chunk_version,

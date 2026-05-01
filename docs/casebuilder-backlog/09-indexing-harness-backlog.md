@@ -39,8 +39,8 @@ This backlog implements the case-file indexing harness described in [08-case-fil
 - Area: Artifact storage
 - Problem: Normalized text, pages, OCR, and manifests should not live only in Neo4j.
 - Expected behavior: Extraction writes `text.normalized.json`, `pages.json`, `manifest.json`, and optional `ocr.json`/thumbnail artifacts to R2 under opaque keys.
-- Implementation notes: Store artifact object keys and hashes in `DocumentVersion`, `ObjectBlob`, and run records.
-- Acceptance checks: Extracting a supported file creates R2 artifacts and graph references; deleting/tombstoning a matter disables artifact access.
+- Implementation notes: Store artifact hashes and `ObjectBlob` refs in `DocumentVersion`, `ObjectBlob`, and run records. Match the WorkProduct AST snapshot/export pattern: Neo4j gets IDs, hashes, excerpts, and relationships; R2/local storage gets heavy immutable bytes.
+- Acceptance checks: Extracting a supported file creates R2/local artifacts and graph references; deleting/tombstoning a matter disables artifact access; no parser stores large normalized artifacts only as Neo4j payloads.
 - Dependencies: `CB-V0F-017`, `CB-X-017`.
 - Status: Todo
 

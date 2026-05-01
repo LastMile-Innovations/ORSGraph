@@ -717,6 +717,140 @@ pub struct CitationCheckFinding {
     pub status: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct WorkProductDocument {
+    #[serde(default = "default_work_product_schema_version")]
+    pub schema_version: String,
+    #[serde(default)]
+    pub document_id: String,
+    #[serde(default)]
+    pub work_product_id: String,
+    #[serde(default)]
+    pub matter_id: String,
+    #[serde(default)]
+    pub product_type: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub metadata: WorkProductMetadata,
+    #[serde(default)]
+    pub blocks: Vec<WorkProductBlock>,
+    #[serde(default)]
+    pub links: Vec<WorkProductLink>,
+    #[serde(default)]
+    pub citations: Vec<WorkProductCitationUse>,
+    #[serde(default)]
+    pub exhibits: Vec<WorkProductExhibitReference>,
+    #[serde(default)]
+    pub rule_findings: Vec<WorkProductFinding>,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
+pub fn default_work_product_schema_version() -> String {
+    "work-product-ast-v1".to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct WorkProductMetadata {
+    #[serde(default)]
+    pub jurisdiction: Option<String>,
+    #[serde(default)]
+    pub court: Option<String>,
+    #[serde(default)]
+    pub county: Option<String>,
+    #[serde(default)]
+    pub case_number: Option<String>,
+    #[serde(default)]
+    pub rule_pack_id: Option<String>,
+    #[serde(default)]
+    pub template_id: Option<String>,
+    #[serde(default)]
+    pub formatting_profile_id: Option<String>,
+    #[serde(default)]
+    pub parties: Option<WorkProductParties>,
+    #[serde(default = "default_work_product_metadata_status")]
+    pub status: String,
+}
+
+fn default_work_product_metadata_status() -> String {
+    "draft".to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct WorkProductParties {
+    #[serde(default)]
+    pub plaintiffs: Vec<String>,
+    #[serde(default)]
+    pub defendants: Vec<String>,
+    #[serde(default)]
+    pub petitioners: Vec<String>,
+    #[serde(default)]
+    pub respondents: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct TextRange {
+    pub start_offset: u64,
+    pub end_offset: u64,
+    #[serde(default)]
+    pub quote: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WorkProductLink {
+    pub link_id: String,
+    pub source_block_id: String,
+    #[serde(default)]
+    pub source_text_range: Option<TextRange>,
+    pub target_type: String,
+    pub target_id: String,
+    pub relation: String,
+    #[serde(default)]
+    pub confidence: Option<f32>,
+    pub created_by: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WorkProductCitationUse {
+    pub citation_use_id: String,
+    pub source_block_id: String,
+    #[serde(default)]
+    pub source_text_range: Option<TextRange>,
+    pub raw_text: String,
+    #[serde(default)]
+    pub normalized_citation: Option<String>,
+    pub target_type: String,
+    #[serde(default)]
+    pub target_id: Option<String>,
+    #[serde(default)]
+    pub pinpoint: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub resolver_message: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WorkProductExhibitReference {
+    pub exhibit_reference_id: String,
+    pub source_block_id: String,
+    #[serde(default)]
+    pub source_text_range: Option<TextRange>,
+    pub label: String,
+    #[serde(default)]
+    pub exhibit_id: Option<String>,
+    #[serde(default)]
+    pub document_id: Option<String>,
+    #[serde(default)]
+    pub page_range: Option<String>,
+    pub status: String,
+    pub created_at: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WorkProduct {
     pub work_product_id: String,
@@ -732,9 +866,15 @@ pub struct WorkProduct {
     pub created_at: String,
     pub updated_at: String,
     pub profile: WorkProductProfile,
+    #[serde(default)]
+    pub document_ast: WorkProductDocument,
+    #[serde(default)]
     pub blocks: Vec<WorkProductBlock>,
+    #[serde(default)]
     pub marks: Vec<WorkProductMark>,
+    #[serde(default)]
     pub anchors: Vec<WorkProductAnchor>,
+    #[serde(default)]
     pub findings: Vec<WorkProductFinding>,
     pub artifacts: Vec<WorkProductArtifact>,
     pub history: Vec<WorkProductHistoryEvent>,
@@ -982,24 +1122,64 @@ pub struct WorkProductProfile {
     pub supports_rich_text: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct WorkProductBlock {
     pub block_id: String,
     pub id: String,
     pub matter_id: String,
     pub work_product_id: String,
+    #[serde(rename = "type", alias = "block_type")]
     pub block_type: String,
     pub role: String,
     pub title: String,
     pub text: String,
+    #[serde(rename = "order_index", alias = "ordinal")]
     pub ordinal: u64,
+    #[serde(default, alias = "parent_id")]
     pub parent_block_id: Option<String>,
+    #[serde(default)]
+    pub children: Vec<WorkProductBlock>,
+    #[serde(default)]
+    pub links: Vec<String>,
+    #[serde(default)]
+    pub citations: Vec<String>,
+    #[serde(default)]
+    pub exhibits: Vec<String>,
+    #[serde(default)]
+    pub rule_finding_ids: Vec<String>,
+    #[serde(default)]
+    pub paragraph_number: Option<u64>,
+    #[serde(default)]
+    pub sentence_index: Option<u64>,
+    #[serde(default)]
+    pub section_kind: Option<String>,
+    #[serde(default)]
+    pub count_number: Option<u64>,
+    #[serde(default)]
+    pub claim_type: Option<String>,
+    #[serde(default)]
+    pub defendants: Vec<String>,
+    #[serde(default)]
+    pub requested_relief: Vec<String>,
+    #[serde(default)]
+    pub support_status: Option<String>,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+    #[serde(default)]
     pub fact_ids: Vec<String>,
+    #[serde(default)]
     pub evidence_ids: Vec<String>,
+    #[serde(default)]
     pub authorities: Vec<AuthorityRef>,
+    #[serde(default)]
     pub mark_ids: Vec<String>,
+    #[serde(default)]
     pub locked: bool,
+    #[serde(default)]
     pub review_status: String,
+    #[serde(default)]
     pub prosemirror_json: Option<serde_json::Value>,
 }
 
@@ -1094,6 +1274,14 @@ pub struct WorkProductArtifact {
     pub changed_since_export: Option<bool>,
     #[serde(default)]
     pub immutable: Option<bool>,
+    #[serde(default)]
+    pub object_blob_id: Option<String>,
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub storage_status: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1134,6 +1322,7 @@ pub struct PatchWorkProductRequest {
     pub status: Option<String>,
     pub review_status: Option<String>,
     pub setup_stage: Option<String>,
+    pub document_ast: Option<WorkProductDocument>,
     pub blocks: Option<Vec<WorkProductBlock>>,
     pub marks: Option<Vec<WorkProductMark>>,
     pub anchors: Option<Vec<WorkProductAnchor>>,
@@ -1183,6 +1372,149 @@ pub struct WorkProductLinkRequest {
 #[derive(Debug, Deserialize)]
 pub struct PatchWorkProductFindingRequest {
     pub status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AstPatch {
+    pub patch_id: String,
+    #[serde(default)]
+    pub draft_id: Option<String>,
+    #[serde(default)]
+    pub work_product_id: Option<String>,
+    #[serde(default)]
+    pub base_document_hash: Option<String>,
+    #[serde(default)]
+    pub base_snapshot_id: Option<String>,
+    pub created_by: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub operations: Vec<AstOperation>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum AstOperation {
+    InsertBlock {
+        #[serde(default)]
+        parent_id: Option<String>,
+        #[serde(default)]
+        after_block_id: Option<String>,
+        block: WorkProductBlock,
+    },
+    UpdateBlock {
+        block_id: String,
+        #[serde(default)]
+        before: Option<serde_json::Value>,
+        after: serde_json::Value,
+    },
+    DeleteBlock {
+        block_id: String,
+        #[serde(default)]
+        tombstone: bool,
+    },
+    MoveBlock {
+        block_id: String,
+        #[serde(default)]
+        parent_id: Option<String>,
+        #[serde(default)]
+        after_block_id: Option<String>,
+    },
+    SplitBlock {
+        block_id: String,
+        offset: u64,
+        new_block_id: String,
+    },
+    MergeBlocks {
+        first_block_id: String,
+        second_block_id: String,
+    },
+    RenumberParagraphs,
+    AddCitation {
+        citation: WorkProductCitationUse,
+    },
+    ResolveCitation {
+        citation_use_id: String,
+        #[serde(default)]
+        normalized_citation: Option<String>,
+        #[serde(default)]
+        target_type: Option<String>,
+        #[serde(default)]
+        target_id: Option<String>,
+        #[serde(default)]
+        status: Option<String>,
+    },
+    RemoveCitation {
+        citation_use_id: String,
+    },
+    AddLink {
+        link: WorkProductLink,
+    },
+    RemoveLink {
+        link_id: String,
+    },
+    AddExhibitReference {
+        exhibit: WorkProductExhibitReference,
+    },
+    ResolveExhibitReference {
+        exhibit_reference_id: String,
+        #[serde(default)]
+        exhibit_id: Option<String>,
+        #[serde(default)]
+        status: Option<String>,
+    },
+    AddRuleFinding {
+        finding: WorkProductFinding,
+    },
+    ResolveRuleFinding {
+        finding_id: String,
+        status: String,
+    },
+    ApplyTemplate {
+        template_id: String,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AstValidationIssue {
+    pub code: String,
+    pub message: String,
+    #[serde(default)]
+    pub target_type: Option<String>,
+    #[serde(default)]
+    pub target_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AstValidationResponse {
+    pub valid: bool,
+    pub errors: Vec<AstValidationIssue>,
+    pub warnings: Vec<AstValidationIssue>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MarkdownToAstRequest {
+    pub markdown: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AstMarkdownResponse {
+    pub markdown: String,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AstDocumentResponse {
+    pub document_ast: WorkProductDocument,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AstRenderedResponse {
+    pub html: Option<String>,
+    pub plain_text: Option<String>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1262,6 +1594,19 @@ pub struct VersionTextDiff {
 }
 
 #[derive(Debug, Serialize)]
+pub struct VersionLayerDiff {
+    pub layer: String,
+    pub target_type: String,
+    pub target_id: String,
+    pub title: String,
+    pub status: String,
+    pub before_hash: Option<String>,
+    pub after_hash: Option<String>,
+    pub before_summary: Option<String>,
+    pub after_summary: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct CompareVersionsResponse {
     pub matter_id: String,
     pub subject_id: String,
@@ -1270,6 +1615,7 @@ pub struct CompareVersionsResponse {
     pub layers: Vec<String>,
     pub summary: VersionChangeSummary,
     pub text_diffs: Vec<VersionTextDiff>,
+    pub layer_diffs: Vec<VersionLayerDiff>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1513,7 +1859,27 @@ pub struct RulePack {
     pub jurisdiction: String,
     pub version: String,
     pub effective_date: String,
+    pub rule_profile: RuleProfileSummary,
     pub rules: Vec<RuleDefinition>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct RuleProfileSummary {
+    pub jurisdiction_id: String,
+    pub court_id: Option<String>,
+    pub court: Option<String>,
+    pub filing_date: Option<String>,
+    pub utcr_edition_id: Option<String>,
+    pub slr_edition_id: Option<String>,
+    #[serde(default)]
+    pub active_statewide_order_ids: Vec<String>,
+    #[serde(default)]
+    pub active_local_order_ids: Vec<String>,
+    #[serde(default)]
+    pub active_out_of_cycle_amendment_ids: Vec<String>,
+    #[serde(default)]
+    pub currentness_warnings: Vec<String>,
+    pub resolver_endpoint: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1587,6 +1953,14 @@ pub struct ExportArtifact {
     pub generated_at: String,
     pub warnings: Vec<String>,
     pub content_preview: String,
+    #[serde(default)]
+    pub object_blob_id: Option<String>,
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub storage_status: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1769,6 +2143,7 @@ pub struct AiActionResponse<T: Serialize> {
 pub struct AuthoritySearchQuery {
     pub q: String,
     pub limit: Option<u32>,
+    pub authority_family: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

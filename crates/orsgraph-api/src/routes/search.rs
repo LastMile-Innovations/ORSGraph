@@ -18,7 +18,10 @@ pub async fn open(
     State(state): State<AppState>,
     Query(params): Query<OpenParams>,
 ) -> ApiResult<Json<DirectOpenResponse>> {
-    let response = state.search_service.direct_open(&params.q).await?;
+    let response = state
+        .search_service
+        .direct_open(&params.q, params.authority_family.as_deref())
+        .await?;
     Ok(Json(response))
 }
 
@@ -36,6 +39,7 @@ pub async fn suggest(
 #[derive(serde::Deserialize)]
 pub struct OpenParams {
     pub q: String,
+    pub authority_family: Option<String>,
 }
 
 #[derive(serde::Deserialize)]

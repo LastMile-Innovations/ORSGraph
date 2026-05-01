@@ -7,6 +7,7 @@ use aws_sdk_s3::presigning::PresigningConfig;
 use aws_sdk_s3::{primitives::ByteStream, Client};
 use aws_types::region::Region;
 use bytes::Bytes;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -251,7 +252,7 @@ impl ObjectStore for R2ObjectStore {
         let response = request
             .send()
             .await
-            .map_err(|error| ApiError::External(format!("R2 put_object failed: {error}")))?;
+            .map_err(|_| ApiError::External("R2 put_object failed".to_string()))?;
         Ok(StoredObject {
             bucket: Some(self.bucket.clone()),
             key: key.to_string(),
@@ -281,7 +282,7 @@ impl ObjectStore for R2ObjectStore {
         let presigned = request
             .presigned(presigning_config)
             .await
-            .map_err(|error| ApiError::External(format!("R2 presign PUT failed: {error}")))?;
+            .map_err(|_| ApiError::External("R2 presign PUT failed".to_string()))?;
         let mut headers = headers_to_map(presigned.headers());
         if let Some(content_type) = options.content_type {
             headers
@@ -311,7 +312,7 @@ impl ObjectStore for R2ObjectStore {
             .key(key)
             .presigned(presigning_config)
             .await
-            .map_err(|error| ApiError::External(format!("R2 presign GET failed: {error}")))?;
+            .map_err(|_| ApiError::External("R2 presign GET failed".to_string()))?;
         Ok(PresignedOperation {
             method: presigned.method().to_string(),
             url: presigned.uri().to_string(),
@@ -360,7 +361,7 @@ impl ObjectStore for R2ObjectStore {
             .body
             .collect()
             .await
-            .map_err(|error| ApiError::External(format!("R2 body read failed: {error}")))?;
+            .map_err(|_| ApiError::External("R2 body read failed".to_string()))?;
         Ok(data.into_bytes())
     }
 
@@ -371,7 +372,7 @@ impl ObjectStore for R2ObjectStore {
             .key(key)
             .send()
             .await
-            .map_err(|error| ApiError::External(format!("R2 delete_object failed: {error}")))?;
+            .map_err(|_| ApiError::External("R2 delete_object failed".to_string()))?;
         Ok(())
     }
 }
@@ -380,7 +381,7 @@ pub fn build_document_object_key(document_id: &str, filename: &str) -> String {
     let ext = file_extension(filename).unwrap_or_else(|| "bin".to_string());
     format!(
         "casebuilder/documents/{}/original.{}",
-        sanitize_path_part(document_id),
+        hash_path_segment(document_id.as_bytes(), 24),
         ext
     )
 }
@@ -430,6 +431,19 @@ fn sanitize_path_part(value: &str) -> String {
     }
 }
 
+fn hash_path_segment(bytes: &[u8], chars: usize) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(chars);
+    for byte in digest {
+        out.push_str(&format!("{byte:02x}"));
+        if out.len() >= chars {
+            break;
+        }
+    }
+    out.truncate(chars);
+    out
+}
+
 fn headers_to_map<'a>(
     headers: impl Iterator<Item = (&'a str, &'a str)>,
 ) -> BTreeMap<String, String> {
@@ -449,7 +463,7 @@ fn map_r2_read_error<E: std::fmt::Display>(operation: &str, error: E) -> ApiErro
     if message.contains("NotFound") || message.contains("404") || message.contains("NoSuchKey") {
         ApiError::NotFound(format!("R2 object not found during {operation}"))
     } else {
-        ApiError::External(format!("R2 {operation} failed: {message}"))
+        ApiError::External(format!("R2 {operation} failed"))
     }
 }
 
@@ -467,12 +481,12 @@ mod tests {
     #[test]
     fn object_keys_do_not_include_raw_filenames() {
         let key = build_document_object_key("doc:Tenant Notice:123", "../Secret Notice.pdf");
-        assert_eq!(
-            key,
-            "casebuilder/documents/doc_Tenant_Notice_123/original.pdf"
-        );
+        assert!(key.starts_with("casebuilder/documents/"));
         assert!(!key.contains("Secret Notice"));
+        assert!(!key.contains("Tenant"));
+        assert!(!key.contains("Notice"));
         assert!(!key.contains(".."));
+        assert!(key.ends_with("/original.pdf"));
     }
 
     #[test]

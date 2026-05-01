@@ -190,6 +190,92 @@ async function main() {
   )
   assert(artifact.artifact_id, "complaint export artifact returned")
 
+  const workProduct = await request(`/matters/${encodeURIComponent(matterId)}/work-products`, {
+    method: "POST",
+    body: JSON.stringify({ title: "Smoke motion", product_type: "motion" }),
+  })
+  assert(workProduct.document_ast?.blocks?.length > 0, "work product returned canonical AST")
+  const firstBlock = workProduct.document_ast.blocks[0]
+  const workProductSnapshots = await request(
+    `/matters/${encodeURIComponent(matterId)}/work-products/${encodeURIComponent(workProduct.work_product_id)}/snapshots`,
+  )
+  const latestWorkProductSnapshot = [...workProductSnapshots].sort(
+    (left, right) => (right.sequence_number ?? 0) - (left.sequence_number ?? 0),
+  )[0]
+  assert(latestWorkProductSnapshot?.document_hash, "work product snapshot has document hash")
+  const patchedWorkProduct = await request(
+    `/matters/${encodeURIComponent(matterId)}/work-products/${encodeURIComponent(workProduct.work_product_id)}/ast/patch`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        patch_id: `${workProduct.work_product_id}:patch:smoke`,
+        work_product_id: workProduct.work_product_id,
+        base_document_hash: latestWorkProductSnapshot.document_hash,
+        created_by: "system",
+        reason: "Smoke AST patch",
+        created_at: `${Date.now()}`,
+        operations: [
+          {
+            op: "update_block",
+            block_id: firstBlock.block_id,
+            after: { text: "Smoke AST patch updated this motion block." },
+          },
+        ],
+      }),
+    },
+  )
+  assert(
+    patchedWorkProduct.document_ast.blocks[0].text.includes("Smoke AST patch"),
+    "AST patch updated block text",
+  )
+  await request(
+    `/matters/${encodeURIComponent(matterId)}/work-products/${encodeURIComponent(workProduct.work_product_id)}/links`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        block_id: firstBlock.block_id,
+        target_type: "fact",
+        target_id: approvedFact.fact_id || approvedFact.id,
+        relation: "supports",
+      }),
+    },
+  )
+  const astCompare = await request(
+    `/matters/${encodeURIComponent(matterId)}/work-products/${encodeURIComponent(workProduct.work_product_id)}/compare?from=${encodeURIComponent(latestWorkProductSnapshot.snapshot_id)}&layers=all`,
+  )
+  assert(
+    astCompare.layer_diffs?.some((diff) => diff.layer === "support"),
+    "AST compare reports support-layer changes",
+  )
+  const astValidation = await request(
+    `/matters/${encodeURIComponent(matterId)}/work-products/${encodeURIComponent(workProduct.work_product_id)}/ast/validate`,
+    { method: "POST" },
+  )
+  assert(astValidation.valid, "AST validation passed")
+  const markdownProjection = await request(
+    `/matters/${encodeURIComponent(matterId)}/work-products/${encodeURIComponent(workProduct.work_product_id)}/ast/to-markdown`,
+    { method: "POST" },
+  )
+  assert(markdownProjection.markdown?.includes("Smoke motion"), "AST converts to markdown")
+  const markdownAst = await request(
+    `/matters/${encodeURIComponent(matterId)}/work-products/${encodeURIComponent(workProduct.work_product_id)}/ast/from-markdown`,
+    {
+      method: "POST",
+      body: JSON.stringify({ markdown: "## COUNT I - Smoke\n\n1. Smoke allegation." }),
+    },
+  )
+  assert(markdownAst.document_ast?.blocks?.length === 2, "markdown converts to AST")
+  const astHtml = await request(
+    `/matters/${encodeURIComponent(matterId)}/work-products/${encodeURIComponent(workProduct.work_product_id)}/ast/to-html`,
+    { method: "POST" },
+  )
+  assert(astHtml.html?.includes("work-product-preview"), "AST converts to HTML")
+  const astText = await request(
+    `/matters/${encodeURIComponent(matterId)}/work-products/${encodeURIComponent(workProduct.work_product_id)}/ast/to-plain-text`,
+    { method: "POST" },
+  )
+  assert(astText.plain_text?.includes("Smoke motion"), "AST converts to plain text")
+
   try {
     await request(`/matters/${encodeURIComponent(matterId)}/export/docx`, { method: "POST" })
     throw new Error("export/docx unexpectedly succeeded")

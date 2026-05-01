@@ -12,11 +12,12 @@ The first graph-native Case History slice is implemented. The codebase now has:
 
 - Canonical work-product Case History DTOs in backend and frontend: `ChangeSet`, `VersionChange`, `VersionSnapshot`, `SnapshotManifest`, `SnapshotEntityState`, `VersionBranch`, `LegalImpactSummary`, `VersionChangeSummary`, `LegalSupportUse`, `AIEditAudit`, restore responses, and compare responses.
 - Neo4j constraints/indexes for version nodes, branch nodes, manifest/entity-state nodes, support-use nodes, AI audit nodes, and milestones.
-- Deterministic hash helpers for document/work-product state, support graph, QC state, formatting profile, manifest state, and export artifacts.
+- Deterministic hash helpers for `WorkProduct.document_ast`, support graph, QC state, formatting profile, manifest state, and export artifacts.
 - Shared work-product history routes for history, change-set detail, snapshot list/detail/create, compare, restore, export history, and AI audit.
 - Complaint route aliases that delegate into the same canonical work-product history handlers instead of creating a separate complaint history stack.
 - Root/main branch creation, root snapshots, change-set recording, snapshot manifests, entity-state records, export snapshots, AI audit records, and changed-since-export checks.
 - Complaint facade save paths synchronize into canonical work-product history, so existing complaint editor actions create `ChangeSet`/`VersionSnapshot` records.
+- AST patch, validation, conversion, preview/export, and restore paths now use `document_ast` as the current document state.
 - A Complaint workspace `History` panel with timeline, manual snapshot, text compare, restore dry-run/apply, and export changed-since-export indicator.
 
 The deliberate remaining pre-launch cleanup is:
@@ -47,6 +48,7 @@ Because CaseBuilder has not launched yet, continue optimizing for the clean mode
 
 - `LegalVersionControlService` behavior currently lives inside `CaseBuilderService`; it should be extracted when the next slice touches service boundaries.
 - `ComplaintHistoryEvent` and `WorkProductHistoryEvent` models still exist as compatibility/facade projections; they are no longer the desired truth.
+- Flat WorkProduct `blocks`, `marks`, and `anchors` still exist as compatibility projections/adapters; they are no longer document truth when `document_ast` exists.
 - First-class support-use graph nodes exist, but support arrays are still used as current-view convenience fields.
 - Compare is text/block-first; support, citation, authority, claim/element, QC, and export diffs are represented only in summaries or future backlog.
 - Restore warnings are basic; support-loss and unresolved-citation warnings need richer graph inspection.
@@ -211,7 +213,7 @@ type ComplaintWorkProductProfile = {
 Implementation rule:
 
 - `ComplaintDraft`, `ComplaintSection`, `ComplaintCount`, and `PleadingParagraph` can remain frontend/backend view models while the UI is being migrated.
-- The persisted source of truth should become `WorkProduct`, `WorkProductBlock`, `LegalSupportUse`, `WorkProductFinding`, `WorkProductArtifact`, and Case History nodes.
+- The persisted source of truth should be `WorkProduct.document_ast`, structured AST links/citations/exhibits/rule findings, `WorkProductArtifact`, and Case History nodes. Flattened `WorkProductBlock` arrays remain projections until removed.
 - Stable block IDs replace paragraph numbers as identity. Paragraph numbers are render state and must be versioned through renumber mapping, not used as primary keys.
 
 ### ChangeSet
@@ -786,6 +788,7 @@ Remove before launch:
 - Any new complaint-only version-control service.
 - Any restore/compare/export-history code path that does not use `LegalVersionControl`.
 - Raw support arrays as authoritative state when a support-use node exists.
+- Flat WorkProduct block arrays, marks, or anchors as authoritative document state when `document_ast` exists.
 - Direct hard delete of legal draft targets without tombstone changes.
 - Separate complaint and work-product history APIs that can drift.
 
@@ -798,7 +801,7 @@ Remove before launch:
 - Area: Planning/product
 - Problem: Version history is currently a light event stream inside Complaint Editor and not a complete legal version-control system.
 - Expected behavior: This file is the source of truth for Case History work, with shared `WorkProduct` version control as the platform and Complaint as the first product profile.
-- Implementation notes: Cross-link from `CB-CE-017`, `CB-CE-028`, `CB-V1-004`, and `CB-V1-005` when those docs are next edited. Do not implement a complaint-only version-control stack.
+- Implementation notes: Cross-link from `CB-CE-017`, `CB-WPB-014`, `CB-V1-004`, and `CB-V1-005` when those docs are next edited. Do not implement a complaint-only version-control stack.
 - Acceptance checks: Product scope, vocabulary, data model, API, graph model, UI components, and phased backlog are documented.
 - Dependencies: Current Complaint Editor and WorkProduct scaffolding.
 - Status: Done
@@ -810,9 +813,9 @@ Remove before launch:
 - Expected behavior: Choose `WorkProduct` as the canonical versioned legal document. Complaint-specific objects become a profile/view/facade, not independent history persistence.
 - Implementation notes: This is explicitly allowed because there are no launched users. Prefer the clean model over migration compatibility.
 - Acceptance checks: New version-control tickets and APIs reference `subject_id=work_product_id`; no new persistence depends on `ComplaintHistoryEvent` or `DraftVersion`.
-- Dependencies: `CB-CE-028`, current Complaint Editor implementation.
+- Dependencies: `CB-WPB-014`, current Complaint profile implementation.
 - Status: Partial
-- Progress: Durable Case History now routes through `work_product_id`; complaint routes are aliases/facades. Stored flat history DTOs still exist and must be removed or fully demoted before launch.
+- Progress: Durable Case History now routes through `work_product_id`; complaint routes are aliases/facades; WorkProduct document state now routes through `document_ast`. Stored flat history DTOs and compatibility block/mark/anchor projections still exist and must be removed or fully demoted before launch.
 
 ### Epic CB-CH-100 - Core Data Model and Persistence
 
@@ -823,7 +826,7 @@ Remove before launch:
 - Expected behavior: Add backend Rust and frontend TypeScript DTOs for `VersionSubject`, `ChangeSet`, `VersionSnapshot`, `SnapshotManifest`, `SnapshotEntityState`, `VersionChange`, `VersionChangeSummary`, `LegalImpactSummary`, `VersionBranch`, `Milestone`, `AIEditAudit`, `MergeRequest`, and `ConflictResolution`.
 - Implementation notes: `subject_id` should be the canonical `work_product_id`. Complaint IDs can appear in route aliases or UI view models, not in core version-control DTOs.
 - Acceptance checks: DTO contract tests serialize/normalize all new types and enforce `matter_id`, `subject_type=work_product`, and `subject_id`.
-- Dependencies: `CB-CH-001`, `CB-X-001`, `CB-X-013`, `CB-CE-028`.
+- Dependencies: `CB-CH-001`, `CB-X-001`, `CB-X-013`, `CB-WPB-014`.
 - Status: Partial
 - Progress: Backend/frontend DTOs now cover core V0 version records, snapshots, manifests, branches, legal impact, AI audit, compare, and restore. `MergeRequest` and `ConflictResolution` remain for the merge-card slice.
 
@@ -847,7 +850,7 @@ Remove before launch:
 - Acceptance checks: Identical legal state hashes identically; changed paragraph/support/QC/formatting state changes only the expected hash.
 - Dependencies: `CB-CH-101`.
 - Status: Done
-- Progress: Deterministic hash helpers exist for document/work-product state, support graph, QC state, formatting profile, manifests, and export artifacts. Unit coverage proves identical state hashes identically and text/support/QC/formatting edits move the expected layer.
+- Progress: Deterministic hash helpers exist for `document_ast`, support graph, QC state, formatting profile, manifests, and export artifacts. Unit coverage proves identical state hashes identically and text/support/QC/formatting edits move the expected layer.
 
 ## CB-CH-104 - CaseHistoryService scaffold
 - Priority: P0
@@ -880,7 +883,7 @@ Remove before launch:
 - Acceptance checks: A query can answer "show every unsupported allegation ever introduced" using graph nodes, not by scanning draft JSON.
 - Dependencies: `CB-CH-102`, `CB-CE-008`, `CB-CE-009`.
 - Status: Partial
-- Progress: `LegalSupportUse`, `FactUse`, `AuthorityUse`, and `ElementSupport` graph constraints exist, and support-link actions create support-use nodes. Current-view arrays remain for UI convenience and need deeper deprecation.
+- Progress: `LegalSupportUse`, `FactUse`, `AuthorityUse`, and `ElementSupport` graph constraints exist, support-link actions create support-use nodes, and AST links/citations/exhibits materialize through existing graph paths. Current-view arrays remain for UI convenience and need deeper deprecation.
 
 ## CB-CH-107 - Snapshot manifest and entity-state storage
 - Priority: P0
@@ -888,10 +891,10 @@ Remove before launch:
 - Problem: Full JSON snapshots alone are fast to restore but weak for graph queries and large-matter diffs.
 - Expected behavior: Each full snapshot writes a `SnapshotManifest` and `SnapshotEntityState` rows for meaningful legal objects, plus optional full-state blob/ref for restore speed.
 - Implementation notes: Store inline state only when small. Use storage refs for large state objects.
-- Acceptance checks: Compare can identify changed entity hashes before loading full state payloads.
-- Dependencies: `CB-CH-103`, `CB-CH-106`.
+- Acceptance checks: Compare can identify changed entity hashes before loading full state payloads; restore hydrates both inline and `ObjectBlob`-backed snapshot state.
+- Dependencies: `CB-CH-103`, `CB-CH-106`, `CB-WPB-061`, `CB-WPB-062`.
 - Status: Partial
-- Progress: Snapshot creation now writes manifests and entity-state records with inline full state for V0 restore. Large snapshot storage refs and manifest-only diff optimization remain.
+- Progress: Snapshot creation writes manifests and entity-state records; oversized full state/entity state now offloads to object storage with `ObjectBlob` refs and restore/compare hydration. Compression, cross-matter fixtures, and manifest-only diff optimization remain.
 
 ## CB-CH-108 - ChangeSet grouping model
 - Priority: P0
@@ -937,7 +940,7 @@ Remove before launch:
 - Acceptance checks: Tests prove paragraph text before/after is preserved and renumbering stores old-to-new mapping.
 - Dependencies: `CB-CH-104`, `CB-CH-103`.
 - Status: Partial
-- Progress: Work-product and complaint facade create/patch flows record before/after state for major block and metadata edits. Relief/signature/certificate-specific diffs and paragraph renumber old-to-new mapping remain.
+- Progress: Work-product AST patch and complaint facade create/patch flows record before/after state for AST/document edits. Relief/signature/certificate-specific diffs, move detection, and paragraph renumber old-to-new mapping remain.
 
 ## CB-CH-203 - Capture support, citation, authority, and exhibit changes
 - Priority: P0
@@ -948,7 +951,7 @@ Remove before launch:
 - Acceptance checks: Removing the only evidence link creates a warning in legal impact.
 - Dependencies: `CB-CH-106`, `CB-CH-202`, `CB-CE-008`, `CB-CE-009`.
 - Status: Partial
-- Progress: Support-link routes record support-use changes and affected fact/evidence/authority summaries. Unlink/update operations and support-loss risk warnings remain.
+- Progress: Support-link routes record support-use changes and affected fact/evidence/authority summaries. AST patch operations can add/remove links, citations, and exhibit references. Rich unlink/update UI, support-loss risk warnings, and compare-layer output remain.
 
 ## CB-CH-204 - Capture QC state changes
 - Priority: P0
@@ -959,7 +962,7 @@ Remove before launch:
 - Acceptance checks: Tests prove a resolved finding appears as resolved in compare and timeline.
 - Dependencies: `CB-CH-104`, `CB-CE-011`.
 - Status: Partial
-- Progress: Work-product QC runs and finding status changes record version events and warning IDs. Complaint-specific facade coverage exists through work-product sync; richer QC diff and reopen lifecycle coverage remain.
+- Progress: Work-product QC runs, finding status changes, AST validation warnings, and AST rule-finding patches record/synchronize warning IDs. Complaint-specific facade coverage exists through work-product sync; richer QC diff and reopen/comment lifecycle coverage remain.
 
 ## CB-CH-205 - Autosnapshot grouping policy
 - Priority: P1
@@ -1038,7 +1041,7 @@ Remove before launch:
 - Acceptance checks: Tests cover paragraph update, create, delete/tombstone, move, and renumber.
 - Dependencies: `CB-CH-103`.
 - Status: Partial
-- Progress: Stable-ID block text diff exists for added/removed/modified V0 comparisons. Word-level hunks, moved paragraph detection, delete tombstones, and renumber diffs remain.
+- Progress: Stable-ID flattened AST block text diff exists for added/removed/modified V0 comparisons. Word-level hunks, moved paragraph detection, delete tombstones, and renumber diffs remain.
 
 ## CB-CH-402 - Support, citation, and authority diff
 - Priority: P1
@@ -1049,6 +1052,7 @@ Remove before launch:
 - Acceptance checks: Compare identifies citation added, evidence removed, and support status from supported to unsupported.
 - Dependencies: `CB-CH-203`.
 - Status: Todo
+- Progress: AST snapshots now contain structured links, citation uses, and exhibit references, so the data needed for this diff layer is present. The compare response still needs support/citation/authority/exhibit layer implementation.
 
 ## CB-CH-403 - Claim, element, relief, and QC diff
 - Priority: P1
@@ -1101,7 +1105,7 @@ Remove before launch:
 - Expected behavior: Restore citation links, evidence links, authority links, exhibit links, formatting profile, or QC decisions by scope.
 - Implementation notes: Dry-run response should list current support that would be removed.
 - Acceptance checks: Restoring citation links does not change paragraph text.
-- Dependencies: `CB-CH-402`, `CB-CH-502`.
+- Dependencies: `CB-CH-402`, `CB-CH-502`, `CB-WPB-044`.
 - Status: Todo
 
 ## CB-CH-504 - Restore warning preview
@@ -1124,7 +1128,7 @@ Remove before launch:
 - Expected behavior: Every versioned work product has a main branch. Users can create alternatives from any snapshot.
 - Implementation notes: Branch names use legal language: `TRO Version`, `Short Filing Version`, `Aggressive Version`, `Settlement Draft`.
 - Acceptance checks: Branch manager can list, open, rename, archive, and compare branches.
-- Dependencies: `CB-CH-304`.
+- Dependencies: `CB-CH-304`, `CB-WPB-045`.
 - Status: Todo
 
 ## CB-CH-602 - Branch-aware save and snapshot pointers
@@ -1316,11 +1320,12 @@ Remove before launch:
 - Priority: P1
 - Area: Performance/storage
 - Problem: Full snapshots can become large on long matters.
-- Expected behavior: Store inline state for small snapshots and object/blob refs for larger snapshots; keep bounded list endpoints.
-- Implementation notes: Use content hashes and optional storage refs compatible with local/R2 artifact lifecycle.
-- Acceptance checks: Large fixture history remains paginated and snapshot detail stays under agreed payload limits.
-- Dependencies: `CB-X-010`, `CB-X-017`, `CB-CH-103`.
-- Status: Todo
+- Expected behavior: Store inline state for small snapshots and `ObjectBlob` refs for larger snapshots; keep bounded list endpoints.
+- Implementation notes: Use content hashes and optional storage refs compatible with local/R2 artifact lifecycle. Refs must be private graph IDs, not raw object keys.
+- Acceptance checks: Large fixture history remains paginated, snapshot detail stays under agreed payload limits, and object-backed snapshots restore correctly.
+- Dependencies: `CB-X-010`, `CB-X-017`, `CB-CH-103`, `CB-WPB-061`, `CB-WPB-062`.
+- Status: Partial
+- Progress: Configurable inline thresholds and object-backed snapshot hydration are implemented. Retention cleanup and large-fixture benchmarks remain.
 
 ## CB-CH-1103 - Logging without sensitive text
 - Priority: P0
@@ -1339,8 +1344,9 @@ Remove before launch:
 - Expected behavior: Smoke flow creates complaint, edits paragraph, links evidence, inserts citation, runs QC, exports, compares to prior snapshot, restores paragraph, and verifies changed-since-export.
 - Implementation notes: Keep deterministic and provider-free by default.
 - Acceptance checks: Smoke fails on missing version events, broken hashes, incorrect restore, or lost export snapshot.
-- Dependencies: `CB-CH-201` through `CB-CH-902`.
-- Status: Todo
+- Dependencies: `CB-CH-201` through `CB-CH-902`, `CB-WPB-056`.
+- Status: Partial
+- Progress: Existing smoke covers AST-backed WorkProduct creation, patch, validation, and markdown/html/plain conversion. Full history smoke across support, QC, export, compare, restore, and changed-since-export remains.
 
 ## Optimized Release Slices
 

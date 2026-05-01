@@ -1,6 +1,6 @@
 # 02 - V0 MVP Workflows
 
-V0 MVP should let a single user create a matter, add files, extract text, review facts, build a timeline, map claims and evidence, retrieve ORS authority, draft a complaint, and run support checks.
+V0 MVP should let a single user create a matter, add files, extract text, review facts, build a timeline, map claims and evidence, retrieve ORS authority, create a complaint-profile WorkProduct, and run support checks.
 
 ## CB-V0-001 - Matter dashboard
 - Priority: P0
@@ -144,29 +144,29 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Progress: Authorities page now has a live ORSGraph search panel with query input, result snippets, citations/canonical IDs, scores, warnings, error state, target selectors, and attach controls for claims, elements, and draft paragraphs.
 - Still needed: Currentness panels, definitions/deadlines/remedies/penalties grouping, recommendation workflow from selected text, and richer attached-authority management.
 
-## CB-V0-013 - Complaint Builder entry point
+## CB-V0-013 - Complaint profile entry point
 - Priority: P1
 - Area: Complaint workflow
-- Problem: Complaint route is currently a workflow hub, not a full builder.
-- Expected behavior: Provides the V0 entry point into complaint work, creates or regenerates a complaint scaffold, and routes users toward the dedicated Complaint Editor once the structured editor lands.
-- Implementation notes: Keep this as the bridge from current `Draft kind=complaint` behavior into the full Complaint Editor program tracked in `10-complaint-editor-backlog.md`; do not expand the generic Draft model into the complaint AST here.
-- Acceptance checks: User can produce a complaint draft scaffold from approved facts and selected claims.
+- Problem: Complaint route started as a workflow hub and must remain a friendly entry point while the shared WorkProduct Builder becomes canonical.
+- Expected behavior: Provides the V0 entry point into complaint work, creates or opens a complaint-profile WorkProduct/facade, and routes users toward the structured complaint profile editor.
+- Implementation notes: Keep this as the bridge into `10-complaint-editor-backlog.md` and `12-work-product-builder-backlog.md`; do not expand legacy Draft endpoints into complaint or future document AST work.
+- Acceptance checks: User can create or open a complaint-profile WorkProduct from approved facts and selected claims.
 - Dependencies: `CB-V0-007`, `CB-V0-010`, `CB-V0-012`, `CB-V0-014`.
 - Status: Partial
-- Progress: Complaint Builder now has a live create/regenerate complaint draft action backed by `Draft kind=complaint`, plus the V0 workflow checklist and safety framing.
-- Still needed: Full structured editor work moves to `CB-CE-001` through `CB-CE-027`, beginning with AST, routes, guided setup, caption/outline, counts, paragraph numbering, save/load, return paths, and basic complaint QC.
+- Progress: Complaint work now uses the structured complaint profile/facade, synchronizes into canonical WorkProduct AST and Case History, and keeps V0 safety framing visible.
+- Still needed: Shared route/editor migration and AST production hardening move to `CB-WPB-004` through `CB-WPB-065`; complaint-specific projection/polish remains in `CB-CE-*`.
 
 ## CB-V0-014 - Drafting Studio live save
 - Priority: P1
 - Area: Drafting
-- Problem: Draft editor displays content but does not persist live edits.
-- Expected behavior: User can create, edit, save, and reload drafts through API.
+- Problem: Legacy Draft editor displays content but does not fully match the shared WorkProduct direction.
+- Expected behavior: User can create, edit, save, and reload legacy drafts through API while new legal work-product editing moves to WorkProduct Builder.
 - Implementation notes: Wire `POST /drafts`, `PATCH /drafts/:draftId`, and local unsaved state warnings.
 - Acceptance checks: Draft changes persist across refresh.
 - Dependencies: `CB-V0F-011`.
 - Status: Partial
 - Progress: Drafts list can create drafts from templates; draft editor can edit section bodies and save through `PATCH /drafts/:draftId`.
-- Still needed: Unsaved-change warnings, paragraph-level editing/persistence polish, status transitions, version snapshots, and robust reload tests.
+- Still needed: Unsaved-change warnings, paragraph-level editing/persistence polish, status transitions, robust reload tests, and a clear legacy boundary with canonical WorkProduct AST. Do not add `WorkProductDraft` unless branch/current-draft state needs a separate record.
 
 ## CB-V0-015 - Draft generation scaffold
 - Priority: P1
@@ -178,7 +178,7 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Dependencies: `CB-V0-014`.
 - Status: Partial
 - Progress: Drafts list and draft editor can call backend template scaffold generation and display provider-disabled/template-mode messages.
-- Still needed: Better complaint-specific outline controls, source link review, authority insertion, and visible paragraph/fact/evidence linkage in the editor.
+- Still needed: Better source link review, authority insertion, visible paragraph/fact/evidence linkage, and migration of legal drafting scaffolds into WorkProduct templates/profiles that emit AST patches.
 
 ## CB-V0-016 - Sentence and paragraph support checks
 - Priority: P1
@@ -189,8 +189,8 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Acceptance checks: Unsupported fact and missing citation findings display and link to draft paragraphs and sources.
 - Dependencies: `CB-V0-014`, `CB-V0-015`.
 - Status: Partial
-- Progress: Draft editor can run backend deterministic fact-check and citation-check actions, surface action messages, and render persisted fact/citation findings alongside the draft. QC also renders persisted findings from the matter.
-- Still needed: Sentence-level anchors, link each finding to remediation evidence/authority, resolve/ignore statuses, and sentence node support.
+- Progress: Draft editor can run backend deterministic fact-check and citation-check actions, surface action messages, and render persisted fact/citation findings alongside the draft. WorkProduct QC and AST validation can attach findings/warnings to AST targets, and QC also renders persisted findings from the matter.
+- Still needed: Sentence-level support graph, link each finding to remediation evidence/authority, full resolve/ignore/reopen lifecycle, and reusable AST warning marks in the shared editor.
 
 ## CB-V0-017 - Safety copy and no-legal-advice framing
 - Priority: P0
@@ -213,7 +213,7 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Acceptance checks: CI/dev script fails on broken V0 path.
 - Dependencies: `CB-V0F-012`, `CB-V0-002` through `CB-V0-016`.
 - Status: Partial
-- Progress: Added `pnpm run smoke:casebuilder`, which creates a temp live matter, uploads a text file, extracts/reviews facts, creates timeline/claim/evidence records, attaches authority, creates/generates a draft, runs deterministic checks, verifies export-deferred response, and cleans up.
+- Progress: Added `pnpm run smoke:casebuilder`, which creates a temp live matter, uploads a text file, extracts/reviews facts, creates timeline/claim/evidence records, attaches authority, creates/generates a draft, runs deterministic checks, verifies export-deferred response, creates an AST-backed WorkProduct, applies an AST patch, validates, converts to markdown/html/plain text, and cleans up.
 - Still needed: Run against a live local/API environment and wire into CI once the Neo4j/API fixture is dependable.
 
 ## CB-V0-019 - Ingestion job and status pipeline
@@ -231,9 +231,9 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 ## CB-V0-020 - Source span and provenance model
 - Priority: P0
 - Area: Evidence/provenance
-- Problem: Facts, evidence, draft paragraphs, and future sentence checks need exact source anchors, not only document IDs or free-text quotes.
+- Problem: Facts, evidence, WorkProduct blocks, and future sentence checks need exact source anchors, not only document IDs or free-text quotes.
 - Expected behavior: Add a shared `SourceSpan` DTO for document version, object blob, page, text chunk, byte/character offsets, quote, extraction method, confidence, and review status.
-- Implementation notes: Use `SourceSpan` from extraction through fact review, evidence creation, draft support, and findings. Every derived graph node should trace to the exact R2 object/version/page/chunk/span when available.
+- Implementation notes: Use `SourceSpan` from extraction through fact review, evidence creation, WorkProduct support, and findings. Every derived graph node should trace to the exact R2 object/version/page/chunk/span when available.
 - Acceptance checks: Every proposed fact and evidence item can open the source document at the supporting span or show an explicit unavailable-source reason.
 - Dependencies: `CB-V0F-014`, `CB-V0F-015`, `CB-V0-004`, `CB-V0-006`, `CB-V0-011`.
 - Status: Partial
@@ -294,14 +294,14 @@ V0 MVP should let a single user create a matter, add files, extract text, review
 - Completed: Added `POST /api/v1/matters/:matter_id/authority/attach` and `/detach`, frontend typed helpers, authority attach controls, persistence on claims/elements/draft paragraphs, and graph materialization for resolved canonical IDs.
 - Verification: `cargo test -p orsgraph-api casebuilder_routes_cover_v0_contracts`, `cargo test -p orsgraph-api casebuilder`, and `./node_modules/.bin/tsc --noEmit --incremental false`.
 
-## CB-V0-026 - Sentence-level draft support model
+## CB-V0-026 - Sentence-level WorkProduct support model
 - Priority: P1
 - Area: Drafting/fact-checking
-- Problem: Current checks are paragraph-level, but the product promise requires every draft sentence to be support-checkable.
-- Expected behavior: Add `DraftSentence` records with text, role, source fact IDs, evidence IDs, authority refs, support status, and finding anchors.
-- Implementation notes: Derive sentences from paragraphs in V0, then make the editor sentence-aware once the model is stable. This is a shared dependency for Complaint Editor paragraph/sentence checks, AI drafting, and citation anchors.
+- Problem: Current checks are paragraph-level, but the product promise requires every WorkProduct sentence to be support-checkable.
+- Expected behavior: Add or materialize `SentenceBlock`/`WorkProductSentence` records with text, role, source fact IDs, evidence IDs, authority refs, support status, and finding anchors.
+- Implementation notes: Derive sentences from AST paragraph blocks in V0, then make the shared WorkProduct editor sentence-aware once the model is stable. This is a shared dependency for complaint paragraph/sentence checks, AI drafting, and citation anchors.
 - Acceptance checks: Fact-check and citation-check findings can target a sentence or paragraph, and the editor can display each finding at the exact text anchor.
-- Dependencies: `CB-V0-014`, `CB-V0-015`, `CB-V0-016`, `CB-V0-020`, `CB-CE-006`, `CB-CE-011`, `CB-CE-016`.
+- Dependencies: `CB-WPB-003`, `CB-WPB-010`, `CB-WPB-011`, `CB-V0-016`, `CB-V0-020`, `CB-CE-006`, `CB-CE-011`, `CB-CE-016`.
 - Status: Todo
 
 ## CB-V0-027 - Graph upserts from ingestion manifests

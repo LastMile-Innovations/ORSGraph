@@ -37,6 +37,12 @@ pub struct ApiConfig {
     pub r2_download_ttl_seconds: u64,
     #[serde(default = "default_r2_max_upload_bytes")]
     pub r2_max_upload_bytes: u64,
+    #[serde(default = "default_casebuilder_ast_entity_inline_bytes")]
+    pub casebuilder_ast_entity_inline_bytes: u64,
+    #[serde(default = "default_casebuilder_ast_snapshot_inline_bytes")]
+    pub casebuilder_ast_snapshot_inline_bytes: u64,
+    #[serde(default = "default_casebuilder_ast_block_inline_bytes")]
+    pub casebuilder_ast_block_inline_bytes: u64,
     #[serde(default = "default_log_level")]
     pub log_level: String,
 
@@ -99,6 +105,18 @@ fn default_r2_download_ttl_seconds() -> u64 {
 
 fn default_r2_max_upload_bytes() -> u64 {
     50 * 1024 * 1024
+}
+
+fn default_casebuilder_ast_entity_inline_bytes() -> u64 {
+    64 * 1024
+}
+
+fn default_casebuilder_ast_snapshot_inline_bytes() -> u64 {
+    256 * 1024
+}
+
+fn default_casebuilder_ast_block_inline_bytes() -> u64 {
+    64 * 1024
 }
 
 fn default_api_host() -> String {
@@ -245,6 +263,15 @@ impl ApiConfig {
         if let Some(value) = read_u64("ORS_R2_MAX_UPLOAD_BYTES") {
             self.r2_max_upload_bytes = value;
         }
+        if let Some(value) = read_u64("ORS_CASEBUILDER_AST_ENTITY_INLINE_BYTES") {
+            self.casebuilder_ast_entity_inline_bytes = value;
+        }
+        if let Some(value) = read_u64("ORS_CASEBUILDER_AST_SNAPSHOT_INLINE_BYTES") {
+            self.casebuilder_ast_snapshot_inline_bytes = value;
+        }
+        if let Some(value) = read_u64("ORS_CASEBUILDER_AST_BLOCK_INLINE_BYTES") {
+            self.casebuilder_ast_block_inline_bytes = value;
+        }
 
         if let Ok(value) = env::var("VOYAGE_API_KEY") {
             if !value.trim().is_empty() {
@@ -316,6 +343,21 @@ impl ApiConfig {
                 "ORS_R2_MAX_UPLOAD_BYTES must be greater than 0".to_string(),
             ));
         }
+        if self.casebuilder_ast_entity_inline_bytes == 0 {
+            return Err(ConfigError::Message(
+                "ORS_CASEBUILDER_AST_ENTITY_INLINE_BYTES must be greater than 0".to_string(),
+            ));
+        }
+        if self.casebuilder_ast_snapshot_inline_bytes == 0 {
+            return Err(ConfigError::Message(
+                "ORS_CASEBUILDER_AST_SNAPSHOT_INLINE_BYTES must be greater than 0".to_string(),
+            ));
+        }
+        if self.casebuilder_ast_block_inline_bytes == 0 {
+            return Err(ConfigError::Message(
+                "ORS_CASEBUILDER_AST_BLOCK_INLINE_BYTES must be greater than 0".to_string(),
+            ));
+        }
         if self.storage_backend == "r2" {
             for (name, value) in [
                 ("ORS_R2_ACCOUNT_ID", &self.r2_account_id),
@@ -381,6 +423,9 @@ mod tests {
             r2_upload_ttl_seconds: 900,
             r2_download_ttl_seconds: 300,
             r2_max_upload_bytes: 10,
+            casebuilder_ast_entity_inline_bytes: 64 * 1024,
+            casebuilder_ast_snapshot_inline_bytes: 256 * 1024,
+            casebuilder_ast_block_inline_bytes: 64 * 1024,
             log_level: "info".to_string(),
             voyage_api_key: None,
             rerank_enabled: false,
@@ -423,6 +468,9 @@ mod tests {
             r2_upload_ttl_seconds: 900,
             r2_download_ttl_seconds: 300,
             r2_max_upload_bytes: 10,
+            casebuilder_ast_entity_inline_bytes: 64 * 1024,
+            casebuilder_ast_snapshot_inline_bytes: 256 * 1024,
+            casebuilder_ast_block_inline_bytes: 64 * 1024,
             log_level: "info".to_string(),
             voyage_api_key: None,
             rerank_enabled: false,

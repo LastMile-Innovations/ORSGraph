@@ -1,6 +1,6 @@
 UNWIND $rows AS row
 MERGE (elc:ExternalLegalCitation {external_citation_id: row.external_citation_id})
-SET elc += row { .citation, .normalized_citation, .citation_type, .jurisdiction_id, .source_system }
+SET elc += row { .citation, .normalized_citation, .citation_type, .jurisdiction_id, .source_system, .url }
 SET elc.id = row.external_citation_id,
     elc.graph_kind = 'citation',
     elc.schema_version = '1.0.0',

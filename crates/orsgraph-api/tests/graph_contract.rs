@@ -72,6 +72,12 @@ fn casebuilder_routes_cover_v0_contracts() {
         "/matters/:matter_id/work-products/:work_product_id/blocks",
         "/matters/:matter_id/work-products/:work_product_id/blocks/:block_id",
         "/matters/:matter_id/work-products/:work_product_id/links",
+        "/matters/:matter_id/work-products/:work_product_id/ast/patch",
+        "/matters/:matter_id/work-products/:work_product_id/ast/validate",
+        "/matters/:matter_id/work-products/:work_product_id/ast/to-markdown",
+        "/matters/:matter_id/work-products/:work_product_id/ast/from-markdown",
+        "/matters/:matter_id/work-products/:work_product_id/ast/to-html",
+        "/matters/:matter_id/work-products/:work_product_id/ast/to-plain-text",
         "/matters/:matter_id/work-products/:work_product_id/qc/run",
         "/matters/:matter_id/work-products/:work_product_id/qc/findings",
         "/matters/:matter_id/work-products/:work_product_id/qc/findings/:finding_id",
@@ -128,6 +134,15 @@ fn casebuilder_routes_cover_v0_contracts() {
             "missing CaseBuilder route {expected}"
         );
     }
+
+    assert!(
+        routes.contains("ListWorkProductsParams") && routes.contains("document_ast"),
+        "WorkProduct list route should support explicit include=document_ast"
+    );
+    assert!(
+        routes.contains("list_work_product_snapshots_for_api"),
+        "snapshot list route should use bounded API summaries"
+    );
 }
 
 #[test]
@@ -228,6 +243,15 @@ fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
     }
 
     for expected in [
+        "struct WorkProductDocument",
+        "struct WorkProductMetadata",
+        "struct WorkProductLink",
+        "struct WorkProductCitationUse",
+        "struct WorkProductExhibitReference",
+        "struct AstPatch",
+        "enum AstOperation",
+        "struct AstValidationResponse",
+        "struct AstRenderedResponse",
         "struct ChangeSet",
         "struct VersionChange",
         "struct VersionSnapshot",
@@ -236,6 +260,7 @@ fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
         "struct VersionBranch",
         "struct LegalImpactSummary",
         "struct VersionChangeSummary",
+        "struct VersionLayerDiff",
         "struct AIEditAudit",
         "struct Milestone",
         "struct LegalSupportUse",
@@ -243,6 +268,19 @@ fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
         assert!(
             backend_models.contains(expected),
             "missing backend Case History DTO {expected}"
+        );
+    }
+    for expected in [
+        "base_document_hash",
+        "base_snapshot_id",
+        "object_blob_id",
+        "full_state_ref",
+        "state_ref",
+        "storage_ref",
+    ] {
+        assert!(
+            backend_models.contains(expected),
+            "missing backend hybrid AST storage field {expected}"
         );
     }
 
@@ -272,6 +310,15 @@ fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
     }
 
     for expected in [
+        "interface WorkProductDocument",
+        "interface WorkProductMetadata",
+        "interface WorkProductLink",
+        "interface WorkProductCitationUse",
+        "interface WorkProductExhibitReference",
+        "interface AstPatch",
+        "type AstOperation",
+        "interface AstValidationResponse",
+        "interface AstRenderedResponse",
         "interface ChangeSet",
         "interface VersionChange",
         "interface VersionSnapshot",
@@ -280,6 +327,7 @@ fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
         "interface VersionBranch",
         "interface LegalImpactSummary",
         "interface VersionChangeSummary",
+        "interface VersionLayerDiff",
         "interface AIEditAudit",
         "interface CaseHistoryMilestone",
         "interface LegalSupportUse",
@@ -287,6 +335,19 @@ fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
         assert!(
             frontend_types.contains(expected),
             "missing frontend Case History DTO {expected}"
+        );
+    }
+    for expected in [
+        "base_document_hash",
+        "base_snapshot_id",
+        "object_blob_id",
+        "full_state_ref",
+        "state_ref",
+        "storage_ref",
+    ] {
+        assert!(
+            frontend_types.contains(expected),
+            "missing frontend hybrid AST storage field {expected}"
         );
     }
 
@@ -302,6 +363,12 @@ fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
         "previewComplaint",
         "exportComplaint",
         "runComplaintAiCommand",
+        "applyWorkProductAstPatch",
+        "validateWorkProductAst",
+        "workProductAstToMarkdown",
+        "workProductAstFromMarkdown",
+        "workProductAstToHtml",
+        "workProductAstToPlainText",
         "getWorkProductHistory",
         "getWorkProductSnapshots",
         "getWorkProductSnapshot",
@@ -310,6 +377,8 @@ fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
         "restoreWorkProductVersion",
         "getWorkProductExportHistory",
         "getWorkProductAiAudit",
+        "GetWorkProductsOptions",
+        "AstPatchConcurrency",
         "normalizeComplaint",
         "buildDemoComplaint",
     ] {
@@ -353,6 +422,112 @@ fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
         backend_service.contains("unwrap_or_default()")
             && backend_service.contains("default_complaint_from_matter"),
         "complaint creation should tolerate matters without seeded graph children"
+    );
+}
+
+#[test]
+fn workproduct_hybrid_ast_storage_contract_is_bounded_and_object_backed() {
+    let backend_service = include_str!("../src/services/casebuilder.rs");
+    let backend_models = include_str!("../src/models/casebuilder.rs");
+    let frontend_api = include_str!("../../../frontend/lib/casebuilder/api.ts");
+    let object_store = include_str!("../src/services/object_store.rs");
+
+    for expected in [
+        "snapshot_full_state_key",
+        "snapshot_manifest_key",
+        "snapshot_entity_state_key",
+        "work_product_export_key",
+        "safe_work_product_download_filename",
+        "object_blob_id_for_hash",
+        "full_state_ref = Some(blob.object_blob_id)",
+        "state.state_ref = Some(blob.object_blob_id)",
+        "manifest.storage_ref = Some(blob.object_blob_id)",
+        "object_blob_id: Some(artifact_blob.object_blob_id.clone())",
+        "hydrate_snapshot_full_state",
+        "load_json_blob(matter_id, blob_id)",
+        "list_work_product_snapshots_for_api",
+        "list_work_product_snapshots(matter_id, work_product_id)",
+        "summarize_version_snapshot_for_list",
+        "version_change_state_summary",
+        "validate_ast_patch_matter_references",
+        "validate_work_product_matter_references",
+        "validate_work_product_link_target",
+        "validate_complaint_link_references",
+        "diff_work_product_layers",
+        "restore_work_product_scope",
+        "layer_diffs",
+        "\"state_storage\": \"version_snapshot\"",
+        "ApiError::Conflict",
+    ] {
+        assert!(
+            backend_service.contains(expected),
+            "missing hybrid WorkProduct AST storage behavior {expected}"
+        );
+    }
+
+    for expected in [
+        "base_document_hash",
+        "base_snapshot_id",
+        "object_blob_id",
+        "full_state_ref",
+        "state_ref",
+        "storage_ref",
+    ] {
+        assert!(
+            backend_models.contains(expected),
+            "missing backend hybrid DTO field {expected}"
+        );
+    }
+
+    assert!(
+        frontend_api.contains("include=document_ast")
+            && frontend_api.contains("base_document_hash or base_snapshot_id"),
+        "frontend API should expose explicit full-AST list opt-in and AST patch concurrency guard"
+    );
+    assert!(
+        frontend_api.contains("normalizeVersionLayerDiff") && frontend_api.contains("layer_diffs"),
+        "frontend API should normalize bounded legal layer diffs"
+    );
+    assert!(
+        object_store.contains("hash_path_segment(document_id.as_bytes(), 24)")
+            && !object_store.contains("R2 presign GET failed: {error}"),
+        "ObjectStore keys and errors should avoid raw filenames/storage keys"
+    );
+}
+
+#[test]
+fn casebuilder_matter_isolation_contracts_cover_ast_and_object_backed_paths() {
+    let backend_service = include_str!("../src/services/casebuilder.rs");
+    let backend_routes = include_str!("../src/routes/casebuilder.rs");
+
+    for expected in [
+        "MATCH (:Matter {matter_id: $matter_id})-[:USES_OBJECT_BLOB]->(b:ObjectBlob",
+        "product_from_snapshot(matter_id, &from_snapshot)",
+        "product_from_snapshot(matter_id, &snapshot)",
+        "get_work_product_artifact(matter_id, work_product_id, artifact_id)",
+        "validate_ast_patch_matter_references(matter_id, &product, &patch)",
+        "validate_work_product_matter_references(matter_id, &product)",
+        "validate_work_product_matter_references(matter_id, &restored)",
+        "validate_work_product_link_target(matter_id",
+        "validate_complaint_link_references(matter_id",
+        "require_fact(matter_id",
+        "require_evidence(matter_id",
+        "require_document(matter_id",
+        "require_source_span(matter_id",
+        "safe_work_product_download_filename(&artifact)",
+    ] {
+        assert!(
+            backend_service.contains(expected),
+            "missing matter-isolation/safe-download behavior {expected}"
+        );
+    }
+
+    assert!(
+        !backend_service.contains("AST patch conflict: patch_id=")
+            && backend_routes.contains(
+                "Export is deferred for CaseBuilder V0; DOCX/PDF/filing packets are V0.2+."
+            ),
+        "CaseBuilder errors should avoid prompt/patch ids and matter ids"
     );
 }
 

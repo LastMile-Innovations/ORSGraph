@@ -7,7 +7,7 @@ These tasks cut across phases and should be worked whenever they unblock trust, 
 - Area: API/data
 - Problem: Frontend and backend CaseBuilder shapes can drift.
 - Expected behavior: Contract tests or fixture validation catch DTO/view-model drift for existing and production backlog DTOs.
-- Implementation notes: Add sample API payloads and mapper tests for matter, document, fact, claim, draft, and findings.
+- Implementation notes: Add sample API payloads and mapper tests for matter, document, fact, claim, WorkProduct AST, AST patches, citations, exhibits, rule findings, drafts, and findings.
 - Acceptance checks: CI fails if required fields disappear or type normalization breaks.
 - Dependencies: Current data adapter.
 - Status: Todo
@@ -26,9 +26,9 @@ These tasks cut across phases and should be worked whenever they unblock trust, 
 - Priority: P0
 - Area: Privacy/storage
 - Problem: Uploads need creation, retention, deletion, and error policy.
-- Expected behavior: Create, read metadata, delete, and cleanup orphaned files safely.
-- Implementation notes: Keep paths matter-scoped and sanitized.
-- Acceptance checks: Deleting a matter removes or tombstones local files according to policy.
+- Expected behavior: Create, read metadata, delete, and cleanup orphaned files safely, including uploads, extraction artifacts, AST snapshot blobs, projection caches, and generated exports.
+- Implementation notes: Keep paths matter-scoped and sanitized; graph refs should point to `ObjectBlob` IDs rather than exposing raw storage keys.
+- Acceptance checks: Deleting a matter removes or tombstones local/R2 files according to policy and prevents AST/export object hydration afterward.
 - Dependencies: Matter deletion policy.
 - Status: Todo
 
@@ -96,9 +96,9 @@ These tasks cut across phases and should be worked whenever they unblock trust, 
 - Priority: P2
 - Area: Performance
 - Problem: Large matters can make graph and draft views slow.
-- Expected behavior: Pagination, limits, and lazy loading for documents, facts, evidence, graph nodes, and drafts.
-- Implementation notes: Add API `limit/offset` before large real matters; enforce graph node/edge limits and bounded findings responses.
-- Acceptance checks: Seeded large fixture remains usable and API responses are bounded.
+- Expected behavior: Pagination, limits, and lazy loading for documents, facts, evidence, graph nodes, WorkProducts, AST block trees, projections, snapshots, exports, and findings.
+- Implementation notes: Add API `limit/offset` before large real matters; enforce graph node/edge limits, bounded findings responses, AST payload budgets, incremental validation, projection caching, summary list payloads, and R2/local refs for large immutable state.
+- Acceptance checks: Seeded large fixture remains usable, API responses are bounded, and legal intelligence queries use graph state without scanning object blobs.
 - Dependencies: Live API adoption.
 - Status: Todo
 
@@ -126,37 +126,37 @@ These tasks cut across phases and should be worked whenever they unblock trust, 
 - Priority: P0
 - Area: API/data
 - Problem: The production backlog introduces shared objects that need stable names before route work starts.
-- Expected behavior: Backend and frontend DTO registries include `ObjectBlob`, `DocumentVersion`, `IngestionRun`, `SourceSpan`, `IssueSuggestion`, `DraftSentence`, `CaseGraphNode`, `CaseGraphEdge`, `QcRun`, `EvidenceGap`, `AuthorityGap`, `Contradiction`, `ExportPackage`, and `AuditEvent`.
+- Expected behavior: Backend and frontend DTO registries include `ObjectBlob`, `DocumentVersion`, `IngestionRun`, `SourceSpan`, `WorkProductDocument`, `WorkProductSentence`, `IssueSuggestion`, `CaseGraphNode`, `CaseGraphEdge`, `QcRun`, `EvidenceGap`, `AuthorityGap`, `Contradiction`, `ExportPackage`, and `AuditEvent`.
 - Implementation notes: Add DTOs incrementally with contract fixtures; avoid exposing Neo4j internals or file-system paths.
 - Acceptance checks: Contract tests prove each DTO serializes, normalizes in the frontend adapter, and keeps matter ownership fields where relevant.
 - Dependencies: `CB-X-001`.
 - Status: Partial
-- Progress: Backend and frontend DTO registries now include `ObjectBlob`, `DocumentVersion`, `IngestionRun`, and `SourceSpan`; contract tests cover backend/frontend registry presence, serialization, frontend normalization references, matter ownership fields, and filename-safe IDs/object keys for the first provenance slice.
-- Still needed: Add the remaining production DTOs: `IssueSuggestion`, `DraftSentence`, `CaseGraphNode`, `CaseGraphEdge`, `QcRun`, `EvidenceGap`, `AuthorityGap`, `Contradiction`, `ExportPackage`, and `AuditEvent`; complaint-specific DTOs are tracked in `CB-CE-001`.
+- Progress: Backend and frontend DTO registries now include `ObjectBlob`, `DocumentVersion`, `IngestionRun`, `SourceSpan`, `WorkProductDocument`, AST-capable `WorkProductBlock`, AST patch/conversion DTOs, links, citations, and exhibit references; contract tests cover backend/frontend registry presence, serialization, frontend normalization references, matter ownership fields, and filename-safe IDs/object keys for the first provenance slice.
+- Still needed: Add the remaining production DTOs: `IssueSuggestion`, `WorkProductSentence` graph/projection records, `CaseGraphNode`, `CaseGraphEdge`, `QcRun`, `EvidenceGap`, `AuthorityGap`, `Contradiction`, `ExportPackage`, and `AuditEvent`; complaint-specific DTOs are tracked in `CB-CE-001`.
 
 ## CB-X-014 - Production route contract coverage
 - Priority: P0
 - Area: API/routing
 - Problem: New production wiring routes need explicit contract coverage like the existing V0 route test.
-- Expected behavior: Contract tests cover `/issues/spot`, `/graph`, `/qc/run`, finding lifecycle routes, task/deadline CRUD, export package status/download routes, complaint routes, and any new authority target routes beyond the V0 claim/element/draft-paragraph attach contract.
+- Expected behavior: Contract tests cover WorkProduct AST patch/validate/convert routes, `/issues/spot`, `/graph`, `/qc/run`, finding lifecycle routes, task/deadline CRUD, export package status/download routes, complaint routes, and any new authority target routes beyond the V0 claim/element/draft-paragraph attach contract.
 - Implementation notes: Start with route registration tests, then add handler-level fixtures as services become real.
 - Acceptance checks: CI fails if any production backlog route is removed or renamed without updating the contract.
 - Dependencies: `CB-X-013`, current route contract tests.
 - Status: Partial
-- Progress: V0 route contract coverage now includes binary upload, authority attach/detach, complaint routes, work-product routes, and Case History history/snapshot/compare/restore/export-history/AI-audit routes with complaint aliases.
-- Still needed: Contract coverage for issue spotting, graph, matter-level QC run, richer finding lifecycle, task/deadline CRUD, export package status/download, and future authority target routes.
+- Progress: V0 route contract coverage now includes binary upload, authority attach/detach, complaint routes, work-product routes, WorkProduct AST patch/validate/convert routes, and Case History history/snapshot/compare/restore/export-history/AI-audit routes with complaint aliases.
+- Still needed: Handler-level fixtures for AST routes, plus contract coverage for issue spotting, graph, matter-level QC run, richer finding lifecycle, task/deadline CRUD, export package status/download, and future authority target routes.
 
 ## CB-X-015 - V0 end-to-end workflow smoke
 - Priority: P0
 - Area: Quality
 - Problem: The product promise depends on the full chain working together, not isolated pages.
-- Expected behavior: Automated smoke covers create matter, upload, extract, approve fact, create claim, attach evidence, attach authority, create draft, run checks, open QC, and preview export status.
+- Expected behavior: Automated smoke covers create matter, upload, extract, approve fact, create claim, attach evidence, attach authority, create draft, create AST-backed WorkProduct, patch/validate/convert AST, run checks, open QC, preview, export status, snapshot, compare, and restore.
 - Implementation notes: Use a test Neo4j fixture or mocked service boundary; keep it deterministic and safe for local dev.
 - Acceptance checks: Smoke fails on broken matter isolation, missing graph links, missing source support, or broken draft/check handoff.
 - Dependencies: `CB-V0-018`, `CB-V0-019`, `CB-V0-025`, `CB-V01-015`, `CB-V02-011`.
 - Status: Partial
-- Progress: Added `pnpm run smoke:casebuilder` covering the V0 workflow and export-deferred status; script syntax is verified.
-- Still needed: Run it against a live local/API fixture and decide whether it belongs in CI as a required or optional smoke.
+- Progress: Added `pnpm run smoke:casebuilder` covering the V0 workflow, export-deferred status, AST-backed WorkProduct creation, AST patch, validation, and markdown/html/plain conversion; script syntax is verified.
+- Still needed: Run it against a live local/API fixture, expand it through support/citation/exhibit/QC/export/history restore, and decide whether it belongs in CI as a required or optional smoke.
 
 ## CB-X-016 - Matter isolation and authorization query audit
 - Priority: P0
@@ -182,8 +182,8 @@ These tasks cut across phases and should be worked whenever they unblock trust, 
 - Priority: P1
 - Area: Performance
 - Problem: CaseBuilder must remain usable when a matter contains many documents, facts, evidence rows, draft paragraphs, and findings.
-- Expected behavior: Seeded large fixture exercises bounded API responses, lazy UI loading, graph limits, and draft/finding pagination.
-- Implementation notes: Include realistic counts for documents, extracted chunks, facts, evidence links, claims/elements, draft sentences, and QC findings.
+- Expected behavior: Seeded large fixture exercises bounded API responses, lazy UI loading, graph limits, AST payload budgets, projection caching, export preview budgets, and finding pagination.
+- Implementation notes: Include realistic counts for documents, extracted chunks, facts, evidence links, claims/elements, WorkProduct blocks, sentences, citations, exhibits, snapshots, and QC findings.
 - Acceptance checks: Core pages render within agreed dev thresholds and never request unbounded graph/finding/document payloads.
 - Dependencies: `CB-X-010`, `CB-V01-008`, `CB-V01-015`.
 - Status: Todo

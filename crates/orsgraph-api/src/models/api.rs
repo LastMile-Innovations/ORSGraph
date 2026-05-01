@@ -71,6 +71,27 @@ pub struct StatuteDetailResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct StatutePageResponse {
+    pub identity: StatuteIdentity,
+    pub current_version: StatuteVersion,
+    pub source_document: SourceDocument,
+    pub provision_count: u64,
+    pub citation_counts: CitationCounts,
+    pub semantic_counts: SemanticCounts,
+    pub source_notes: Vec<String>,
+    pub provisions: Vec<ProvisionNode>,
+    pub qc: StatutePageQcSummary,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatutePageQcSummary {
+    pub status: String,
+    pub passed_checks: u64,
+    pub total_checks: u64,
+    pub notes: Vec<QCNoteItem>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct StatuteIdentity {
     pub canonical_id: String,
     pub citation: String,
@@ -202,7 +223,7 @@ pub struct ProvisionsResponse {
     pub provisions: Vec<ProvisionNode>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ProvisionNode {
     pub provision_id: String,
     pub display_citation: String,

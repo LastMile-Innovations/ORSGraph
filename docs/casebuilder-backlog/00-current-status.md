@@ -4,11 +4,13 @@ This file separates what is actually implemented from what is scaffolded or stil
 
 ## Latest verification
 
-Last verified on 2026-05-01 while extending the production backlog.
+Last verified on 2026-05-01 after the canonical WorkProduct AST refactor.
 
 - `cargo test -p orsgraph-api` passed.
-- `pnpm run typecheck` passed.
-- Worktree already had broad unrelated modified/untracked files; backlog updates should stay scoped to `docs/casebuilder-backlog/*`.
+- `cargo check -p orsgraph-api` passed.
+- `pnpm run check` from `frontend/` passed.
+- `node --check frontend/scripts/smoke-casebuilder.mjs` passed.
+- Frontend build still logs expected local fallback warnings for `/sidebar` and `/statutes` when no local API is available.
 
 Follow-up verification on 2026-05-01 after implementing the first provenance spine slice:
 
@@ -34,7 +36,7 @@ Follow-up implementation update on 2026-05-01 for the provider-free Complaint Ed
 
 - Added complaint-specific backend DTOs, Neo4j constraints/indexes, graph edge materialization, API routes, deterministic Oregon complaint QC, preview, export artifacts, AI template states, history, filing packet state, and no-seed complaint defaults.
 - Added the frontend complaint workspace route family and structured three-pane Complaint Editor workbench.
-- Retired generic `draft_type=complaint` creation in favor of `/api/v1/matters/:matterId/complaints`.
+- Retired generic complaint draft creation in favor of structured complaint routes that synchronize into complaint-profile WorkProducts.
 - Verification: `cargo test -p orsgraph-api`, `pnpm run typecheck`, `pnpm run lint`, and `pnpm run build` passed.
 
 Follow-up implementation update on 2026-05-01 for graph-native Case History V0:
@@ -44,6 +46,56 @@ Follow-up implementation update on 2026-05-01 for graph-native Case History V0:
 - Wired complaint/work-product create, edit, support link, QC, AI, export, and restore flows into canonical Case History.
 - Added a Complaint workspace Case History screen with timeline, manual snapshots, text compare, restore dry-run/apply, and changed-since-export status.
 - Verification: `cargo check -p orsgraph-api`, `cargo test -p orsgraph-api --test graph_contract`, `cargo test -p orsgraph-api work_product_hashes_are_stable_and_layered --lib`, and `pnpm run check` from `frontend/` passed.
+
+Follow-up backlog integration update on 2026-05-01 for WorkProduct Builder:
+
+- Added `12-work-product-builder-backlog.md` as the canonical shared editor backlog.
+- WorkProduct DTOs/routes/history are already partially wired; the remaining shared-builder gaps are shared frontend WorkProduct routes/components, reusable `WorkProductEditor`, type/profile registries, rich text custom nodes/marks, strict schema validation, rich legal diff layers, and production DOCX/PDF export.
+- Complaint remains implemented as the first WorkProduct profile/facade while future answers, motions, declarations, letters, notices, exhibit lists, and filing packets converge on shared WorkProduct contracts.
+- No application code changed for this docs pass.
+
+Follow-up implementation update on 2026-05-01 for the canonical WorkProduct AST refactor:
+
+- `WorkProduct.document_ast` is now the canonical current legal document for WorkProduct persistence.
+- Backend and frontend DTOs include `WorkProductDocument`, AST-capable `WorkProductBlock`, structured links, citation uses, exhibit references, text ranges, rule findings, `AstPatch`, `AstOperation`, validation responses, and conversion responses.
+- Existing block/mark/anchor/finding arrays remain compatibility projections or adapters; new legal document work should write AST or AST patches.
+- Added AST patch, validate, markdown, HTML, and plain-text conversion routes and frontend API helpers.
+- Refactored CaseBuilder service reads/writes, preview/export/history/hash/snapshot/restore/diff paths to consume the AST first.
+- Added provider-free tests for AST validation, patching, markdown conversion, hash stability, rule-finding projection sync, route contracts, and smoke syntax.
+
+Follow-up backlog expansion update on 2026-05-01 for AST completion:
+
+- Expanded `12-work-product-builder-backlog.md` through `CB-WPB-065` to cover everything needed to complete, test, optimize, and safely ship the AST platform, including hybrid graph/R2 AST storage.
+- Added backlog coverage for typed block registry, schema migrations, canonical hashing, patch concurrency, operation invariants, paragraph/cross-reference handling, sentence anchoring, citation/exhibit lifecycles, support inspectors, AST rule engine, matter-level QC, rich text and markdown round-trip, preview/DOCX/PDF renderers, export readiness, AI patch review, scoped restore, branch merge conflicts, large-document performance, snapshot/cache policy, frontend autosave, AST diagnostics, accessibility, matter isolation, sensitive logging, fixture/property/projection/smoke tests, legacy projection cleanup, module extraction, docs, and production release gates.
+- No application code changed for this backlog expansion.
+
+Follow-up implementation update on 2026-05-01 for WorkProduct AST hardening:
+
+- Added bounded legal layer diffs for support links, citations, exhibits, rule findings, formatting, and export artifacts.
+- Expanded scoped restore across AST blocks, metadata, support links, citations, exhibits, rule findings, formatting, and export state while preserving unrelated current edits.
+- Hardened matter-scoped reference validation for support links, complaint links, AST patches, snapshot hydration, restore, compare, and export downloads.
+- Tightened privacy edges: AST conflict/errors avoid prompts/patch IDs/legal text, R2 storage errors avoid raw backend details, WorkProduct download filenames are hash-derived, and new document object keys use hashed path segments.
+- Added focused unit/contract/smoke coverage for bounded list payloads, layer diffs, scoped restore, safe download responses, matter-isolated object-backed paths, and frontend `layer_diffs` normalization.
+
+Follow-up implementation update on 2026-05-01 for the 2025 UTCR graph corpus:
+
+- Added `/Users/grey/Downloads/2025_UTCR.pdf` as a first-class `or:utcr` court-rule corpus with its own `LegalCorpus`, `CorpusEdition`, `SourceDocument`, `SourcePage`, `CourtRuleChapter`, rule identity/version, provision, citation, procedural requirement, retrieval chunk, and WorkProduct rule-pack outputs.
+- Generated `data/utcr_2025/graph/` with 185 source pages, 24 chapters, 239 rules, 1,738 provisions, 491 citation mentions, 2,565 procedural requirements, 4,900 retrieval chunks, and six WorkProduct rule packs.
+- Generalized loader Cypher and Rust seed paths so UTCR can share the legal graph spine without ORS-only labels/defaults, while adding UTCR/court-rule labels and procedural requirement relationships.
+- Search now recognizes `UTCR 2.010`, UTCR pin citations, UTCR ranges, and `authority_family=UTCR`; CaseBuilder UTCR citations canonicalize to graph rule IDs instead of defaulting to external-only placeholders once seeded.
+- Documentation lives in `docs/legal-corpora/2025-utcr-ingestion.md`.
+- Verification: `cargo fmt --check -p ors-crawler-v0 -p orsgraph-api`, `cargo check -p ors-crawler-v0`, `cargo check -p orsgraph-api`, `cargo test -p ors-crawler-v0 utcr`, `cargo test -p orsgraph-api services::search::tests`, targeted CaseBuilder UTCR citation tests, parse command, and seed dry-run passed.
+- Live Neo4j seed and embeddings were not run because `NEO4J_PASSWORD` was not set and embeddings remain intentionally gated.
+
+Follow-up implementation and docs update on 2026-05-01 for the Court Rules Registry and local SLR graph layer:
+
+- Added a Court Rules Registry parser for SLR/CJO/PJO index tables, preserving `current_future` versus `prior` publication buckets separately from computed currentness.
+- Added graph nodes and JSONL outputs for registry sources/snapshots, publication entries, jurisdictions, courts, rule authority documents, SLR editions, effective intervals, rule topics, applicability, supersession, and WorkProduct authority inclusion.
+- Added a local SLR PDF parser and reviewed `/Users/grey/Downloads/Linn_SLR_2026.pdf`; the latest parse produced 31 authority units, 124 provisions, 22 citation mentions, 31 retrieval chunks, and zero diagnostics.
+- Added Neo4j load/materialization support and a `RuleApplicabilityResolver` route family for registry, jurisdiction current/history, applicable rules, order detail, and SLR edition detail.
+- Generalized the model for top-down expansion: jurisdiction ancestry now supports `us -> state -> county/court`, SLR `SUPPLEMENTS` edges are data-driven through `supplements_corpus_id`, and CaseBuilder rule profiles are no longer Linn-only.
+- Added documentation in `docs/data-model/full-data-model.md`, `docs/legal-corpora/court-rules-registry-layer.md`, `docs/legal-corpora/local-slr-pdf-ingestion.md`, and `docs/legal-corpora/top-down-expansion-roadmap.md`.
+- Verification: `cargo fmt --check`, `cargo check -p ors-crawler-v0`, `cargo check -p orsgraph-api`, `cargo test -p ors-crawler-v0 court_rules_registry`, `cargo test -p ors-crawler-v0 local_rule_pdf_parser`, and the Linn SLR parse command passed.
 
 ## Done
 
@@ -143,6 +195,22 @@ Follow-up implementation update on 2026-05-01 for graph-native Case History V0:
 - Verification: `cargo check -p orsgraph-api`, `cargo test -p orsgraph-api --test graph_contract`, `cargo test -p orsgraph-api work_product_hashes_are_stable_and_layered --lib`, and `pnpm run check` from `frontend/`.
 - Status: Done
 
+### DONE-013 - Canonical WorkProduct AST foundation
+- Priority: P0
+- Area: WorkProduct Builder / AST
+- Completed behavior: `WorkProduct.document_ast` is the canonical current document model. It stores metadata, nested AST blocks, links, citation uses, exhibit references, and rule findings. Existing flat blocks, marks, anchors, and findings are rebuilt as adapter/projection surfaces.
+- Evidence: `crates/orsgraph-api/src/models/casebuilder.rs`, `crates/orsgraph-api/src/services/casebuilder.rs`, `crates/orsgraph-api/src/routes/casebuilder.rs`, `frontend/lib/casebuilder/types.ts`, `frontend/lib/casebuilder/api.ts`, `frontend/scripts/smoke-casebuilder.mjs`, `docs/casebuilder-backlog/12-work-product-builder-backlog.md`.
+- Verification: `cargo test -p orsgraph-api`, `cargo check -p orsgraph-api`, `pnpm run check`, and `node --check frontend/scripts/smoke-casebuilder.mjs`.
+- Status: Done
+
+### DONE-014 - AST completion backlog expansion
+- Priority: P0
+- Area: Planning/quality
+- Completed behavior: The WorkProduct Builder backlog now has explicit tickets for finishing, testing, optimizing, securing, and releasing the AST platform and all major systems that consume it.
+- Evidence: `docs/casebuilder-backlog/12-work-product-builder-backlog.md`.
+- Verification: Docs consistency and whitespace checks.
+- Status: Done
+
 ## Partial
 
 ### PARTIAL-001 - Matter creation UI
@@ -169,16 +237,16 @@ Follow-up implementation update on 2026-05-01 for graph-native Case History V0:
 ### PARTIAL-004 - Drafting and checks
 - Priority: P1
 - Area: Drafting studio
-- Current behavior: Deterministic draft scaffold, unsupported-fact checks, and missing-citation checks exist on backend. Frontend can create drafts, edit/save section bodies, call scaffold generation, run support checks, and render persisted fact/citation findings in the draft editor and QC page.
-- Still needed: Sentence-level finding UI, source-linked check remediation, unsaved-change warnings, richer Case History diff/restore layers, and provider-gated live drafting.
+- Current behavior: Legacy deterministic draft scaffold, unsupported-fact checks, and missing-citation checks exist on backend. Frontend can create drafts, edit/save section bodies, call scaffold generation, run support checks, and render persisted fact/citation findings. New legal document drafting should use WorkProduct AST and AST patches.
+- Still needed: Clear legacy Draft boundary, shared WorkProductEditor UI, sentence-level finding UI, source-linked check remediation, unsaved-change warnings, richer Case History diff/restore layers, and provider-gated live AST patch drafting.
 - Status: Partial
 
-### PARTIAL-011 - Complaint Editor / Builder entry point
+### PARTIAL-011 - Complaint profile entry point
 - Priority: P1
 - Area: Complaint workflow
-- Current behavior: Complaint Editor is now the canonical complaint work product. It creates a structured complaint AST with caption, sections, counts, paragraphs, support/citation/exhibit links, deterministic QC, preview, export artifacts, history, AI template states, filing packet state, and no-seed defaults.
-- Still needed: Shared work-product editor abstraction for motions, answers, declarations, briefs, and future rich-text profiles is tracked in `CB-CE-028`.
-- Status: Done
+- Current behavior: Complaint Editor is now the first structured WorkProduct profile/facade. It creates complaint-profile state and synchronizes into canonical WorkProduct AST/Case History. Complaint routes remain friendly facades while shared WorkProduct routes/editor mature.
+- Still needed: Finish moving complaint UI onto shared WorkProductEditor contracts, keep complaint DTOs as projections, and migrate future motions, answers, declarations, briefs, letters, notices, exhibit lists, and filing packets through `12-work-product-builder-backlog.md`.
+- Status: Partial
 
 ### PARTIAL-005 - Authority retrieval
 - Priority: P1
@@ -225,8 +293,8 @@ Follow-up implementation update on 2026-05-01 for graph-native Case History V0:
 ### PARTIAL-012 - Graph, QC, and export surfaces
 - Priority: P1
 - Area: Production wiring
-- Current behavior: Graph and export pages render route-ready shells or derived summaries; QC renders derived metrics plus persisted draft fact/citation findings. Backend export endpoints are explicit V0.2 deferred stubs.
-- Still needed: Matter-scoped graph API, interactive graph renderer, QC run endpoint, finding lifecycle, persisted gap/contradiction nodes, export package pipeline, DOCX/PDF generation, and packet preview/download status.
+- Current behavior: Graph and export pages render route-ready shells or derived summaries; QC renders derived metrics plus persisted draft/work-product findings. WorkProduct QC, AST validation, AST conversions, preview, export artifacts, immutable export snapshots, and changed-since-export state exist. PDF/DOCX remain review-needed skeletons.
+- Still needed: Matter-level QC run, full finding lifecycle/reopen/comments, matter-scoped graph API, interactive graph renderer, persisted gap/contradiction nodes, production export package pipeline, production DOCX/PDF generation, and packet preview/download status.
 - Status: Partial
 
 ### PARTIAL-013 - AI/provider-gated legal workbench features
@@ -250,24 +318,32 @@ Follow-up implementation update on 2026-05-01 for graph-native Case History V0:
 - Still needed: Remove/demote flat history persistence, add matter-isolation tests, add support/citation/authority/QC diff layers, add scoped restore modes, add snapshot viewer and compare modal polish, add sensitive-log guardrails, add end-to-end history smoke, then implement branch alternatives and merge cards.
 - Status: Partial
 
+### PARTIAL-016 - AST production readiness
+- Priority: P0
+- Area: WorkProduct AST
+- Current behavior: Canonical AST persistence, patching, validation, conversion, graph materialization, and history/export integration foundations exist.
+- Still needed: Complete `CB-WPB-024` through `CB-WPB-065`, including typed schema, migrations, concurrency, editor round-trips, link/citation/exhibit lifecycles, QC/rule packs, PDF/DOCX renderers, graph/R2 storage hardening, diff/restore layers, performance budgets, security tests, fixture corpus, property tests, smoke matrix, module extraction, and release gate.
+- Status: Partial
+
 ## Not yet real
 
 - No live AI provider execution for fact extraction, issue spotting, drafting, fact checking, or citation checking.
 - No PDF/DOCX/XLSX/image parsing or OCR-backed extraction; binary files are stored but non-text extraction remains deferred.
-- No R2 artifact manifest layout for original/text/pages/OCR/redaction/export artifacts.
+- No full R2 artifact manifest layout for original/text/pages/OCR/redaction artifacts; WorkProduct AST snapshots/exports now have the first object-backed storage slice.
 - No R2 event notification ingestion queue or lifecycle/storage-class policy.
 - No OCR/transcription.
 - No issue spotting endpoint or claim/defense suggestion queue.
-- No sentence-level `DraftSentence` support model.
+- No production sentence-level WorkProduct support graph beyond AST-capable sentence fields.
 - No branch alternatives, merge cards, rich support/QC diff layers, scoped support restore, audit reports, or full Case History smoke coverage.
 - No matter graph API or interactive CaseBuilder graph renderer.
-- No QC run endpoint or persisted gap/contradiction lifecycle.
+- No matter-level QC run endpoint or persisted gap/contradiction lifecycle.
 - No production indexing harness for 100 to 1,000+ mixed files.
-- No DOCX/PDF export.
+- No production DOCX/PDF export; current WorkProduct PDF/DOCX artifacts are deterministic review-needed skeletons.
+- No polished shared frontend WorkProduct route family or reusable rich-text WorkProductEditor.
 - No e-filing.
 - No multi-user collaboration.
 - No attorney review mode.
 - No case-law integration.
-- No production court-rule integration beyond the first deterministic Oregon complaint rule pack.
+- No full production court-rule universe yet. The 2025 UTCR corpus, Linn registry snapshot, and Linn 2026 SLR PDF path exist; ORCP, ORAP, OAR, all other Oregon SLRs/orders, forms, federal/state expansion corpora, and case law remain future corpora.
 - No production authentication beyond optional API key.
 - No audit log, retention settings, or user-facing matter deletion lifecycle UI.

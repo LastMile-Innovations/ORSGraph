@@ -20,6 +20,11 @@ struct CompareWorkProductParams {
     layers: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct ListWorkProductsParams {
+    include: Option<String>,
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/matters", get(list_matters).post(create_matter))
@@ -112,6 +117,30 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/matters/:matter_id/work-products/:work_product_id/links",
             post(link_work_product_support),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/ast/patch",
+            post(apply_work_product_ast_patch),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/ast/validate",
+            post(validate_work_product_ast),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/ast/to-markdown",
+            post(work_product_ast_to_markdown),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/ast/from-markdown",
+            post(work_product_ast_from_markdown),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/ast/to-html",
+            post(work_product_ast_to_html),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/ast/to-plain-text",
+            post(work_product_ast_to_plain_text),
         )
         .route(
             "/matters/:matter_id/work-products/:work_product_id/qc/run",
@@ -965,11 +994,21 @@ async fn filing_packet(
 async fn list_work_products(
     State(state): State<AppState>,
     Path(matter_id): Path<String>,
+    Query(params): Query<ListWorkProductsParams>,
 ) -> ApiResult<Json<Vec<WorkProduct>>> {
+    let include_ast = params
+        .include
+        .as_deref()
+        .map(|value| {
+            value
+                .split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case("document_ast"))
+        })
+        .unwrap_or(false);
     Ok(Json(
         state
             .casebuilder_service
-            .list_work_products(&matter_id)
+            .list_work_products_for_api(&matter_id, include_ast)
             .await?,
     ))
 }
@@ -1047,6 +1086,80 @@ async fn link_work_product_support(
         state
             .casebuilder_service
             .link_work_product_support(&matter_id, &work_product_id, request)
+            .await?,
+    ))
+}
+
+async fn apply_work_product_ast_patch(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+    Json(request): Json<AstPatch>,
+) -> ApiResult<Json<WorkProduct>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .apply_work_product_ast_patch(&matter_id, &work_product_id, request)
+            .await?,
+    ))
+}
+
+async fn validate_work_product_ast(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+) -> ApiResult<Json<AstValidationResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .validate_work_product_ast(&matter_id, &work_product_id)
+            .await?,
+    ))
+}
+
+async fn work_product_ast_to_markdown(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+) -> ApiResult<Json<AstMarkdownResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .work_product_ast_to_markdown(&matter_id, &work_product_id)
+            .await?,
+    ))
+}
+
+async fn work_product_ast_from_markdown(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+    Json(request): Json<MarkdownToAstRequest>,
+) -> ApiResult<Json<AstDocumentResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .work_product_ast_from_markdown(&matter_id, &work_product_id, request)
+            .await?,
+    ))
+}
+
+async fn work_product_ast_to_html(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+) -> ApiResult<Json<AstRenderedResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .work_product_ast_to_html(&matter_id, &work_product_id)
+            .await?,
+    ))
+}
+
+async fn work_product_ast_to_plain_text(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+) -> ApiResult<Json<AstRenderedResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .work_product_ast_to_plain_text(&matter_id, &work_product_id)
             .await?,
     ))
 }
@@ -1181,7 +1294,7 @@ async fn list_work_product_snapshots(
     Ok(Json(
         state
             .casebuilder_service
-            .list_work_product_snapshots(&matter_id, &work_product_id)
+            .list_work_product_snapshots_for_api(&matter_id, &work_product_id)
             .await?,
     ))
 }
@@ -1219,7 +1332,7 @@ async fn compare_work_product_snapshots(
     let layers = params
         .layers
         .as_deref()
-        .unwrap_or("text")
+        .unwrap_or("all")
         .split(',')
         .map(str::trim)
         .filter(|layer| !layer.is_empty())
@@ -1369,6 +1482,7 @@ async fn authority_search(
         .search(SearchQuery {
             q: params.q.clone(),
             r#type: Some("all".to_string()),
+            authority_family: params.authority_family.clone(),
             chapter: None,
             status: None,
             mode: Some(SearchMode::Auto),
@@ -1422,6 +1536,7 @@ async fn authority_recommend(
         Query(AuthoritySearchQuery {
             q: request.text,
             limit: request.limit,
+            authority_family: None,
         }),
     )
     .await
@@ -1454,11 +1569,11 @@ async fn authority_detach(
 }
 
 async fn export_not_ready(
-    Path(matter_id): Path<String>,
+    Path(_matter_id): Path<String>,
 ) -> ApiResult<Json<AiActionResponse<serde_json::Value>>> {
-    Err(ApiError::BadRequest(format!(
-        "Export is deferred for CaseBuilder V0 matter {matter_id}; DOCX/PDF/filing packets are V0.2+."
-    )))
+    Err(ApiError::BadRequest(
+        "Export is deferred for CaseBuilder V0; DOCX/PDF/filing packets are V0.2+.".to_string(),
+    ))
 }
 
 fn parse_binary_upload(headers: &HeaderMap, body: Bytes) -> ApiResult<BinaryUploadRequest> {

@@ -20,6 +20,7 @@ struct QueryPlan {
     intent: SearchIntent,
     retrieval_query: String,
     chapter_filter: Option<String>,
+    authority_filter: Option<String>,
 }
 
 impl SearchService {
@@ -53,12 +54,16 @@ impl SearchService {
     pub async fn search(&self, query: SearchQuery) -> ApiResult<SearchResponse> {
         let started_at = Instant::now();
         let raw_query = query.q.clone();
-        let mut plan = analyze_search_query(&raw_query);
+        let mut plan =
+            analyze_search_query_with_authority(&raw_query, query.authority_family.as_deref());
         let requested_mode = query.mode.unwrap_or_default();
         let mode = Self::resolve_mode(requested_mode, &plan);
         let mut filters = SearchRetrievalFilters::from_query(&query);
         if filters.chapter.is_none() {
             filters.chapter = plan.chapter_filter.clone();
+        }
+        if filters.authority_family.is_none() {
+            filters.authority_family = plan.authority_filter.clone();
         }
         plan.analysis.applied_filters = filters.applied_filter_names();
 
@@ -143,13 +148,20 @@ impl SearchService {
             }
 
             for exact_query in exact_queries_for_plan(&plan) {
-                match self.neo4j.search_exact(&exact_query).await {
+                let exact_authority =
+                    authority_family_for_exact(&exact_query, &plan.analysis.citations)
+                        .or(plan.authority_filter.as_deref());
+                match self.neo4j.search_exact(&exact_query, exact_authority).await {
                     Ok(mut exact_results) => {
                         if exact_results.is_empty() {
                             if let Some(parent_query) =
                                 parent_query_for_exact(&exact_query, &plan.analysis.citations)
                             {
-                                match self.neo4j.search_exact(&parent_query).await {
+                                match self
+                                    .neo4j
+                                    .search_exact(&parent_query, exact_authority)
+                                    .await
+                                {
                                     Ok(parent_results) => {
                                         exact_results = parent_results;
                                         for res in &mut exact_results {
@@ -624,6 +636,11 @@ impl SearchService {
                         return false;
                     }
                 }
+                if let Some(authority_family) = filters.authority_family.as_deref() {
+                    if !candidate_matches_authority_family(candidate, authority_family) {
+                        return false;
+                    }
+                }
                 if let Some(chapter) = filters.chapter.as_deref() {
                     if candidate.chapter.as_deref() != Some(chapter) {
                         return false;
@@ -654,6 +671,11 @@ impl SearchService {
 
             if let Some(result_type) = filters.result_type.as_deref() {
                 if !self.matches_result_type(candidate, result_type) {
+                    return false;
+                }
+            }
+            if let Some(authority_family) = filters.authority_family.as_deref() {
+                if !candidate_matches_authority_family(candidate, authority_family) {
                     return false;
                 }
             }
@@ -755,6 +777,17 @@ impl SearchService {
         let expected = result_type.to_lowercase();
         kind == expected
             || match expected.as_str() {
+                "statute" => kind == "legaltextidentity" || kind == "legaltextversion",
+                "court_rule" | "courtrule" | "rule" => matches!(
+                    kind.as_str(),
+                    "court_rule"
+                        | "courtrule"
+                        | "utcrrule"
+                        | "utcrruleversion"
+                        | "court_rule_provision"
+                        | "utcrprovision"
+                ),
+                "provision" => matches!(kind.as_str(), "court_rule_provision" | "utcrprovision"),
                 "semantic" => matches!(
                     kind.as_str(),
                     "legalsemanticnode"
@@ -764,6 +797,14 @@ impl SearchService {
                         | "penalty"
                         | "remedy"
                         | "requirednotice"
+                        | "proceduralrequirement"
+                        | "formattingrequirement"
+                        | "filingrequirement"
+                        | "servicerequirement"
+                        | "efilingrequirement"
+                        | "certificateofservicerequirement"
+                        | "exhibitrequirement"
+                        | "protectedinformationrequirement"
                 ),
                 "notice" | "requirednotice" => {
                     kind == "requirednotice" || self.has_semantic_signal(candidate, &["notice"])
@@ -814,9 +855,19 @@ impl SearchService {
         is_exact_candidate(candidate)
     }
 
-    pub async fn direct_open(&self, q: &str) -> ApiResult<DirectOpenResponse> {
-        let plan = analyze_search_query(q);
+    pub async fn direct_open(
+        &self,
+        q: &str,
+        authority_family: Option<&str>,
+    ) -> ApiResult<DirectOpenResponse> {
+        let plan = analyze_search_query_with_authority(q, authority_family);
         let normalized = plan.analysis.normalized_query.clone();
+        let authority_family = plan
+            .analysis
+            .citations
+            .first()
+            .map(|citation| citation.authority_family.as_str())
+            .or(plan.authority_filter.as_deref());
         let citation = plan
             .analysis
             .citations
@@ -824,7 +875,11 @@ impl SearchService {
             .map(|citation| citation.normalized.as_str())
             .unwrap_or(normalized.as_str());
 
-        if let Some(result) = self.neo4j.search_exact_provision(citation).await? {
+        if let Some(result) = self
+            .neo4j
+            .search_exact_provision(citation, authority_family)
+            .await?
+        {
             return Ok(direct_response_from_result(
                 true,
                 DirectMatchType::ExactProvision,
@@ -834,7 +889,11 @@ impl SearchService {
             ));
         }
 
-        if let Some(result) = self.neo4j.search_exact_statute(citation).await? {
+        if let Some(result) = self
+            .neo4j
+            .search_exact_statute(citation, authority_family)
+            .await?
+        {
             return Ok(direct_response_from_result(
                 true,
                 DirectMatchType::ExactStatute,
@@ -850,7 +909,11 @@ impl SearchService {
             .first()
             .and_then(|citation| citation.parent.as_deref())
         {
-            if let Some(result) = self.neo4j.search_exact_statute(parent_citation).await? {
+            if let Some(result) = self
+                .neo4j
+                .search_exact_statute(parent_citation, authority_family)
+                .await?
+            {
                 let parent = DirectOpenParent {
                     citation: result
                         .citation
@@ -985,11 +1048,28 @@ impl SearchService {
 
     fn kind_priority(&self, kind: &str) -> i32 {
         match kind.to_lowercase().as_str() {
-            "provision" => 10,
-            "statute" | "legaltextidentity" | "legaltextversion" => 9,
+            "provision" | "court_rule_provision" | "utcrprovision" => 10,
+            "statute" | "court_rule" | "legaltextidentity" | "legaltextversion" => 9,
             "definition" | "definedterm" => 8,
-            "obligation" | "exception" | "deadline" | "penalty" | "remedy" | "requirednotice"
-            | "taxrule" | "moneyamount" | "ratelimit" | "legalactor" | "legalaction" => 7,
+            "obligation"
+            | "exception"
+            | "deadline"
+            | "penalty"
+            | "remedy"
+            | "requirednotice"
+            | "proceduralrequirement"
+            | "formattingrequirement"
+            | "filingrequirement"
+            | "servicerequirement"
+            | "efilingrequirement"
+            | "certificateofservicerequirement"
+            | "exhibitrequirement"
+            | "protectedinformationrequirement"
+            | "taxrule"
+            | "moneyamount"
+            | "ratelimit"
+            | "legalactor"
+            | "legalaction" => 7,
             "sourcenote" | "sessionlaw" | "amendment" | "temporaleffect" => 6,
             "chunk" | "retrievalchunk" => 5,
             _ => 0,
@@ -1031,10 +1111,15 @@ fn mark_exact_result(result: &mut SearchResult, score: f32, rank_source: &str) {
 }
 
 fn analyze_search_query(q: &str) -> QueryPlan {
-    let normalized = normalize_search_query(q);
+    analyze_search_query_with_authority(q, None)
+}
+
+fn analyze_search_query_with_authority(q: &str, authority_family: Option<&str>) -> QueryPlan {
+    let requested_authority = normalized_authority_filter(authority_family);
+    let normalized = normalize_search_query_with_authority(q, requested_authority.as_deref());
     let ranges = parse_citation_ranges(&normalized);
     let citations = parse_query_citations(&normalized);
-    let (chapter_prefix, chapter_residual) = parse_chapter_query(&normalized);
+    let (chapter_prefix, chapter_authority, chapter_residual) = parse_chapter_query(&normalized);
 
     let residual_text = if let Some(residual) = chapter_residual {
         Some(residual)
@@ -1050,6 +1135,16 @@ fn analyze_search_query(q: &str) -> QueryPlan {
         .clone()
         .or_else(|| ranges.first().map(|range| range.chapter.clone()))
         .or_else(|| citations.first().map(|citation| citation.chapter.clone()));
+
+    let inferred_authority_family = chapter_authority
+        .clone()
+        .or_else(|| ranges.first().map(|range| range.authority_family.clone()))
+        .or_else(|| {
+            citations
+                .first()
+                .map(|citation| citation.authority_family.clone())
+        })
+        .or(requested_authority);
 
     let chapter_filter = chapter_prefix.clone().or_else(|| {
         residual_text
@@ -1073,6 +1168,7 @@ fn analyze_search_query(q: &str) -> QueryPlan {
         analysis: SearchAnalysis {
             normalized_query: normalized,
             intent: intent.as_str().to_string(),
+            inferred_authority_family: inferred_authority_family.clone(),
             citations,
             ranges,
             inferred_chapter,
@@ -1085,6 +1181,7 @@ fn analyze_search_query(q: &str) -> QueryPlan {
         intent,
         retrieval_query,
         chapter_filter,
+        authority_filter: inferred_authority_family,
     }
 }
 
@@ -1113,6 +1210,16 @@ fn parent_query_for_exact(exact_query: &str, citations: &[QueryCitation]) -> Opt
         .and_then(|citation| citation.parent.clone())
 }
 
+fn authority_family_for_exact<'a>(
+    exact_query: &str,
+    citations: &'a [QueryCitation],
+) -> Option<&'a str> {
+    citations
+        .iter()
+        .find(|citation| citation.normalized == exact_query)
+        .map(|citation| citation.authority_family.as_str())
+}
+
 fn build_expanded_retrieval_query(base: &str, terms: &[QueryExpansionTerm]) -> String {
     let mut parts = vec![base.trim().to_string()];
     for term in terms.iter().take(5) {
@@ -1137,6 +1244,10 @@ fn push_unique(values: &mut Vec<String>, value: String) {
 }
 
 fn normalize_search_query(q: &str) -> String {
+    normalize_search_query_with_authority(q, None)
+}
+
+fn normalize_search_query_with_authority(q: &str, authority_family: Option<&str>) -> String {
     let mut normalized = q.trim().to_string();
 
     normalized = normalized
@@ -1145,21 +1256,39 @@ fn normalize_search_query(q: &str) -> String {
         .replace('‘', "'")
         .replace('’', "'");
 
+    let default_authority = authority_family.unwrap_or("ORS").to_ascii_uppercase();
     let range_re = Regex::new(
-        r"(?i)^\s*(?:ORS\s+)?(\d{1,3}[A-Z]?\.\d{3}(?:\([^)]+\))?)\s+(?:to|through|thru|-|–)\s+(?:ORS\s+)?(\d{1,3}[A-Z]?\.\d{3}(?:\([^)]+\))?)\s*$",
+        r"(?i)^\s*(?:(ORS|UTCR)\s+)?(\d{1,3}[A-Z]?\.\d{3}(?:\([^)]+\))?)\s+(?:to|through|thru|-|–)\s+(?:(ORS|UTCR)\s+)?(\d{1,3}[A-Z]?\.\d{3}(?:\([^)]+\))?)\s*$",
     )
     .unwrap();
     if let Some(caps) = range_re.captures(&normalized) {
+        let authority = caps
+            .get(1)
+            .or_else(|| caps.get(3))
+            .map(|m| m.as_str().to_ascii_uppercase())
+            .unwrap_or_else(|| default_authority.clone());
         return format!(
-            "ORS {} to ORS {}",
-            &caps[1].to_ascii_uppercase(),
-            &caps[2].to_ascii_uppercase()
+            "{authority} {} to {authority} {}",
+            &caps[2].to_ascii_uppercase(),
+            &caps[4].to_ascii_uppercase()
         );
     }
 
     let bare_ors_re = Regex::new(r"(?i)^\s*(\d{1,3}[A-Z]?\.\d{3}(?:\([^)]+\))?)\s*$").unwrap();
     if let Some(caps) = bare_ors_re.captures(&normalized) {
-        return format!("ORS {}", &caps[1].to_ascii_uppercase());
+        return format!("{default_authority} {}", &caps[1].to_ascii_uppercase());
+    }
+
+    let utcr_re = Regex::new(r"(?i)\butcr\s+(\d{1,3}[A-Z]?\.\d{3}(?:\([^)]+\))?)").unwrap();
+    normalized = utcr_re
+        .replace_all(&normalized, |caps: &regex::Captures| {
+            format!("UTCR {}", &caps[1].to_ascii_uppercase())
+        })
+        .to_string();
+
+    let utcr_chapter_re = Regex::new(r"(?i)^\s*utcr\s+chapter\s+(\d{1,3}[A-Z]?)\s*$").unwrap();
+    if let Some(caps) = utcr_chapter_re.captures(&normalized) {
+        return format!("UTCR Chapter {}", &caps[1].to_ascii_uppercase());
     }
 
     let ors_re = Regex::new(r"(?i)\bors\s+(\d{1,3}[A-Z]?\.\d{3}(?:\([^)]+\))?)").unwrap();
@@ -1169,8 +1298,16 @@ fn normalize_search_query(q: &str) -> String {
         })
         .to_string();
 
+    let ors_chapter_re = Regex::new(r"(?i)^\s*ors\s+chapter\s+(\d{1,3}[A-Z]?)\s*$").unwrap();
+    if let Some(caps) = ors_chapter_re.captures(&normalized) {
+        return format!("ORS Chapter {}", &caps[1].to_ascii_uppercase());
+    }
+
     let chapter_re = Regex::new(r"(?i)^\s*chapter\s+(\d{1,3}[A-Z]?)\s*$").unwrap();
     if let Some(caps) = chapter_re.captures(&normalized) {
+        if default_authority == "UTCR" {
+            return format!("UTCR Chapter {}", &caps[1].to_ascii_uppercase());
+        }
         return format!("Chapter {}", &caps[1].to_ascii_uppercase());
     }
 
@@ -1179,21 +1316,27 @@ fn normalize_search_query(q: &str) -> String {
 
 fn parse_query_citations(q: &str) -> Vec<QueryCitation> {
     let citation_re =
-        Regex::new(r"(?i)\b(?:ORS\s+)?(\d{1,3}[A-Z]?)\.(\d{3})((?:\([A-Za-z0-9]+\))*)").unwrap();
+        Regex::new(r"(?i)\b(?:(ORS|UTCR)\s+)?(\d{1,3}[A-Z]?)\.(\d{3})((?:\([A-Za-z0-9]+\))*)")
+            .unwrap();
     citation_re
         .captures_iter(q)
         .filter_map(|caps| {
             let raw = caps.get(0)?.as_str().trim().to_string();
-            let chapter = caps.get(1)?.as_str().to_ascii_uppercase();
-            let section = caps.get(2)?.as_str().to_string();
-            let subsection_text = caps.get(3).map(|m| m.as_str()).unwrap_or_default();
+            let authority_family = caps
+                .get(1)
+                .map(|m| m.as_str().to_ascii_uppercase())
+                .unwrap_or_else(|| "ORS".to_string());
+            let chapter = caps.get(2)?.as_str().to_ascii_uppercase();
+            let section = caps.get(3)?.as_str().to_string();
+            let subsection_text = caps.get(4).map(|m| m.as_str()).unwrap_or_default();
             let subsections = parse_subsections(subsection_text);
-            let base = format!("ORS {chapter}.{section}");
+            let base = format!("{authority_family} {chapter}.{section}");
             let normalized = format!("{base}{subsection_text}");
             let parent = (!subsections.is_empty()).then(|| base.clone());
 
             Some(QueryCitation {
                 raw,
+                authority_family,
                 normalized,
                 base,
                 chapter,
@@ -1207,21 +1350,43 @@ fn parse_query_citations(q: &str) -> Vec<QueryCitation> {
 
 fn parse_citation_ranges(q: &str) -> Vec<QueryCitationRange> {
     let range_re = Regex::new(
-        r"(?i)\b(?:ORS\s+)?(\d{1,3}[A-Z]?)\.(\d{3})(?:\([^)]+\))*\s+(?:to|through|thru|-|–)\s+(?:ORS\s+)?(\d{1,3}[A-Z]?)\.(\d{3})(?:\([^)]+\))*",
+        r"(?i)\b(?:(ORS|UTCR)\s+)?(\d{1,3}[A-Z]?)\.(\d{3})(?:\([^)]+\))*\s+(?:to|through|thru|-|–)\s+(?:(ORS|UTCR)\s+)?(\d{1,3}[A-Z]?)\.(\d{3})(?:\([^)]+\))*",
     )
     .unwrap();
     range_re
         .captures_iter(q)
         .filter_map(|caps| {
-            let start_chapter = caps.get(1)?.as_str().to_ascii_uppercase();
-            let end_chapter = caps.get(3)?.as_str().to_ascii_uppercase();
+            let start_authority = caps.get(1).map(|m| m.as_str().to_ascii_uppercase());
+            let end_authority = caps.get(4).map(|m| m.as_str().to_ascii_uppercase());
+            let authority_family = start_authority
+                .clone()
+                .or(end_authority.clone())
+                .unwrap_or_else(|| "ORS".to_string());
+            if let (Some(start), Some(end)) = (&start_authority, &end_authority) {
+                if start != end {
+                    return None;
+                }
+            }
+            let start_chapter = caps.get(2)?.as_str().to_ascii_uppercase();
+            let end_chapter = caps.get(5)?.as_str().to_ascii_uppercase();
             if start_chapter != end_chapter {
                 return None;
             }
-            let start = format!("ORS {}.{}", start_chapter, caps.get(2)?.as_str());
-            let end = format!("ORS {}.{}", end_chapter, caps.get(4)?.as_str());
+            let start = format!(
+                "{} {}.{}",
+                authority_family,
+                start_chapter,
+                caps.get(3)?.as_str()
+            );
+            let end = format!(
+                "{} {}.{}",
+                authority_family,
+                end_chapter,
+                caps.get(6)?.as_str()
+            );
             Some(QueryCitationRange {
                 raw: caps.get(0)?.as_str().trim().to_string(),
+                authority_family,
                 start,
                 end,
                 chapter: start_chapter,
@@ -1238,20 +1403,22 @@ fn parse_subsections(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn parse_chapter_query(q: &str) -> (Option<String>, Option<String>) {
-    let chapter_re = Regex::new(r"(?i)^\s*(?:ORS\s+)?chapter\s+(\d{1,3}[A-Z]?)\b\s*(.*)$").unwrap();
+fn parse_chapter_query(q: &str) -> (Option<String>, Option<String>, Option<String>) {
+    let chapter_re =
+        Regex::new(r"(?i)^\s*(?:(ORS|UTCR)\s+)?chapter\s+(\d{1,3}[A-Z]?)\b\s*(.*)$").unwrap();
     if let Some(caps) = chapter_re.captures(q) {
+        let authority_family = caps.get(1).map(|m| m.as_str().to_ascii_uppercase());
         let chapter = caps
-            .get(1)
+            .get(2)
             .map(|m| m.as_str().to_ascii_uppercase())
             .unwrap_or_default();
         let residual = caps
-            .get(2)
+            .get(3)
             .map(|m| clean_query_spacing(m.as_str()))
             .filter(|value| !value.is_empty());
-        return (Some(chapter), residual);
+        return (Some(chapter), authority_family, residual);
     }
-    (None, None)
+    (None, None, None)
 }
 
 fn remove_ranges_from_query(q: &str, ranges: &[QueryCitationRange]) -> String {
@@ -1264,6 +1431,34 @@ fn remove_citations_from_query(q: &str, citations: &[QueryCitation]) -> String {
     citations.iter().fold(q.to_string(), |current, citation| {
         current.replace(&citation.raw, " ")
     })
+}
+
+fn candidate_matches_authority_family(candidate: &SearchResult, authority_family: &str) -> bool {
+    let expected = normalized_authority_filter(Some(authority_family))
+        .unwrap_or_else(|| authority_family.to_ascii_uppercase());
+    candidate
+        .authority_family
+        .as_deref()
+        .and_then(|value| normalized_authority_filter(Some(value)))
+        .or_else(|| {
+            candidate
+                .citation
+                .as_deref()
+                .and_then(infer_authority_family_from_citation)
+        })
+        .map(|actual| actual == expected)
+        .unwrap_or(false)
+}
+
+fn infer_authority_family_from_citation(citation: &str) -> Option<String> {
+    let upper = citation.trim().to_ascii_uppercase();
+    if upper.starts_with("UTCR ") {
+        Some("UTCR".to_string())
+    } else if upper.starts_with("ORS ") {
+        Some("ORS".to_string())
+    } else {
+        None
+    }
 }
 
 fn clean_residual_text(value: String) -> Option<String> {
@@ -1332,8 +1527,8 @@ fn order_candidates_after_rerank(
 }
 
 fn detect_search_intent(q: &str) -> SearchIntent {
-    let ors_re = Regex::new(r"^ORS\s+\d{1,3}\.\d{3}(?:\([^)]+\))?$").unwrap();
-    let chapter_re = Regex::new(r"(?i)^chapter\s+\d{1,3}$").unwrap();
+    let citation_re = Regex::new(r"^(?:ORS|UTCR)\s+\d{1,3}[A-Z]?\.\d{3}(?:\([^)]+\))?$").unwrap();
+    let chapter_re = Regex::new(r"(?i)^(?:(?:ORS|UTCR)\s+)?chapter\s+\d{1,3}[A-Z]?$").unwrap();
     let definition_re = Regex::new(r"(?i)^definition\s+of|defines?\b|meaning\s+of").unwrap();
     let deadline_re =
         Regex::new(r"(?i)deadline|within\s+\d+\s+days|by\s+the\s+\w+\s+day|how long|when must")
@@ -1348,7 +1543,7 @@ fn detect_search_intent(q: &str) -> SearchIntent {
         Regex::new(r"(?i)operative|effective|amended|repealed|renumbered|session law|current")
             .unwrap();
 
-    if ors_re.is_match(q) {
+    if citation_re.is_match(q) {
         SearchIntent::Citation
     } else if chapter_re.is_match(q) {
         SearchIntent::Chapter
@@ -1422,6 +1617,9 @@ mod tests {
         SearchResult {
             id: id.to_string(),
             kind: "provision".to_string(),
+            authority_family: Some("ORS".to_string()),
+            authority_type: Some("statute".to_string()),
+            corpus_id: Some("or:ors".to_string()),
             citation: Some(format!("ORS 90.{id}")),
             title: None,
             chapter: Some("90".to_string()),
@@ -1460,6 +1658,14 @@ mod tests {
         assert_eq!(normalize_search_query("90.300"), "ORS 90.300");
         assert_eq!(normalize_search_query("ors 90.300(1)"), "ORS 90.300(1)");
         assert_eq!(
+            normalize_search_query("utcr 2.010(4)(a)"),
+            "UTCR 2.010(4)(a)"
+        );
+        assert_eq!(
+            normalize_search_query_with_authority("2.010", Some("UTCR")),
+            "UTCR 2.010"
+        );
+        assert_eq!(
             normalize_search_query("90.320 to 90.330"),
             "ORS 90.320 to ORS 90.330"
         );
@@ -1473,6 +1679,7 @@ mod tests {
     #[test]
     fn detects_legal_search_intents() {
         assert_eq!(detect_search_intent("ORS 90.300"), SearchIntent::Citation);
+        assert_eq!(detect_search_intent("UTCR 2.010"), SearchIntent::Citation);
         assert_eq!(detect_search_intent("Chapter 90"), SearchIntent::Chapter);
         assert_eq!(
             detect_search_intent("definition of dwelling unit"),
@@ -1528,6 +1735,19 @@ mod tests {
         assert_eq!(range.analysis.ranges[0].end, "ORS 90.330");
         assert_eq!(range.analysis.ranges[0].chapter, "90");
 
+        let utcr = analyze_search_query("UTCR 2.010(4)(a)");
+        assert_eq!(utcr.analysis.citations[0].authority_family, "UTCR");
+        assert_eq!(utcr.analysis.citations[0].base, "UTCR 2.010");
+        assert_eq!(
+            utcr.analysis.citations[0].subsections,
+            vec!["4".to_string(), "a".to_string()]
+        );
+
+        let utcr_range = analyze_search_query("UTCR 21.040 to 21.140");
+        assert_eq!(utcr_range.analysis.ranges[0].authority_family, "UTCR");
+        assert_eq!(utcr_range.analysis.ranges[0].start, "UTCR 21.040");
+        assert_eq!(utcr_range.analysis.ranges[0].end, "UTCR 21.140");
+
         let chapter_topic = analyze_search_query("chapter 90 habitability");
         assert_eq!(
             chapter_topic.analysis.inferred_chapter.as_deref(),
@@ -1546,6 +1766,7 @@ mod tests {
         let filters = SearchRetrievalFilters::from_query(&SearchQuery {
             q: "security deposit deadline".to_string(),
             r#type: Some("deadline".to_string()),
+            authority_family: Some("ORS".to_string()),
             chapter: Some("90".to_string()),
             status: Some("all".to_string()),
             mode: Some(SearchMode::Hybrid),
@@ -1566,6 +1787,7 @@ mod tests {
             filters.applied_filter_names(),
             vec![
                 "type",
+                "authority_family",
                 "chapter",
                 "current_only",
                 "source_backed",

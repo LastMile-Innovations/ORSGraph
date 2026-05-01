@@ -30,10 +30,12 @@ impl Neo4jService {
     pub async fn ensure_indexes(&self) -> ApiResult<()> {
         let indexes = [
             "CREATE INDEX legal_identity_citation IF NOT EXISTS FOR (n:LegalTextIdentity) ON (n.citation)",
+            "CREATE INDEX legal_identity_authority_family IF NOT EXISTS FOR (n:LegalTextIdentity) ON (n.authority_family)",
             "CREATE INDEX legal_identity_canonical IF NOT EXISTS FOR (n:LegalTextIdentity) ON (n.canonical_id)",
             "CREATE INDEX legal_version_id IF NOT EXISTS FOR (n:LegalTextVersion) ON (n.version_id)",
             "CREATE INDEX legal_version_canonical IF NOT EXISTS FOR (n:LegalTextVersion) ON (n.canonical_id)",
             "CREATE INDEX provision_display_citation IF NOT EXISTS FOR (n:Provision) ON (n.display_citation)",
+            "CREATE INDEX provision_authority_family IF NOT EXISTS FOR (n:Provision) ON (n.authority_family)",
             "CREATE INDEX provision_id IF NOT EXISTS FOR (n:Provision) ON (n.provision_id)",
             "CREATE INDEX provision_version_id IF NOT EXISTS FOR (n:Provision) ON (n.version_id)",
             "CREATE INDEX provision_canonical_id IF NOT EXISTS FOR (n:Provision) ON (n.canonical_id)",
@@ -52,10 +54,16 @@ impl Neo4jService {
             "CREATE INDEX temporal_effect_canonical_id IF NOT EXISTS FOR (n:TemporalEffect) ON (n.canonical_id)",
             "CREATE INDEX temporal_effect_version_id IF NOT EXISTS FOR (n:TemporalEffect) ON (n.version_id)",
             "CREATE INDEX temporal_effect_source_provision IF NOT EXISTS FOR (n:TemporalEffect) ON (n.source_provision_id)",
+            "CREATE INDEX rule_authority_document_id IF NOT EXISTS FOR (n:RuleAuthorityDocument) ON (n.authority_document_id)",
+            "CREATE INDEX rule_authority_document_applicability IF NOT EXISTS FOR (n:RuleAuthorityDocument) ON (n.jurisdiction_id, n.effective_start_date, n.effective_end_date)",
+            "CREATE INDEX rule_authority_document_kind IF NOT EXISTS FOR (n:RuleAuthorityDocument) ON (n.authority_kind, n.date_status)",
+            "CREATE INDEX rule_publication_entry_jurisdiction IF NOT EXISTS FOR (n:RulePublicationEntry) ON (n.jurisdiction_id, n.publication_bucket)",
+            "CREATE INDEX court_rules_registry_source_id IF NOT EXISTS FOR (n:CourtRulesRegistrySource) ON (n.registry_source_id)",
+            "CREATE INDEX court_rules_registry_snapshot_id IF NOT EXISTS FOR (n:CourtRulesRegistrySnapshot) ON (n.registry_snapshot_id)",
             "CREATE FULLTEXT INDEX statute_fulltext IF NOT EXISTS FOR (n:LegalTextIdentity|LegalTextVersion) ON EACH [n.citation, n.title, n.text]",
             "CREATE FULLTEXT INDEX provision_fulltext IF NOT EXISTS FOR (n:Provision) ON EACH [n.display_citation, n.text, n.normalized_text]",
             "CREATE FULLTEXT INDEX definition_fulltext IF NOT EXISTS FOR (n:Definition|DefinedTerm) ON EACH [n.term, n.normalized_term, n.definition_text]",
-            "CREATE FULLTEXT INDEX semantic_fulltext IF NOT EXISTS FOR (n:LegalSemanticNode|Obligation|Exception|Deadline|Penalty|Remedy|RequiredNotice|FormText) ON EACH [n.text, n.normalized_text, n.actor_text, n.action_text, n.object_text, n.trigger_event]",
+            "CREATE FULLTEXT INDEX semantic_fulltext IF NOT EXISTS FOR (n:LegalSemanticNode|ProceduralRequirement|Obligation|Exception|Deadline|Penalty|Remedy|RequiredNotice|FormText) ON EACH [n.text, n.normalized_text, n.actor_text, n.action_text, n.object_text, n.trigger_event, n.summary]",
             "CREATE FULLTEXT INDEX history_fulltext IF NOT EXISTS FOR (n:SourceNote|StatusEvent|TemporalEffect|SessionLaw|Amendment|LineageEvent) ON EACH [n.text, n.normalized_text, n.status_text, n.trigger_text, n.citation, n.raw_text]",
             "CREATE FULLTEXT INDEX chunk_fulltext IF NOT EXISTS FOR (n:RetrievalChunk) ON EACH [n.text, n.breadcrumb, n.citation]",
             "CREATE FULLTEXT INDEX actor_action_fulltext IF NOT EXISTS FOR (n:LegalActor|LegalAction) ON EACH [n.actor_text, n.normalized_actor, n.verb, n.object_text, n.normalized_action]",
@@ -116,6 +124,7 @@ impl Neo4jService {
     pub async fn search_exact_statute(
         &self,
         citation: &str,
+        authority_family: Option<&str>,
     ) -> ApiResult<Option<SearchResultModel>> {
         let citation_upper = citation.to_ascii_uppercase();
         let mut result = self
@@ -123,14 +132,20 @@ impl Neo4jService {
             .execute(
                 query(
                     "MATCH (n:LegalTextIdentity)
-                     WHERE n.citation = $c OR n.citation = $c_upper OR n.canonical_id = $c
+                     WHERE (n.citation = $c OR n.citation = $c_upper OR n.canonical_id = $c)
+                       AND ($authority_family = '' OR coalesce(n.authority_family, 'ORS') = $authority_family)
                      RETURN n.canonical_id as id, n.citation as citation, n.title as title,
-                            n.chapter as chapter, n.status as status, 'statute' as kind,
-                            coalesce(n.text, n.title) as text
+                            n.chapter as chapter, n.status as status,
+                            CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule' ELSE 'statute' END as kind,
+                            coalesce(n.text, n.title) as text,
+                            n.authority_family as authority_family,
+                            n.authority_type as authority_type,
+                            n.corpus_id as corpus_id
                      LIMIT 1",
                 )
                 .param("c", citation)
-                .param("c_upper", citation_upper),
+                .param("c_upper", citation_upper)
+                .param("authority_family", authority_family.unwrap_or_default()),
             )
             .await
             .map_err(ApiError::Neo4jConnection)?;
@@ -146,6 +161,7 @@ impl Neo4jService {
     pub async fn search_exact_provision(
         &self,
         citation: &str,
+        authority_family: Option<&str>,
     ) -> ApiResult<Option<SearchResultModel>> {
         let citation_upper = citation.to_ascii_uppercase();
         let mut result = self
@@ -153,14 +169,20 @@ impl Neo4jService {
             .execute(
                 query(
                     "MATCH (n:Provision)
-                     WHERE n.display_citation = $c OR n.display_citation = $c_upper
+                     WHERE (n.display_citation = $c OR n.display_citation = $c_upper)
+                       AND ($authority_family = '' OR coalesce(n.authority_family, 'ORS') = $authority_family)
                      RETURN n.provision_id as id, n.display_citation as citation, null as title,
-                            n.chapter as chapter, n.status as status, 'provision' as kind,
-                            n.text as text
+                            n.chapter as chapter, n.status as status,
+                            CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule_provision' ELSE 'provision' END as kind,
+                            n.text as text,
+                            n.authority_family as authority_family,
+                            n.authority_type as authority_type,
+                            n.corpus_id as corpus_id
                      LIMIT 1",
                 )
                 .param("c", citation)
-                .param("c_upper", citation_upper),
+                .param("c_upper", citation_upper)
+                .param("authority_family", authority_family.unwrap_or_default()),
             )
             .await
             .map_err(ApiError::Neo4jConnection)?;
@@ -229,9 +251,14 @@ impl Neo4jService {
         })
     }
 
-    pub async fn search_exact(&self, citation: &str) -> ApiResult<Vec<SearchResultModel>> {
+    pub async fn search_exact(
+        &self,
+        citation: &str,
+        authority_family: Option<&str>,
+    ) -> ApiResult<Vec<SearchResultModel>> {
         let mut results = Vec::new();
         let citation_upper = citation.to_ascii_uppercase();
+        let authority_family = authority_family.unwrap_or_default();
 
         // Statute lookup
         let mut statute_res = self
@@ -239,13 +266,19 @@ impl Neo4jService {
             .execute(
                 query(
                     "MATCH (n:LegalTextIdentity)
-		                   WHERE n.citation = $c OR n.citation = $c_upper OR n.canonical_id = $c
+		                   WHERE (n.citation = $c OR n.citation = $c_upper OR n.canonical_id = $c)
+		                     AND ($authority_family = '' OR coalesce(n.authority_family, 'ORS') = $authority_family)
 		                   RETURN n.canonical_id as id, n.citation as citation, n.title as title,
-		                          n.chapter as chapter, n.status as status, labels(n)[0] as kind,
-		                          n.title as text",
+		                          n.chapter as chapter, n.status as status,
+		                          CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule' ELSE 'statute' END as kind,
+		                          n.title as text,
+		                          n.authority_family as authority_family,
+		                          n.authority_type as authority_type,
+		                          n.corpus_id as corpus_id",
                 )
                 .param("c", citation)
-                .param("c_upper", citation_upper.clone()),
+                .param("c_upper", citation_upper.clone())
+                .param("authority_family", authority_family),
             )
             .await
             .map_err(ApiError::Neo4jConnection)?;
@@ -264,13 +297,19 @@ impl Neo4jService {
             .execute(
                 query(
                     "MATCH (n:Provision)
-		                   WHERE n.display_citation = $c OR n.display_citation = $c_upper
+		                   WHERE (n.display_citation = $c OR n.display_citation = $c_upper)
+		                     AND ($authority_family = '' OR coalesce(n.authority_family, 'ORS') = $authority_family)
 		                   RETURN n.provision_id as id, n.display_citation as citation, null as title,
-		                          n.chapter as chapter, n.status as status, labels(n)[0] as kind,
-		                          n.text as text",
+		                          n.chapter as chapter, n.status as status,
+		                          CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule_provision' ELSE 'provision' END as kind,
+		                          n.text as text,
+		                          n.authority_family as authority_family,
+		                          n.authority_type as authority_type,
+		                          n.corpus_id as corpus_id",
                 )
                 .param("c", citation)
-                .param("c_upper", citation_upper),
+                .param("c_upper", citation_upper)
+                .param("authority_family", authority_family),
             )
             .await
             .map_err(ApiError::Neo4jConnection)?;
@@ -282,20 +321,30 @@ impl Neo4jService {
         // Chapter lookup
         let chapter_number = citation
             .strip_prefix("Chapter ")
-            .or_else(|| citation.strip_prefix("chapter "));
+            .or_else(|| citation.strip_prefix("chapter "))
+            .or_else(|| citation.strip_prefix("UTCR Chapter "))
+            .or_else(|| citation.strip_prefix("utcr chapter "))
+            .or_else(|| citation.strip_prefix("ORS Chapter "))
+            .or_else(|| citation.strip_prefix("ors chapter "));
         if let Some(chapter) = chapter_number {
             let mut chapter_res = self
                 .graph
                 .execute(
                     query(
                         "MATCH (n:ChapterVersion)
-                         WHERE n.chapter = $chapter OR n.chapter_number = $chapter
+                         WHERE (n.chapter = $chapter OR n.chapter_number = $chapter)
+                           AND ($authority_family = '' OR coalesce(n.authority_family, 'ORS') = $authority_family)
                          RETURN n.chapter_id as id, 'Chapter ' + n.chapter as citation, n.title as title,
-                                n.chapter as chapter, null as status, 'chapter' as kind,
-                                coalesce(n.title, n.summary, n.chapter) as text
+                                n.chapter as chapter, null as status,
+                                CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule_chapter' ELSE 'chapter' END as kind,
+                                coalesce(n.title, n.summary, n.chapter) as text,
+                                n.authority_family as authority_family,
+                                n.authority_type as authority_type,
+                                n.corpus_id as corpus_id
                          LIMIT 5",
                     )
-                    .param("chapter", chapter),
+                    .param("chapter", chapter)
+                    .param("authority_family", authority_family),
                 )
                 .await
                 .map_err(ApiError::Neo4jConnection)?;
@@ -325,25 +374,36 @@ impl Neo4jService {
                     "CALL {
                        MATCH (n:LegalTextIdentity)
                        WHERE n.chapter = $chapter
+                         AND coalesce(n.authority_family, 'ORS') = $authority_family
                          AND n.citation >= $start
                          AND n.citation <= $upper_end
                        RETURN n.canonical_id as id, n.citation as citation, n.title as title,
-                              n.chapter as chapter, n.status as status, 'statute' as kind,
-                              coalesce(n.text, n.title) as text
+                              n.chapter as chapter, n.status as status,
+                              CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule' ELSE 'statute' END as kind,
+                              coalesce(n.text, n.title) as text,
+                              n.authority_family as authority_family,
+                              n.authority_type as authority_type,
+                              n.corpus_id as corpus_id
                        UNION
                        MATCH (n:Provision)
                        WHERE n.chapter = $chapter
+                         AND coalesce(n.authority_family, 'ORS') = $authority_family
                          AND n.display_citation >= $start
                          AND n.display_citation <= $upper_end
                        RETURN n.provision_id as id, n.display_citation as citation, null as title,
-                              n.chapter as chapter, n.status as status, 'provision' as kind,
-                              n.text as text
+                              n.chapter as chapter, n.status as status,
+                              CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule_provision' ELSE 'provision' END as kind,
+                              n.text as text,
+                              n.authority_family as authority_family,
+                              n.authority_type as authority_type,
+                              n.corpus_id as corpus_id
                      }
-                     RETURN id, citation, title, chapter, status, kind, text
+                     RETURN id, citation, title, chapter, status, kind, text, authority_family, authority_type, corpus_id
                      ORDER BY citation
                      LIMIT $limit",
                 )
                 .param("chapter", range.chapter.clone())
+                .param("authority_family", range.authority_family.clone())
                 .param("start", range.start.clone())
                 .param("upper_end", upper_end)
                 .param("limit", limit.max(1) as i64),
@@ -549,6 +609,10 @@ impl Neo4jService {
         if filters.chapter.is_some() {
             search_where.push("node.chapter = $chapter".to_string());
         }
+        if filters.authority_family.is_some() {
+            search_where
+                .push("coalesce(node.authority_family, 'ORS') = $authority_family".to_string());
+        }
         if chunk_type.is_some() {
             search_where.push("node.chunk_type = $chunk_type".to_string());
         }
@@ -567,14 +631,20 @@ impl Neo4jService {
              OPTIONAL MATCH (source:LegalTextVersion)-[:VERSION_OF]->(id2:LegalTextIdentity)
              WITH node, source, score, coalesce(id, id2) AS identity, v,
                   coalesce(source.chapter, identity.chapter, node.chapter) AS chapter,
-                  coalesce(source.status, identity.status, 'active') AS status
+                  coalesce(source.status, identity.status, 'active') AS status,
+                  coalesce(source.authority_family, identity.authority_family, node.authority_family, 'ORS') AS authority_family,
+                  coalesce(source.authority_type, identity.authority_type, node.authority_type) AS authority_type,
+                  coalesce(source.corpus_id, identity.corpus_id, node.corpus_id) AS corpus_id
              WHERE ($chapter = '' OR chapter = $chapter)
                AND ($status = '' OR status = $status)
+               AND ($authority_family = '' OR authority_family = $authority_family)
                AND ($current_only = false OR status IS NULL OR status = 'active')
              RETURN
                coalesce(source.provision_id, identity.canonical_id, node.chunk_id) as id,
                CASE
+                 WHEN source:Provision AND authority_family = 'UTCR' THEN 'court_rule_provision'
                  WHEN source:Provision THEN 'provision'
+                 WHEN source:LegalTextVersion AND authority_family = 'UTCR' THEN 'court_rule'
                  WHEN source:LegalTextVersion THEN 'statute'
                  ELSE 'chunk'
                END as kind,
@@ -586,6 +656,9 @@ impl Neo4jService {
                node.chunk_id as chunk_id,
                source.provision_id as provision_id,
                coalesce(v.version_id, source.version_id, node.parent_version_id, node.source_version_id) as version_id,
+               authority_family,
+               authority_type,
+               corpus_id,
                score
              ORDER BY score DESC
              LIMIT $limit",
@@ -600,6 +673,10 @@ impl Neo4jService {
             .param("limit", limit as i64)
             .param("chapter", filters.chapter.clone().unwrap_or_default())
             .param("status", filters.status.clone().unwrap_or_default())
+            .param(
+                "authority_family",
+                filters.authority_family.clone().unwrap_or_default(),
+            )
             .param("current_only", filters.current_only);
         if let Some(chunk_type) = chunk_type {
             query_builder = query_builder.param("chunk_type", chunk_type);
@@ -904,6 +981,18 @@ impl Neo4jService {
         let id = row.get::<String>("id").unwrap_or_default();
         let citation = row.get::<String>("citation").ok();
         let title: Option<String> = row.get("title").ok();
+        let authority_family = row.get::<String>("authority_family").ok().or_else(|| {
+            citation
+                .as_deref()
+                .and_then(infer_authority_family_from_citation)
+        });
+        let authority_type = row.get::<String>("authority_type").ok().or_else(|| {
+            authority_type_for_family(authority_family.as_deref()).map(ToString::to_string)
+        });
+        let corpus_id = row
+            .get::<String>("corpus_id")
+            .ok()
+            .or_else(|| corpus_id_for_family(authority_family.as_deref()).map(ToString::to_string));
 
         // Basic snippet generation
         let text: Option<String> = row.get("text").ok();
@@ -918,11 +1007,19 @@ impl Neo4jService {
             None => title.clone().unwrap_or_default(),
         };
 
-        let href = match kind.as_str() {
-            "statute" | "legaltextidentity" => {
+        let href = match (authority_family.as_deref(), kind.as_str()) {
+            (Some("UTCR"), "court_rule" | "legaltextidentity" | "utcrrule") => {
+                format!("/rules/utcr/{}", citation.as_deref().unwrap_or(&id))
+            }
+            (Some("UTCR"), "court_rule_provision" | "provision" | "utcrprovision") => format!(
+                "/rules/utcr/{}?provision={}",
+                citation.as_deref().unwrap_or(&id),
+                id
+            ),
+            (_, "statute" | "legaltextidentity") => {
                 format!("/statutes/{}", citation.as_deref().unwrap_or(&id))
             }
-            "provision" => format!(
+            (_, "provision") => format!(
                 "/statutes/{}?provision={}",
                 citation.as_deref().unwrap_or(&id),
                 id
@@ -933,6 +1030,9 @@ impl Neo4jService {
         Ok(SearchResultModel {
             id,
             kind,
+            authority_family,
+            authority_type,
+            corpus_id,
             citation: citation.clone(),
             title,
             chapter: row.get("chapter").ok(),
@@ -965,19 +1065,37 @@ impl Neo4jService {
         &self,
         limit: Option<u32>,
         offset: Option<u32>,
+        q: Option<&str>,
         chapter: Option<&str>,
+        status: Option<&str>,
     ) -> ApiResult<StatuteIndexResponse> {
         let limit = limit.unwrap_or(250).clamp(1, 1000);
         let offset = offset.unwrap_or(0);
+        let q = normalized_filter(q);
+        let status = normalized_filter(status);
         let mut result = self
             .graph
             .execute(
                 query(
                     "MATCH (i:LegalTextIdentity)
-                     WHERE $chapter IS NULL OR i.chapter = $chapter
+                     WHERE ($chapter IS NULL OR i.chapter = $chapter)
+                       AND ($status IS NULL OR toLower(coalesce(i.status, 'active')) = $status)
+                       AND (
+                         $q IS NULL
+                         OR toLower(coalesce(i.citation, '')) CONTAINS $q
+                         OR toLower(coalesce(i.canonical_id, '')) CONTAINS $q
+                         OR toLower(coalesce(i.title, '')) CONTAINS $q
+                       )
                      WITH count(i) AS total
                      MATCH (i:LegalTextIdentity)
-                     WHERE $chapter IS NULL OR i.chapter = $chapter
+                     WHERE ($chapter IS NULL OR i.chapter = $chapter)
+                       AND ($status IS NULL OR toLower(coalesce(i.status, 'active')) = $status)
+                       AND (
+                         $q IS NULL
+                         OR toLower(coalesce(i.citation, '')) CONTAINS $q
+                         OR toLower(coalesce(i.canonical_id, '')) CONTAINS $q
+                         OR toLower(coalesce(i.title, '')) CONTAINS $q
+                       )
                      WITH i, total
                      ORDER BY i.chapter, i.citation
                      SKIP $offset
@@ -991,7 +1109,9 @@ impl Neo4jService {
                        edition_year: coalesce(i.edition_year, 2025)
                      }) as items",
                 )
+                .param("q", q)
                 .param("chapter", chapter.map(|value| value.to_string()))
+                .param("status", status)
                 .param("offset", offset as i64)
                 .param("limit", limit as i64),
             )
@@ -1141,6 +1261,55 @@ impl Neo4jService {
         })
     }
 
+    pub async fn get_statute_page(&self, citation: &str) -> ApiResult<StatutePageResponse> {
+        let detail = self.get_statute(citation).await?;
+        let provisions = self.get_provisions(citation).await?;
+        let StatuteDetailResponse {
+            identity,
+            current_version,
+            source_document,
+            provision_count,
+            citation_counts,
+            semantic_counts,
+            source_notes,
+            ..
+        } = detail;
+
+        let qc_notes = source_notes
+            .iter()
+            .enumerate()
+            .map(|(index, message)| QCNoteItem {
+                note_id: format!("source-note:{index}"),
+                level: "info".to_string(),
+                category: "source".to_string(),
+                message: message.clone(),
+                related_id: Some(identity.canonical_id.clone()),
+            })
+            .collect::<Vec<_>>();
+        let qc_status = if qc_notes.is_empty() {
+            "pass".to_string()
+        } else {
+            "warning".to_string()
+        };
+
+        Ok(StatutePageResponse {
+            identity,
+            current_version,
+            source_document,
+            provision_count,
+            citation_counts,
+            semantic_counts,
+            source_notes,
+            provisions: provisions.provisions,
+            qc: StatutePageQcSummary {
+                status: qc_status,
+                passed_checks: if qc_notes.is_empty() { 2 } else { 1 },
+                total_checks: 2,
+                notes: qc_notes,
+            },
+        })
+    }
+
     pub async fn get_provisions(&self, citation: &str) -> ApiResult<ProvisionsResponse> {
         let mut result = self
             .graph
@@ -1183,7 +1352,7 @@ impl Neo4jService {
 
         Ok(ProvisionsResponse {
             citation: citation.to_string(),
-            provisions,
+            provisions: nest_provisions(provisions),
         })
     }
 
@@ -2216,8 +2385,11 @@ impl Neo4jService {
 
     pub async fn suggest(&self, q: &str, limit: u32) -> ApiResult<Vec<SuggestResult>> {
         let q = q.trim();
+        let explicit_utcr_re = regex::Regex::new(r"(?i)^UTCR\s+\d{1,3}(?:\.\d*)?").unwrap();
         let bare_citation_re = regex::Regex::new(r"^\d{1,3}[A-Za-z]?\.\d*").unwrap();
-        let normalized_q = if bare_citation_re.is_match(q) {
+        let normalized_q = if explicit_utcr_re.is_match(q) {
+            q.to_ascii_uppercase()
+        } else if bare_citation_re.is_match(q) {
             format!("ORS {q}")
         } else {
             q.to_string()
@@ -2226,23 +2398,29 @@ impl Neo4jService {
         let mut result = self.graph.execute(
             query("CALL {
                      MATCH (n:Provision)
-                     WHERE toUpper(n.display_citation) STARTS WITH toUpper($normalized_q)
-                        OR toUpper(n.display_citation) STARTS WITH toUpper($q)
-                     RETURN n.display_citation as label,
-                            'provision' as kind,
-                            '/statutes/' + coalesce(n.canonical_id, n.display_citation) + '?provision=' + n.provision_id as href,
-                            n.display_citation as citation,
-                            coalesce(n.canonical_id, n.provision_id) as canonical_id,
-                            'exact_provision' as match_type,
+	                     WHERE toUpper(n.display_citation) STARTS WITH toUpper($normalized_q)
+	                        OR toUpper(n.display_citation) STARTS WITH toUpper($q)
+	                     RETURN n.display_citation as label,
+	                            CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule_provision' ELSE 'provision' END as kind,
+	                            CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR'
+	                              THEN '/rules/utcr/' + coalesce(n.canonical_id, n.display_citation) + '?provision=' + n.provision_id
+	                              ELSE '/statutes/' + coalesce(n.canonical_id, n.display_citation) + '?provision=' + n.provision_id
+	                            END as href,
+	                            n.display_citation as citation,
+	                            coalesce(n.canonical_id, n.provision_id) as canonical_id,
+	                            'exact_provision' as match_type,
                             100.0 as score
                      UNION
                      MATCH (n:LegalTextIdentity)
                      WHERE toUpper(n.citation) STARTS WITH toUpper($normalized_q)
-                        OR toUpper(n.citation) STARTS WITH toUpper($q)
-                        OR toUpper(n.title) CONTAINS toUpper($q)
-                     RETURN n.citation as label,
-                            'statute' as kind,
-                            '/statutes/' + n.canonical_id as href,
+	                        OR toUpper(n.citation) STARTS WITH toUpper($q)
+	                        OR toUpper(n.title) CONTAINS toUpper($q)
+	                     RETURN n.citation as label,
+	                            CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule' ELSE 'statute' END as kind,
+	                            CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR'
+	                              THEN '/rules/utcr/' + n.canonical_id
+	                              ELSE '/statutes/' + n.canonical_id
+	                            END as href,
                             n.citation as citation,
                             n.canonical_id as canonical_id,
                             'exact_statute' as match_type,
@@ -2301,6 +2479,33 @@ impl Neo4jService {
             });
         }
         Ok(suggestions)
+    }
+}
+
+fn infer_authority_family_from_citation(citation: &str) -> Option<String> {
+    let upper = citation.trim().to_ascii_uppercase();
+    if upper.starts_with("UTCR ") {
+        Some("UTCR".to_string())
+    } else if upper.starts_with("ORS ") {
+        Some("ORS".to_string())
+    } else {
+        None
+    }
+}
+
+fn authority_type_for_family(authority_family: Option<&str>) -> Option<&'static str> {
+    match authority_family {
+        Some("UTCR") => Some("court_rule"),
+        Some("ORS") => Some("statute"),
+        _ => None,
+    }
+}
+
+fn corpus_id_for_family(authority_family: Option<&str>) -> Option<&'static str> {
+    match authority_family {
+        Some("UTCR") => Some("or:utcr"),
+        Some("ORS") => Some("or:ors"),
+        _ => None,
     }
 }
 
@@ -2795,6 +3000,50 @@ fn percentage(part: u64, total: u64) -> f64 {
     }
 }
 
+fn normalized_filter(value: Option<&str>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty() && value != "all")
+}
+
+fn nest_provisions(mut provisions: Vec<ProvisionNode>) -> Vec<ProvisionNode> {
+    provisions.sort_by_key(|provision| provision.local_path.len());
+
+    let mut roots = Vec::new();
+    for mut provision in provisions {
+        provision.children = vec![];
+        if provision.local_path.len() <= 1 {
+            roots.push(provision);
+            continue;
+        }
+
+        let parent_path = provision.local_path[..provision.local_path.len() - 1].to_vec();
+        if let Some(parent) = find_provision_by_path_mut(&mut roots, &parent_path) {
+            parent.children.push(provision);
+        } else {
+            roots.push(provision);
+        }
+    }
+
+    roots
+}
+
+fn find_provision_by_path_mut<'a>(
+    provisions: &'a mut [ProvisionNode],
+    path: &[String],
+) -> Option<&'a mut ProvisionNode> {
+    for provision in provisions {
+        if provision.local_path == path {
+            return Some(provision);
+        }
+        if let Some(child) = find_provision_by_path_mut(&mut provision.children, path) {
+            return Some(child);
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2861,5 +3110,41 @@ mod tests {
         assert_eq!(links.len(), 2);
         assert_eq!(links[0].provision_id, "p1");
         assert_eq!(links[1].provision_id, "p2");
+    }
+
+    #[test]
+    fn provision_tree_nests_by_local_path() {
+        let tree = nest_provisions(vec![
+            provision_node("p1", "ORS 1.001(1)", &["1"]),
+            provision_node("p1a", "ORS 1.001(1)(a)", &["1", "a"]),
+            provision_node("p1ai", "ORS 1.001(1)(a)(A)", &["1", "a", "A"]),
+            provision_node("p2", "ORS 1.001(2)", &["2"]),
+        ]);
+
+        assert_eq!(tree.len(), 2);
+        assert_eq!(tree[0].provision_id, "p1");
+        assert_eq!(tree[0].children.len(), 1);
+        assert_eq!(tree[0].children[0].provision_id, "p1a");
+        assert_eq!(tree[0].children[0].children[0].provision_id, "p1ai");
+        assert_eq!(tree[1].provision_id, "p2");
+    }
+
+    #[test]
+    fn normalized_filter_trims_all_and_lowercases() {
+        assert_eq!(normalized_filter(Some("  Active ")), Some("active".to_string()));
+        assert_eq!(normalized_filter(Some("all")), None);
+        assert_eq!(normalized_filter(Some("  ")), None);
+        assert_eq!(normalized_filter(None), None);
+    }
+
+    fn provision_node(id: &str, citation: &str, path: &[&str]) -> ProvisionNode {
+        ProvisionNode {
+            provision_id: id.to_string(),
+            display_citation: citation.to_string(),
+            local_path: path.iter().map(|value| value.to_string()).collect(),
+            depth: path.len(),
+            text: citation.to_string(),
+            children: vec![],
+        }
     }
 }

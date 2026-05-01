@@ -1,26 +1,33 @@
-# 10 - Complaint Editor Backlog
+# 10 - Complaint Profile Backlog
 
-The Complaint Editor is the pleading-drafting layer inside CaseBuilder. It should feel like a structured legal workbench: complaint outline, numbered allegations, claim/count builder, evidence support, ORSGraph authority links, rule-aware QC, court-paper preview, and export pipeline.
+The Complaint profile is the first structured WorkProduct profile inside CaseBuilder. It should feel like a pleading workbench: complaint outline, numbered allegations, claim/count builder, evidence support, ORSGraph authority links, rule-aware QC, court-paper preview, and export pipeline.
 
-This backlog is the source of truth for the full Complaint Editor program. Existing V0/V0.1/V0.2/V1 backlog items remain shared foundations and dependencies, but the complaint-specific AST, routes, editor, Oregon rule pack, layout, export, AI drafting, and filing packet work live here.
+This backlog records complaint-specific profile and facade work. The canonical shared editor architecture and canonical AST contract now live in [12-work-product-builder-backlog.md](12-work-product-builder-backlog.md). Existing V0/V0.1/V0.2/V1 backlog items remain shared foundations and dependencies, but future non-complaint document work should flow through WorkProduct Builder rather than copying complaint-only code.
 
 ## Product guardrails
 
-- First buildable slice is structured editor first: AST, routes, caption/outline, paragraphs, numbering, save/load, and basic QC.
+- First buildable slice remains structured complaint profile first: WorkProduct AST facade, routes, caption/outline, paragraphs, numbering, save/load, and basic QC.
 - The default user journey should be guided and forgiving: start from matter data, show the next useful action, and let advanced users jump directly into editor, claims, evidence, QC, preview, or export.
-- Do not make export-first or AI-first choices until the canonical complaint AST is stable.
-- The generic `Draft` model remains usable for existing non-complaint drafts; complaint work now routes through the structured Complaint Editor instead of `draft_type=complaint`.
-- Editor preview and export must use the same canonical complaint AST and layout logic.
+- Do not make export-first or AI-first choices that bypass the shared WorkProduct AST.
+- The generic `Draft` model remains usable for legacy non-WorkProduct drafts; new legal document types should use WorkProduct Builder by default.
+- Complaint editor preview and export must use the same profile AST/layout logic as the canonical WorkProduct rendering path wherever that path exists.
 - The product must always label generated text, checks, previews, and exports as review-needed. It must not promise legal advice, guaranteed compliance, or filing readiness.
-- Add Tiptap/ProseMirror dependencies only when the shared work-product editor starts; until then use structured AST DTOs and non-rich editor shells.
+- Tiptap/ProseMirror dependencies already exist. Wire custom nodes/marks through the shared WorkProduct editor, not through complaint-only rich text code.
 
 ## 2026-05-01 implementation update
 
-- Complaint work now uses a dedicated structured Complaint Editor instead of generic `Draft` complaint scaffolds.
+- Complaint work now uses a dedicated structured Complaint profile/facade instead of generic complaint draft scaffolds.
 - Backend complaint DTOs, routes, Neo4j constraints/indexes, graph edge materialization, deterministic QC, preview, export artifacts, AI template states, history, filing packet state, and no-seed defaults are implemented provider-free.
-- Frontend CaseBuilder has a complaint workspace route family and three-pane editor workbench for editor, outline, counts, support, QC, preview, and export.
-- Generic drafts remain for non-complaint work products; `draft_type=complaint` is intentionally rejected by the backend so complaint work routes through `/complaints`.
-- Discovered follow-up: the rich editor should become a shared work-product editor for motions, answers, declarations, briefs, and future products, tracked as `CB-CE-028`.
+- Frontend CaseBuilder has a complaint workspace route family and three-pane profile workbench for editor, outline, counts, support, QC, preview, and export.
+- Complaint routes remain friendly facades while canonical WorkProduct routes, history, export, and editor contracts mature.
+- Discovered follow-up is now promoted to the canonical WorkProduct Builder backlog in `12-work-product-builder-backlog.md`.
+
+## 2026-05-01 AST refactor update
+
+- `WorkProduct.document_ast` is now the canonical current document model behind complaint-profile persistence.
+- Complaint-specific DTOs remain view-model/facade projections. Durable document content, links, citations, exhibits, rule findings, history hashes, snapshots, preview/export, and conversion paths should converge on the WorkProduct AST.
+- Existing `blocks`, `marks`, `anchors`, and `findings` are adapter/projection surfaces during migration, not separate complaint truth.
+- Production DOCX/PDF rendering is not done; current PDF/DOCX artifacts remain review-needed skeletons until shared AST renderers and visual checks land.
 
 ## UX, flow, and integration principles
 
@@ -44,9 +51,9 @@ This backlog is the source of truth for the full Complaint Editor program. Exist
 ## CB-CE-000 - Backlog integration and scope cleanup
 - Priority: P0
 - Area: Planning/backlog
-- Problem: Complaint Editor work is currently scattered across generic drafting, complaint builder, QC, export, court-rule, and exhibit backlog items.
-- Expected behavior: This file owns the full Complaint Editor program, and the existing phase files cross-link to the relevant `CB-CE-*` tasks without duplicating scope.
-- Implementation notes: Keep `CB-V0-013` as the complaint entry point; keep V0.1 QC/finding items and V0.2 export/exhibit items as shared dependencies.
+- Problem: Complaint profile work was scattered across generic drafting, complaint builder, QC, export, court-rule, exhibit, and shared editor backlog items.
+- Expected behavior: This file owns complaint-specific profile/facade work, while shared editor, route, AST, QC, export, and version-control architecture lives in `12-work-product-builder-backlog.md`.
+- Implementation notes: Keep `CB-V0-013` as the complaint profile entry point; keep V0.1 QC/finding items and V0.2 export/exhibit items as shared dependencies.
 - Acceptance checks: README, current status, V0, V0.1, V0.2, V1, feature inventory, and cross-cutting backlog references point to this file where complaint-specific work belongs.
 - Dependencies: None.
 - Status: Done
@@ -56,7 +63,7 @@ This backlog is the source of truth for the full Complaint Editor program. Exist
 - Area: Data model/API
 - Problem: A complaint cannot be managed as one raw text blob or only as generic draft sections.
 - Expected behavior: Backend and frontend DTO registries include `ComplaintDraft`, `ComplaintSection`, `ComplaintCount`, `PleadingParagraph`, `PleadingSentence`, `CitationUse`, `EvidenceUse`, `ExhibitReference`, `ReliefRequest`, `SignatureBlock`, `CertificateOfService`, `FormattingProfile`, `RulePack`, `RuleCheckFinding`, and `ExportArtifact`.
-- Implementation notes: Store complaint objects alongside existing `Draft` records; include `matter_id` ownership and stable IDs for every node that can receive support links, citations, comments, checks, or export anchors.
+- Implementation notes: Store durable legal document state in `WorkProduct.document_ast`; keep complaint objects as facade/view-model projections where they make the complaint UI easier. Include `matter_id` ownership and stable IDs for every node that can receive support links, citations, comments, checks, or export anchors.
 - Acceptance checks: DTO contract tests prove serialization, frontend normalization, matter ownership fields, and stable IDs for all complaint AST nodes.
 - Dependencies: `CB-X-001`, `CB-X-013`, current Draft/Fact/Evidence/Claim/Authority models.
 - Status: Done
@@ -149,6 +156,7 @@ This backlog is the source of truth for the full Complaint Editor program. Exist
 - Implementation notes: Store source citation, source URL, effective date, severity, target type, message, explanation, suggested fix, and auto-fix availability for each rule.
 - Acceptance checks: Rule-pack tests cover caption, all parties in complaint title, separate counts, numbered paragraphs, plain/concise ultimate facts, demand for relief, signature/contact fields, double spacing, numbered lines, first-page two-inch blank top area, and one-inch side margins.
 - Dependencies: `CB-CE-001`, Oregon court-rule source capture.
+- Progress: The 2025 UTCR corpus is now parsed as first-class graph data with source-backed procedural requirement nodes and a generated `or:utcr:2025:oregon_circuit_civil_complaint` WorkProduct rule pack. ORCP rules remain external/source-backed until an ORCP corpus is added. See [../legal-corpora/2025-utcr-ingestion.md](../legal-corpora/2025-utcr-ingestion.md).
 - Status: Done
 
 ## CB-CE-011 - Complaint QC dashboard and finding lifecycle
@@ -161,16 +169,16 @@ This backlog is the source of truth for the full Complaint Editor program. Exist
 - Dependencies: `CB-V01-009`, `CB-V01-015`, `CB-V01-016`, `CB-CE-010`.
 - Status: Done
 
-## CB-CE-012 - Tiptap/ProseMirror editor integration
+## CB-CE-012 - Complaint rich-text profile hooks
 - Priority: P1
 - Area: Frontend/editor
-- Problem: The structured complaint editor needs stable custom nodes and marks once the AST is proven.
-- Expected behavior: Add rich-editor custom nodes/marks for `pleading_section`, `pleading_count`, `pleading_paragraph`, `citation_mark`, `evidence_mark`, `exhibit_mark`, `fact_chip`, `authority_chip`, and `qc_warning_mark` when the shared work-product editor starts.
-- Implementation notes: Do not add dependencies before the shared editor abstraction. The current complaint editor intentionally uses structured AST fields and direct save actions so complaint work no longer depends on generic drafts.
+- Problem: The structured complaint profile needs stable custom nodes and marks once the shared WorkProduct editor owns rich text.
+- Expected behavior: Map complaint-specific nodes/marks such as caption, pleading section, count, numbered paragraph, citation, evidence, exhibit, fact chip, authority chip, and QC warning into the shared WorkProduct/Tiptap schema.
+- Implementation notes: Tiptap/ProseMirror dependencies already exist. Do not wire a complaint-only rich editor; use `CB-WPB-008` as the owner for shared nodes and round-tripping.
 - Acceptance checks: Shared editor tests prove load, edit, save, reload, chips, marks, paragraph locks, and QC warning anchors survive a round trip across complaint and later motion/answer profiles.
-- Dependencies: `CB-CE-006`, `CB-CE-008`, `CB-CE-009`.
-- Completed: Deferred/superseded for the complaint slice by the structured AST workbench and new shared editor epic.
-- Verification: No Tiptap/ProseMirror dependencies were added; `pnpm run build` passes.
+- Dependencies: `CB-WPB-008`, `CB-CE-006`, `CB-CE-008`, `CB-CE-009`.
+- Completed: Deferred/superseded for the complaint slice by the structured AST workbench and the new shared WorkProduct Builder backlog.
+- Verification: Existing complaint structured editor build passed before this docs update; future rich-text verification belongs to `CB-WPB-008`.
 - Status: Deferred
 
 ## CB-CE-013 - Court-paper layout engine and preview
@@ -181,7 +189,8 @@ This backlog is the source of truth for the full Complaint Editor program. Exist
 - Implementation notes: Start HTML/CSS court-paper renderer; keep a later path open for a dedicated layout engine or Typst-like renderer.
 - Acceptance checks: Preview tests catch missing line numbers, margin drift, text overlap, signature split issues, and unsupported page overflow states.
 - Dependencies: `CB-CE-001`, `CB-CE-010`.
-- Status: Done
+- Status: Partial
+- Progress: Complaint/WorkProduct preview consumes structured state and produces review-needed court-paper-style output. Production page layout checks, visual regression, and PDF/DOCX parity remain in shared export work.
 
 ## CB-CE-014 - Export artifact model and export endpoint
 - Priority: P1
@@ -197,11 +206,12 @@ This backlog is the source of truth for the full Complaint Editor program. Exist
 - Priority: P1
 - Area: Export/rendering
 - Problem: Users need court-ready, editable, review, and internal support-linked export modes.
-- Expected behavior: Export formats include PDF, DOCX, HTML, Markdown, plain text, and JSON complaint AST. Export profiles include clean filing copy, editable DOCX, review PDF with annotations, evidence-linked internal copy, citations report, and rule checklist.
-- Implementation notes: PDF/DOCX must preserve structured numbering, citation labels, exhibit references, caption, and rule-sensitive formatting.
+- Expected behavior: Export formats include PDF, DOCX, HTML, Markdown, plain text, and JSON WorkProduct AST. Export profiles include clean filing copy, editable DOCX, review PDF with annotations, evidence-linked internal copy, citations report, and rule checklist.
+- Implementation notes: HTML/Markdown/plain text/JSON AST are the reliable current projections. PDF/DOCX must preserve structured numbering, citation labels, exhibit references, caption, and rule-sensitive formatting before they can be considered production exports.
 - Acceptance checks: Export tests verify AST-to-HTML, AST-to-DOCX, AST-to-PDF skeletons, page count metadata, and readable downloads.
 - Dependencies: `CB-V02-006`, `CB-V02-007`, `CB-V02-013`, `CB-CE-014`.
-- Status: Done
+- Status: Partial
+- Progress: AST-backed HTML, Markdown, plain-text, and JSON-style projections exist through shared WorkProduct conversion/export paths. PDF/DOCX skeleton artifacts exist with warnings; production renderers and visual verification remain in `CB-WPB-012`, `CB-V02-006`, and `CB-V02-007`.
 
 ## CB-CE-016 - AI complaint drafting commands with source-backed output
 - Priority: P2
@@ -222,7 +232,7 @@ This backlog is the source of truth for the full Complaint Editor program. Exist
 - Acceptance checks: Text, support, citation, rules, AI, restore, and export changes are visible from Case History records, not from stored complaint-only event truth.
 - Dependencies: `CB-CH-105`, `CB-CH-402`, `CB-CH-503`, `CB-CH-1104`.
 - Status: Partial
-- Progress: Case History V0 now records complaint-profile work-product create/edit/support/QC/AI/export/restore events and exposes timeline/compare/restore in the Complaint workspace. Rich support/QC diff, scoped restore, and smoke coverage remain in `11-case-history-version-control.md`.
+- Progress: Case History V0 now records AST-backed complaint-profile work-product create/edit/support/QC/AI/export/restore events and exposes timeline/compare/restore in the Complaint workspace. Rich support/citation/exhibit/QC diff, scoped restore, and smoke coverage remain in `11-case-history-version-control.md`.
 
 ## CB-CE-018 - Filing packet and exhibit packet builder
 - Priority: P2
@@ -324,12 +334,12 @@ This backlog is the source of truth for the full Complaint Editor program. Exist
 - Dependencies: `CB-X-001`, `CB-X-002`, `CB-X-014`, `CB-CE-001` through `CB-CE-026`.
 - Status: Done
 
-## CB-CE-028 - Shared work-product editor for motions, answers, declarations, briefs, and future products
+## CB-CE-028 - Shared WorkProduct editor promotion
 - Priority: P0
 - Area: Editor/platform
-- Problem: Complaint work should not be a one-off editor while motions, answers, declarations, briefs, notices, and exhibit lists remain generic draft blobs.
-- Expected behavior: Promote the structured editor architecture into a shared work-product editor with product-specific AST profiles, route families, rule packs, support links, QC, preview, export, history, and AI template states.
-- Implementation notes: Complaint Editor remains the first concrete profile. Do not reintroduce `draft_type=complaint`; migrate future work products away from generic drafts when their AST profile starts. Rich-text/Tiptap work should attach to this shared editor layer instead of only to complaints.
-- Acceptance checks: Motions/answers/declarations can use the same editor shell, graph support links, findings lifecycle, preview/export path, and no-seed initialization pattern without duplicating complaint-specific code.
+- Problem: Complaint work should not stay isolated while motions, answers, declarations, briefs, notices, and exhibit lists remain generic draft blobs.
+- Expected behavior: Superseded by [12-work-product-builder-backlog.md](12-work-product-builder-backlog.md), which now owns the canonical `WorkProduct.document_ast`, shared editor, product-specific profiles, route families, rule packs, support links, QC, preview, export, history, and AI patch states.
+- Implementation notes: Complaint Editor remains the first concrete profile/facade. Future WorkProduct work should use `CB-WPB-*` tasks rather than expanding this complaint backlog.
+- Acceptance checks: Covered by `CB-WPB-004` through `CB-WPB-065`; `CB-WPB-002` documents why a separate `WorkProductDraft` is deferred unless branch state requires it.
 - Dependencies: `CB-CE-001` through `CB-CE-027`.
-- Status: Todo
+- Status: Deferred

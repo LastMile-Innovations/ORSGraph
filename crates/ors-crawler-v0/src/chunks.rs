@@ -329,6 +329,25 @@ fn make_provision_chunk(
         citation: provision.citation.clone(),
         jurisdiction_id: "or:state".to_string(),
         authority_level,
+        authority_family: provision
+            .authority_family
+            .clone()
+            .or_else(|| Some("ORS".to_string())),
+        corpus_id: provision
+            .corpus_id
+            .clone()
+            .or_else(|| Some("or:ors".to_string())),
+        authority_type: provision
+            .authority_type
+            .clone()
+            .or_else(|| Some("statute".to_string())),
+        effective_date: provision.effective_date.clone(),
+        chapter: provision
+            .chapter
+            .clone()
+            .or_else(|| Some(chapter_from_citation(&provision.citation))),
+        source_page_start: provision.source_page_start,
+        source_page_end: provision.source_page_end,
         edition_year,
         embedding_model: None,
         embedding_dim: None,
@@ -396,6 +415,22 @@ fn make_full_statute_chunk(
         citation: version.citation.clone(),
         jurisdiction_id: "or:state".to_string(),
         authority_level,
+        authority_family: version
+            .authority_family
+            .clone()
+            .or_else(|| Some("ORS".to_string())),
+        corpus_id: version
+            .corpus_id
+            .clone()
+            .or_else(|| Some("or:ors".to_string())),
+        authority_type: version
+            .authority_type
+            .clone()
+            .or_else(|| Some("statute".to_string())),
+        effective_date: version.effective_date.clone(),
+        chapter: Some(version.chapter.clone()),
+        source_page_start: version.source_page_start,
+        source_page_end: version.source_page_end,
         edition_year,
         embedding_model: None,
         embedding_dim: None,

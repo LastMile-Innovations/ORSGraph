@@ -2,12 +2,17 @@ use crate::embedding_profiles::EmbeddingProfile;
 use crate::embeddings::EmbeddingTargetSpec;
 use crate::models::{
     Amendment, ChapterFrontMatter, ChapterHeading, ChapterTocEntry, CitationMention, CitesEdge,
-    Deadline, DefinedTerm, Definition, DefinitionScope, EnrichedChunk, EnrichedCitation,
-    EnrichedDefinition, Exception, FormText, HtmlParagraph, LegalAction, LegalActor,
-    LegalSemanticNode, LegalTextIdentity, LegalTextVersion, LineageEvent, MoneyAmount, Obligation,
-    ParserDiagnostic, Penalty, Provision, RateLimit, Remedy, RequiredNotice, ReservedRange,
-    RetrievalChunk, SessionLaw, SourceDocument, SourceNote, StatusEvent, TaxRule, TemporalEffect,
-    TimeInterval, TitleChapterEntry,
+    Commentary, CorpusEdition, Court, CourtRuleChapter, CourtRulesRegistrySnapshot,
+    CourtRulesRegistrySource, Deadline, DefinedTerm, Definition, DefinitionScope,
+    EffectiveInterval, EnrichedChunk, EnrichedCitation, EnrichedDefinition, Exception,
+    ExternalLegalCitation, FormText, FormattingProfile, HtmlParagraph, Jurisdiction, LegalAction,
+    LegalActor, LegalCorpus, LegalSemanticNode, LegalTextIdentity, LegalTextVersion, LineageEvent,
+    MoneyAmount, Obligation, ParserDiagnostic, Penalty, ProceduralRequirement, Provision,
+    RateLimit, Remedy, ReporterNote, RequiredNotice, ReservedRange, RetrievalChunk,
+    RuleApplicabilityEdge, RuleAuthorityDocument, RulePackMembership, RulePublicationEntry,
+    RuleSupersessionEdge, RuleTopic, SessionLaw, SourceDocument, SourceNote, SourcePage,
+    SourceTocEntry, StatusEvent, SupplementaryLocalRuleEdition, TaxRule, TemporalEffect,
+    TimeInterval, TitleChapterEntry, WorkProductRulePack, WorkProductRulePackAuthority,
 };
 use anyhow::{Context, Result};
 use neo4rs::{query, ConfigBuilder, Graph};
@@ -427,6 +432,124 @@ impl Neo4jLoader {
         Ok(())
     }
 
+    pub async fn load_legal_corpora(
+        &self,
+        rows: Vec<LegalCorpus>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_legal_corpora")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_corpus_edition_rows(
+        &self,
+        rows: Vec<CorpusEdition>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_corpus_edition_rows")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_jurisdiction_rows(
+        &self,
+        rows: Vec<Jurisdiction>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_jurisdiction_rows")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_courts(&self, rows: Vec<Court>, batch_size: usize) -> Result<()> {
+        let query_str = Self::load_query("load_courts")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_court_rules_registry_sources(
+        &self,
+        rows: Vec<CourtRulesRegistrySource>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_court_rules_registry_sources")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_court_rules_registry_snapshots(
+        &self,
+        rows: Vec<CourtRulesRegistrySnapshot>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_court_rules_registry_snapshots")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_rule_publication_entries(
+        &self,
+        rows: Vec<RulePublicationEntry>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_rule_publication_entries")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_rule_authority_documents(
+        &self,
+        rows: Vec<RuleAuthorityDocument>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_rule_authority_documents")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_supplementary_local_rule_editions(
+        &self,
+        rows: Vec<SupplementaryLocalRuleEdition>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_supplementary_local_rule_editions")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_effective_intervals(
+        &self,
+        rows: Vec<EffectiveInterval>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_effective_intervals")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_rule_topics(&self, rows: Vec<RuleTopic>, batch_size: usize) -> Result<()> {
+        let query_str = Self::load_query("load_rule_topics")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_rule_applicability_edges(
+        &self,
+        rows: Vec<RuleApplicabilityEdge>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_rule_applicability_edges")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_rule_supersession_edges(
+        &self,
+        rows: Vec<RuleSupersessionEdge>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_rule_supersession_edges")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_work_product_rule_pack_authorities(
+        &self,
+        rows: Vec<WorkProductRulePackAuthority>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_work_product_rule_pack_authorities")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
     /// Creates chapter version nodes from loaded legal text versions.
     ///
     /// This method aggregates legal text versions by chapter and creates ChapterVersion nodes.
@@ -453,6 +576,29 @@ impl Neo4jLoader {
     ) -> Result<()> {
         let query_str = Self::load_query("load_source_documents")?;
         self.run_rows_with_batch(&query_str, docs, batch_size).await
+    }
+
+    pub async fn load_source_pages(&self, rows: Vec<SourcePage>, batch_size: usize) -> Result<()> {
+        let query_str = Self::load_query("load_source_pages")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_source_toc_entries(
+        &self,
+        rows: Vec<SourceTocEntry>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_source_toc_entries")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_court_rule_chapters(
+        &self,
+        rows: Vec<CourtRuleChapter>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_court_rule_chapters")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
     }
 
     pub async fn load_html_paragraphs(
@@ -793,10 +939,60 @@ impl Neo4jLoader {
 
     pub async fn load_external_legal_citations(
         &self,
-        rows: Vec<EnrichedCitation>,
+        rows: Vec<ExternalLegalCitation>,
         batch_size: usize,
     ) -> Result<()> {
         let query_str = Self::load_query("load_external_legal_citations")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_reporter_notes(
+        &self,
+        rows: Vec<ReporterNote>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_reporter_notes")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_commentaries(&self, rows: Vec<Commentary>, batch_size: usize) -> Result<()> {
+        let query_str = Self::load_query("load_commentaries")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_procedural_requirements(
+        &self,
+        rows: Vec<ProceduralRequirement>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_procedural_requirements")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_work_product_rule_packs(
+        &self,
+        rows: Vec<WorkProductRulePack>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_work_product_rule_packs")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_formatting_profiles(
+        &self,
+        rows: Vec<FormattingProfile>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_formatting_profiles")?;
+        self.run_rows_with_batch(&query_str, rows, batch_size).await
+    }
+
+    pub async fn load_rule_pack_memberships(
+        &self,
+        rows: Vec<RulePackMembership>,
+        batch_size: usize,
+    ) -> Result<()> {
+        let query_str = Self::load_query("load_rule_pack_memberships")?;
         self.run_rows_with_batch(&query_str, rows, batch_size).await
     }
 
@@ -1056,6 +1252,18 @@ impl Neo4jLoader {
     ) -> Result<()> {
         let q = Self::with_transaction_batch(
             Self::load_query("materialize_specialized_edges")?,
+            relationship_batch_size,
+        );
+        self.run_multi_statement_query(&q).await?;
+        Ok(())
+    }
+
+    pub async fn materialize_court_rules_registry_edges(
+        &self,
+        relationship_batch_size: usize,
+    ) -> Result<()> {
+        let q = Self::with_transaction_batch(
+            Self::load_query("materialize_court_rules_registry_edges")?,
             relationship_batch_size,
         );
         self.run_multi_statement_query(&q).await?;

@@ -31,7 +31,7 @@ Build a repeatable indexing system that can answer:
   - Entity, Party, EntityMention.
   - Fact, TimelineEvent, DeadlineInstance.
   - Claim, Element, Defense.
-  - DraftParagraph, DraftSentence.
+  - WorkProductBlock, WorkProductParagraph, WorkProductSentence.
   - Authority refs and validation findings.
   - IngestionRun and IndexRun.
 

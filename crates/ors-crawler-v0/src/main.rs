@@ -1,19 +1,27 @@
 use ors_crawler_v0::{
-    embeddings, io_jsonl, models, neo4j_loader, ors_dom_parser, qc, qc_full, qc_neo4j, resolver,
-    semantic, voyage,
+    court_rules_registry_parser, embeddings, io_jsonl, local_rule_pdf_parser, models, neo4j_loader,
+    ors_dom_parser, qc, qc_full, qc_neo4j, resolver, semantic, utcr_pdf_parser, voyage,
 };
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
+use court_rules_registry_parser::{parse_court_rules_registry_text, CourtRulesRegistryParseConfig};
 use io_jsonl::{read_jsonl_batches, write_jsonl, write_jsonl_atomic, write_one_json};
+use local_rule_pdf_parser::{parse_local_rule_pdf, LocalRulePdfParseConfig};
 use models::{
     Amendment, ChapterFrontMatter, ChapterHeading, ChapterTocEntry, CitationMention, CitesEdge,
-    Deadline, DefinedTerm, Definition, DefinitionScope, Exception, FormText, HtmlParagraph,
-    LegalAction, LegalActor, LegalSemanticNode, LegalTextIdentity, LegalTextVersion, LineageEvent,
-    MoneyAmount, Obligation, ParserDiagnostic, ParserDiagnostics, Penalty, Provision, QcStatus,
-    RateLimit, Remedy, RequiredNotice, ReservedRange, RetrievalChunk, SessionLaw, SourceDocument,
-    SourceNote, StatusEvent, TaxRule, TemporalEffect, TimeInterval, TitleChapterEntry,
+    Commentary, CorpusEdition, Court, CourtRuleChapter, CourtRulesRegistrySnapshot,
+    CourtRulesRegistrySource, Deadline, DefinedTerm, Definition, DefinitionScope,
+    EffectiveInterval, Exception, ExternalLegalCitation, FormText, FormattingProfile,
+    HtmlParagraph, Jurisdiction, LegalAction, LegalActor, LegalCorpus, LegalSemanticNode,
+    LegalTextIdentity, LegalTextVersion, LineageEvent, MoneyAmount, Obligation, ParserDiagnostic,
+    ParserDiagnostics, Penalty, ProceduralRequirement, Provision, QcStatus, RateLimit, Remedy,
+    ReporterNote, RequiredNotice, ReservedRange, RetrievalChunk, RuleApplicabilityEdge,
+    RuleAuthorityDocument, RulePackMembership, RulePublicationEntry, RuleSupersessionEdge,
+    RuleTopic, SessionLaw, SourceDocument, SourceNote, SourcePage, SourceTocEntry, StatusEvent,
+    SupplementaryLocalRuleEdition, TaxRule, TemporalEffect, TimeInterval, TitleChapterEntry,
+    WorkProductRulePack, WorkProductRulePackAuthority,
 };
 use neo4rs::query;
 use ors_dom_parser::parse_ors_chapter_html;
@@ -33,6 +41,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::{info, warn};
+use utcr_pdf_parser::{parse_utcr_pdf, UtcrParseConfig};
 use voyage::{estimate_tokens, model_config, VoyageClient};
 
 // ── CLI ────────────────────────────────────────────────────────────────────────
@@ -62,6 +71,87 @@ enum Command {
 
         #[arg(long)]
         source_url: Option<String>,
+
+        #[arg(long, default_value_t = false)]
+        fail_on_qc: bool,
+    },
+    ParseUtcrPdf {
+        #[arg(long)]
+        input: PathBuf,
+
+        #[arg(long)]
+        out: PathBuf,
+
+        #[arg(long, default_value_t = 2025)]
+        edition_year: i32,
+
+        #[arg(long, default_value = "2025-08-01")]
+        effective_date: String,
+
+        #[arg(
+            long,
+            default_value = "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf"
+        )]
+        source_url: String,
+
+        #[arg(long, default_value_t = false)]
+        fail_on_qc: bool,
+    },
+    ParseCourtRulesRegistry {
+        #[arg(long)]
+        input: PathBuf,
+
+        #[arg(long)]
+        out: PathBuf,
+
+        #[arg(long, default_value = "Linn")]
+        jurisdiction: String,
+
+        #[arg(long, default_value = "2026-05-01")]
+        snapshot_date: String,
+
+        #[arg(
+            long,
+            default_value = "https://www.courts.oregon.gov/courts/linn/go/pages/rules.aspx"
+        )]
+        source_url: String,
+
+        #[arg(long, default_value_t = false)]
+        fail_on_qc: bool,
+    },
+    ParseLocalRulePdf {
+        #[arg(long)]
+        input: PathBuf,
+
+        #[arg(long)]
+        out: PathBuf,
+
+        #[arg(long, default_value = "or:linn")]
+        jurisdiction_id: String,
+
+        #[arg(long, default_value = "Linn County")]
+        jurisdiction_name: String,
+
+        #[arg(long, default_value = "or:linn:circuit_court")]
+        court_id: String,
+
+        #[arg(long, default_value = "Linn County Circuit Court")]
+        court_name: String,
+
+        #[arg(long, default_value = "23rd Judicial District")]
+        judicial_district: String,
+
+        #[arg(long, default_value_t = 2026)]
+        edition_year: i32,
+
+        #[arg(long, default_value = "2026-02-01")]
+        effective_date: String,
+
+        #[arg(
+            long,
+            default_value = "https://www.courts.oregon.gov/courts/linn/go/pages/rules.aspx"
+        )]
+        source_url: String,
 
         #[arg(long, default_value_t = false)]
         fail_on_qc: bool,
@@ -571,6 +661,228 @@ async fn main() -> Result<()> {
 
             if fail_on_qc && report.is_blocking_failure() {
                 return Err(anyhow!("QC failed: {:?}", report.errors));
+            }
+
+            Ok(())
+        }
+        Command::ParseUtcrPdf {
+            input,
+            out,
+            edition_year,
+            effective_date,
+            source_url,
+            fail_on_qc,
+        } => {
+            let parsed = parse_utcr_pdf(
+                &input,
+                UtcrParseConfig {
+                    edition_year,
+                    effective_date,
+                    source_url,
+                },
+            )?;
+            write_utcr_graph_outputs(&out.join("graph"), &parsed)?;
+
+            let errors = parsed
+                .parser_diagnostics
+                .iter()
+                .filter(|diag| diag.severity == "error")
+                .map(|diag| diag.message.clone())
+                .collect::<Vec<_>>();
+            let warnings = parsed
+                .parser_diagnostics
+                .iter()
+                .filter(|diag| diag.severity == "warning")
+                .map(|diag| diag.message.clone())
+                .collect::<Vec<_>>();
+            let stats = serde_json::json!({
+                "corpus": "UTCR",
+                "edition_year": edition_year,
+                "source_pdf": input.display().to_string(),
+                "source_documents": parsed.source_documents.len(),
+                "source_pages": parsed.source_pages.len(),
+                "toc_entries": parsed.source_toc_entries.len(),
+                "chapters": parsed.court_rule_chapters.len(),
+                "rules": parsed.identities.len(),
+                "versions": parsed.versions.len(),
+                "provisions": parsed.provisions.len(),
+                "citation_mentions": parsed.citation_mentions.len(),
+                "external_legal_citations": parsed.external_legal_citations.len(),
+                "cites_edges": parsed.cites_edges.len(),
+                "procedural_requirements": parsed.procedural_rules.len()
+                    + parsed.formatting_requirements.len()
+                    + parsed.filing_requirements.len()
+                    + parsed.service_requirements.len()
+                    + parsed.efiling_requirements.len()
+                    + parsed.caption_requirements.len()
+                    + parsed.signature_requirements.len()
+                    + parsed.certificate_requirements.len()
+                    + parsed.exhibit_requirements.len()
+                    + parsed.protected_information_rules.len()
+                    + parsed.sanction_rules.len()
+                    + parsed.deadline_rules.len()
+                    + parsed.exception_rules.len(),
+                "work_product_rule_packs": parsed.work_product_rule_packs.len(),
+                "retrieval_chunks": parsed.retrieval_chunks.len(),
+                "qc_failed": !errors.is_empty(),
+                "qc_errors": errors,
+                "qc_warnings": warnings,
+            });
+            write_one_json(out.join("stats.json"), &stats)?;
+
+            if fail_on_qc
+                && parsed
+                    .parser_diagnostics
+                    .iter()
+                    .any(|diag| diag.severity == "error")
+            {
+                return Err(anyhow!(
+                    "UTCR QC failed; see {}",
+                    out.join("stats.json").display()
+                ));
+            }
+
+            Ok(())
+        }
+        Command::ParseCourtRulesRegistry {
+            input,
+            out,
+            jurisdiction,
+            snapshot_date,
+            source_url,
+            fail_on_qc,
+        } => {
+            let text = fs::read_to_string(&input)
+                .with_context(|| format!("failed to read registry text {}", input.display()))?;
+            let parsed = parse_court_rules_registry_text(
+                &text,
+                CourtRulesRegistryParseConfig::oregon(
+                    jurisdiction,
+                    snapshot_date.clone(),
+                    source_url,
+                ),
+            )?;
+            write_court_rules_registry_graph_outputs(&out.join("graph"), &parsed)?;
+
+            let errors = parsed
+                .parser_diagnostics
+                .iter()
+                .filter(|diag| diag.severity == "error")
+                .map(|diag| diag.message.clone())
+                .collect::<Vec<_>>();
+            let warnings = parsed
+                .parser_diagnostics
+                .iter()
+                .filter(|diag| diag.severity == "warning")
+                .map(|diag| diag.message.clone())
+                .collect::<Vec<_>>();
+            let stats = serde_json::json!({
+                "corpus": "CourtRulesRegistry",
+                "snapshot_date": snapshot_date,
+                "registry_sources": parsed.registry_sources.len(),
+                "registry_snapshots": parsed.registry_snapshots.len(),
+                "publication_entries": parsed.publication_entries.len(),
+                "authority_documents": parsed.authority_documents.len(),
+                "supplementary_local_rule_editions": parsed.supplementary_local_rule_editions.len(),
+                "chief_justice_orders": parsed.chief_justice_orders.len(),
+                "presiding_judge_orders": parsed.presiding_judge_orders.len(),
+                "out_of_cycle_amendments": parsed.out_of_cycle_amendments.len(),
+                "rule_topics": parsed.rule_topics.len(),
+                "rule_supersession_edges": parsed.rule_supersession_edges.len(),
+                "work_product_rule_pack_authorities": parsed.work_product_rule_pack_authorities.len(),
+                "qc_failed": !errors.is_empty(),
+                "qc_errors": errors,
+                "qc_warnings": warnings,
+            });
+            write_one_json(out.join("stats.json"), &stats)?;
+
+            if fail_on_qc
+                && parsed
+                    .parser_diagnostics
+                    .iter()
+                    .any(|diag| diag.severity == "error")
+            {
+                return Err(anyhow!(
+                    "court rules registry QC failed; see {}",
+                    out.join("stats.json").display()
+                ));
+            }
+
+            Ok(())
+        }
+        Command::ParseLocalRulePdf {
+            input,
+            out,
+            jurisdiction_id,
+            jurisdiction_name,
+            court_id,
+            court_name,
+            judicial_district,
+            edition_year,
+            effective_date,
+            source_url,
+            fail_on_qc,
+        } => {
+            let parsed = parse_local_rule_pdf(
+                &input,
+                LocalRulePdfParseConfig::oregon(
+                    jurisdiction_id,
+                    jurisdiction_name,
+                    court_id,
+                    court_name,
+                    judicial_district,
+                    edition_year,
+                    effective_date.clone(),
+                    source_url,
+                ),
+            )?;
+            write_local_rule_pdf_graph_outputs(&out.join("graph"), &parsed)?;
+
+            let errors = parsed
+                .parser_diagnostics
+                .iter()
+                .filter(|diag| diag.severity == "error")
+                .map(|diag| diag.message.clone())
+                .collect::<Vec<_>>();
+            let warnings = parsed
+                .parser_diagnostics
+                .iter()
+                .filter(|diag| diag.severity == "warning")
+                .map(|diag| diag.message.clone())
+                .collect::<Vec<_>>();
+            let stats = serde_json::json!({
+                "corpus": "SLR",
+                "edition_year": edition_year,
+                "effective_date": effective_date,
+                "source_pdf": input.display().to_string(),
+                "jurisdictions": parsed.jurisdictions.len(),
+                "courts": parsed.courts.len(),
+                "source_documents": parsed.source_documents.len(),
+                "source_pages": parsed.source_pages.len(),
+                "toc_entries": parsed.source_toc_entries.len(),
+                "chapters": parsed.court_rule_chapters.len(),
+                "rules": parsed.identities.len(),
+                "versions": parsed.versions.len(),
+                "provisions": parsed.provisions.len(),
+                "citation_mentions": parsed.citation_mentions.len(),
+                "external_legal_citations": parsed.external_legal_citations.len(),
+                "retrieval_chunks": parsed.retrieval_chunks.len(),
+                "qc_failed": !errors.is_empty(),
+                "qc_errors": errors,
+                "qc_warnings": warnings,
+            });
+            write_one_json(out.join("stats.json"), &stats)?;
+
+            if fail_on_qc
+                && parsed
+                    .parser_diagnostics
+                    .iter()
+                    .any(|diag| diag.severity == "error")
+            {
+                return Err(anyhow!(
+                    "local rule PDF QC failed; see {}",
+                    out.join("stats.json").display()
+                ));
             }
 
             Ok(())
@@ -1221,6 +1533,71 @@ async fn run_seed(
     loader.load_corpus().await?;
     loader.load_corpus_editions(edition_year).await?;
 
+    let legal_corpora_path = graph_dir.join("legal_corpora.jsonl");
+    if legal_corpora_path.exists() {
+        let start = Instant::now();
+        let mut total = 0usize;
+        for batch in read_jsonl_batches::<LegalCorpus>(
+            &legal_corpora_path,
+            seed_batch_config.node_batch_size,
+        )? {
+            let rows = batch?;
+            total += rows.len();
+            loader
+                .load_legal_corpora(rows, seed_batch_config.node_batch_size)
+                .await?;
+        }
+        log_seed_phase_done("Legal Corpora", total, start);
+    }
+
+    let corpus_editions_path = graph_dir.join("corpus_editions.jsonl");
+    if corpus_editions_path.exists() {
+        let start = Instant::now();
+        let mut total = 0usize;
+        for batch in read_jsonl_batches::<CorpusEdition>(
+            &corpus_editions_path,
+            seed_batch_config.node_batch_size,
+        )? {
+            let rows = batch?;
+            total += rows.len();
+            loader
+                .load_corpus_edition_rows(rows, seed_batch_config.node_batch_size)
+                .await?;
+        }
+        log_seed_phase_done("Corpus Editions", total, start);
+    }
+
+    let jurisdiction_rows_path = graph_dir.join("jurisdictions.jsonl");
+    if jurisdiction_rows_path.exists() {
+        let start = Instant::now();
+        let mut total = 0usize;
+        for batch in read_jsonl_batches::<Jurisdiction>(
+            &jurisdiction_rows_path,
+            seed_batch_config.node_batch_size,
+        )? {
+            let rows = batch?;
+            total += rows.len();
+            loader
+                .load_jurisdiction_rows(rows, seed_batch_config.node_batch_size)
+                .await?;
+        }
+        log_seed_phase_done("Jurisdiction Rows", total, start);
+    }
+
+    let courts_path = graph_dir.join("courts.jsonl");
+    if courts_path.exists() {
+        let start = Instant::now();
+        let mut total = 0usize;
+        for batch in read_jsonl_batches::<Court>(&courts_path, seed_batch_config.node_batch_size)? {
+            let rows = batch?;
+            total += rows.len();
+            loader
+                .load_courts(rows, seed_batch_config.node_batch_size)
+                .await?;
+        }
+        log_seed_phase_done("Courts", total, start);
+    }
+
     // Phase 2: Load all node types from JSONL files
     info!("═══ Phase 2: Loading Source Documents ═══");
     let source_docs_path = graph_dir.join("source_documents.jsonl");
@@ -1238,6 +1615,56 @@ async fn run_seed(
                 .await?;
         }
         log_seed_phase_done("Source Documents", total, start);
+    }
+
+    let source_pages_path = graph_dir.join("source_pages.jsonl");
+    if source_pages_path.exists() {
+        let start = Instant::now();
+        let mut total = 0usize;
+        for batch in
+            read_jsonl_batches::<SourcePage>(&source_pages_path, seed_batch_config.node_batch_size)?
+        {
+            let rows = batch?;
+            total += rows.len();
+            loader
+                .load_source_pages(rows, seed_batch_config.node_batch_size)
+                .await?;
+        }
+        log_seed_phase_done("Source Pages", total, start);
+    }
+
+    let source_toc_path = graph_dir.join("source_toc_entries.jsonl");
+    if source_toc_path.exists() {
+        let start = Instant::now();
+        let mut total = 0usize;
+        for batch in read_jsonl_batches::<SourceTocEntry>(
+            &source_toc_path,
+            seed_batch_config.node_batch_size,
+        )? {
+            let rows = batch?;
+            total += rows.len();
+            loader
+                .load_source_toc_entries(rows, seed_batch_config.node_batch_size)
+                .await?;
+        }
+        log_seed_phase_done("Source TOC Entries", total, start);
+    }
+
+    let court_rule_chapters_path = graph_dir.join("court_rule_chapters.jsonl");
+    if court_rule_chapters_path.exists() {
+        let start = Instant::now();
+        let mut total = 0usize;
+        for batch in read_jsonl_batches::<CourtRuleChapter>(
+            &court_rule_chapters_path,
+            seed_batch_config.node_batch_size,
+        )? {
+            let rows = batch?;
+            total += rows.len();
+            loader
+                .load_court_rule_chapters(rows, seed_batch_config.node_batch_size)
+                .await?;
+        }
+        log_seed_phase_done("Court Rule Chapters", total, start);
     }
 
     info!("═══ Phase 3: Loading Legal Text Identities ═══");
@@ -1269,9 +1696,14 @@ async fn run_seed(
         )? {
             let mut versions = batch?;
             for v in &mut versions {
+                let authority_header = authority_embedding_header(
+                    v.authority_family.as_deref(),
+                    v.edition_year,
+                    v.corpus_id.as_deref(),
+                );
                 let input_text = format!(
-                    "Oregon Revised Statutes. {} Edition.\nCitation: {}\nTitle: {}\nStatus: {}\nText:\n{}",
-                    edition_year,
+                    "{}\nCitation: {}\nTitle: {}\nStatus: {}\nText:\n{}",
+                    authority_header,
                     v.citation,
                     v.title.as_deref().unwrap_or(""),
                     v.status,
@@ -1302,12 +1734,14 @@ async fn run_seed(
         {
             let mut provisions = batch?;
             for p in &mut provisions {
-                let input_text = format!(
-                    "Oregon Revised Statutes. {} Edition.\nCitation: {}\nProvision type: {}.\nStatus: active.\nText:\n{}",
+                let authority_header = authority_embedding_header(
+                    p.authority_family.as_deref(),
                     edition_year,
-                    p.display_citation,
-                    p.provision_type,
-                    p.text
+                    p.corpus_id.as_deref(),
+                );
+                let input_text = format!(
+                    "{}\nCitation: {}\nProvision type: {}.\nStatus: active.\nText:\n{}",
+                    authority_header, p.display_citation, p.provision_type, p.text
                 );
                 p.embedding_input_hash = Some(calculate_embedding_input_hash(&input_text));
             }
@@ -1397,6 +1831,85 @@ async fn run_seed(
             }
         }};
     }
+
+    load_optional_node_file!(
+        "Phase 8r0: Loading Court Rules Registry Sources",
+        "court_rules_registry_sources.jsonl",
+        CourtRulesRegistrySource,
+        load_court_rules_registry_sources
+    );
+    load_optional_node_file!(
+        "Phase 8r1: Loading Court Rules Registry Snapshots",
+        "court_rules_registry_snapshots.jsonl",
+        CourtRulesRegistrySnapshot,
+        load_court_rules_registry_snapshots
+    );
+    load_optional_node_file!(
+        "Phase 8r2: Loading Rule Publication Entries",
+        "rule_publication_entries.jsonl",
+        RulePublicationEntry,
+        load_rule_publication_entries
+    );
+    load_optional_node_file!(
+        "Phase 8r3: Loading Rule Authority Documents",
+        "rule_authority_documents.jsonl",
+        RuleAuthorityDocument,
+        load_rule_authority_documents
+    );
+    load_optional_node_file!(
+        "Phase 8r4: Loading Chief Justice Orders",
+        "chief_justice_orders.jsonl",
+        RuleAuthorityDocument,
+        load_rule_authority_documents
+    );
+    load_optional_node_file!(
+        "Phase 8r5: Loading Presiding Judge Orders",
+        "presiding_judge_orders.jsonl",
+        RuleAuthorityDocument,
+        load_rule_authority_documents
+    );
+    load_optional_node_file!(
+        "Phase 8r6: Loading Supplementary Local Rule Editions",
+        "supplementary_local_rule_editions.jsonl",
+        SupplementaryLocalRuleEdition,
+        load_supplementary_local_rule_editions
+    );
+    load_optional_node_file!(
+        "Phase 8r7: Loading Out-of-Cycle Amendments",
+        "out_of_cycle_amendments.jsonl",
+        RuleAuthorityDocument,
+        load_rule_authority_documents
+    );
+    load_optional_node_file!(
+        "Phase 8r8: Loading Effective Intervals",
+        "effective_intervals.jsonl",
+        EffectiveInterval,
+        load_effective_intervals
+    );
+    load_optional_node_file!(
+        "Phase 8r9: Loading Rule Topics",
+        "rule_topics.jsonl",
+        RuleTopic,
+        load_rule_topics
+    );
+    load_optional_node_file!(
+        "Phase 8ra: Loading Rule Applicability Edges",
+        "rule_applicability_edges.jsonl",
+        RuleApplicabilityEdge,
+        load_rule_applicability_edges
+    );
+    load_optional_node_file!(
+        "Phase 8rb: Loading Rule Supersession Edges",
+        "rule_supersession_edges.jsonl",
+        RuleSupersessionEdge,
+        load_rule_supersession_edges
+    );
+    load_optional_node_file!(
+        "Phase 8rc: Loading WorkProduct Rule Pack Authorities",
+        "work_product_rule_pack_authorities.jsonl",
+        WorkProductRulePackAuthority,
+        load_work_product_rule_pack_authorities
+    );
 
     load_optional_node_file!(
         "Phase 8a: Loading Status Events",
@@ -1571,6 +2084,120 @@ async fn run_seed(
         "form_texts.jsonl",
         FormText,
         load_form_texts
+    );
+    load_optional_node_file!(
+        "Phase 8u: Loading External Legal Citations",
+        "external_legal_citations.jsonl",
+        ExternalLegalCitation,
+        load_external_legal_citations
+    );
+    load_optional_node_file!(
+        "Phase 8v: Loading Reporter Notes",
+        "reporter_notes.jsonl",
+        ReporterNote,
+        load_reporter_notes
+    );
+    load_optional_node_file!(
+        "Phase 8w: Loading Commentaries",
+        "commentaries.jsonl",
+        Commentary,
+        load_commentaries
+    );
+    load_optional_node_file!(
+        "Phase 8x: Loading Procedural Rules",
+        "procedural_rules.jsonl",
+        ProceduralRequirement,
+        load_procedural_requirements
+    );
+    load_optional_node_file!(
+        "Phase 8x1: Loading Formatting Requirements",
+        "formatting_requirements.jsonl",
+        ProceduralRequirement,
+        load_procedural_requirements
+    );
+    load_optional_node_file!(
+        "Phase 8x2: Loading Filing Requirements",
+        "filing_requirements.jsonl",
+        ProceduralRequirement,
+        load_procedural_requirements
+    );
+    load_optional_node_file!(
+        "Phase 8x3: Loading Service Requirements",
+        "service_requirements.jsonl",
+        ProceduralRequirement,
+        load_procedural_requirements
+    );
+    load_optional_node_file!(
+        "Phase 8x4: Loading Efiling Requirements",
+        "efiling_requirements.jsonl",
+        ProceduralRequirement,
+        load_procedural_requirements
+    );
+    load_optional_node_file!(
+        "Phase 8x5: Loading Caption Requirements",
+        "caption_requirements.jsonl",
+        ProceduralRequirement,
+        load_procedural_requirements
+    );
+    load_optional_node_file!(
+        "Phase 8x6: Loading Signature Requirements",
+        "signature_requirements.jsonl",
+        ProceduralRequirement,
+        load_procedural_requirements
+    );
+    load_optional_node_file!(
+        "Phase 8x7: Loading Certificate Requirements",
+        "certificate_requirements.jsonl",
+        ProceduralRequirement,
+        load_procedural_requirements
+    );
+    load_optional_node_file!(
+        "Phase 8x8: Loading Exhibit Requirements",
+        "exhibit_requirements.jsonl",
+        ProceduralRequirement,
+        load_procedural_requirements
+    );
+    load_optional_node_file!(
+        "Phase 8x9: Loading Protected Information Rules",
+        "protected_information_rules.jsonl",
+        ProceduralRequirement,
+        load_procedural_requirements
+    );
+    load_optional_node_file!(
+        "Phase 8x10: Loading Sanction Rules",
+        "sanction_rules.jsonl",
+        ProceduralRequirement,
+        load_procedural_requirements
+    );
+    load_optional_node_file!(
+        "Phase 8x11: Loading Deadline Rules",
+        "deadline_rules.jsonl",
+        ProceduralRequirement,
+        load_procedural_requirements
+    );
+    load_optional_node_file!(
+        "Phase 8x12: Loading Exception Rules",
+        "exception_rules.jsonl",
+        ProceduralRequirement,
+        load_procedural_requirements
+    );
+    load_optional_node_file!(
+        "Phase 8y: Loading WorkProduct Rule Packs",
+        "work_product_rule_packs.jsonl",
+        WorkProductRulePack,
+        load_work_product_rule_packs
+    );
+    load_optional_node_file!(
+        "Phase 8z: Loading Formatting Profiles",
+        "formatting_profiles.jsonl",
+        FormattingProfile,
+        load_formatting_profiles
+    );
+    load_optional_node_file!(
+        "Phase 8zz: Loading Rule Pack Memberships",
+        "rule_pack_memberships.jsonl",
+        RulePackMembership,
+        load_rule_pack_memberships
     );
 
     materialize_seed_relationships(
@@ -1793,6 +2420,7 @@ async fn materialize_seed_relationships(
         loader.materialize_obligation_edges(relationship_batch_size),
         loader.materialize_history_edges(relationship_batch_size),
         loader.materialize_specialized_edges(relationship_batch_size),
+        loader.materialize_court_rules_registry_edges(relationship_batch_size),
     )?;
 
     info!("Enforcing current flags on LegalTextVersion nodes...");
@@ -1959,6 +2587,38 @@ fn validate_seed_graph_contract(
     }
 
     count_optional!("chapter_headings.jsonl", ChapterHeading);
+    count_optional!("legal_corpora.jsonl", LegalCorpus);
+    count_optional!("corpus_editions.jsonl", CorpusEdition);
+    count_optional!("jurisdictions.jsonl", Jurisdiction);
+    count_optional!("courts.jsonl", Court);
+    count_optional!(
+        "court_rules_registry_sources.jsonl",
+        CourtRulesRegistrySource
+    );
+    count_optional!(
+        "court_rules_registry_snapshots.jsonl",
+        CourtRulesRegistrySnapshot
+    );
+    count_optional!("rule_publication_entries.jsonl", RulePublicationEntry);
+    count_optional!("rule_authority_documents.jsonl", RuleAuthorityDocument);
+    count_optional!("chief_justice_orders.jsonl", RuleAuthorityDocument);
+    count_optional!("presiding_judge_orders.jsonl", RuleAuthorityDocument);
+    count_optional!(
+        "supplementary_local_rule_editions.jsonl",
+        SupplementaryLocalRuleEdition
+    );
+    count_optional!("out_of_cycle_amendments.jsonl", RuleAuthorityDocument);
+    count_optional!("effective_intervals.jsonl", EffectiveInterval);
+    count_optional!("rule_topics.jsonl", RuleTopic);
+    count_optional!("rule_supersession_edges.jsonl", RuleSupersessionEdge);
+    count_optional!("rule_applicability_edges.jsonl", RuleApplicabilityEdge);
+    count_optional!(
+        "work_product_rule_pack_authorities.jsonl",
+        WorkProductRulePackAuthority
+    );
+    count_optional!("source_pages.jsonl", SourcePage);
+    count_optional!("source_toc_entries.jsonl", SourceTocEntry);
+    count_optional!("court_rule_chapters.jsonl", CourtRuleChapter);
     count_optional!("html_paragraphs.debug.jsonl", HtmlParagraph);
     count_optional!("chapter_front_matter.jsonl", ChapterFrontMatter);
     count_optional!("title_chapter_entries.jsonl", TitleChapterEntry);
@@ -1966,6 +2626,9 @@ fn validate_seed_graph_contract(
     count_optional!("chapter_toc_entries.jsonl", ChapterTocEntry);
     count_optional!("reserved_ranges.jsonl", ReservedRange);
     count_optional!("parser_diagnostics.jsonl", ParserDiagnostic);
+    count_optional!("reporter_notes.jsonl", ReporterNote);
+    count_optional!("commentaries.jsonl", Commentary);
+    count_optional!("external_legal_citations.jsonl", ExternalLegalCitation);
     count_optional!("cites_edges.jsonl", CitesEdge);
     count_optional!("status_events.jsonl", StatusEvent);
     count_optional!("temporal_effects.jsonl", TemporalEffect);
@@ -1989,6 +2652,22 @@ fn validate_seed_graph_contract(
     count_optional!("rate_limits.jsonl", RateLimit);
     count_optional!("required_notices.jsonl", RequiredNotice);
     count_optional!("form_texts.jsonl", FormText);
+    count_optional!("procedural_rules.jsonl", ProceduralRequirement);
+    count_optional!("formatting_requirements.jsonl", ProceduralRequirement);
+    count_optional!("filing_requirements.jsonl", ProceduralRequirement);
+    count_optional!("service_requirements.jsonl", ProceduralRequirement);
+    count_optional!("efiling_requirements.jsonl", ProceduralRequirement);
+    count_optional!("caption_requirements.jsonl", ProceduralRequirement);
+    count_optional!("signature_requirements.jsonl", ProceduralRequirement);
+    count_optional!("certificate_requirements.jsonl", ProceduralRequirement);
+    count_optional!("exhibit_requirements.jsonl", ProceduralRequirement);
+    count_optional!("protected_information_rules.jsonl", ProceduralRequirement);
+    count_optional!("sanction_rules.jsonl", ProceduralRequirement);
+    count_optional!("deadline_rules.jsonl", ProceduralRequirement);
+    count_optional!("exception_rules.jsonl", ProceduralRequirement);
+    count_optional!("work_product_rule_packs.jsonl", WorkProductRulePack);
+    count_optional!("formatting_profiles.jsonl", FormattingProfile);
+    count_optional!("rule_pack_memberships.jsonl", RulePackMembership);
 
     Ok(counts)
 }
@@ -2803,6 +3482,269 @@ fn append_derived_graph_nodes(graph_dir: &Path, parsed: &models::ParsedChapter) 
     Ok(())
 }
 
+fn write_utcr_graph_outputs(
+    graph_dir: &Path,
+    parsed: &utcr_pdf_parser::ParsedUtcrCorpus,
+) -> Result<()> {
+    write_jsonl(graph_dir.join("legal_corpora.jsonl"), &parsed.legal_corpora)?;
+    write_jsonl(
+        graph_dir.join("corpus_editions.jsonl"),
+        &parsed.corpus_editions,
+    )?;
+    write_jsonl(
+        graph_dir.join("source_documents.jsonl"),
+        &parsed.source_documents,
+    )?;
+    write_jsonl(graph_dir.join("source_pages.jsonl"), &parsed.source_pages)?;
+    write_jsonl(
+        graph_dir.join("source_toc_entries.jsonl"),
+        &parsed.source_toc_entries,
+    )?;
+    write_jsonl(
+        graph_dir.join("court_rule_chapters.jsonl"),
+        &parsed.court_rule_chapters,
+    )?;
+    write_jsonl(
+        graph_dir.join("chapter_headings.jsonl"),
+        &parsed.chapter_headings,
+    )?;
+    write_jsonl(
+        graph_dir.join("legal_text_identities.jsonl"),
+        &parsed.identities,
+    )?;
+    write_jsonl(
+        graph_dir.join("legal_text_versions.jsonl"),
+        &parsed.versions,
+    )?;
+    write_jsonl(graph_dir.join("provisions.jsonl"), &parsed.provisions)?;
+    write_jsonl(
+        graph_dir.join("reporter_notes.jsonl"),
+        &parsed.reporter_notes,
+    )?;
+    write_jsonl(graph_dir.join("commentaries.jsonl"), &parsed.commentaries)?;
+    write_jsonl(
+        graph_dir.join("citation_mentions.jsonl"),
+        &parsed.citation_mentions,
+    )?;
+    write_jsonl(
+        graph_dir.join("external_legal_citations.jsonl"),
+        &parsed.external_legal_citations,
+    )?;
+    write_jsonl(graph_dir.join("cites_edges.jsonl"), &parsed.cites_edges)?;
+    write_jsonl(
+        graph_dir.join("procedural_rules.jsonl"),
+        &parsed.procedural_rules,
+    )?;
+    write_jsonl(
+        graph_dir.join("formatting_requirements.jsonl"),
+        &parsed.formatting_requirements,
+    )?;
+    write_jsonl(
+        graph_dir.join("filing_requirements.jsonl"),
+        &parsed.filing_requirements,
+    )?;
+    write_jsonl(
+        graph_dir.join("service_requirements.jsonl"),
+        &parsed.service_requirements,
+    )?;
+    write_jsonl(
+        graph_dir.join("efiling_requirements.jsonl"),
+        &parsed.efiling_requirements,
+    )?;
+    write_jsonl(
+        graph_dir.join("caption_requirements.jsonl"),
+        &parsed.caption_requirements,
+    )?;
+    write_jsonl(
+        graph_dir.join("signature_requirements.jsonl"),
+        &parsed.signature_requirements,
+    )?;
+    write_jsonl(
+        graph_dir.join("certificate_requirements.jsonl"),
+        &parsed.certificate_requirements,
+    )?;
+    write_jsonl(
+        graph_dir.join("exhibit_requirements.jsonl"),
+        &parsed.exhibit_requirements,
+    )?;
+    write_jsonl(
+        graph_dir.join("protected_information_rules.jsonl"),
+        &parsed.protected_information_rules,
+    )?;
+    write_jsonl(
+        graph_dir.join("sanction_rules.jsonl"),
+        &parsed.sanction_rules,
+    )?;
+    write_jsonl(
+        graph_dir.join("deadline_rules.jsonl"),
+        &parsed.deadline_rules,
+    )?;
+    write_jsonl(
+        graph_dir.join("exception_rules.jsonl"),
+        &parsed.exception_rules,
+    )?;
+    write_jsonl(
+        graph_dir.join("work_product_rule_packs.jsonl"),
+        &parsed.work_product_rule_packs,
+    )?;
+    write_jsonl(
+        graph_dir.join("formatting_profiles.jsonl"),
+        &parsed.formatting_profiles,
+    )?;
+    write_jsonl(
+        graph_dir.join("rule_pack_memberships.jsonl"),
+        &parsed.rule_pack_memberships,
+    )?;
+    write_jsonl(
+        graph_dir.join("retrieval_chunks.jsonl"),
+        &parsed.retrieval_chunks,
+    )?;
+    write_jsonl(
+        graph_dir.join("parser_diagnostics.jsonl"),
+        &parsed.parser_diagnostics,
+    )?;
+    Ok(())
+}
+
+fn write_court_rules_registry_graph_outputs(
+    graph_dir: &Path,
+    parsed: &court_rules_registry_parser::ParsedCourtRulesRegistry,
+) -> Result<()> {
+    write_empty_core_seed_files(graph_dir)?;
+    write_jsonl(
+        graph_dir.join("court_rules_registry_sources.jsonl"),
+        &parsed.registry_sources,
+    )?;
+    write_jsonl(
+        graph_dir.join("court_rules_registry_snapshots.jsonl"),
+        &parsed.registry_snapshots,
+    )?;
+    write_jsonl(
+        graph_dir.join("rule_publication_entries.jsonl"),
+        &parsed.publication_entries,
+    )?;
+    write_jsonl(graph_dir.join("jurisdictions.jsonl"), &parsed.jurisdictions)?;
+    write_jsonl(graph_dir.join("courts.jsonl"), &parsed.courts)?;
+    write_jsonl(
+        graph_dir.join("rule_authority_documents.jsonl"),
+        &parsed.authority_documents,
+    )?;
+    write_jsonl(
+        graph_dir.join("chief_justice_orders.jsonl"),
+        &parsed.chief_justice_orders,
+    )?;
+    write_jsonl(
+        graph_dir.join("presiding_judge_orders.jsonl"),
+        &parsed.presiding_judge_orders,
+    )?;
+    write_jsonl(
+        graph_dir.join("supplementary_local_rule_editions.jsonl"),
+        &parsed.supplementary_local_rule_editions,
+    )?;
+    write_jsonl(
+        graph_dir.join("out_of_cycle_amendments.jsonl"),
+        &parsed.out_of_cycle_amendments,
+    )?;
+    write_jsonl(
+        graph_dir.join("effective_intervals.jsonl"),
+        &parsed.effective_intervals,
+    )?;
+    write_jsonl(graph_dir.join("rule_topics.jsonl"), &parsed.rule_topics)?;
+    write_jsonl(
+        graph_dir.join("rule_supersession_edges.jsonl"),
+        &parsed.rule_supersession_edges,
+    )?;
+    write_jsonl(
+        graph_dir.join("rule_applicability_edges.jsonl"),
+        &parsed.rule_applicability_edges,
+    )?;
+    write_jsonl(
+        graph_dir.join("work_product_rule_pack_authorities.jsonl"),
+        &parsed.work_product_rule_pack_authorities,
+    )?;
+    write_jsonl(
+        graph_dir.join("parser_diagnostics.jsonl"),
+        &parsed.parser_diagnostics,
+    )?;
+    Ok(())
+}
+
+fn write_local_rule_pdf_graph_outputs(
+    graph_dir: &Path,
+    parsed: &local_rule_pdf_parser::ParsedLocalRuleCorpus,
+) -> Result<()> {
+    write_jsonl(graph_dir.join("jurisdictions.jsonl"), &parsed.jurisdictions)?;
+    write_jsonl(graph_dir.join("courts.jsonl"), &parsed.courts)?;
+    write_jsonl(graph_dir.join("legal_corpora.jsonl"), &parsed.legal_corpora)?;
+    write_jsonl(
+        graph_dir.join("corpus_editions.jsonl"),
+        &parsed.corpus_editions,
+    )?;
+    write_jsonl(
+        graph_dir.join("source_documents.jsonl"),
+        &parsed.source_documents,
+    )?;
+    write_jsonl(graph_dir.join("source_pages.jsonl"), &parsed.source_pages)?;
+    write_jsonl(
+        graph_dir.join("source_toc_entries.jsonl"),
+        &parsed.source_toc_entries,
+    )?;
+    write_jsonl(
+        graph_dir.join("court_rule_chapters.jsonl"),
+        &parsed.court_rule_chapters,
+    )?;
+    write_jsonl(
+        graph_dir.join("chapter_headings.jsonl"),
+        &parsed.chapter_headings,
+    )?;
+    write_jsonl(
+        graph_dir.join("legal_text_identities.jsonl"),
+        &parsed.identities,
+    )?;
+    write_jsonl(
+        graph_dir.join("legal_text_versions.jsonl"),
+        &parsed.versions,
+    )?;
+    write_jsonl(graph_dir.join("provisions.jsonl"), &parsed.provisions)?;
+    write_jsonl(
+        graph_dir.join("citation_mentions.jsonl"),
+        &parsed.citation_mentions,
+    )?;
+    write_jsonl(
+        graph_dir.join("external_legal_citations.jsonl"),
+        &parsed.external_legal_citations,
+    )?;
+    write_jsonl(
+        graph_dir.join("retrieval_chunks.jsonl"),
+        &parsed.retrieval_chunks,
+    )?;
+    write_jsonl(
+        graph_dir.join("parser_diagnostics.jsonl"),
+        &parsed.parser_diagnostics,
+    )?;
+    write_jsonl::<CitesEdge>(graph_dir.join("cites_edges.jsonl"), &[])?;
+    Ok(())
+}
+
+fn write_empty_core_seed_files(graph_dir: &Path) -> Result<()> {
+    write_empty_if_missing::<SourceDocument>(&graph_dir.join("source_documents.jsonl"))?;
+    write_empty_if_missing::<LegalTextIdentity>(&graph_dir.join("legal_text_identities.jsonl"))?;
+    write_empty_if_missing::<LegalTextVersion>(&graph_dir.join("legal_text_versions.jsonl"))?;
+    write_empty_if_missing::<Provision>(&graph_dir.join("provisions.jsonl"))?;
+    write_empty_if_missing::<CitationMention>(&graph_dir.join("citation_mentions.jsonl"))?;
+    write_empty_if_missing::<RetrievalChunk>(&graph_dir.join("retrieval_chunks.jsonl"))?;
+    write_empty_if_missing::<ChapterHeading>(&graph_dir.join("chapter_headings.jsonl"))?;
+    write_empty_if_missing::<CitesEdge>(&graph_dir.join("cites_edges.jsonl"))?;
+    Ok(())
+}
+
+fn write_empty_if_missing<T: Serialize>(path: &Path) -> Result<()> {
+    if !path.exists() {
+        write_jsonl::<T>(path, &[])?;
+    }
+    Ok(())
+}
+
 fn dedupe_session_laws(rows: &mut Vec<SessionLaw>) {
     let mut seen = std::collections::HashSet::new();
     rows.retain(|row| seen.insert(row.session_law_id.clone()));
@@ -2875,6 +3817,25 @@ fn chapter_sort_key(chapter: &str) -> (u32, String) {
     let digits: String = chapter.chars().take_while(|c| c.is_ascii_digit()).collect();
     let n = digits.parse::<u32>().unwrap_or(9999);
     (n, chapter.to_string())
+}
+
+fn authority_embedding_header(
+    authority_family: Option<&str>,
+    edition_year: i32,
+    corpus_id: Option<&str>,
+) -> String {
+    match authority_family.unwrap_or("ORS") {
+        "UTCR" => format!("Oregon Uniform Trial Court Rules. {edition_year} Edition."),
+        "SLR" => {
+            let jurisdiction = corpus_id
+                .and_then(|id| id.strip_suffix(":slr"))
+                .unwrap_or("or:linn");
+            format!(
+                "Oregon Supplementary Local Court Rules ({jurisdiction}). {edition_year} Edition."
+            )
+        }
+        _ => format!("Oregon Revised Statutes. {edition_year} Edition."),
+    }
 }
 
 fn calculate_embedding_input_hash(text: &str) -> String {

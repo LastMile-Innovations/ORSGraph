@@ -9,12 +9,19 @@ use flate2::read::DeflateDecoder;
 use neo4rs::query;
 use regex::Regex;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read};
 use std::path::Path;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::fs;
+
+#[derive(Clone, Copy)]
+struct AstStoragePolicy {
+    entity_inline_bytes: u64,
+    snapshot_inline_bytes: u64,
+    block_inline_bytes: u64,
+}
 
 #[derive(Clone)]
 pub struct CaseBuilderService {
@@ -23,6 +30,7 @@ pub struct CaseBuilderService {
     upload_ttl_seconds: u64,
     download_ttl_seconds: u64,
     max_upload_bytes: u64,
+    ast_storage_policy: AstStoragePolicy,
 }
 
 #[derive(Clone)]
@@ -84,18 +92,25 @@ struct WorkProductHashes {
     formatting_hash: String,
 }
 
+struct ComparableLayerItem {
+    layer: &'static str,
+    target_type: String,
+    target_id: String,
+    title: String,
+    summary: String,
+    value: serde_json::Value,
+}
+
 const PARSER_REGISTRY_VERSION: &str = "casebuilder-parser-registry-v1";
 const CHUNKER_VERSION: &str = "casebuilder-line-chunker-v1";
 const CITATION_RESOLVER_VERSION: &str = "casebuilder-citation-resolver-v1";
 const CASE_INDEX_VERSION: &str = "casebuilder-case-graph-index-v1";
 const ORS_2025_SOURCE_URL: &str = "https://www.oregonlegislature.gov/bills_laws/pages/ors.aspx";
 const ORCP_2025_SOURCE_URL: &str = "https://www.oregonlegislature.gov/bills_laws/Pages/ORCP.aspx";
-const UTCR_CURRENT_SOURCE_URL: &str =
-    "https://www.courts.oregon.gov/programs/utcr/pages/currentrules.aspx";
+const UTCR_CURRENT_SOURCE_URL: &str = "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf";
 
 static PLEADING_PARAGRAPH_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?m)^\s*(?:\*\*)?(?:¶\s*)?([0-9]+[A-Za-z]?)\.\s*(?:\*\*)?\s*(.+?)\s*$"#)
-        .unwrap()
+    Regex::new(r#"(?m)^\s*(?:\*\*)?(?:¶\s*)?([0-9]+[A-Za-z]?)\.\s*(?:\*\*)?\s*(.+?)\s*$"#).unwrap()
 });
 static CLAIM_HEADING_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\bCLAIM\s+FOR\s+RELIEF\b").unwrap());
@@ -115,9 +130,8 @@ static SESSION_LAW_CITATION_RE: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
-static EXHIBIT_LABEL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(?:PX|EXHIBIT)\s*[- ]?([A-Z]{1,3}|[0-9]{1,4})\b").unwrap()
-});
+static EXHIBIT_LABEL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(?:PX|EXHIBIT)\s*[- ]?([A-Z]{1,3}|[0-9]{1,4})\b").unwrap());
 
 #[derive(Clone)]
 struct ParserOutcome {
@@ -153,6 +167,9 @@ impl CaseBuilderService {
         upload_ttl_seconds: u64,
         download_ttl_seconds: u64,
         max_upload_bytes: u64,
+        ast_entity_inline_bytes: u64,
+        ast_snapshot_inline_bytes: u64,
+        ast_block_inline_bytes: u64,
     ) -> Self {
         Self {
             neo4j,
@@ -160,6 +177,11 @@ impl CaseBuilderService {
             upload_ttl_seconds,
             download_ttl_seconds,
             max_upload_bytes,
+            ast_storage_policy: AstStoragePolicy {
+                entity_inline_bytes: ast_entity_inline_bytes,
+                snapshot_inline_bytes: ast_snapshot_inline_bytes,
+                block_inline_bytes: ast_block_inline_bytes,
+            },
         }
     }
 
@@ -893,7 +915,10 @@ impl CaseBuilderService {
                     "extract_text",
                     error_code,
                     &document.summary,
-                    matches!(extraction_status.as_str(), "ocr_required" | "transcription_deferred"),
+                    matches!(
+                        extraction_status.as_str(),
+                        "ocr_required" | "transcription_deferred"
+                    ),
                 )
             });
             if let Some(run) = &ingestion_run {
@@ -1424,7 +1449,27 @@ impl CaseBuilderService {
         self.migrate_legacy_drafts_to_work_products(matter_id)
             .await?;
         self.migrate_complaints_to_work_products(matter_id).await?;
-        self.list_nodes(matter_id, work_product_spec()).await
+        let mut products = self
+            .list_nodes::<WorkProduct>(matter_id, work_product_spec())
+            .await?;
+        for product in &mut products {
+            refresh_work_product_state(product);
+        }
+        Ok(products)
+    }
+
+    pub async fn list_work_products_for_api(
+        &self,
+        matter_id: &str,
+        include_document_ast: bool,
+    ) -> ApiResult<Vec<WorkProduct>> {
+        let mut products = self.list_work_products(matter_id).await?;
+        if !include_document_ast {
+            for product in &mut products {
+                summarize_work_product_for_list(product);
+            }
+        }
+        Ok(products)
     }
 
     pub async fn create_work_product(
@@ -1511,13 +1556,19 @@ impl CaseBuilderService {
             .get_node(matter_id, work_product_spec(), work_product_id)
             .await
         {
-            Ok(product) => Ok(product),
+            Ok(mut product) => {
+                refresh_work_product_state(&mut product);
+                Ok(product)
+            }
             Err(ApiError::NotFound(_)) => {
                 self.migrate_legacy_drafts_to_work_products(matter_id)
                     .await?;
                 self.migrate_complaints_to_work_products(matter_id).await?;
-                self.get_node(matter_id, work_product_spec(), work_product_id)
-                    .await
+                let mut product = self
+                    .get_node(matter_id, work_product_spec(), work_product_id)
+                    .await?;
+                refresh_work_product_state(&mut product);
+                Ok(product)
             }
             Err(error) => Err(error),
         }
@@ -1543,14 +1594,24 @@ impl CaseBuilderService {
         if let Some(value) = request.setup_stage {
             product.setup_stage = value;
         }
+        if let Some(value) = request.document_ast {
+            product.document_ast = value;
+            normalize_work_product_ast(&mut product);
+            product.blocks = flatten_work_product_blocks(&product.document_ast.blocks);
+            product.marks.clear();
+            product.anchors.clear();
+        }
         if let Some(value) = request.blocks {
             product.blocks = value;
+            rebuild_work_product_ast_from_projection(&mut product);
         }
         if let Some(value) = request.marks {
             product.marks = value;
+            rebuild_work_product_ast_from_projection(&mut product);
         }
         if let Some(value) = request.anchors {
             product.anchors = value;
+            rebuild_work_product_ast_from_projection(&mut product);
         }
         if let Some(value) = request.formatting_profile {
             product.formatting_profile = value;
@@ -1564,6 +1625,8 @@ impl CaseBuilderService {
             "Work product metadata or AST was updated.",
         ));
         refresh_work_product_state(&mut product);
+        self.validate_work_product_matter_references(matter_id, &product)
+            .await?;
         let product = self.save_work_product(matter_id, product).await?;
         self.record_work_product_change(
             matter_id,
@@ -1586,6 +1649,157 @@ impl CaseBuilderService {
         )
         .await?;
         Ok(product)
+    }
+
+    pub async fn apply_work_product_ast_patch(
+        &self,
+        matter_id: &str,
+        work_product_id: &str,
+        patch: AstPatch,
+    ) -> ApiResult<WorkProduct> {
+        let mut product = self.get_work_product(matter_id, work_product_id).await?;
+        let before_product = product.clone();
+        normalize_work_product_ast(&mut product);
+        let current_document_hash = work_product_hashes(&product)?.document_hash;
+        let current_snapshot_id = if patch.base_snapshot_id.is_some() {
+            self.latest_work_product_snapshot_id(matter_id, work_product_id)
+                .await?
+        } else {
+            None
+        };
+        validate_ast_patch_concurrency(
+            &patch,
+            work_product_id,
+            &current_document_hash,
+            current_snapshot_id.as_deref(),
+        )?;
+        self.validate_ast_patch_matter_references(matter_id, &product, &patch)
+            .await?;
+        for operation in &patch.operations {
+            apply_ast_operation(&mut product.document_ast, operation)?;
+        }
+        normalize_work_product_ast(&mut product);
+        let validation = validate_work_product_document(&product);
+        if !validation.errors.is_empty() {
+            let codes = validation
+                .errors
+                .iter()
+                .map(|issue| issue.code.clone())
+                .collect::<Vec<_>>()
+                .join(",");
+            return Err(ApiError::BadRequest(format!(
+                "AST patch failed validation: issue_codes={codes}"
+            )));
+        }
+        product.blocks = flatten_work_product_blocks(&product.document_ast.blocks);
+        self.validate_work_product_matter_references(matter_id, &product)
+            .await?;
+        product.history.push(work_product_event(
+            matter_id,
+            work_product_id,
+            "ast_patch_applied",
+            "document_ast",
+            &product.document_ast.document_id,
+            "AST patch applied.",
+        ));
+        refresh_work_product_state(&mut product);
+        self.validate_work_product_matter_references(matter_id, &product)
+            .await?;
+        let product = self.save_work_product(matter_id, product).await?;
+        self.record_work_product_change(
+            matter_id,
+            Some(&before_product),
+            &product,
+            "editor",
+            "ast_patch",
+            "AST patch applied",
+            "AST patch applied.",
+            vec![VersionChangeInput {
+                target_type: "document_ast".to_string(),
+                target_id: product.document_ast.document_id.clone(),
+                operation: "patch".to_string(),
+                before: json_value(&before_product.document_ast).ok(),
+                after: json_value(&product.document_ast).ok(),
+                summary: "AST patch applied.".to_string(),
+                legal_impact: LegalImpactSummary::default(),
+                ai_audit_id: None,
+            }],
+        )
+        .await?;
+        Ok(product)
+    }
+
+    pub async fn validate_work_product_ast(
+        &self,
+        matter_id: &str,
+        work_product_id: &str,
+    ) -> ApiResult<AstValidationResponse> {
+        let product = self.get_work_product(matter_id, work_product_id).await?;
+        Ok(validate_work_product_document(&product))
+    }
+
+    pub async fn work_product_ast_to_markdown(
+        &self,
+        matter_id: &str,
+        work_product_id: &str,
+    ) -> ApiResult<AstMarkdownResponse> {
+        let product = self.get_work_product(matter_id, work_product_id).await?;
+        Ok(AstMarkdownResponse {
+            markdown: work_product_markdown(&product),
+            warnings: validate_work_product_document(&product)
+                .warnings
+                .into_iter()
+                .map(|issue| issue.message)
+                .collect(),
+        })
+    }
+
+    pub async fn work_product_ast_from_markdown(
+        &self,
+        matter_id: &str,
+        work_product_id: &str,
+        request: MarkdownToAstRequest,
+    ) -> ApiResult<AstDocumentResponse> {
+        let product = self.get_work_product(matter_id, work_product_id).await?;
+        let (document_ast, warnings) = markdown_to_work_product_ast(&product, &request.markdown);
+        Ok(AstDocumentResponse {
+            document_ast,
+            warnings,
+        })
+    }
+
+    pub async fn work_product_ast_to_html(
+        &self,
+        matter_id: &str,
+        work_product_id: &str,
+    ) -> ApiResult<AstRenderedResponse> {
+        let product = self.get_work_product(matter_id, work_product_id).await?;
+        Ok(AstRenderedResponse {
+            html: Some(render_work_product_preview(&product).html),
+            plain_text: None,
+            warnings: validate_work_product_document(&product)
+                .warnings
+                .into_iter()
+                .map(|issue| issue.message)
+                .collect(),
+        })
+    }
+
+    pub async fn work_product_ast_to_plain_text(
+        &self,
+        matter_id: &str,
+        work_product_id: &str,
+    ) -> ApiResult<AstRenderedResponse> {
+        let product = self.get_work_product(matter_id, work_product_id).await?;
+        Ok(AstRenderedResponse {
+            html: None,
+            plain_text: Some(work_product_plain_text(&product)),
+            warnings: validate_work_product_document(&product)
+                .warnings
+                .into_iter()
+                .map(|issue| issue.message)
+                .collect(),
+        })
     }
 
     pub async fn create_work_product_block(
@@ -1623,7 +1837,9 @@ impl CaseBuilderService {
             locked: false,
             review_status: "needs_review".to_string(),
             prosemirror_json: None,
+            ..WorkProductBlock::default()
         });
+        rebuild_work_product_ast_from_projection(&mut product);
         product.history.push(work_product_event(
             matter_id,
             work_product_id,
@@ -1633,6 +1849,8 @@ impl CaseBuilderService {
             "Work product block created.",
         ));
         refresh_work_product_state(&mut product);
+        self.validate_work_product_matter_references(matter_id, &product)
+            .await?;
         let product = self.save_work_product(matter_id, product).await?;
         let after_block = product
             .blocks
@@ -1652,7 +1870,9 @@ impl CaseBuilderService {
                 target_id: block_id.clone(),
                 operation: "create".to_string(),
                 before: None,
-                after: after_block.as_ref().and_then(|block| json_value(block).ok()),
+                after: after_block
+                    .as_ref()
+                    .and_then(|block| json_value(block).ok()),
                 summary: "Work product block created.".to_string(),
                 legal_impact: LegalImpactSummary::default(),
                 ai_audit_id: None,
@@ -1721,6 +1941,7 @@ impl CaseBuilderService {
         if let Some(value) = request.prosemirror_json {
             block.prosemirror_json = value;
         }
+        rebuild_work_product_ast_from_projection(&mut product);
         product.history.push(work_product_event(
             matter_id,
             work_product_id,
@@ -1748,8 +1969,12 @@ impl CaseBuilderService {
                 target_type: "block".to_string(),
                 target_id: block_id.to_string(),
                 operation: "update".to_string(),
-                before: before_block.as_ref().and_then(|block| json_value(block).ok()),
-                after: after_block.as_ref().and_then(|block| json_value(block).ok()),
+                before: before_block
+                    .as_ref()
+                    .and_then(|block| json_value(block).ok()),
+                after: after_block
+                    .as_ref()
+                    .and_then(|block| json_value(block).ok()),
                 summary: "Work product block updated.".to_string(),
                 legal_impact: LegalImpactSummary::default(),
                 ai_audit_id: None,
@@ -1767,13 +1992,13 @@ impl CaseBuilderService {
     ) -> ApiResult<WorkProduct> {
         let mut product = self.get_work_product(matter_id, work_product_id).await?;
         let before_product = product.clone();
+        self.validate_work_product_link_target(matter_id, &request.target_type, &request.target_id)
+            .await?;
         let block_index = product
             .blocks
             .iter()
             .position(|block| block.block_id == request.block_id)
-            .ok_or_else(|| {
-                ApiError::NotFound(format!("Work product block {} not found", request.block_id))
-            })?;
+            .ok_or_else(|| ApiError::NotFound("Work product block not found".to_string()))?;
         let anchor_id = format!(
             "{}:anchor:{}",
             request.block_id,
@@ -1843,6 +2068,7 @@ impl CaseBuilderService {
             target_id: anchor_id.clone(),
             status: "derived_from_ast".to_string(),
         });
+        rebuild_work_product_ast_from_projection(&mut product);
         product.history.push(work_product_event(
             matter_id,
             work_product_id,
@@ -1865,9 +2091,12 @@ impl CaseBuilderService {
                 "evidence" | "document" | "source_span" => {
                     impact.affected_evidence.push(anchor.target_id.clone())
                 }
-                "authority" | "provision" | "legal_text" => impact
-                    .affected_authorities
-                    .push(anchor.canonical_id.clone().unwrap_or_else(|| anchor.target_id.clone())),
+                "authority" | "provision" | "legal_text" => impact.affected_authorities.push(
+                    anchor
+                        .canonical_id
+                        .clone()
+                        .unwrap_or_else(|| anchor.target_id.clone()),
+                ),
                 _ => {}
             }
         }
@@ -1884,7 +2113,9 @@ impl CaseBuilderService {
                 target_id: anchor_id.clone(),
                 operation: "link".to_string(),
                 before: None,
-                after: after_anchor.as_ref().and_then(|anchor| json_value(anchor).ok()),
+                after: after_anchor
+                    .as_ref()
+                    .and_then(|anchor| json_value(anchor).ok()),
                 summary: "Support or authority anchor linked.".to_string(),
                 legal_impact: impact,
                 ai_audit_id: None,
@@ -1902,6 +2133,7 @@ impl CaseBuilderService {
         let mut product = self.get_work_product(matter_id, work_product_id).await?;
         let before_product = product.clone();
         product.findings = work_product_findings(&product);
+        product.document_ast.rule_findings = product.findings.clone();
         product.history.push(work_product_event(
             matter_id,
             work_product_id,
@@ -1982,6 +2214,7 @@ impl CaseBuilderService {
             })?;
         finding.status = request.status;
         finding.updated_at = now_string();
+        product.document_ast.rule_findings = product.findings.clone();
         product.history.push(work_product_event(
             matter_id,
             work_product_id,
@@ -2015,8 +2248,12 @@ impl CaseBuilderService {
                 target_type: "rule_finding".to_string(),
                 target_id: finding_id.to_string(),
                 operation: "resolve".to_string(),
-                before: before_finding.as_ref().and_then(|finding| json_value(finding).ok()),
-                after: after_finding.as_ref().and_then(|finding| json_value(finding).ok()),
+                before: before_finding
+                    .as_ref()
+                    .and_then(|finding| json_value(finding).ok()),
+                after: after_finding
+                    .as_ref()
+                    .and_then(|finding| json_value(finding).ok()),
                 summary: "Work product finding status changed.".to_string(),
                 legal_impact: impact,
                 ai_audit_id: None,
@@ -2054,8 +2291,24 @@ impl CaseBuilderService {
             request.include_exhibits.unwrap_or(false),
             request.include_qc_report.unwrap_or(false),
         );
-        let content_preview = render_work_product_export_content(&product, &format)?;
-        let artifact_hash = sha256_hex(content_preview.as_bytes());
+        let export_content = render_work_product_export_content(&product, &format)?;
+        let artifact_hash = sha256_hex(export_content.as_bytes());
+        let artifact_key = work_product_export_key(
+            matter_id,
+            work_product_id,
+            &artifact_id,
+            &artifact_hash,
+            &format,
+        );
+        let artifact_blob = self
+            .store_casebuilder_bytes(
+                matter_id,
+                &artifact_key,
+                Bytes::from(export_content.clone()),
+                export_mime_type(&format),
+            )
+            .await?;
+        let content_preview = export_content_preview(&export_content);
         let render_profile_hash = sha256_hex(format!("{format}:{profile}:{mode}").as_bytes());
         let next_sequence = self
             .list_work_product_snapshots(matter_id, work_product_id)
@@ -2090,6 +2343,10 @@ impl CaseBuilderService {
             qc_status_at_export: Some(qc_status_at_export),
             changed_since_export: Some(false),
             immutable: Some(true),
+            object_blob_id: Some(artifact_blob.object_blob_id.clone()),
+            size_bytes: Some(artifact_blob.size_bytes),
+            mime_type: artifact_blob.mime_type.clone(),
+            storage_status: Some("stored".to_string()),
         };
         product.artifacts.push(artifact.clone());
         product.history.push(work_product_event(
@@ -2136,9 +2393,7 @@ impl CaseBuilderService {
             .artifacts
             .into_iter()
             .find(|artifact| artifact.artifact_id == artifact_id)
-            .ok_or_else(|| {
-                ApiError::NotFound(format!("Work product artifact {artifact_id} not found"))
-            })
+            .ok_or_else(|| ApiError::NotFound("Work product artifact not found".to_string()))
     }
 
     pub async fn download_work_product_artifact(
@@ -2152,18 +2407,37 @@ impl CaseBuilderService {
             .await?;
         let mut headers = BTreeMap::new();
         headers.insert("X-Review-Needed".to_string(), "true".to_string());
+        let mut method = "GET".to_string();
+        let mut url = artifact.download_url.clone();
+        let mut expires_at = now_string();
+        let mut bytes = artifact
+            .size_bytes
+            .unwrap_or_else(|| artifact.content_preview.len() as u64);
+        if let Some(object_blob_id) = artifact.object_blob_id.as_deref() {
+            let blob = self.get_object_blob(matter_id, object_blob_id).await?;
+            bytes = blob.size_bytes;
+            expires_at = timestamp_after(self.download_ttl_seconds);
+            if self.object_store.provider() == "r2" {
+                let presigned = self
+                    .object_store
+                    .presign_get(
+                        &blob.storage_key,
+                        Duration::from_secs(self.download_ttl_seconds),
+                    )
+                    .await?;
+                method = presigned.method;
+                url = presigned.url;
+                headers.extend(presigned.headers);
+            }
+        }
         Ok(WorkProductDownloadResponse {
-            method: "GET".to_string(),
-            url: artifact.download_url.clone(),
-            expires_at: now_string(),
+            method,
+            url,
+            expires_at,
             headers,
-            filename: format!(
-                "{}.{}",
-                sanitize_path_segment(work_product_id),
-                artifact.format
-            ),
+            filename: safe_work_product_download_filename(&artifact),
             mime_type: Some(export_mime_type(&artifact.format).to_string()),
-            bytes: artifact.content_preview.len() as u64,
+            bytes,
             artifact,
         })
     }
@@ -2195,7 +2469,7 @@ impl CaseBuilderService {
             "ai_command_requested",
             request.target_id.as_deref().unwrap_or("work_product"),
             &target_id,
-            request.prompt.as_deref().unwrap_or(&message),
+            "AI command requested in provider-free template mode.",
         ));
         refresh_work_product_state(&mut product);
         let product = self.save_work_product(matter_id, product).await?;
@@ -2206,7 +2480,10 @@ impl CaseBuilderService {
             .last()
             .map(|snapshot| snapshot.snapshot_id.clone())
             .unwrap_or_default();
-        let ai_audit_id = generate_id("ai-audit", &format!("{work_product_id}:{}", request.command));
+        let ai_audit_id = generate_id(
+            "ai-audit",
+            &format!("{work_product_id}:{}", request.command),
+        );
         let ai_audit = AIEditAudit {
             id: ai_audit_id.clone(),
             ai_audit_id: ai_audit_id.clone(),
@@ -2332,6 +2609,32 @@ impl CaseBuilderService {
         Ok(snapshots)
     }
 
+    pub async fn list_work_product_snapshots_for_api(
+        &self,
+        matter_id: &str,
+        work_product_id: &str,
+    ) -> ApiResult<Vec<VersionSnapshot>> {
+        let mut snapshots = self
+            .list_work_product_snapshots(matter_id, work_product_id)
+            .await?;
+        for snapshot in &mut snapshots {
+            summarize_version_snapshot_for_list(snapshot);
+        }
+        Ok(snapshots)
+    }
+
+    async fn latest_work_product_snapshot_id(
+        &self,
+        matter_id: &str,
+        work_product_id: &str,
+    ) -> ApiResult<Option<String>> {
+        Ok(latest_snapshot_id(
+            &self
+                .list_work_product_snapshots(matter_id, work_product_id)
+                .await?,
+        ))
+    }
+
     pub async fn get_work_product_snapshot(
         &self,
         matter_id: &str,
@@ -2343,6 +2646,9 @@ impl CaseBuilderService {
             .get_node::<VersionSnapshot>(matter_id, version_snapshot_spec(), snapshot_id)
             .await?;
         if snapshot.subject_id == work_product_id {
+            let mut snapshot = snapshot;
+            self.hydrate_snapshot_full_state(matter_id, &mut snapshot)
+                .await?;
             Ok(snapshot)
         } else {
             Err(ApiError::NotFound(format!(
@@ -2401,26 +2707,47 @@ impl CaseBuilderService {
         let from_snapshot = self
             .get_work_product_snapshot(matter_id, work_product_id, from_snapshot_id)
             .await?;
-        let from_product = snapshot_product(&from_snapshot)?;
+        let from_product = self
+            .product_from_snapshot(matter_id, &from_snapshot)
+            .await?;
         let (to_id, to_product) = if let Some(snapshot_id) = to_snapshot_id {
             let snapshot = self
                 .get_work_product_snapshot(matter_id, work_product_id, snapshot_id)
                 .await?;
-            (snapshot.snapshot_id.clone(), snapshot_product(&snapshot)?)
+            (
+                snapshot.snapshot_id.clone(),
+                self.product_from_snapshot(matter_id, &snapshot).await?,
+            )
         } else {
             ("current".to_string(), current)
         };
-        let text_diffs = diff_work_product_blocks(&from_product, &to_product);
+        let selected_layers = normalize_compare_layers(layers);
+        let text_diffs = if selected_layers.iter().any(|layer| layer == "text") {
+            diff_work_product_blocks(&from_product, &to_product)
+        } else {
+            Vec::new()
+        };
+        let layer_diffs = diff_work_product_layers(&from_product, &to_product, &selected_layers)?;
         let summary = VersionChangeSummary {
             text_changes: text_diffs
                 .iter()
                 .filter(|diff| diff.status != "unchanged")
                 .count() as u64,
-            support_changes: 0,
-            citation_changes: 0,
-            authority_changes: 0,
-            qc_changes: 0,
-            export_changes: 0,
+            support_changes: layer_change_count(&layer_diffs, "support"),
+            citation_changes: layer_change_count(&layer_diffs, "citations"),
+            authority_changes: layer_diffs
+                .iter()
+                .filter(|diff| {
+                    diff.layer == "support"
+                        && diff.status != "unchanged"
+                        && matches!(
+                            diff.target_type.as_str(),
+                            "legal_authority" | "provision" | "legal_text"
+                        )
+                })
+                .count() as u64,
+            qc_changes: layer_change_count(&layer_diffs, "rule_findings"),
+            export_changes: layer_change_count(&layer_diffs, "exports"),
             ai_changes: 0,
             targets_changed: text_diffs
                 .iter()
@@ -2430,18 +2757,29 @@ impl CaseBuilderService {
                     target_id: diff.target_id.clone(),
                     label: Some(diff.title.clone()),
                 })
+                .chain(
+                    layer_diffs
+                        .iter()
+                        .filter(|diff| diff.status != "unchanged")
+                        .map(|diff| VersionTargetSummary {
+                            target_type: diff.target_type.clone(),
+                            target_id: diff.target_id.clone(),
+                            label: Some(diff.title.clone()),
+                        }),
+                )
                 .collect(),
             risk_level: "low".to_string(),
-            user_summary: "Compared work-product text layer.".to_string(),
+            user_summary: "Compared work-product AST layers.".to_string(),
         };
         Ok(CompareVersionsResponse {
             matter_id: matter_id.to_string(),
             subject_id: work_product_id.to_string(),
             from_snapshot_id: from_snapshot.snapshot_id,
             to_snapshot_id: to_id,
-            layers,
+            layers: selected_layers,
             summary,
             text_diffs,
+            layer_diffs,
         })
     }
 
@@ -2455,59 +2793,12 @@ impl CaseBuilderService {
         let snapshot = self
             .get_work_product_snapshot(matter_id, work_product_id, &request.snapshot_id)
             .await?;
-        let snapshot_product = snapshot_product(&snapshot)?;
+        let snapshot_product = self.product_from_snapshot(matter_id, &snapshot).await?;
         let scope = request.scope.as_str();
         let dry_run = request.dry_run.unwrap_or(false);
-        let mut restored = current.clone();
-        let mut warnings = Vec::new();
-        match scope {
-            "work_product" | "complaint" => {
-                warnings.push(format!(
-                    "This will replace the current work product with snapshot {}.",
-                    snapshot.snapshot_id
-                ));
-                restored = snapshot_product;
-            }
-            "block" | "paragraph" => {
-                let target_ids = request.target_ids.unwrap_or_default();
-                if target_ids.is_empty() {
-                    return Err(ApiError::BadRequest(
-                        "Restore requires target_ids for block or paragraph scope.".to_string(),
-                    ));
-                }
-                for target_id in target_ids {
-                    let snapshot_block = snapshot_product
-                        .blocks
-                        .iter()
-                        .find(|block| block.block_id == target_id)
-                        .cloned()
-                        .ok_or_else(|| {
-                            ApiError::NotFound(format!("Snapshot block {target_id} not found"))
-                        })?;
-                    match restored
-                        .blocks
-                        .iter_mut()
-                        .find(|block| block.block_id == target_id)
-                    {
-                        Some(block) => {
-                            if block.evidence_ids.len() > snapshot_block.evidence_ids.len() {
-                                warnings.push(format!(
-                                    "Restoring {} may remove current evidence links.",
-                                    snapshot_block.title
-                                ));
-                            }
-                            *block = snapshot_block;
-                        }
-                        None => restored.blocks.push(snapshot_block),
-                    }
-                }
-            }
-            value => {
-                return Err(ApiError::BadRequest(format!(
-                    "Unsupported restore scope {value}"
-                )));
-            }
-        }
+        let target_ids = request.target_ids.unwrap_or_default();
+        let (mut restored, warnings) =
+            restore_work_product_scope(&current, &snapshot_product, scope, &target_ids)?;
         if dry_run {
             return Ok(RestoreVersionResponse {
                 restored: false,
@@ -2515,10 +2806,12 @@ impl CaseBuilderService {
                 warnings,
                 snapshot_id: snapshot.snapshot_id,
                 change_set: None,
-                result: Some(current),
+                result: Some(restored),
             });
         }
         refresh_work_product_state(&mut restored);
+        self.validate_work_product_matter_references(matter_id, &restored)
+            .await?;
         let restored = self.save_work_product(matter_id, restored).await?;
         self.sync_complaint_projection_from_work_product(matter_id, &restored)
             .await?;
@@ -2560,19 +2853,23 @@ impl CaseBuilderService {
     ) -> ApiResult<Vec<WorkProductArtifact>> {
         let product = self.get_work_product(matter_id, work_product_id).await?;
         let current_hashes = work_product_hashes(&product)?;
+        let snapshots_by_id = self
+            .list_work_product_snapshots(matter_id, work_product_id)
+            .await?
+            .into_iter()
+            .map(|snapshot| (snapshot.snapshot_id.clone(), snapshot))
+            .collect::<BTreeMap<_, _>>();
         let mut artifacts = Vec::new();
         for mut artifact in product.artifacts {
             if let Some(snapshot_id) = artifact.snapshot_id.clone() {
-                artifact.changed_since_export = self
-                    .get_work_product_snapshot(matter_id, work_product_id, &snapshot_id)
-                    .await
+                artifact.changed_since_export = snapshots_by_id
+                    .get(&snapshot_id)
                     .map(|snapshot| {
                         snapshot.document_hash != current_hashes.document_hash
                             || snapshot.support_graph_hash != current_hashes.support_graph_hash
                             || snapshot.qc_state_hash != current_hashes.qc_state_hash
                             || snapshot.formatting_hash != current_hashes.formatting_hash
                     })
-                    .ok()
                     .or(Some(true));
             }
             artifacts.push(artifact);
@@ -2594,6 +2891,142 @@ impl CaseBuilderService {
             .collect::<Vec<_>>();
         audits.sort_by(|left, right| left.created_at.cmp(&right.created_at));
         Ok(audits)
+    }
+
+    async fn apply_snapshot_storage_policy(
+        &self,
+        matter_id: &str,
+        product: &WorkProduct,
+        snapshot: &mut VersionSnapshot,
+        manifest: &mut SnapshotManifest,
+        entity_states: &mut [SnapshotEntityState],
+    ) -> ApiResult<()> {
+        let full_state = json_value(product)?;
+        let full_state_bytes = serde_json::to_vec(&full_state)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if should_inline_payload(
+            full_state_bytes.len(),
+            self.ast_storage_policy.snapshot_inline_bytes,
+        ) {
+            snapshot.full_state_inline = Some(full_state);
+            snapshot.full_state_ref = None;
+        } else {
+            let full_state_hash = sha256_hex(&full_state_bytes);
+            let key = snapshot_full_state_key(
+                matter_id,
+                &product.work_product_id,
+                &snapshot.snapshot_id,
+                &full_state_hash,
+            );
+            let blob = self
+                .store_casebuilder_bytes(
+                    matter_id,
+                    &key,
+                    Bytes::from(full_state_bytes),
+                    "application/json; charset=utf-8",
+                )
+                .await?;
+            snapshot.full_state_inline = None;
+            snapshot.full_state_ref = Some(blob.object_blob_id);
+        }
+
+        let mut offloaded_any_state = false;
+        for state in entity_states.iter_mut() {
+            let Some(value) = state.state_inline.clone() else {
+                continue;
+            };
+            let bytes = serde_json::to_vec(&value)
+                .map_err(|error| ApiError::Internal(error.to_string()))?;
+            if should_inline_payload(bytes.len(), self.ast_storage_policy.entity_inline_bytes) {
+                continue;
+            }
+            let key = snapshot_entity_state_key(
+                matter_id,
+                &product.work_product_id,
+                &snapshot.snapshot_id,
+                &state.entity_type,
+                &state.entity_hash,
+            );
+            let blob = self
+                .store_casebuilder_bytes(
+                    matter_id,
+                    &key,
+                    Bytes::from(bytes),
+                    "application/json; charset=utf-8",
+                )
+                .await?;
+            state.state_inline = None;
+            state.state_ref = Some(blob.object_blob_id);
+            offloaded_any_state = true;
+        }
+
+        let manifest_payload = serde_json::json!({
+            "manifest": manifest,
+            "entity_states": entity_states.iter().map(|state| serde_json::json!({
+                "entity_state_id": state.entity_state_id,
+                "entity_type": state.entity_type,
+                "entity_id": state.entity_id,
+                "entity_hash": state.entity_hash,
+                "state_ref": state.state_ref,
+                "inline": state.state_inline.is_some(),
+            })).collect::<Vec<_>>(),
+        });
+        let manifest_bytes = serde_json::to_vec(&manifest_payload)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        if offloaded_any_state
+            || !should_inline_payload(
+                manifest_bytes.len(),
+                self.ast_storage_policy.entity_inline_bytes,
+            )
+        {
+            let key = snapshot_manifest_key(
+                matter_id,
+                &product.work_product_id,
+                &snapshot.snapshot_id,
+                &manifest.manifest_hash,
+            );
+            let blob = self
+                .store_casebuilder_bytes(
+                    matter_id,
+                    &key,
+                    Bytes::from(manifest_bytes),
+                    "application/json; charset=utf-8",
+                )
+                .await?;
+            manifest.storage_ref = Some(blob.object_blob_id);
+            snapshot.manifest_ref = manifest.storage_ref.clone();
+        }
+        Ok(())
+    }
+
+    async fn product_from_snapshot(
+        &self,
+        matter_id: &str,
+        snapshot: &VersionSnapshot,
+    ) -> ApiResult<WorkProduct> {
+        if let Some(value) = snapshot.full_state_inline.clone() {
+            return serde_json::from_value(value)
+                .map_err(|error| ApiError::Internal(error.to_string()));
+        }
+        let Some(blob_id) = snapshot.full_state_ref.as_deref() else {
+            return Err(ApiError::Internal("Snapshot has no state".to_string()));
+        };
+        self.load_json_blob(matter_id, blob_id).await
+    }
+
+    async fn hydrate_snapshot_full_state(
+        &self,
+        matter_id: &str,
+        snapshot: &mut VersionSnapshot,
+    ) -> ApiResult<()> {
+        if snapshot.full_state_inline.is_some() {
+            return Ok(());
+        }
+        let Some(blob_id) = snapshot.full_state_ref.as_deref() else {
+            return Ok(());
+        };
+        snapshot.full_state_inline = Some(self.load_json_blob(matter_id, blob_id).await?);
+        Ok(())
     }
 
     async fn list_work_product_change_sets(
@@ -2660,6 +3093,8 @@ impl CaseBuilderService {
         let mut recorded_changes = Vec::new();
         for (index, input) in changes.into_iter().enumerate() {
             let change_id = format!("{change_set_id}:change:{}", index + 1);
+            let (before_hash, before) = version_change_state_summary(input.before)?;
+            let (after_hash, after) = version_change_state_summary(input.after)?;
             change_ids.push(change_id.clone());
             recorded_changes.push(VersionChange {
                 id: change_id.clone(),
@@ -2673,13 +3108,10 @@ impl CaseBuilderService {
                 target_type: input.target_type,
                 target_id: input.target_id,
                 operation: input.operation,
-                before_hash: input
-                    .before
-                    .as_ref()
-                    .and_then(|value| json_hash(value).ok()),
-                after_hash: input.after.as_ref().and_then(|value| json_hash(value).ok()),
-                before: input.before,
-                after: input.after,
+                before_hash,
+                after_hash,
+                before,
+                after,
                 summary: input.summary,
                 legal_impact: input.legal_impact,
                 ai_audit_id: input.ai_audit_id,
@@ -2692,9 +3124,9 @@ impl CaseBuilderService {
             merge_legal_impacts(recorded_changes.iter().map(|change| &change.legal_impact));
         let version_summary = version_summary_for_changes(summary, &recorded_changes);
         let hashes = work_product_hashes(after_product)?;
-        let (manifest, entity_states) =
+        let (mut manifest, mut entity_states) =
             snapshot_manifest_for_product(matter_id, &snapshot_id, after_product, &now)?;
-        let snapshot = VersionSnapshot {
+        let mut snapshot = VersionSnapshot {
             id: snapshot_id.clone(),
             snapshot_id: snapshot_id.clone(),
             matter_id: matter_id.to_string(),
@@ -2718,9 +3150,17 @@ impl CaseBuilderService {
             manifest_hash: manifest.manifest_hash.clone(),
             manifest_ref: None,
             full_state_ref: None,
-            full_state_inline: Some(json_value(after_product)?),
+            full_state_inline: None,
             summary: version_summary,
         };
+        self.apply_snapshot_storage_policy(
+            matter_id,
+            after_product,
+            &mut snapshot,
+            &mut manifest,
+            &mut entity_states,
+        )
+        .await?;
         let branch = VersionBranch {
             id: branch_id.clone(),
             branch_id: branch_id.clone(),
@@ -2826,14 +3266,16 @@ impl CaseBuilderService {
         mut product: WorkProduct,
     ) -> ApiResult<WorkProduct> {
         product.updated_at = now_string();
+        refresh_work_product_state(&mut product);
         self.save_work_product_internal(matter_id, product).await
     }
 
     async fn save_work_product_internal(
         &self,
         matter_id: &str,
-        product: WorkProduct,
+        mut product: WorkProduct,
     ) -> ApiResult<WorkProduct> {
+        refresh_work_product_state(&mut product);
         let product = self
             .merge_node(
                 matter_id,
@@ -2860,6 +3302,19 @@ impl CaseBuilderService {
                 artifact,
             )
             .await?;
+            if let Some(object_blob_id) = artifact.object_blob_id.as_deref() {
+                self.neo4j
+                    .run_rows(
+                        query(
+                            "MATCH (a:WorkProductArtifact {artifact_id: $artifact_id})
+                             MATCH (b:ObjectBlob {object_blob_id: $object_blob_id})
+                             MERGE (a)-[:STORED_AS]->(b)",
+                        )
+                        .param("artifact_id", artifact.artifact_id.clone())
+                        .param("object_blob_id", object_blob_id.to_string()),
+                    )
+                    .await?;
+            }
         }
         Ok(product)
     }
@@ -3296,7 +3751,8 @@ impl CaseBuilderService {
                     document_id: document_id.to_string(),
                     complaint_id: None,
                     status: "not_likely_complaint".to_string(),
-                    message: "Document did not meet the complaint-draft detection threshold.".to_string(),
+                    message: "Document did not meet the complaint-draft detection threshold."
+                        .to_string(),
                     parser_id,
                     likely_complaint,
                     complaint: None,
@@ -3349,8 +3805,8 @@ impl CaseBuilderService {
             "count_count": complaint.counts.len(),
             "citation_count": complaint.paragraphs.iter().map(|p| p.citation_uses.len()).sum::<usize>(),
         });
-        let manifest_bytes = serde_json::to_vec(&manifest)
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let manifest_bytes =
+            serde_json::to_vec(&manifest).map_err(|error| ApiError::Internal(error.to_string()))?;
         let manifest_hash = sha256_hex(&manifest_bytes);
         let stored_manifest = self
             .object_store
@@ -3479,7 +3935,8 @@ impl CaseBuilderService {
                 document_id: document.document_id,
                 complaint_id: Some(complaint.complaint_id.clone()),
                 status: "imported".to_string(),
-                message: "Structured complaint import completed; human review is required.".to_string(),
+                message: "Structured complaint import completed; human review is required."
+                    .to_string(),
                 parser_id,
                 likely_complaint,
                 complaint: Some(complaint),
@@ -3837,6 +4294,8 @@ impl CaseBuilderService {
         request: ComplaintLinkRequest,
     ) -> ApiResult<ComplaintDraft> {
         let mut complaint = self.get_complaint(matter_id, complaint_id).await?;
+        self.validate_complaint_link_references(matter_id, &request)
+            .await?;
         match request.target_type.as_str() {
             "paragraph" | "sentence" => {
                 let paragraph_id = if request.target_type == "paragraph" {
@@ -4133,6 +4592,10 @@ impl CaseBuilderService {
             generated_at: now_string(),
             warnings,
             content_preview: rendered,
+            object_blob_id: None,
+            size_bytes: None,
+            mime_type: Some(export_mime_type(&format).to_string()),
+            storage_status: Some("legacy_inline".to_string()),
         };
         complaint.export_artifacts.push(artifact.clone());
         complaint.history.push(complaint_event(
@@ -4222,14 +4685,14 @@ impl CaseBuilderService {
             &target,
             &warning,
         ));
-        if let Some(prompt) = request.prompt {
+        if request.prompt.is_some() {
             complaint.history.push(complaint_event(
                 matter_id,
                 complaint_id,
                 "ai_prompt_recorded",
                 "complaint",
                 &target,
-                &format!("Prompt recorded for human review: {}", prompt.trim()),
+                "Prompt recorded for human review.",
             ));
         }
         refresh_complaint_state(&mut complaint);
@@ -4292,7 +4755,8 @@ impl CaseBuilderService {
         }
         let product = work_product_from_complaint(&complaint);
         let version_changes = work_product_facade_change_inputs(before_product.as_ref(), &product);
-        self.save_work_product_internal(matter_id, product.clone()).await?;
+        self.save_work_product_internal(matter_id, product.clone())
+            .await?;
         if !version_changes.is_empty() {
             let snapshot_type = if before_product.is_none() {
                 "auto"
@@ -4340,7 +4804,8 @@ impl CaseBuilderService {
                     }
                 }
                 if changed {
-                    self.save_work_product_internal(matter_id, locked_product).await?;
+                    self.save_work_product_internal(matter_id, locked_product)
+                        .await?;
                 }
             }
         }
@@ -4525,7 +4990,8 @@ impl CaseBuilderService {
             })
             .collect();
         refresh_complaint_state(&mut complaint);
-        self.save_complaint_projection_only(matter_id, complaint).await?;
+        self.save_complaint_projection_only(matter_id, complaint)
+            .await?;
         Ok(())
     }
 
@@ -4984,6 +5450,390 @@ impl CaseBuilderService {
         from_payload(&payload)
     }
 
+    async fn get_object_blob(
+        &self,
+        matter_id: &str,
+        object_blob_id: &str,
+    ) -> ApiResult<ObjectBlob> {
+        let rows = self
+            .neo4j
+            .run_rows(
+                query(
+                    "MATCH (:Matter {matter_id: $matter_id})-[:USES_OBJECT_BLOB]->(b:ObjectBlob {object_blob_id: $object_blob_id})
+                     RETURN b.payload AS payload",
+                )
+                .param("matter_id", matter_id)
+                .param("object_blob_id", object_blob_id),
+            )
+            .await?;
+        let payload = rows
+            .first()
+            .and_then(|row| row.get::<String>("payload").ok())
+            .ok_or_else(|| ApiError::NotFound("ObjectBlob not found".to_string()))?;
+        from_payload(&payload)
+    }
+
+    async fn store_casebuilder_bytes(
+        &self,
+        matter_id: &str,
+        key: &str,
+        bytes: Bytes,
+        content_type: &str,
+    ) -> ApiResult<ObjectBlob> {
+        let sha256 = sha256_hex(&bytes);
+        let stored = self
+            .object_store
+            .put_bytes(
+                key,
+                bytes.clone(),
+                put_options(Some(content_type.to_string()), Some(sha256.clone())),
+            )
+            .await?;
+        let now = now_string();
+        let blob = ObjectBlob {
+            object_blob_id: object_blob_id_for_hash(&sha256),
+            id: object_blob_id_for_hash(&sha256),
+            sha256: Some(sha256),
+            size_bytes: stored.content_length,
+            mime_type: stored.content_type.clone(),
+            storage_provider: self.object_store.provider().to_string(),
+            storage_bucket: stored
+                .bucket
+                .clone()
+                .or_else(|| self.object_store.bucket().map(str::to_string)),
+            storage_key: stored.key,
+            etag: stored.etag,
+            storage_class: None,
+            created_at: now,
+            retention_state: "active".to_string(),
+        };
+        self.merge_object_blob(matter_id, &blob).await
+    }
+
+    async fn load_json_blob<T: serde::de::DeserializeOwned>(
+        &self,
+        matter_id: &str,
+        object_blob_id: &str,
+    ) -> ApiResult<T> {
+        let blob = self.get_object_blob(matter_id, object_blob_id).await?;
+        let bytes = self.object_store.get_bytes(&blob.storage_key).await?;
+        serde_json::from_slice(&bytes).map_err(|error| ApiError::Internal(error.to_string()))
+    }
+
+    async fn validate_ast_patch_matter_references(
+        &self,
+        matter_id: &str,
+        product: &WorkProduct,
+        patch: &AstPatch,
+    ) -> ApiResult<()> {
+        for operation in &patch.operations {
+            match operation {
+                AstOperation::InsertBlock { block, .. } => {
+                    self.validate_ast_block_payload_references(matter_id, product, block)
+                        .await?;
+                }
+                AstOperation::AddLink { link } => {
+                    self.validate_work_product_link_target(
+                        matter_id,
+                        &link.target_type,
+                        &link.target_id,
+                    )
+                    .await?;
+                }
+                AstOperation::AddCitation { citation } => {
+                    self.validate_citation_target_reference(
+                        matter_id,
+                        citation.target_type.as_str(),
+                        citation.target_id.as_deref(),
+                    )
+                    .await?;
+                }
+                AstOperation::ResolveCitation {
+                    target_type,
+                    target_id,
+                    ..
+                } => {
+                    if let Some(target_id) = target_id.as_deref() {
+                        self.validate_citation_target_reference(
+                            matter_id,
+                            target_type.as_deref().unwrap_or("legal_authority"),
+                            Some(target_id),
+                        )
+                        .await?;
+                    }
+                }
+                AstOperation::AddExhibitReference { exhibit } => {
+                    self.validate_exhibit_reference_targets(matter_id, exhibit)
+                        .await?;
+                }
+                AstOperation::ResolveExhibitReference { exhibit_id, .. } => {
+                    if let Some(exhibit_id) = exhibit_id.as_deref() {
+                        self.require_evidence_or_document(matter_id, exhibit_id)
+                            .await?;
+                    }
+                }
+                AstOperation::AddRuleFinding { finding } => {
+                    if finding.matter_id != matter_id {
+                        return Err(ApiError::BadRequest(
+                            "AST rule finding matter does not match route matter.".to_string(),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    async fn validate_work_product_matter_references(
+        &self,
+        matter_id: &str,
+        product: &WorkProduct,
+    ) -> ApiResult<()> {
+        if product.matter_id != matter_id || product.document_ast.matter_id != matter_id {
+            return Err(ApiError::BadRequest(
+                "Work product matter does not match route matter.".to_string(),
+            ));
+        }
+        let blocks = flatten_work_product_blocks(&product.document_ast.blocks);
+        let block_ids = blocks
+            .iter()
+            .map(|block| block.block_id.clone())
+            .collect::<HashSet<_>>();
+        for block in &blocks {
+            if block.matter_id != matter_id || block.work_product_id != product.work_product_id {
+                return Err(ApiError::BadRequest(
+                    "AST block ownership does not match work product.".to_string(),
+                ));
+            }
+            for fact_id in &block.fact_ids {
+                self.require_fact(matter_id, fact_id).await?;
+            }
+            for evidence_id in &block.evidence_ids {
+                self.require_evidence_document_or_span(matter_id, evidence_id)
+                    .await?;
+            }
+        }
+        for link in &product.document_ast.links {
+            if !block_ids.contains(&link.source_block_id) {
+                return Err(ApiError::NotFound(
+                    "AST link source block not found".to_string(),
+                ));
+            }
+            self.validate_work_product_link_target(matter_id, &link.target_type, &link.target_id)
+                .await?;
+        }
+        for citation in &product.document_ast.citations {
+            if !block_ids.contains(&citation.source_block_id) {
+                return Err(ApiError::NotFound(
+                    "AST citation source block not found".to_string(),
+                ));
+            }
+            self.validate_citation_target_reference(
+                matter_id,
+                &citation.target_type,
+                citation.target_id.as_deref(),
+            )
+            .await?;
+        }
+        for exhibit in &product.document_ast.exhibits {
+            if !block_ids.contains(&exhibit.source_block_id) {
+                return Err(ApiError::NotFound(
+                    "AST exhibit source block not found".to_string(),
+                ));
+            }
+            self.validate_exhibit_reference_targets(matter_id, exhibit)
+                .await?;
+        }
+        for finding in &product.document_ast.rule_findings {
+            if finding.matter_id != matter_id || finding.work_product_id != product.work_product_id
+            {
+                return Err(ApiError::BadRequest(
+                    "AST rule finding ownership does not match work product.".to_string(),
+                ));
+            }
+            if matches!(
+                finding.target_type.as_str(),
+                "block" | "paragraph" | "section"
+            ) && !block_ids.contains(&finding.target_id)
+            {
+                return Err(ApiError::NotFound(
+                    "AST rule finding target block not found".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    async fn validate_ast_block_payload_references(
+        &self,
+        matter_id: &str,
+        product: &WorkProduct,
+        block: &WorkProductBlock,
+    ) -> ApiResult<()> {
+        let mut stack = vec![block];
+        while let Some(block) = stack.pop() {
+            if (!block.matter_id.is_empty() && block.matter_id != matter_id)
+                || (!block.work_product_id.is_empty()
+                    && block.work_product_id != product.work_product_id)
+            {
+                return Err(ApiError::BadRequest(
+                    "AST block ownership does not match work product.".to_string(),
+                ));
+            }
+            for fact_id in &block.fact_ids {
+                self.require_fact(matter_id, fact_id).await?;
+            }
+            for evidence_id in &block.evidence_ids {
+                self.require_evidence_document_or_span(matter_id, evidence_id)
+                    .await?;
+            }
+            for child in &block.children {
+                stack.push(child);
+            }
+        }
+        Ok(())
+    }
+
+    async fn validate_complaint_link_references(
+        &self,
+        matter_id: &str,
+        request: &ComplaintLinkRequest,
+    ) -> ApiResult<()> {
+        if let Some(fact_id) = request.fact_id.as_deref() {
+            self.require_fact(matter_id, fact_id).await?;
+        }
+        if let Some(evidence_id) = request.evidence_id.as_deref() {
+            self.require_evidence(matter_id, evidence_id).await?;
+        }
+        if let Some(document_id) = request.document_id.as_deref() {
+            self.require_document(matter_id, document_id).await?;
+        }
+        if let Some(source_span_id) = request.source_span_id.as_deref() {
+            self.require_source_span(matter_id, source_span_id).await?;
+        }
+        Ok(())
+    }
+
+    async fn validate_work_product_link_target(
+        &self,
+        matter_id: &str,
+        target_type: &str,
+        target_id: &str,
+    ) -> ApiResult<()> {
+        match target_type {
+            "fact" => self.require_fact(matter_id, target_id).await,
+            "evidence" => self.require_evidence(matter_id, target_id).await,
+            "document" | "case_document" => self.require_document(matter_id, target_id).await,
+            "source_span" | "text_span" | "document_page" => {
+                self.require_source_span(matter_id, target_id).await
+            }
+            "exhibit" => {
+                self.require_evidence_or_document(matter_id, target_id)
+                    .await
+            }
+            "authority"
+            | "legal_authority"
+            | "provision"
+            | "legal_text_identity"
+            | "legal_text" => Ok(()),
+            _ => Err(ApiError::BadRequest(
+                "Unsupported support target_type.".to_string(),
+            )),
+        }
+    }
+
+    async fn validate_citation_target_reference(
+        &self,
+        matter_id: &str,
+        target_type: &str,
+        target_id: Option<&str>,
+    ) -> ApiResult<()> {
+        let Some(target_id) = target_id else {
+            return Ok(());
+        };
+        match target_type {
+            "fact" => self.require_fact(matter_id, target_id).await,
+            "evidence" => self.require_evidence(matter_id, target_id).await,
+            "document" | "case_document" => self.require_document(matter_id, target_id).await,
+            "source_span" | "text_span" | "document_page" => {
+                self.require_source_span(matter_id, target_id).await
+            }
+            _ => Ok(()),
+        }
+    }
+
+    async fn validate_exhibit_reference_targets(
+        &self,
+        matter_id: &str,
+        exhibit: &WorkProductExhibitReference,
+    ) -> ApiResult<()> {
+        if let Some(document_id) = exhibit.document_id.as_deref() {
+            self.require_document(matter_id, document_id).await?;
+        }
+        if let Some(exhibit_id) = exhibit.exhibit_id.as_deref() {
+            self.require_evidence_or_document(matter_id, exhibit_id)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn require_fact(&self, matter_id: &str, fact_id: &str) -> ApiResult<()> {
+        self.get_node::<CaseFact>(matter_id, fact_spec(), fact_id)
+            .await
+            .map(|_| ())
+            .map_err(|error| matter_reference_error(error, "fact"))
+    }
+
+    async fn require_evidence(&self, matter_id: &str, evidence_id: &str) -> ApiResult<()> {
+        self.get_node::<CaseEvidence>(matter_id, evidence_spec(), evidence_id)
+            .await
+            .map(|_| ())
+            .map_err(|error| matter_reference_error(error, "evidence"))
+    }
+
+    async fn require_document(&self, matter_id: &str, document_id: &str) -> ApiResult<()> {
+        self.get_node::<CaseDocument>(matter_id, document_spec(), document_id)
+            .await
+            .map(|_| ())
+            .map_err(|error| matter_reference_error(error, "document"))
+    }
+
+    async fn require_source_span(&self, matter_id: &str, source_span_id: &str) -> ApiResult<()> {
+        self.get_node::<SourceSpan>(matter_id, source_span_spec(), source_span_id)
+            .await
+            .map(|_| ())
+            .map_err(|error| matter_reference_error(error, "source_span"))
+    }
+
+    async fn require_evidence_or_document(
+        &self,
+        matter_id: &str,
+        target_id: &str,
+    ) -> ApiResult<()> {
+        match self.require_evidence(matter_id, target_id).await {
+            Ok(()) => Ok(()),
+            Err(ApiError::NotFound(_)) => self.require_document(matter_id, target_id).await,
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn require_evidence_document_or_span(
+        &self,
+        matter_id: &str,
+        target_id: &str,
+    ) -> ApiResult<()> {
+        match self.require_evidence(matter_id, target_id).await {
+            Ok(()) => Ok(()),
+            Err(ApiError::NotFound(_)) => match self.require_document(matter_id, target_id).await {
+                Ok(()) => Ok(()),
+                Err(ApiError::NotFound(_)) => self.require_source_span(matter_id, target_id).await,
+                Err(error) => Err(error),
+            },
+            Err(error) => Err(error),
+        }
+    }
+
     async fn merge_document_version(
         &self,
         matter_id: &str,
@@ -5371,7 +6221,13 @@ impl CaseBuilderService {
 
     async fn materialize_work_product_edges(&self, product: &WorkProduct) -> ApiResult<()> {
         for block in &product.blocks {
-            let payload = to_payload(block)?;
+            let payload = work_product_block_graph_payload(
+                block,
+                self.ast_storage_policy.block_inline_bytes,
+            )?;
+            let text_excerpt =
+                block_text_excerpt(&block.text, self.ast_storage_policy.block_inline_bytes);
+            let text_hash = sha256_hex(block.text.as_bytes());
             self.neo4j
                 .run_rows(
                     query(
@@ -5384,6 +6240,8 @@ impl CaseBuilderService {
                              b.role = $role,
                              b.title = $title,
                              b.text = $text,
+                             b.text_hash = $text_hash,
+                             b.text_size_bytes = $text_size_bytes,
                              b.ordinal = $ordinal
                          MERGE (w)-[:HAS_BLOCK]->(b)
                          WITH b
@@ -5397,7 +6255,9 @@ impl CaseBuilderService {
                     .param("block_id", block.block_id.clone())
                     .param("role", block.role.clone())
                     .param("title", block.title.clone())
-                    .param("text", block.text.clone())
+                    .param("text", text_excerpt)
+                    .param("text_hash", text_hash)
+                    .param("text_size_bytes", block.text.len() as i64)
                     .param("ordinal", block.ordinal as i64)
                     .param(
                         "parent_block_id",
@@ -5410,11 +6270,12 @@ impl CaseBuilderService {
                 self.neo4j
                     .run_rows(
                         query(
-                            "MATCH (b:WorkProductBlock {block_id: $block_id})
-                             MATCH (f:Fact {fact_id: $fact_id})
+                            "MATCH (b:WorkProductBlock {block_id: $block_id, matter_id: $matter_id})
+                             MATCH (f:Fact {fact_id: $fact_id, matter_id: $matter_id})
                              MERGE (b)-[:SUPPORTED_BY_FACT]->(f)",
                         )
                         .param("block_id", block.block_id.clone())
+                        .param("matter_id", product.matter_id.clone())
                         .param("fact_id", fact_id.clone()),
                     )
                     .await?;
@@ -5423,16 +6284,17 @@ impl CaseBuilderService {
                 self.neo4j
                     .run_rows(
                         query(
-                            "MATCH (b:WorkProductBlock {block_id: $block_id})
-                             OPTIONAL MATCH (e:Evidence {evidence_id: $evidence_id})
-                             OPTIONAL MATCH (d:CaseDocument {document_id: $evidence_id})
-                             OPTIONAL MATCH (s:SourceSpan {source_span_id: $evidence_id})
+                            "MATCH (b:WorkProductBlock {block_id: $block_id, matter_id: $matter_id})
+                             OPTIONAL MATCH (e:Evidence {evidence_id: $evidence_id, matter_id: $matter_id})
+                             OPTIONAL MATCH (d:CaseDocument {document_id: $evidence_id, matter_id: $matter_id})
+                             OPTIONAL MATCH (s:SourceSpan {source_span_id: $evidence_id, matter_id: $matter_id})
                              WITH b, coalesce(e, d, s) AS support
                              FOREACH (_ IN CASE WHEN support IS NULL THEN [] ELSE [1] END |
                                MERGE (b)-[:SUPPORTED_BY_EVIDENCE]->(support)
                              )",
                         )
                         .param("block_id", block.block_id.clone())
+                        .param("matter_id", product.matter_id.clone())
                         .param("evidence_id", evidence_id.clone()),
                     )
                     .await?;
@@ -5441,7 +6303,7 @@ impl CaseBuilderService {
                 self.neo4j
                     .run_rows(
                         query(
-                            "MATCH (b:WorkProductBlock {block_id: $block_id})
+                            "MATCH (b:WorkProductBlock {block_id: $block_id, matter_id: $matter_id})
                              OPTIONAL MATCH (p:Provision {canonical_id: $canonical_id})
                              OPTIONAL MATCH (i:LegalTextIdentity {canonical_id: $canonical_id})
                              WITH b, coalesce(p, i) AS authority
@@ -5450,7 +6312,104 @@ impl CaseBuilderService {
                              )",
                         )
                         .param("block_id", block.block_id.clone())
+                        .param("matter_id", product.matter_id.clone())
                         .param("canonical_id", authority.canonical_id.clone()),
+                    )
+                    .await?;
+            }
+        }
+
+        for link in &product.document_ast.links {
+            match link.target_type.as_str() {
+                "fact" => {
+                    self.neo4j
+                        .run_rows(
+                            query(
+                                "MATCH (b:WorkProductBlock {block_id: $block_id, matter_id: $matter_id})
+                                 MATCH (f:Fact {fact_id: $target_id, matter_id: $matter_id})
+                                 MERGE (b)-[:SUPPORTED_BY_FACT]->(f)",
+                            )
+                            .param("block_id", link.source_block_id.clone())
+                            .param("matter_id", product.matter_id.clone())
+                            .param("target_id", link.target_id.clone()),
+                        )
+                        .await?;
+                }
+                "evidence" | "case_document" | "document_page" | "text_span" | "source_span" => {
+                    self.neo4j
+                        .run_rows(
+                            query(
+                                "MATCH (b:WorkProductBlock {block_id: $block_id, matter_id: $matter_id})
+                                 OPTIONAL MATCH (e:Evidence {evidence_id: $target_id, matter_id: $matter_id})
+                                 OPTIONAL MATCH (d:CaseDocument {document_id: $target_id, matter_id: $matter_id})
+                                 OPTIONAL MATCH (s:SourceSpan {source_span_id: $target_id, matter_id: $matter_id})
+                                 WITH b, coalesce(e, d, s) AS support
+                                 FOREACH (_ IN CASE WHEN support IS NULL THEN [] ELSE [1] END |
+                                   MERGE (b)-[:SUPPORTED_BY_EVIDENCE]->(support)
+                                 )",
+                            )
+                            .param("block_id", link.source_block_id.clone())
+                            .param("matter_id", product.matter_id.clone())
+                            .param("target_id", link.target_id.clone()),
+                        )
+                        .await?;
+                }
+                "legal_authority" | "provision" | "legal_text_identity" | "legal_text" => {
+                    self.neo4j
+                        .run_rows(
+                            query(
+                                "MATCH (b:WorkProductBlock {block_id: $block_id, matter_id: $matter_id})
+                                 OPTIONAL MATCH (p:Provision {canonical_id: $target_id})
+                                 OPTIONAL MATCH (i:LegalTextIdentity {canonical_id: $target_id})
+                                 WITH b, coalesce(p, i) AS authority
+                                 FOREACH (_ IN CASE WHEN authority IS NULL THEN [] ELSE [1] END |
+                                   MERGE (b)-[:SUPPORTED_BY_AUTHORITY]->(authority)
+                                 )",
+                            )
+                            .param("block_id", link.source_block_id.clone())
+                            .param("matter_id", product.matter_id.clone())
+                            .param("target_id", link.target_id.clone()),
+                        )
+                        .await?;
+                }
+                "exhibit" => {
+                    self.neo4j
+                        .run_rows(
+                            query(
+                                "MATCH (b:WorkProductBlock {block_id: $block_id, matter_id: $matter_id})
+                                 OPTIONAL MATCH (e:Evidence {evidence_id: $target_id, matter_id: $matter_id})
+                                 OPTIONAL MATCH (d:CaseDocument {document_id: $target_id, matter_id: $matter_id})
+                                 WITH b, coalesce(e, d) AS exhibit
+                                 FOREACH (_ IN CASE WHEN exhibit IS NULL THEN [] ELSE [1] END |
+                                   MERGE (b)-[:REFERENCES_EXHIBIT]->(exhibit)
+                                 )",
+                            )
+                            .param("block_id", link.source_block_id.clone())
+                            .param("matter_id", product.matter_id.clone())
+                            .param("target_id", link.target_id.clone()),
+                        )
+                        .await?;
+                }
+                _ => {}
+            }
+        }
+
+        for citation in &product.document_ast.citations {
+            if let Some(target_id) = &citation.target_id {
+                self.neo4j
+                    .run_rows(
+                        query(
+                            "MATCH (b:WorkProductBlock {block_id: $block_id, matter_id: $matter_id})
+                             OPTIONAL MATCH (p:Provision {canonical_id: $target_id})
+                             OPTIONAL MATCH (i:LegalTextIdentity {canonical_id: $target_id})
+                             WITH b, coalesce(p, i) AS authority
+                             FOREACH (_ IN CASE WHEN authority IS NULL THEN [] ELSE [1] END |
+                               MERGE (b)-[:CITES]->(authority)
+                             )",
+                        )
+                        .param("block_id", citation.source_block_id.clone())
+                        .param("matter_id", product.matter_id.clone())
+                        .param("target_id", target_id.clone()),
                     )
                     .await?;
             }
@@ -5464,8 +6423,8 @@ impl CaseBuilderService {
             self.neo4j
                 .run_rows(
                     query(
-                        "MATCH (w:WorkProduct {work_product_id: $work_product_id})
-                         MATCH (b:WorkProductBlock {block_id: $block_id})
+                        "MATCH (w:WorkProduct {work_product_id: $work_product_id, matter_id: $matter_id})
+                         MATCH (b:WorkProductBlock {block_id: $block_id, matter_id: $matter_id})
                          MERGE (a:WorkProductAnchor {anchor_id: $anchor_id})
                          SET a.payload = $payload,
                              a.matter_id = $matter_id,
@@ -5479,9 +6438,9 @@ impl CaseBuilderService {
                          MERGE (w)-[:HAS_ANCHOR]->(a)
                          MERGE (b)-[:HAS_ANCHOR]->(a)
                          WITH a
-                         OPTIONAL MATCH (f:Fact {fact_id: $target_id})
-                         OPTIONAL MATCH (e:Evidence {evidence_id: $target_id})
-                         OPTIONAL MATCH (d:CaseDocument {document_id: $target_id})
+                         OPTIONAL MATCH (f:Fact {fact_id: $target_id, matter_id: $matter_id})
+                         OPTIONAL MATCH (e:Evidence {evidence_id: $target_id, matter_id: $matter_id})
+                         OPTIONAL MATCH (d:CaseDocument {document_id: $target_id, matter_id: $matter_id})
                          OPTIONAL MATCH (p:Provision {canonical_id: $canonical_id})
                          OPTIONAL MATCH (i:LegalTextIdentity {canonical_id: $canonical_id})
                          WITH a, coalesce(f, e, d, p, i) AS target
@@ -5506,8 +6465,8 @@ impl CaseBuilderService {
                 )
                 .await?;
             let support_statement = format!(
-                "MATCH (w:WorkProduct {{work_product_id: $work_product_id}})
-                 MATCH (b:WorkProductBlock {{block_id: $block_id}})
+                "MATCH (w:WorkProduct {{work_product_id: $work_product_id, matter_id: $matter_id}})
+                 MATCH (b:WorkProductBlock {{block_id: $block_id, matter_id: $matter_id}})
                  MERGE (u:LegalSupportUse:{support_label} {{support_use_id: $support_use_id}})
                  SET u.payload = $payload,
                      u.matter_id = $matter_id,
@@ -5547,7 +6506,7 @@ impl CaseBuilderService {
             self.neo4j
                 .run_rows(
                     query(
-                        "MATCH (b:WorkProductBlock {block_id: $block_id})
+                        "MATCH (b:WorkProductBlock {block_id: $block_id, matter_id: $matter_id})
                          MERGE (m:WorkProductMark {mark_id: $mark_id})
                          SET m.payload = $payload,
                              m.matter_id = $matter_id,
@@ -5576,7 +6535,7 @@ impl CaseBuilderService {
             self.neo4j
                 .run_rows(
                     query(
-                        "MATCH (w:WorkProduct {work_product_id: $work_product_id})
+                        "MATCH (w:WorkProduct {work_product_id: $work_product_id, matter_id: $matter_id})
                          MERGE (f:WorkProductFinding {finding_id: $finding_id})
                          SET f.matter_id = $matter_id,
                              f.work_product_id = $work_product_id,
@@ -5651,6 +6610,25 @@ impl CaseBuilderService {
                 .param("manifest_id", manifest.manifest_id.clone()),
             )
             .await?;
+        for object_blob_id in [
+            snapshot.full_state_ref.as_ref(),
+            snapshot.manifest_ref.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (s:VersionSnapshot {snapshot_id: $snapshot_id})
+                         MATCH (b:ObjectBlob {object_blob_id: $object_blob_id})
+                         MERGE (s)-[:STORED_AS]->(b)",
+                    )
+                    .param("snapshot_id", snapshot.snapshot_id.clone())
+                    .param("object_blob_id", object_blob_id.clone()),
+                )
+                .await?;
+        }
         for state in entity_states {
             self.neo4j
                 .run_rows(
@@ -5663,6 +6641,19 @@ impl CaseBuilderService {
                     .param("entity_state_id", state.entity_state_id.clone()),
                 )
                 .await?;
+            if let Some(object_blob_id) = state.state_ref.as_ref() {
+                self.neo4j
+                    .run_rows(
+                        query(
+                            "MATCH (es:SnapshotEntityState {entity_state_id: $entity_state_id})
+                             MATCH (b:ObjectBlob {object_blob_id: $object_blob_id})
+                             MERGE (es)-[:STORED_AS]->(b)",
+                        )
+                        .param("entity_state_id", state.entity_state_id.clone())
+                        .param("object_blob_id", object_blob_id.clone()),
+                    )
+                    .await?;
+            }
         }
         for change in changes {
             self.neo4j
@@ -5714,11 +6705,12 @@ impl CaseBuilderService {
                 self.neo4j
                     .run_rows(
                         query(
-                            "MATCH (u:LegalSupportUse {support_use_id: $support_use_id})
-                             MATCH (f:Fact {fact_id: $source_id})
+                            "MATCH (u:LegalSupportUse {support_use_id: $support_use_id, matter_id: $matter_id})
+                             MATCH (f:Fact {fact_id: $source_id, matter_id: $matter_id})
                              MERGE (u)-[:USES_FACT]->(f)",
                         )
                         .param("support_use_id", support_use.support_use_id.clone())
+                        .param("matter_id", support_use.matter_id.clone())
                         .param("source_id", support_use.source_id.clone()),
                     )
                     .await?;
@@ -5727,11 +6719,12 @@ impl CaseBuilderService {
                 self.neo4j
                     .run_rows(
                         query(
-                            "MATCH (u:LegalSupportUse {support_use_id: $support_use_id})
-                             MATCH (e:Evidence {evidence_id: $source_id})
+                            "MATCH (u:LegalSupportUse {support_use_id: $support_use_id, matter_id: $matter_id})
+                             MATCH (e:Evidence {evidence_id: $source_id, matter_id: $matter_id})
                              MERGE (u)-[:USES_EVIDENCE]->(e)",
                         )
                         .param("support_use_id", support_use.support_use_id.clone())
+                        .param("matter_id", support_use.matter_id.clone())
                         .param("source_id", support_use.source_id.clone()),
                     )
                     .await?;
@@ -5740,11 +6733,12 @@ impl CaseBuilderService {
                 self.neo4j
                     .run_rows(
                         query(
-                            "MATCH (u:LegalSupportUse {support_use_id: $support_use_id})
-                             MATCH (s:SourceSpan {source_span_id: $source_id})
+                            "MATCH (u:LegalSupportUse {support_use_id: $support_use_id, matter_id: $matter_id})
+                             MATCH (s:SourceSpan {source_span_id: $source_id, matter_id: $matter_id})
                              MERGE (u)-[:USES_SPAN]->(s)",
                         )
                         .param("support_use_id", support_use.support_use_id.clone())
+                        .param("matter_id", support_use.matter_id.clone())
                         .param("source_id", support_use.source_id.clone()),
                     )
                     .await?;
@@ -5753,7 +6747,7 @@ impl CaseBuilderService {
                 self.neo4j
                     .run_rows(
                         query(
-                            "MATCH (u:LegalSupportUse {support_use_id: $support_use_id})
+                            "MATCH (u:LegalSupportUse {support_use_id: $support_use_id, matter_id: $matter_id})
                              OPTIONAL MATCH (p:Provision {canonical_id: $source_id})
                              OPTIONAL MATCH (i:LegalTextIdentity {canonical_id: $source_id})
                              WITH u, coalesce(p, i) AS authority
@@ -5762,6 +6756,7 @@ impl CaseBuilderService {
                              )",
                         )
                         .param("support_use_id", support_use.support_use_id.clone())
+                        .param("matter_id", support_use.matter_id.clone())
                         .param("source_id", support_use.source_id.clone()),
                     )
                     .await?;
@@ -6250,15 +7245,23 @@ impl CaseBuilderService {
         }
         if let Some(key) = document.storage_key.as_deref() {
             let bytes = self.object_store.get_bytes(key).await?;
-            return Ok(parse_document_bytes(&document.filename, document.mime_type.as_deref(), &bytes)
-                .text
-                .unwrap_or_default());
+            return Ok(parse_document_bytes(
+                &document.filename,
+                document.mime_type.as_deref(),
+                &bytes,
+            )
+            .text
+            .unwrap_or_default());
         }
         if let Some(path) = document.storage_path.as_deref() {
             let bytes = fs::read(path).await.map_err(io_error)?;
-            return Ok(parse_document_bytes(&document.filename, document.mime_type.as_deref(), &bytes)
-                .text
-                .unwrap_or_default());
+            return Ok(parse_document_bytes(
+                &document.filename,
+                document.mime_type.as_deref(),
+                &bytes,
+            )
+            .text
+            .unwrap_or_default());
         }
         Ok(String::new())
     }
@@ -6479,6 +7482,15 @@ fn ai_edit_audit_spec() -> NodeSpec {
     }
 }
 
+fn matter_reference_error(error: ApiError, target_type: &str) -> ApiError {
+    match error {
+        ApiError::NotFound(_) => {
+            ApiError::NotFound(format!("Matter-owned {target_type} reference not found"))
+        }
+        other => other,
+    }
+}
+
 fn normalize_work_product_type(value: &str) -> ApiResult<String> {
     let normalized = value.trim().to_ascii_lowercase().replace('-', "_");
     let supported = [
@@ -6615,7 +7627,7 @@ fn default_work_product_from_matter(
             ],
         ),
     };
-    WorkProduct {
+    let mut product = WorkProduct {
         id: work_product_id.to_string(),
         work_product_id: work_product_id.to_string(),
         matter_id: matter.matter_id.clone(),
@@ -6629,6 +7641,7 @@ fn default_work_product_from_matter(
         created_at: now.to_string(),
         updated_at: now.to_string(),
         profile: work_product_profile(product_type),
+        document_ast: WorkProductDocument::default(),
         blocks,
         marks: Vec::new(),
         anchors: Vec::new(),
@@ -6645,7 +7658,15 @@ fn default_work_product_from_matter(
         ai_commands: default_work_product_ai_commands(product_type),
         formatting_profile: default_work_product_formatting_profile(product_type),
         rule_pack: work_product_rule_pack(product_type),
-    }
+    };
+    apply_matter_rule_profile(
+        &mut product.rule_pack,
+        matter,
+        now.get(0..10).unwrap_or(now),
+        product_type,
+    );
+    refresh_work_product_state(&mut product);
+    product
 }
 
 fn complaint_work_product_blocks(
@@ -6685,7 +7706,10 @@ fn complaint_work_product_blocks(
         (
             "jurisdiction_venue",
             "Jurisdiction and venue",
-            format!("Jurisdiction and venue are alleged in {}.", matter.jurisdiction),
+            format!(
+                "Jurisdiction and venue are alleged in {}.",
+                matter.jurisdiction
+            ),
         ),
         ("factual_paragraph", "Factual allegations", fact_text),
         ("count", "Claims for relief", count_text),
@@ -6718,7 +7742,11 @@ fn complaint_work_product_blocks(
             ordinal: index as u64 + 1,
             parent_block_id: None,
             fact_ids: if *role == "factual_paragraph" {
-                facts.iter().take(8).map(|fact| fact.fact_id.clone()).collect()
+                facts
+                    .iter()
+                    .take(8)
+                    .map(|fact| fact.fact_id.clone())
+                    .collect()
             } else {
                 Vec::new()
             },
@@ -6736,6 +7764,7 @@ fn complaint_work_product_blocks(
             locked: false,
             review_status: "needs_review".to_string(),
             prosemirror_json: Some(prosemirror_doc_for_text(text)),
+            ..WorkProductBlock::default()
         })
         .collect()
 }
@@ -6839,6 +7868,7 @@ fn motion_blocks(
             locked: false,
             review_status: "needs_review".to_string(),
             prosemirror_json: Some(prosemirror_doc_for_text(text)),
+            ..WorkProductBlock::default()
         })
         .collect()
 }
@@ -6868,6 +7898,7 @@ fn profile_blocks(
             locked: false,
             review_status: "needs_review".to_string(),
             prosemirror_json: Some(prosemirror_doc_for_text(text)),
+            ..WorkProductBlock::default()
         })
         .collect()
 }
@@ -6970,6 +8001,7 @@ fn work_product_rule_pack(product_type: &str) -> RulePack {
         jurisdiction: "Oregon".to_string(),
         version: "provider-free-seed-2026-05-01".to_string(),
         effective_date: "2025-08-01".to_string(),
+        rule_profile: default_rule_profile_summary(),
         rules: vec![rule_definition(
             "work-product-review-needed",
             "Human review",
@@ -6985,6 +8017,110 @@ fn work_product_rule_pack(product_type: &str) -> RulePack {
     }
 }
 
+fn default_rule_profile_summary() -> RuleProfileSummary {
+    RuleProfileSummary {
+        jurisdiction_id: "or:state".to_string(),
+        court_id: None,
+        court: None,
+        filing_date: None,
+        utcr_edition_id: Some("or:utcr@2025".to_string()),
+        slr_edition_id: None,
+        active_statewide_order_ids: Vec::new(),
+        active_local_order_ids: Vec::new(),
+        active_out_of_cycle_amendment_ids: Vec::new(),
+        currentness_warnings: vec![
+            "Resolve filing-date rule context through /api/v1/rules/applicable before filing or export."
+                .to_string(),
+        ],
+        resolver_endpoint:
+            "/api/v1/rules/applicable?jurisdiction=Linn&date=YYYY-MM-DD&type=complaint"
+                .to_string(),
+    }
+}
+
+fn apply_matter_rule_profile(
+    rule_pack: &mut RulePack,
+    matter: &MatterSummary,
+    filing_date: &str,
+    product_type: &str,
+) {
+    let jurisdiction_id = casebuilder_jurisdiction_id(matter);
+    let court_id = casebuilder_court_id(matter, &jurisdiction_id);
+    rule_pack.rule_profile.jurisdiction_id = jurisdiction_id.clone();
+    rule_pack.rule_profile.court_id = court_id;
+    rule_pack.rule_profile.court = if matter.court.is_empty() {
+        None
+    } else {
+        Some(matter.court.clone())
+    };
+    rule_pack.rule_profile.filing_date = Some(filing_date.to_string());
+    rule_pack.rule_profile.resolver_endpoint = format!(
+        "/api/v1/rules/applicable?jurisdiction={}&date={}&type={}",
+        jurisdiction_id, filing_date, product_type
+    );
+}
+
+fn casebuilder_jurisdiction_id(matter: &MatterSummary) -> String {
+    let jurisdiction = matter.jurisdiction.trim();
+    if jurisdiction.is_empty() || jurisdiction.eq_ignore_ascii_case("oregon") {
+        return county_from_court(&matter.court)
+            .map(|county| format!("or:{}", slug_casebuilder_id(&county)))
+            .unwrap_or_else(|| "or:state".to_string());
+    }
+    let normalized = jurisdiction.to_ascii_lowercase();
+    if normalized.starts_with("or:") {
+        return normalized;
+    }
+    if normalized == "statewide" {
+        return "or:state".to_string();
+    }
+    let county_source = if normalized.ends_with(" county") {
+        normalized.trim_end_matches(" county").trim().to_string()
+    } else if let Some(county) = county_from_court(&matter.court) {
+        county
+    } else {
+        normalized
+    };
+    format!("or:{}", slug_casebuilder_id(&county_source))
+}
+
+fn casebuilder_court_id(matter: &MatterSummary, jurisdiction_id: &str) -> Option<String> {
+    if jurisdiction_id == "or:state" {
+        return None;
+    }
+    let court = matter.court.trim().to_ascii_lowercase();
+    if court.starts_with("or:") {
+        Some(court)
+    } else if court.contains("circuit court") || court.is_empty() {
+        Some(format!("{jurisdiction_id}:circuit_court"))
+    } else {
+        Some(format!("{jurisdiction_id}:{}", slug_casebuilder_id(&court)))
+    }
+}
+
+fn county_from_court(court: &str) -> Option<String> {
+    let lower = court.to_ascii_lowercase();
+    lower
+        .split(" county")
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != lower)
+        .map(str::to_string)
+}
+
+fn slug_casebuilder_id(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>()
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
 fn oregon_civil_motion_rule_pack() -> RulePack {
     RulePack {
         rule_pack_id: "oregon-circuit-civil-motion-orcp-utcr".to_string(),
@@ -6992,6 +8128,7 @@ fn oregon_civil_motion_rule_pack() -> RulePack {
         jurisdiction: "Oregon".to_string(),
         version: "provider-free-seed-2026-05-01".to_string(),
         effective_date: "2025-08-01".to_string(),
+        rule_profile: default_rule_profile_summary(),
         rules: vec![
             rule_definition("orcp-14-motion-writing-grounds-relief", "ORCP 14 A", "https://oregon.public.law/rules-of-civil-procedure/orcp-14-motions/", "blocking", "work_product", "rules", "Motion must state grounds and relief sought.", "ORCP 14 A requires written motions to state grounds with particularity and set forth requested relief.", "Complete the relief requested and argument blocks.", false),
             rule_definition("orcp-14-motion-form", "ORCP 14 B", "https://oregon.public.law/rules-of-civil-procedure/orcp-14-motions/", "serious", "formatting", "formatting", "Motion form requires caption, signing, and other form review.", "ORCP 14 B applies pleading form rules, including signing requirements, to motions and other papers.", "Review caption, signature, and document form before export.", false),
@@ -7061,13 +8198,21 @@ fn work_product_event(
 }
 
 fn refresh_work_product_state(product: &mut WorkProduct) {
+    if product.document_ast.blocks.is_empty() {
+        rebuild_work_product_ast_from_projection(product);
+    } else {
+        normalize_work_product_ast(product);
+        product.blocks = flatten_work_product_blocks(&product.document_ast.blocks);
+    }
     product.blocks.sort_by_key(|block| block.ordinal);
     for (index, block) in product.blocks.iter_mut().enumerate() {
         block.ordinal = index as u64 + 1;
+        block.updated_at = product.updated_at.clone();
         block
             .prosemirror_json
             .get_or_insert_with(|| prosemirror_doc_for_text(&block.text));
     }
+    normalize_work_product_ast(product);
     product.review_status = if product
         .findings
         .iter()
@@ -7083,6 +8228,1169 @@ fn refresh_work_product_state(product: &mut WorkProduct) {
     } else {
         "ready_for_review".to_string()
     };
+}
+
+fn summarize_work_product_for_list(product: &mut WorkProduct) {
+    product.blocks.clear();
+    product.marks.clear();
+    product.anchors.clear();
+    product.document_ast.blocks.clear();
+    product.document_ast.links.clear();
+    product.document_ast.citations.clear();
+    product.document_ast.exhibits.clear();
+    product.document_ast.rule_findings.clear();
+    for artifact in &mut product.artifacts {
+        artifact.content_preview = export_content_preview(&artifact.content_preview);
+    }
+}
+
+fn summarize_version_snapshot_for_list(snapshot: &mut VersionSnapshot) {
+    snapshot.full_state_inline = None;
+}
+
+fn latest_snapshot_id(snapshots: &[VersionSnapshot]) -> Option<String> {
+    snapshots
+        .iter()
+        .max_by_key(|snapshot| snapshot.sequence_number)
+        .map(|snapshot| snapshot.snapshot_id.clone())
+}
+
+fn validate_ast_patch_concurrency(
+    patch: &AstPatch,
+    route_work_product_id: &str,
+    current_document_hash: &str,
+    current_snapshot_id: Option<&str>,
+) -> ApiResult<()> {
+    if let Some(patch_work_product_id) = patch.work_product_id.as_deref() {
+        if patch_work_product_id != route_work_product_id {
+            return Err(ApiError::BadRequest(
+                "AST patch work_product_id does not match route target.".to_string(),
+            ));
+        }
+    }
+    if patch.base_document_hash.is_none() && patch.base_snapshot_id.is_none() {
+        return Err(ApiError::BadRequest(
+            "AST patch requires base_document_hash or base_snapshot_id.".to_string(),
+        ));
+    }
+    if let Some(base_hash) = patch.base_document_hash.as_deref() {
+        if base_hash != current_document_hash {
+            return Err(ApiError::Conflict(format!(
+                "AST patch conflict: conflict_field=base_document_hash base_document_hash={base_hash} current_document_hash={current_document_hash}."
+            )));
+        }
+    }
+    if let Some(base_snapshot_id) = patch.base_snapshot_id.as_deref() {
+        if current_snapshot_id != Some(base_snapshot_id) {
+            return Err(ApiError::Conflict(
+                "AST patch conflict: conflict_field=base_snapshot_id.".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn rebuild_work_product_ast_from_projection(product: &mut WorkProduct) {
+    let blocks = product.blocks.clone();
+    product.document_ast = work_product_document_from_projection(product, blocks);
+}
+
+fn normalize_work_product_ast(product: &mut WorkProduct) {
+    let now = if product.updated_at.is_empty() {
+        now_string()
+    } else {
+        product.updated_at.clone()
+    };
+    product.document_ast.schema_version = if product.document_ast.schema_version.is_empty() {
+        default_work_product_schema_version()
+    } else {
+        product.document_ast.schema_version.clone()
+    };
+    product.document_ast.document_id = if product.document_ast.document_id.is_empty() {
+        format!("{}:document", product.work_product_id)
+    } else {
+        product.document_ast.document_id.clone()
+    };
+    product.document_ast.work_product_id = product.work_product_id.clone();
+    product.document_ast.matter_id = product.matter_id.clone();
+    product.document_ast.product_type = product.product_type.clone();
+    product.document_ast.title = product.title.clone();
+    product.document_ast.metadata.status = product.status.clone();
+    product.document_ast.metadata.rule_pack_id = Some(product.rule_pack.rule_pack_id.clone());
+    product.document_ast.metadata.formatting_profile_id =
+        Some(product.formatting_profile.profile_id.clone());
+    if product.document_ast.created_at.is_empty() {
+        product.document_ast.created_at = product.created_at.clone();
+    }
+    product.document_ast.updated_at = now.clone();
+    if product.document_ast.rule_findings.is_empty() && !product.findings.is_empty() {
+        product.document_ast.rule_findings = product.findings.clone();
+    }
+    product.findings = product.document_ast.rule_findings.clone();
+    for block in &mut product.document_ast.blocks {
+        normalize_ast_block(block, &product.matter_id, &product.work_product_id, &now);
+    }
+}
+
+fn normalize_ast_block(
+    block: &mut WorkProductBlock,
+    matter_id: &str,
+    work_product_id: &str,
+    now: &str,
+) {
+    if block.id.is_empty() {
+        block.id = block.block_id.clone();
+    }
+    block.matter_id = matter_id.to_string();
+    block.work_product_id = work_product_id.to_string();
+    if block.created_at.is_empty() {
+        block.created_at = now.to_string();
+    }
+    block.updated_at = now.to_string();
+    if block.review_status.is_empty() {
+        block.review_status = "needs_review".to_string();
+    }
+    if block.block_type.is_empty() {
+        block.block_type = "paragraph".to_string();
+    }
+    for child in &mut block.children {
+        child.parent_block_id = Some(block.block_id.clone());
+        normalize_ast_block(child, matter_id, work_product_id, now);
+    }
+}
+
+fn work_product_document_from_projection(
+    product: &WorkProduct,
+    blocks: Vec<WorkProductBlock>,
+) -> WorkProductDocument {
+    let now = if product.updated_at.is_empty() {
+        product.created_at.clone()
+    } else {
+        product.updated_at.clone()
+    };
+    let mut flat_blocks = blocks
+        .into_iter()
+        .enumerate()
+        .map(|(index, mut block)| {
+            if block.id.is_empty() {
+                block.id = block.block_id.clone();
+            }
+            if block.created_at.is_empty() {
+                block.created_at = product.created_at.clone();
+            }
+            block.updated_at = now.clone();
+            block.ordinal = if block.ordinal == 0 {
+                index as u64 + 1
+            } else {
+                block.ordinal
+            };
+            block.children.clear();
+            block.links.clear();
+            block.citations.clear();
+            block.exhibits.clear();
+            block.rule_finding_ids = product
+                .findings
+                .iter()
+                .filter(|finding| finding.target_id == block.block_id)
+                .map(|finding| finding.finding_id.clone())
+                .collect();
+            block
+        })
+        .collect::<Vec<_>>();
+    flat_blocks.sort_by_key(|block| block.ordinal);
+
+    let mut links = Vec::new();
+    let mut citations = Vec::new();
+    let exhibits = Vec::new();
+    for block in &mut flat_blocks {
+        for fact_id in &block.fact_ids {
+            let link_id = format!(
+                "{}:link:fact:{}",
+                block.block_id,
+                sanitize_path_segment(fact_id)
+            );
+            block.links.push(link_id.clone());
+            links.push(WorkProductLink {
+                link_id,
+                source_block_id: block.block_id.clone(),
+                source_text_range: None,
+                target_type: "fact".to_string(),
+                target_id: fact_id.clone(),
+                relation: "supports".to_string(),
+                confidence: None,
+                created_by: "system".to_string(),
+                created_at: now.clone(),
+            });
+        }
+        for evidence_id in &block.evidence_ids {
+            let link_id = format!(
+                "{}:link:evidence:{}",
+                block.block_id,
+                sanitize_path_segment(evidence_id)
+            );
+            block.links.push(link_id.clone());
+            links.push(WorkProductLink {
+                link_id,
+                source_block_id: block.block_id.clone(),
+                source_text_range: None,
+                target_type: "evidence".to_string(),
+                target_id: evidence_id.clone(),
+                relation: "supports".to_string(),
+                confidence: None,
+                created_by: "system".to_string(),
+                created_at: now.clone(),
+            });
+        }
+        for authority in &block.authorities {
+            let link_id = format!(
+                "{}:link:authority:{}",
+                block.block_id,
+                sanitize_path_segment(&authority.canonical_id)
+            );
+            let citation_use_id = format!(
+                "{}:citation:{}",
+                block.block_id,
+                sanitize_path_segment(&authority.citation)
+            );
+            block.links.push(link_id.clone());
+            block.citations.push(citation_use_id.clone());
+            links.push(WorkProductLink {
+                link_id,
+                source_block_id: block.block_id.clone(),
+                source_text_range: None,
+                target_type: "legal_authority".to_string(),
+                target_id: authority.canonical_id.clone(),
+                relation: "cites".to_string(),
+                confidence: None,
+                created_by: "system".to_string(),
+                created_at: now.clone(),
+            });
+            citations.push(WorkProductCitationUse {
+                citation_use_id,
+                source_block_id: block.block_id.clone(),
+                source_text_range: None,
+                raw_text: authority.citation.clone(),
+                normalized_citation: Some(authority.citation.clone()),
+                target_type: "provision".to_string(),
+                target_id: Some(authority.canonical_id.clone()),
+                pinpoint: authority.pinpoint.clone(),
+                status: "resolved".to_string(),
+                resolver_message: authority.reason.clone(),
+                created_at: now.clone(),
+            });
+        }
+    }
+
+    for anchor in &product.anchors {
+        let link_id = anchor.anchor_id.clone();
+        links.push(WorkProductLink {
+            link_id: link_id.clone(),
+            source_block_id: anchor.block_id.clone(),
+            source_text_range: anchor.quote.as_ref().map(|quote| TextRange {
+                start_offset: 0,
+                end_offset: quote.chars().count() as u64,
+                quote: Some(quote.clone()),
+            }),
+            target_type: anchor.target_type.clone(),
+            target_id: anchor.target_id.clone(),
+            relation: anchor.relation.clone(),
+            confidence: None,
+            created_by: "user".to_string(),
+            created_at: now.clone(),
+        });
+        if let Some(block) = flat_blocks
+            .iter_mut()
+            .find(|block| block.block_id == anchor.block_id)
+        {
+            push_unique(&mut block.links, link_id.clone());
+            if anchor.anchor_type == "authority" || anchor.citation.is_some() {
+                let citation_use_id = format!("{link_id}:citation");
+                push_unique(&mut block.citations, citation_use_id.clone());
+                citations.push(WorkProductCitationUse {
+                    citation_use_id,
+                    source_block_id: anchor.block_id.clone(),
+                    source_text_range: None,
+                    raw_text: anchor
+                        .citation
+                        .clone()
+                        .unwrap_or_else(|| anchor.target_id.clone()),
+                    normalized_citation: anchor.citation.clone(),
+                    target_type: "provision".to_string(),
+                    target_id: anchor
+                        .canonical_id
+                        .clone()
+                        .or_else(|| Some(anchor.target_id.clone())),
+                    pinpoint: anchor.pinpoint.clone(),
+                    status: if anchor.status == "resolved" {
+                        "resolved".to_string()
+                    } else {
+                        "needs_review".to_string()
+                    },
+                    resolver_message: None,
+                    created_at: now.clone(),
+                });
+            }
+        }
+    }
+
+    WorkProductDocument {
+        schema_version: default_work_product_schema_version(),
+        document_id: format!("{}:document", product.work_product_id),
+        work_product_id: product.work_product_id.clone(),
+        matter_id: product.matter_id.clone(),
+        product_type: product.product_type.clone(),
+        title: product.title.clone(),
+        metadata: WorkProductMetadata {
+            jurisdiction: Some(product.profile.jurisdiction.clone()),
+            court: None,
+            county: None,
+            case_number: None,
+            rule_pack_id: Some(product.rule_pack.rule_pack_id.clone()),
+            template_id: None,
+            formatting_profile_id: Some(product.formatting_profile.profile_id.clone()),
+            parties: None,
+            status: product.status.clone(),
+        },
+        blocks: build_work_product_block_tree(&flat_blocks),
+        links,
+        citations,
+        exhibits,
+        rule_findings: product.findings.clone(),
+        created_at: product.created_at.clone(),
+        updated_at: now,
+    }
+}
+
+fn build_work_product_block_tree(flat_blocks: &[WorkProductBlock]) -> Vec<WorkProductBlock> {
+    let ids = flat_blocks
+        .iter()
+        .map(|block| block.block_id.clone())
+        .collect::<HashSet<_>>();
+    flat_blocks
+        .iter()
+        .filter(|block| {
+            block
+                .parent_block_id
+                .as_ref()
+                .map(|parent_id| !ids.contains(parent_id))
+                .unwrap_or(true)
+        })
+        .cloned()
+        .map(|mut block| {
+            attach_work_product_children(&mut block, flat_blocks);
+            block
+        })
+        .collect()
+}
+
+fn attach_work_product_children(block: &mut WorkProductBlock, flat_blocks: &[WorkProductBlock]) {
+    block.children = flat_blocks
+        .iter()
+        .filter(|candidate| candidate.parent_block_id.as_deref() == Some(&block.block_id))
+        .cloned()
+        .map(|mut child| {
+            attach_work_product_children(&mut child, flat_blocks);
+            child
+        })
+        .collect();
+}
+
+fn flatten_work_product_blocks(blocks: &[WorkProductBlock]) -> Vec<WorkProductBlock> {
+    let mut flattened = Vec::new();
+    for block in blocks {
+        flatten_work_product_block(block, &mut flattened);
+    }
+    flattened.sort_by_key(|block| block.ordinal);
+    flattened
+}
+
+fn flatten_work_product_block(block: &WorkProductBlock, flattened: &mut Vec<WorkProductBlock>) {
+    let mut current = block.clone();
+    current.children.clear();
+    flattened.push(current);
+    for child in &block.children {
+        flatten_work_product_block(child, flattened);
+    }
+}
+
+fn block_text_excerpt(text: &str, inline_limit: u64) -> String {
+    if should_inline_payload(text.len(), inline_limit) {
+        return text.to_string();
+    }
+    const GRAPH_EXCERPT_CHARS: usize = 4096;
+    text.chars().take(GRAPH_EXCERPT_CHARS).collect()
+}
+
+fn work_product_block_graph_payload(
+    block: &WorkProductBlock,
+    inline_limit: u64,
+) -> ApiResult<String> {
+    let mut payload = json_value(block)?;
+    if !should_inline_payload(block.text.len(), inline_limit) {
+        if let Some(object) = payload.as_object_mut() {
+            let excerpt = block_text_excerpt(&block.text, inline_limit);
+            object.insert(
+                "text".to_string(),
+                serde_json::Value::String(excerpt.clone()),
+            );
+            object.insert(
+                "text_excerpt".to_string(),
+                serde_json::Value::String(excerpt),
+            );
+            object.insert(
+                "text_hash".to_string(),
+                serde_json::Value::String(sha256_hex(block.text.as_bytes())),
+            );
+            object.insert(
+                "text_size_bytes".to_string(),
+                serde_json::Value::Number(serde_json::Number::from(block.text.len() as u64)),
+            );
+            object.insert(
+                "text_storage_status".to_string(),
+                serde_json::Value::String("graph_excerpt".to_string()),
+            );
+        }
+    }
+    to_payload(&payload)
+}
+
+fn apply_ast_operation(
+    document: &mut WorkProductDocument,
+    operation: &AstOperation,
+) -> ApiResult<()> {
+    match operation {
+        AstOperation::InsertBlock {
+            parent_id,
+            after_block_id,
+            block,
+        } => insert_ast_block(
+            &mut document.blocks,
+            parent_id.as_deref(),
+            after_block_id.as_deref(),
+            block.clone(),
+        ),
+        AstOperation::UpdateBlock {
+            block_id, after, ..
+        } => {
+            let block = find_ast_block_mut(&mut document.blocks, block_id)
+                .ok_or_else(|| ApiError::NotFound(format!("AST block {block_id} not found")))?;
+            merge_json_patch_into_block(block, after)
+        }
+        AstOperation::DeleteBlock { block_id, .. } => {
+            delete_ast_block(&mut document.blocks, block_id)
+                .map(|_| ())
+                .ok_or_else(|| ApiError::NotFound(format!("AST block {block_id} not found")))
+        }
+        AstOperation::MoveBlock {
+            block_id,
+            parent_id,
+            after_block_id,
+        } => {
+            let block = delete_ast_block(&mut document.blocks, block_id)
+                .ok_or_else(|| ApiError::NotFound(format!("AST block {block_id} not found")))?;
+            insert_ast_block(
+                &mut document.blocks,
+                parent_id.as_deref(),
+                after_block_id.as_deref(),
+                block,
+            )
+        }
+        AstOperation::SplitBlock {
+            block_id,
+            offset,
+            new_block_id,
+        } => split_ast_block(&mut document.blocks, block_id, *offset, new_block_id),
+        AstOperation::MergeBlocks {
+            first_block_id,
+            second_block_id,
+        } => merge_ast_blocks(&mut document.blocks, first_block_id, second_block_id),
+        AstOperation::RenumberParagraphs => {
+            let mut next = 1;
+            renumber_ast_paragraphs(&mut document.blocks, &mut next);
+            Ok(())
+        }
+        AstOperation::AddCitation { citation } => {
+            let citation_id = citation.citation_use_id.clone();
+            let block = find_ast_block_mut(&mut document.blocks, &citation.source_block_id)
+                .ok_or_else(|| {
+                    ApiError::NotFound("AST citation source block not found".to_string())
+                })?;
+            push_unique(&mut block.citations, citation_id.clone());
+            document
+                .citations
+                .retain(|item| item.citation_use_id != citation_id);
+            document.citations.push(citation.clone());
+            Ok(())
+        }
+        AstOperation::ResolveCitation {
+            citation_use_id,
+            normalized_citation,
+            target_type,
+            target_id,
+            status,
+        } => {
+            let citation = document
+                .citations
+                .iter_mut()
+                .find(|item| item.citation_use_id == *citation_use_id)
+                .ok_or_else(|| {
+                    ApiError::NotFound(format!("CitationUse {citation_use_id} not found"))
+                })?;
+            if let Some(value) = normalized_citation {
+                citation.normalized_citation = Some(value.clone());
+            }
+            if let Some(value) = target_type {
+                citation.target_type = value.clone();
+            }
+            if let Some(value) = target_id {
+                citation.target_id = Some(value.clone());
+            }
+            if let Some(value) = status {
+                citation.status = value.clone();
+            }
+            Ok(())
+        }
+        AstOperation::RemoveCitation { citation_use_id } => {
+            document
+                .citations
+                .retain(|item| item.citation_use_id != *citation_use_id);
+            remove_block_ref(&mut document.blocks, citation_use_id, "citation");
+            Ok(())
+        }
+        AstOperation::AddLink { link } => {
+            let link_id = link.link_id.clone();
+            let block = find_ast_block_mut(&mut document.blocks, &link.source_block_id)
+                .ok_or_else(|| ApiError::NotFound("AST link source block not found".to_string()))?;
+            push_unique(&mut block.links, link_id.clone());
+            document.links.retain(|item| item.link_id != link_id);
+            document.links.push(link.clone());
+            Ok(())
+        }
+        AstOperation::RemoveLink { link_id } => {
+            document.links.retain(|item| item.link_id != *link_id);
+            remove_block_ref(&mut document.blocks, link_id, "link");
+            Ok(())
+        }
+        AstOperation::AddExhibitReference { exhibit } => {
+            let exhibit_id = exhibit.exhibit_reference_id.clone();
+            let block = find_ast_block_mut(&mut document.blocks, &exhibit.source_block_id)
+                .ok_or_else(|| {
+                    ApiError::NotFound("AST exhibit source block not found".to_string())
+                })?;
+            push_unique(&mut block.exhibits, exhibit_id.clone());
+            document
+                .exhibits
+                .retain(|item| item.exhibit_reference_id != exhibit_id);
+            document.exhibits.push(exhibit.clone());
+            Ok(())
+        }
+        AstOperation::ResolveExhibitReference {
+            exhibit_reference_id,
+            exhibit_id,
+            status,
+        } => {
+            let exhibit = document
+                .exhibits
+                .iter_mut()
+                .find(|item| item.exhibit_reference_id == *exhibit_reference_id)
+                .ok_or_else(|| {
+                    ApiError::NotFound(format!("ExhibitReference {exhibit_reference_id} not found"))
+                })?;
+            if let Some(value) = exhibit_id {
+                exhibit.exhibit_id = Some(value.clone());
+            }
+            if let Some(value) = status {
+                exhibit.status = value.clone();
+            }
+            Ok(())
+        }
+        AstOperation::AddRuleFinding { finding } => {
+            let finding_id = finding.finding_id.clone();
+            let block =
+                find_ast_block_mut(&mut document.blocks, &finding.target_id).ok_or_else(|| {
+                    ApiError::NotFound("AST rule finding target block not found".to_string())
+                })?;
+            push_unique(&mut block.rule_finding_ids, finding_id.clone());
+            document
+                .rule_findings
+                .retain(|item| item.finding_id != finding_id);
+            document.rule_findings.push(finding.clone());
+            Ok(())
+        }
+        AstOperation::ResolveRuleFinding { finding_id, status } => {
+            let finding = document
+                .rule_findings
+                .iter_mut()
+                .find(|item| item.finding_id == *finding_id)
+                .ok_or_else(|| {
+                    ApiError::NotFound(format!("Rule finding {finding_id} not found"))
+                })?;
+            finding.status = status.clone();
+            finding.updated_at = now_string();
+            Ok(())
+        }
+        AstOperation::ApplyTemplate { template_id } => {
+            document.metadata.template_id = Some(template_id.clone());
+            Ok(())
+        }
+    }
+}
+
+fn insert_ast_block(
+    blocks: &mut Vec<WorkProductBlock>,
+    parent_id: Option<&str>,
+    after_block_id: Option<&str>,
+    mut block: WorkProductBlock,
+) -> ApiResult<()> {
+    block.parent_block_id = parent_id.map(str::to_string);
+    let target_blocks = if let Some(parent_id) = parent_id {
+        &mut find_ast_block_mut(blocks, parent_id)
+            .ok_or_else(|| ApiError::NotFound(format!("Parent block {parent_id} not found")))?
+            .children
+    } else {
+        blocks
+    };
+    let insert_index = after_block_id
+        .and_then(|after_id| {
+            target_blocks
+                .iter()
+                .position(|candidate| candidate.block_id == after_id)
+                .map(|index| index + 1)
+        })
+        .unwrap_or_else(|| target_blocks.len());
+    target_blocks.insert(insert_index, block);
+    for (index, block) in target_blocks.iter_mut().enumerate() {
+        block.ordinal = index as u64 + 1;
+    }
+    Ok(())
+}
+
+fn find_ast_block_mut<'a>(
+    blocks: &'a mut [WorkProductBlock],
+    block_id: &str,
+) -> Option<&'a mut WorkProductBlock> {
+    for block in blocks {
+        if block.block_id == block_id {
+            return Some(block);
+        }
+        if let Some(found) = find_ast_block_mut(&mut block.children, block_id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn delete_ast_block(
+    blocks: &mut Vec<WorkProductBlock>,
+    block_id: &str,
+) -> Option<WorkProductBlock> {
+    if let Some(index) = blocks.iter().position(|block| block.block_id == block_id) {
+        return Some(blocks.remove(index));
+    }
+    for block in blocks {
+        if let Some(deleted) = delete_ast_block(&mut block.children, block_id) {
+            return Some(deleted);
+        }
+    }
+    None
+}
+
+fn merge_json_patch_into_block(
+    block: &mut WorkProductBlock,
+    patch: &serde_json::Value,
+) -> ApiResult<()> {
+    let mut value = json_value(block)?;
+    merge_json_objects(&mut value, patch);
+    let mut updated: WorkProductBlock =
+        serde_json::from_value(value).map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    if updated.block_id.is_empty() {
+        updated.block_id = block.block_id.clone();
+    }
+    *block = updated;
+    Ok(())
+}
+
+fn merge_json_objects(base: &mut serde_json::Value, patch: &serde_json::Value) {
+    match (base, patch) {
+        (serde_json::Value::Object(base), serde_json::Value::Object(patch)) => {
+            for (key, value) in patch {
+                if value.is_null() {
+                    base.remove(key);
+                } else {
+                    merge_json_objects(base.entry(key).or_insert(serde_json::Value::Null), value);
+                }
+            }
+        }
+        (base, patch) => *base = patch.clone(),
+    }
+}
+
+fn split_ast_block(
+    blocks: &mut Vec<WorkProductBlock>,
+    block_id: &str,
+    offset: u64,
+    new_block_id: &str,
+) -> ApiResult<()> {
+    let (parent_id, new_block) = {
+        let block = find_ast_block_mut(blocks, block_id)
+            .ok_or_else(|| ApiError::NotFound(format!("AST block {block_id} not found")))?;
+        let split_at = offset.min(block.text.chars().count() as u64) as usize;
+        let left = block.text.chars().take(split_at).collect::<String>();
+        let right = block.text.chars().skip(split_at).collect::<String>();
+        block.text = left.trim_end().to_string();
+        let mut new_block = block.clone();
+        new_block.block_id = new_block_id.to_string();
+        new_block.id = new_block_id.to_string();
+        new_block.text = right.trim_start().to_string();
+        new_block.ordinal = block.ordinal + 1;
+        (block.parent_block_id.clone(), new_block)
+    };
+    insert_ast_block(blocks, parent_id.as_deref(), Some(block_id), new_block)
+}
+
+fn merge_ast_blocks(
+    blocks: &mut Vec<WorkProductBlock>,
+    first_block_id: &str,
+    second_block_id: &str,
+) -> ApiResult<()> {
+    let second = delete_ast_block(blocks, second_block_id)
+        .ok_or_else(|| ApiError::NotFound(format!("AST block {second_block_id} not found")))?;
+    let first = find_ast_block_mut(blocks, first_block_id)
+        .ok_or_else(|| ApiError::NotFound(format!("AST block {first_block_id} not found")))?;
+    if !first.text.is_empty() && !second.text.is_empty() {
+        first.text.push_str("\n\n");
+    }
+    first.text.push_str(&second.text);
+    for id in second.links {
+        push_unique(&mut first.links, id);
+    }
+    for id in second.citations {
+        push_unique(&mut first.citations, id);
+    }
+    for id in second.exhibits {
+        push_unique(&mut first.exhibits, id);
+    }
+    for id in second.rule_finding_ids {
+        push_unique(&mut first.rule_finding_ids, id);
+    }
+    Ok(())
+}
+
+fn renumber_ast_paragraphs(blocks: &mut [WorkProductBlock], next: &mut u64) {
+    for block in blocks {
+        if matches!(
+            block.block_type.as_str(),
+            "numbered_paragraph" | "paragraph"
+        ) && matches!(
+            block.role.as_str(),
+            "factual_allegation"
+                | "legal_allegation"
+                | "jurisdiction"
+                | "venue"
+                | "claim_element"
+                | "relief"
+                | "fact"
+        ) {
+            block.paragraph_number = Some(*next);
+            *next += 1;
+        }
+        renumber_ast_paragraphs(&mut block.children, next);
+    }
+}
+
+fn remove_block_ref(blocks: &mut [WorkProductBlock], id: &str, ref_kind: &str) {
+    for block in blocks {
+        match ref_kind {
+            "citation" => block.citations.retain(|value| value != id),
+            "link" => block.links.retain(|value| value != id),
+            "exhibit" => block.exhibits.retain(|value| value != id),
+            _ => {}
+        }
+        remove_block_ref(&mut block.children, id, ref_kind);
+    }
+}
+
+fn validate_work_product_document(product: &WorkProduct) -> AstValidationResponse {
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    let document = &product.document_ast;
+    if document.schema_version.trim().is_empty() {
+        errors.push(ast_issue(
+            "missing_schema_version",
+            "WorkProduct AST is missing schema_version.",
+            Some("document"),
+            Some(&document.document_id),
+        ));
+    }
+    let mut seen = HashSet::new();
+    let mut parent_ids = HashSet::new();
+    validate_ast_blocks(
+        &document.blocks,
+        None,
+        &mut seen,
+        &mut parent_ids,
+        &mut errors,
+        &mut warnings,
+    );
+    for parent_id in parent_ids {
+        if !seen.contains(&parent_id) {
+            errors.push(ast_issue(
+                "missing_parent",
+                &format!("Parent block {parent_id} does not exist."),
+                Some("block"),
+                Some(&parent_id),
+            ));
+        }
+    }
+    if product.product_type == "complaint" {
+        let flat = flatten_work_product_blocks(&document.blocks);
+        if !flat
+            .iter()
+            .any(|block| block.block_type == "caption" || block.role == "caption")
+        {
+            warnings.push(ast_issue(
+                "complaint_caption_missing",
+                "Complaint AST should include a caption block.",
+                Some("document"),
+                Some(&document.document_id),
+            ));
+        }
+        if !flat
+            .iter()
+            .any(|block| matches!(block.role.as_str(), "relief" | "prayer_for_relief"))
+        {
+            warnings.push(ast_issue(
+                "complaint_relief_missing",
+                "Complaint AST should include demand/prayer for relief.",
+                Some("document"),
+                Some(&document.document_id),
+            ));
+        }
+    }
+    let link_ids = document
+        .links
+        .iter()
+        .map(|link| link.link_id.clone())
+        .collect::<HashSet<_>>();
+    let citation_ids = document
+        .citations
+        .iter()
+        .map(|citation| citation.citation_use_id.clone())
+        .collect::<HashSet<_>>();
+    let exhibit_ids = document
+        .exhibits
+        .iter()
+        .map(|exhibit| exhibit.exhibit_reference_id.clone())
+        .collect::<HashSet<_>>();
+    for block in flatten_work_product_blocks(&document.blocks) {
+        for link_id in &block.links {
+            if !link_ids.contains(link_id) {
+                errors.push(ast_issue(
+                    "broken_block_link",
+                    &format!(
+                        "Block {} references missing link {link_id}.",
+                        block.block_id
+                    ),
+                    Some("block"),
+                    Some(&block.block_id),
+                ));
+            }
+        }
+        for citation_id in &block.citations {
+            if !citation_ids.contains(citation_id) {
+                errors.push(ast_issue(
+                    "broken_block_citation",
+                    &format!(
+                        "Block {} references missing citation {citation_id}.",
+                        block.block_id
+                    ),
+                    Some("block"),
+                    Some(&block.block_id),
+                ));
+            }
+        }
+        for exhibit_id in &block.exhibits {
+            if !exhibit_ids.contains(exhibit_id) {
+                errors.push(ast_issue(
+                    "broken_block_exhibit",
+                    &format!(
+                        "Block {} references missing exhibit {exhibit_id}.",
+                        block.block_id
+                    ),
+                    Some("block"),
+                    Some(&block.block_id),
+                ));
+            }
+        }
+    }
+    for citation in &document.citations {
+        if matches!(
+            citation.status.as_str(),
+            "unresolved" | "ambiguous" | "stale" | "currentness_warning" | "needs_review"
+        ) {
+            warnings.push(ast_issue(
+                "citation_needs_review",
+                &format!("Citation '{}' needs review.", citation.raw_text),
+                Some("citation"),
+                Some(&citation.citation_use_id),
+            ));
+        }
+    }
+    for exhibit in &document.exhibits {
+        if exhibit.status != "attached" {
+            warnings.push(ast_issue(
+                "exhibit_needs_review",
+                &format!("Exhibit reference '{}' is not attached.", exhibit.label),
+                Some("exhibit"),
+                Some(&exhibit.exhibit_reference_id),
+            ));
+        }
+    }
+    AstValidationResponse {
+        valid: errors.is_empty(),
+        errors,
+        warnings,
+    }
+}
+
+fn validate_ast_blocks(
+    blocks: &[WorkProductBlock],
+    parent_id: Option<&str>,
+    seen: &mut HashSet<String>,
+    parent_ids: &mut HashSet<String>,
+    errors: &mut Vec<AstValidationIssue>,
+    warnings: &mut Vec<AstValidationIssue>,
+) {
+    let mut order_indexes = HashSet::new();
+    for block in blocks {
+        if block.block_id.trim().is_empty() {
+            errors.push(ast_issue(
+                "missing_block_id",
+                "AST block is missing block_id.",
+                Some("block"),
+                None,
+            ));
+        } else if !seen.insert(block.block_id.clone()) {
+            errors.push(ast_issue(
+                "duplicate_block_id",
+                &format!("Duplicate block id {}.", block.block_id),
+                Some("block"),
+                Some(&block.block_id),
+            ));
+        }
+        if block.block_type.trim().is_empty() {
+            errors.push(ast_issue(
+                "missing_block_type",
+                &format!("Block {} is missing type.", block.block_id),
+                Some("block"),
+                Some(&block.block_id),
+            ));
+        }
+        if block.ordinal == 0 || !order_indexes.insert(block.ordinal) {
+            warnings.push(ast_issue(
+                "order_index_review",
+                &format!(
+                    "Block {} has a duplicate or zero order_index.",
+                    block.block_id
+                ),
+                Some("block"),
+                Some(&block.block_id),
+            ));
+        }
+        if let Some(parent_id) = parent_id.or(block.parent_block_id.as_deref()) {
+            parent_ids.insert(parent_id.to_string());
+            if parent_id == block.block_id {
+                errors.push(ast_issue(
+                    "block_cycle",
+                    &format!("Block {} cannot be its own parent.", block.block_id),
+                    Some("block"),
+                    Some(&block.block_id),
+                ));
+            }
+        }
+        validate_ast_blocks(
+            &block.children,
+            Some(&block.block_id),
+            seen,
+            parent_ids,
+            errors,
+            warnings,
+        );
+    }
+}
+
+fn ast_issue(
+    code: &str,
+    message: &str,
+    target_type: Option<&str>,
+    target_id: Option<&str>,
+) -> AstValidationIssue {
+    AstValidationIssue {
+        code: code.to_string(),
+        message: message.to_string(),
+        target_type: target_type.map(str::to_string),
+        target_id: target_id.map(str::to_string),
+    }
+}
+
+fn markdown_to_work_product_ast(
+    product: &WorkProduct,
+    markdown: &str,
+) -> (WorkProductDocument, Vec<String>) {
+    let mut blocks = Vec::new();
+    let mut warnings = Vec::new();
+    let mut pending = Vec::new();
+    let mut ordinal = 1_u64;
+    let mut in_frontmatter = false;
+    let mut frontmatter_seen = false;
+
+    for raw_line in markdown.lines() {
+        let line = raw_line.trim_end();
+        if line.trim() == "---" && !frontmatter_seen {
+            in_frontmatter = !in_frontmatter;
+            if !in_frontmatter {
+                frontmatter_seen = true;
+            }
+            continue;
+        }
+        if in_frontmatter || line.trim_start().starts_with("<!--") {
+            continue;
+        }
+        if line.trim().is_empty() {
+            flush_markdown_paragraph(product, &mut blocks, &mut pending, &mut ordinal);
+            continue;
+        }
+        if let Some((level, heading)) = markdown_heading(line) {
+            flush_markdown_paragraph(product, &mut blocks, &mut pending, &mut ordinal);
+            let is_count = heading.to_uppercase().starts_with("COUNT ");
+            blocks.push(WorkProductBlock {
+                id: format!("{}:block:{}", product.work_product_id, ordinal),
+                block_id: format!("{}:block:{}", product.work_product_id, ordinal),
+                matter_id: product.matter_id.clone(),
+                work_product_id: product.work_product_id.clone(),
+                block_type: if is_count { "count" } else { "heading" }.to_string(),
+                role: if is_count { "count" } else { "heading" }.to_string(),
+                title: heading.to_string(),
+                text: heading.to_string(),
+                ordinal,
+                section_kind: if is_count {
+                    None
+                } else {
+                    Some(format!("level_{level}"))
+                },
+                count_number: if is_count {
+                    roman_or_number_after_count(heading)
+                } else {
+                    None
+                },
+                review_status: "needs_review".to_string(),
+                prosemirror_json: Some(prosemirror_doc_for_text(heading)),
+                ..WorkProductBlock::default()
+            });
+            ordinal += 1;
+            continue;
+        }
+        if let Some((number, text)) = markdown_numbered_paragraph(line) {
+            flush_markdown_paragraph(product, &mut blocks, &mut pending, &mut ordinal);
+            blocks.push(WorkProductBlock {
+                id: format!("{}:block:{}", product.work_product_id, ordinal),
+                block_id: format!("{}:block:{}", product.work_product_id, ordinal),
+                matter_id: product.matter_id.clone(),
+                work_product_id: product.work_product_id.clone(),
+                block_type: "numbered_paragraph".to_string(),
+                role: "factual_allegation".to_string(),
+                title: format!("Paragraph {number}"),
+                text: text.to_string(),
+                ordinal,
+                paragraph_number: Some(number),
+                review_status: "needs_review".to_string(),
+                prosemirror_json: Some(prosemirror_doc_for_text(text)),
+                ..WorkProductBlock::default()
+            });
+            ordinal += 1;
+            continue;
+        }
+        pending.push(line.trim().to_string());
+    }
+    flush_markdown_paragraph(product, &mut blocks, &mut pending, &mut ordinal);
+
+    if blocks.is_empty() {
+        warnings.push(
+            "Markdown did not contain recognizable blocks; created an empty AST.".to_string(),
+        );
+    }
+    let document = work_product_document_from_projection(product, blocks);
+    (document, warnings)
+}
+
+fn flush_markdown_paragraph(
+    product: &WorkProduct,
+    blocks: &mut Vec<WorkProductBlock>,
+    pending: &mut Vec<String>,
+    ordinal: &mut u64,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let text = pending.join(" ");
+    blocks.push(WorkProductBlock {
+        id: format!("{}:block:{}", product.work_product_id, *ordinal),
+        block_id: format!("{}:block:{}", product.work_product_id, *ordinal),
+        matter_id: product.matter_id.clone(),
+        work_product_id: product.work_product_id.clone(),
+        block_type: "paragraph".to_string(),
+        role: "custom".to_string(),
+        title: format!("Paragraph {}", *ordinal),
+        text: text.clone(),
+        ordinal: *ordinal,
+        review_status: "needs_review".to_string(),
+        prosemirror_json: Some(prosemirror_doc_for_text(&text)),
+        ..WorkProductBlock::default()
+    });
+    *ordinal += 1;
+    pending.clear();
+}
+
+fn markdown_heading(line: &str) -> Option<(usize, &str)> {
+    let trimmed = line.trim_start();
+    let level = trimmed.chars().take_while(|value| *value == '#').count();
+    if (1..=4).contains(&level) && trimmed.chars().nth(level) == Some(' ') {
+        Some((level, trimmed[level + 1..].trim()))
+    } else {
+        None
+    }
+}
+
+fn markdown_numbered_paragraph(line: &str) -> Option<(u64, &str)> {
+    let trimmed = line.trim_start();
+    let dot = trimmed.find('.')?;
+    let number = trimmed[..dot].parse::<u64>().ok()?;
+    let text = trimmed[dot + 1..].trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some((number, text))
+    }
+}
+
+fn roman_or_number_after_count(text: &str) -> Option<u64> {
+    let rest = text.trim_start_matches(|c: char| c != ' ').trim();
+    let token = rest.split_whitespace().next().unwrap_or_default();
+    token.parse::<u64>().ok().or_else(|| {
+        match token
+            .trim_matches(|c: char| !c.is_ascii_alphabetic())
+            .to_uppercase()
+            .as_str()
+        {
+            "I" => Some(1),
+            "II" => Some(2),
+            "III" => Some(3),
+            "IV" => Some(4),
+            "V" => Some(5),
+            "VI" => Some(6),
+            _ => None,
+        }
+    })
 }
 
 fn work_product_findings(product: &WorkProduct) -> Vec<WorkProductFinding> {
@@ -7287,6 +9595,11 @@ fn render_work_product_export_content(product: &WorkProduct, format: &str) -> Ap
     })
 }
 
+fn export_content_preview(content: &str) -> String {
+    const PREVIEW_CHARS: usize = 16 * 1024;
+    content.chars().take(PREVIEW_CHARS).collect()
+}
+
 fn work_product_markdown(product: &WorkProduct) -> String {
     let mut lines = vec![format!("# {}", product.title)];
     for block in &product.blocks {
@@ -7458,6 +9771,7 @@ fn work_product_from_draft(draft: &CaseDraft) -> WorkProduct {
         created_at: draft.created_at.clone(),
         updated_at: draft.updated_at.clone(),
         profile: work_product_profile(&draft.kind),
+        document_ast: WorkProductDocument::default(),
         blocks: work_product_blocks_from_draft(draft),
         marks: Vec::new(),
         anchors: Vec::new(),
@@ -7503,6 +9817,7 @@ fn work_product_blocks_from_draft(draft: &CaseDraft) -> Vec<WorkProductBlock> {
                 locked: false,
                 review_status: "needs_review".to_string(),
                 prosemirror_json: Some(prosemirror_doc_for_text(&section.body)),
+                ..WorkProductBlock::default()
             });
     let offset = draft.sections.len() as u64;
     let paragraph_blocks = draft
@@ -7527,6 +9842,7 @@ fn work_product_blocks_from_draft(draft: &CaseDraft) -> Vec<WorkProductBlock> {
             locked: false,
             review_status: "needs_review".to_string(),
             prosemirror_json: Some(prosemirror_doc_for_text(&paragraph.text)),
+            ..WorkProductBlock::default()
         });
     section_blocks.chain(paragraph_blocks).collect()
 }
@@ -7556,6 +9872,7 @@ fn work_product_from_complaint(complaint: &ComplaintDraft) -> WorkProduct {
         locked: false,
         review_status: complaint.review_status.clone(),
         prosemirror_json: None,
+        ..WorkProductBlock::default()
     });
     for section in &complaint.sections {
         blocks.push(WorkProductBlock {
@@ -7576,6 +9893,7 @@ fn work_product_from_complaint(complaint: &ComplaintDraft) -> WorkProduct {
             locked: false,
             review_status: section.review_status.clone(),
             prosemirror_json: None,
+            ..WorkProductBlock::default()
         });
     }
     for count in &complaint.counts {
@@ -7597,6 +9915,7 @@ fn work_product_from_complaint(complaint: &ComplaintDraft) -> WorkProduct {
             locked: false,
             review_status: count.health.clone(),
             prosemirror_json: None,
+            ..WorkProductBlock::default()
         });
     }
     for paragraph in &complaint.paragraphs {
@@ -7646,6 +9965,7 @@ fn work_product_from_complaint(complaint: &ComplaintDraft) -> WorkProduct {
             locked: paragraph.locked,
             review_status: paragraph.review_status.clone(),
             prosemirror_json: Some(prosemirror_doc_for_text(&paragraph.text)),
+            ..WorkProductBlock::default()
         });
     }
     let mut product = WorkProduct {
@@ -7662,6 +9982,7 @@ fn work_product_from_complaint(complaint: &ComplaintDraft) -> WorkProduct {
         created_at: complaint.created_at.clone(),
         updated_at: complaint.updated_at.clone(),
         profile: work_product_profile("complaint"),
+        document_ast: WorkProductDocument::default(),
         blocks,
         marks: Vec::new(),
         anchors: Vec::new(),
@@ -7720,6 +10041,10 @@ fn work_product_from_complaint(complaint: &ComplaintDraft) -> WorkProduct {
                 qc_status_at_export: None,
                 changed_since_export: Some(false),
                 immutable: Some(true),
+                object_blob_id: None,
+                size_bytes: Some(artifact.content_preview.len() as u64),
+                mime_type: Some(export_mime_type(&artifact.format).to_string()),
+                storage_status: Some("legacy_inline".to_string()),
             })
             .collect(),
         history: complaint
@@ -7977,6 +10302,12 @@ fn default_complaint_from_matter(
         },
         import_provenance: None,
     };
+    apply_matter_rule_profile(
+        &mut complaint.rule_pack,
+        matter,
+        now.get(0..10).unwrap_or(now),
+        "complaint",
+    );
     refresh_complaint_state(&mut complaint);
     complaint
 }
@@ -8168,7 +10499,11 @@ fn imported_pleading_paragraph(
     let paragraph_id = format!("{complaint_id}:paragraph:{ordinal}");
     let section_id = sections
         .iter()
-        .find(|section| section.section_id.ends_with(&sanitize_path_segment(&parsed.section_key)))
+        .find(|section| {
+            section
+                .section_id
+                .ends_with(&sanitize_path_segment(&parsed.section_key))
+        })
         .or_else(|| sections.first())
         .map(|section| section.section_id.clone());
     let count_id = parsed.count_key.as_ref().and_then(|count_key| {
@@ -8179,8 +10514,14 @@ fn imported_pleading_paragraph(
             .map(|count| count.count_id.clone())
     });
     let role = role_for_imported_paragraph(section_id.as_deref(), sections, count_id.as_deref());
-    let (fact_ids, evidence_uses) =
-        exact_support_for_paragraph(matter, complaint_id, &paragraph_id, &parsed.text, facts, evidence);
+    let (fact_ids, evidence_uses) = exact_support_for_paragraph(
+        matter,
+        complaint_id,
+        &paragraph_id,
+        &parsed.text,
+        facts,
+        evidence,
+    );
     let mut paragraph = pleading_paragraph(
         &matter.matter_id,
         complaint_id,
@@ -8306,7 +10647,11 @@ fn finish_import_paragraph(
     paragraph: Option<ParsedComplaintParagraph>,
 ) {
     if let Some(mut paragraph) = paragraph {
-        paragraph.text = paragraph.text.split_whitespace().collect::<Vec<_>>().join(" ");
+        paragraph.text = paragraph
+            .text
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         if !paragraph.text.is_empty() {
             paragraphs.push(paragraph);
         }
@@ -8426,7 +10771,11 @@ fn imported_caption(matter: &MatterSummary, text: &str, parties: &[CaseParty]) -
 fn role_names_from_parties(parties: &[CaseParty], roles: &[&str]) -> Option<Vec<String>> {
     let names = parties
         .iter()
-        .filter(|party| roles.iter().any(|role| party.role.eq_ignore_ascii_case(role)))
+        .filter(|party| {
+            roles
+                .iter()
+                .any(|role| party.role.eq_ignore_ascii_case(role))
+        })
         .map(|party| party.name.clone())
         .collect::<Vec<_>>();
     if names.is_empty() {
@@ -8438,9 +10787,10 @@ fn role_names_from_parties(parties: &[CaseParty], roles: &[&str]) -> Option<Vec<
 
 fn caption_names_before(text: &str, marker: &str) -> Option<Vec<String>> {
     let lines = text.lines().collect::<Vec<_>>();
-    let marker_index = lines
-        .iter()
-        .position(|line| line.to_ascii_lowercase().contains(&marker.to_ascii_lowercase()))?;
+    let marker_index = lines.iter().position(|line| {
+        line.to_ascii_lowercase()
+            .contains(&marker.to_ascii_lowercase())
+    })?;
     let mut names = Vec::new();
     for line in lines[..marker_index].iter().rev().take(8).rev() {
         let cleaned = clean_caption_line(line);
@@ -8480,7 +10830,12 @@ fn imported_complaint_title(document: &CaseDocument, text: &str) -> String {
     text.lines()
         .map(str::trim)
         .find(|line| line.to_ascii_uppercase().contains("COMPLAINT"))
-        .map(|line| line.trim_start_matches('#').trim().trim_matches('*').to_string())
+        .map(|line| {
+            line.trim_start_matches('#')
+                .trim()
+                .trim_matches('*')
+                .to_string()
+        })
         .filter(|line| !line.is_empty())
         .unwrap_or_else(|| format!("{} structured complaint", document.title))
 }
@@ -8497,7 +10852,9 @@ fn looks_like_complaint(filename: &str, text: &str) -> bool {
         upper.contains("PRAYER FOR RELIEF"),
         upper.contains("PLAINTIFF"),
         upper.contains("DEFENDANT"),
-        ORS_CITATION_RE.is_match(text) || ORCP_CITATION_RE.is_match(text) || UTCR_CITATION_RE.is_match(text),
+        ORS_CITATION_RE.is_match(text)
+            || ORCP_CITATION_RE.is_match(text)
+            || UTCR_CITATION_RE.is_match(text),
         numbered >= 3,
     ];
     signals.iter().filter(|signal| **signal).count() >= 3
@@ -8505,7 +10862,11 @@ fn looks_like_complaint(filename: &str, text: &str) -> bool {
 
 fn parser_id_for_document(document: &CaseDocument) -> String {
     let filename = document.filename.to_ascii_lowercase();
-    let mime = document.mime_type.clone().unwrap_or_default().to_ascii_lowercase();
+    let mime = document
+        .mime_type
+        .clone()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     if filename.ends_with(".md") || filename.ends_with(".markdown") {
         "casebuilder-markdown-v1"
     } else if filename.ends_with(".html") || filename.ends_with(".htm") || mime == "text/html" {
@@ -8534,7 +10895,8 @@ fn exact_support_for_paragraph(
     let mut fact_ids = Vec::new();
     for fact in facts {
         let candidate = normalize_for_match(&fact.statement);
-        if !candidate.is_empty() && (normalized.contains(&candidate) || candidate.contains(&normalized))
+        if !candidate.is_empty()
+            && (normalized.contains(&candidate) || candidate.contains(&normalized))
         {
             push_unique(&mut fact_ids, fact.fact_id.clone());
         }
@@ -8554,7 +10916,10 @@ fn exact_support_for_paragraph(
                 fact_id: fact_ids.first().cloned(),
                 evidence_id: Some(item.evidence_id.clone()),
                 document_id: Some(item.document_id.clone()),
-                source_span_id: item.source_spans.first().map(|span| span.source_span_id.clone()),
+                source_span_id: item
+                    .source_spans
+                    .first()
+                    .map(|span| span.source_span_id.clone()),
                 relation: "supports".to_string(),
                 quote: Some(item.quote.clone()),
                 status: "exact_match_needs_review".to_string(),
@@ -8580,29 +10945,29 @@ fn citation_uses_for_text(
     text: &str,
 ) -> Vec<CitationUse> {
     let mut citations = Vec::new();
-	    for citation in ORS_CITATION_RE
-	        .find_iter(text)
-	        .chain(ORCP_CITATION_RE.find_iter(text))
-	        .chain(UTCR_CITATION_RE.find_iter(text))
-	        .chain(SESSION_LAW_CITATION_RE.find_iter(text))
-	        .map(|m| m.as_str().trim().trim_end_matches('.').to_string())
-	    {
+    for citation in ORS_CITATION_RE
+        .find_iter(text)
+        .chain(ORCP_CITATION_RE.find_iter(text))
+        .chain(UTCR_CITATION_RE.find_iter(text))
+        .chain(SESSION_LAW_CITATION_RE.find_iter(text))
+        .map(|m| m.as_str().trim().trim_end_matches('.').to_string())
+    {
         if citations
             .iter()
             .any(|existing: &CitationUse| existing.citation.eq_ignore_ascii_case(&citation))
         {
             continue;
-	        }
-	        let canonical_id = canonical_id_for_citation(&citation);
-	        let is_external = is_external_authority_citation(&citation);
-	        let currentness = authority_currentness_for_citation(&citation);
-	        let scope_warning = if is_external {
-	            Some("External rule or session-law authority is source-backed but not yet part of the full ORSGraph provision corpus.".to_string())
-	        } else {
-	            None
-	        };
-	        let id = format!("{target_id}:citation-use:{}", citations.len() + 1);
-	        citations.push(CitationUse {
+        }
+        let canonical_id = canonical_id_for_citation(&citation);
+        let is_external = is_external_authority_citation(&citation);
+        let currentness = authority_currentness_for_citation(&citation);
+        let scope_warning = if is_external {
+            Some("External rule or session-law authority is source-backed but not yet part of the full ORSGraph provision corpus.".to_string())
+        } else {
+            None
+        };
+        let id = format!("{target_id}:citation-use:{}", citations.len() + 1);
+        citations.push(CitationUse {
             id: id.clone(),
             citation_use_id: id,
             matter_id: matter_id.to_string(),
@@ -8621,10 +10986,10 @@ fn citation_uses_for_text(
             } else {
                 "unresolved".to_string()
             },
-	            currentness,
-	            scope_warning,
-	            canonical_id,
-	        });
+            currentness,
+            scope_warning,
+            canonical_id,
+        });
     }
     citations
 }
@@ -8657,82 +11022,87 @@ fn canonical_id_for_citation(citation: &str) -> Option<String> {
             sanitize_path_segment(&normalized[5..].trim().to_ascii_lowercase())
         ));
     }
-	    if upper.starts_with("UTCR ") {
-	        return Some(format!(
-	            "or:utcr:{}",
-	            sanitize_path_segment(&normalized[5..].trim().to_ascii_lowercase())
-	        ));
-	    }
-	    if let Some(caps) = SESSION_LAW_CITATION_RE.captures(&normalized) {
-	        let year = caps.get(1)?.as_str();
-	        let chapter = caps.get(2)?.as_str();
-	        let mut canonical = format!("or:session-law:{year}:ch:{chapter}");
-	        if let Some(section) = caps.get(3) {
-	            canonical.push_str(":sec:");
-	            canonical.push_str(&sanitize_path_segment(
-	                &section.as_str().trim().to_ascii_lowercase(),
-	            ));
-	        }
-	        return Some(canonical);
-	    }
-	    None
-	}
+    if upper.starts_with("UTCR ") {
+        let rule = normalized[5..]
+            .trim()
+            .split('(')
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches(',');
+        return Some(format!(
+            "or:utcr:{}",
+            sanitize_path_segment(&rule.to_ascii_lowercase())
+        ));
+    }
+    if let Some(caps) = SESSION_LAW_CITATION_RE.captures(&normalized) {
+        let year = caps.get(1)?.as_str();
+        let chapter = caps.get(2)?.as_str();
+        let mut canonical = format!("or:session-law:{year}:ch:{chapter}");
+        if let Some(section) = caps.get(3) {
+            canonical.push_str(":sec:");
+            canonical.push_str(&sanitize_path_segment(
+                &section.as_str().trim().to_ascii_lowercase(),
+            ));
+        }
+        return Some(canonical);
+    }
+    None
+}
 
-	fn is_external_authority_citation(citation: &str) -> bool {
-	    let upper = citation.to_ascii_uppercase();
-	    upper.starts_with("ORCP")
-	        || upper.starts_with("UTCR")
-	        || upper.starts_with("OR LAWS")
-	        || upper.starts_with("OR. LAWS")
-	        || upper.starts_with("OREGON LAWS")
-	        || upper.starts_with("OREGON LAW")
-	}
+fn is_external_authority_citation(citation: &str) -> bool {
+    let upper = citation.to_ascii_uppercase();
+    upper.starts_with("ORCP")
+        || upper.starts_with("OR LAWS")
+        || upper.starts_with("OR. LAWS")
+        || upper.starts_with("OREGON LAWS")
+        || upper.starts_with("OREGON LAW")
+}
 
-	fn authority_type_for_citation(citation: &str) -> &'static str {
-	    let upper = citation.to_ascii_uppercase();
-	    if upper.starts_with("ORS ") {
-	        "ors"
-	    } else if upper.starts_with("ORCP") {
-	        "orcp"
-	    } else if upper.starts_with("UTCR") {
-	        "utcr"
-	    } else if is_external_authority_citation(citation) {
-	        "session_law"
-	    } else {
-	        "unknown"
-	    }
-	}
+fn authority_type_for_citation(citation: &str) -> &'static str {
+    let upper = citation.to_ascii_uppercase();
+    if upper.starts_with("ORS ") {
+        "ors"
+    } else if upper.starts_with("ORCP") {
+        "orcp"
+    } else if upper.starts_with("UTCR") {
+        "utcr"
+    } else if is_external_authority_citation(citation) {
+        "session_law"
+    } else {
+        "unknown"
+    }
+}
 
-	fn authority_source_url_for_citation(citation: &str) -> &'static str {
-	    match authority_type_for_citation(citation) {
-	        "ors" => ORS_2025_SOURCE_URL,
-	        "orcp" => ORCP_2025_SOURCE_URL,
-	        "utcr" => UTCR_CURRENT_SOURCE_URL,
-	        "session_law" => ORS_2025_SOURCE_URL,
-	        _ => ORS_2025_SOURCE_URL,
-	    }
-	}
+fn authority_source_url_for_citation(citation: &str) -> &'static str {
+    match authority_type_for_citation(citation) {
+        "ors" => ORS_2025_SOURCE_URL,
+        "orcp" => ORCP_2025_SOURCE_URL,
+        "utcr" => UTCR_CURRENT_SOURCE_URL,
+        "session_law" => ORS_2025_SOURCE_URL,
+        _ => ORS_2025_SOURCE_URL,
+    }
+}
 
-	fn authority_edition_for_citation(citation: &str) -> &'static str {
-	    match authority_type_for_citation(citation) {
-	        "ors" => "2025 ORS",
-	        "orcp" => "2025 ORCP",
-	        "utcr" => "Current UTCR",
-	        "session_law" => "Oregon session law source-backed",
-	        _ => "Source-backed authority",
-	    }
-	}
+fn authority_edition_for_citation(citation: &str) -> &'static str {
+    match authority_type_for_citation(citation) {
+        "ors" => "2025 ORS",
+        "orcp" => "2025 ORCP",
+        "utcr" => "Current UTCR",
+        "session_law" => "Oregon session law source-backed",
+        _ => "Source-backed authority",
+    }
+}
 
-	fn authority_currentness_for_citation(citation: &str) -> String {
-	    match authority_type_for_citation(citation) {
-	        "ors" => "2025_ors_needs_review",
-	        "orcp" => "2025_orcp_needs_review",
-	        "utcr" => "current_utcr_needs_review",
-	        "session_law" => "source_backed_needs_review",
-	        _ => "source_backed_needs_review",
-	    }
-	    .to_string()
-	}
+fn authority_currentness_for_citation(citation: &str) -> String {
+    match authority_type_for_citation(citation) {
+        "ors" => "2025_ors_needs_review",
+        "orcp" => "2025_orcp_needs_review",
+        "utcr" => "current_utcr_needs_review",
+        "session_law" => "source_backed_needs_review",
+        _ => "source_backed_needs_review",
+    }
+    .to_string()
+}
 
 fn exhibit_references_for_text(
     matter_id: &str,
@@ -8815,15 +11185,22 @@ fn match_claim_for_count(title: &str, claims: &[CaseClaim]) -> Option<String> {
     claims
         .iter()
         .find(|claim| {
-            let claim_text = normalize_for_match(&format!("{} {}", claim.title, claim.legal_theory));
-            !claim_text.is_empty() && (normalized.contains(&claim_text) || claim_text.contains(&normalized))
+            let claim_text =
+                normalize_for_match(&format!("{} {}", claim.title, claim.legal_theory));
+            !claim_text.is_empty()
+                && (normalized.contains(&claim_text) || claim_text.contains(&normalized))
         })
         .map(|claim| claim.claim_id.clone())
 }
 
 fn complaint_import_node_ids(complaint: &ComplaintDraft, spans: &[SourceSpan]) -> Vec<String> {
     let mut ids = vec![complaint.complaint_id.clone()];
-    ids.extend(complaint.sections.iter().map(|section| section.section_id.clone()));
+    ids.extend(
+        complaint
+            .sections
+            .iter()
+            .map(|section| section.section_id.clone()),
+    );
     ids.extend(complaint.counts.iter().map(|count| count.count_id.clone()));
     ids.extend(
         complaint
@@ -9622,6 +11999,7 @@ fn oregon_civil_complaint_rule_pack() -> RulePack {
         jurisdiction: "Oregon".to_string(),
         version: "provider-free-seed-2026-05-01".to_string(),
         effective_date: "2024-08-01".to_string(),
+        rule_profile: default_rule_profile_summary(),
         rules: vec![
             rule_definition("orcp-16-caption-court", "ORCP 16 A", "https://oregon.public.law/rules-of-civil-procedure/orcp-16-form-of-pleadings/", "blocking", "caption", "rules", "Caption must include court name.", "ORCP 16 describes caption requirements.", "Complete the court name.", false),
             rule_definition("orcp-16-complaint-title-parties", "ORCP 16 A", "https://oregon.public.law/rules-of-civil-procedure/orcp-16-form-of-pleadings/", "blocking", "caption", "rules", "Complaint title must include all parties.", "ORCP 16 distinguishes complaint title requirements from later pleadings.", "Confirm all party names.", false),
@@ -9630,10 +12008,10 @@ fn oregon_civil_complaint_rule_pack() -> RulePack {
             rule_definition("orcp-18-plain-concise-ultimate-facts", "ORCP 18 A", "https://oregon.public.law/rules-of-civil-procedure/orcp-18-claims-for-relief/", "warning", "paragraph", "rules", "Claims should plead plain and concise ultimate facts.", "ORCP 18 calls for a plain and concise statement of ultimate facts.", "Tighten or split long factual allegations.", false),
             rule_definition("orcp-18-demand-relief", "ORCP 18 B", "https://oregon.public.law/rules-of-civil-procedure/orcp-18-claims-for-relief/", "blocking", "relief", "relief", "Demand for relief is required.", "ORCP 18 requires a demand for relief and amount when money or damages are demanded.", "Add requested relief.", false),
             rule_definition("orcp-17-signature-contact", "ORCP 17", "https://oregon.public.law/rules-of-civil-procedure/orcp-17-signing-of-pleadings-motions-and-other-papers-sanctions/", "serious", "signature", "rules", "Signature and contact block require review.", "Pleadings must be signed by a responsible person subject to Rule 17 obligations.", "Complete signature details.", false),
-            rule_definition("utcr-2-010-double-spacing", "UTCR 2.010(4)(a)", "https://www.courts.oregon.gov/rules/UTCR/2024_UTCR.pdf", "serious", "formatting", "formatting", "Pleadings should be double-spaced.", "UTCR 2.010 includes spacing standards for pleadings.", "Enable double spacing.", true),
-            rule_definition("utcr-2-010-numbered-lines", "UTCR 2.010(4)(a)", "https://www.courts.oregon.gov/rules/UTCR/2024_UTCR.pdf", "serious", "formatting", "formatting", "Pleadings should have numbered lines.", "UTCR 2.010 includes numbered-line standards for pleadings.", "Enable numbered lines.", true),
-            rule_definition("utcr-2-010-first-page-blank", "UTCR 2.010(4)(c)", "https://www.courts.oregon.gov/rules/UTCR/2024_UTCR.pdf", "serious", "formatting", "formatting", "First page top blank area should be two inches.", "UTCR 2.010 includes a first-page blank area standard.", "Set first-page blank area to two inches.", true),
-            rule_definition("utcr-2-010-side-margins", "UTCR 2.010(4)(d)", "https://www.courts.oregon.gov/rules/UTCR/2024_UTCR.pdf", "serious", "formatting", "formatting", "Side margins should be at least one inch.", "UTCR 2.010 includes side-margin standards.", "Set one-inch side margins.", true),
+            rule_definition("utcr-2-010-double-spacing", "UTCR 2.010(4)(a)", "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf", "serious", "formatting", "formatting", "Pleadings should be double-spaced.", "UTCR 2.010 includes spacing standards for pleadings.", "Enable double spacing.", true),
+            rule_definition("utcr-2-010-numbered-lines", "UTCR 2.010(4)(a)", "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf", "serious", "formatting", "formatting", "Pleadings should have numbered lines.", "UTCR 2.010 includes numbered-line standards for pleadings.", "Enable numbered lines.", true),
+            rule_definition("utcr-2-010-first-page-blank", "UTCR 2.010(4)(c)", "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf", "serious", "formatting", "formatting", "First page top blank area should be two inches.", "UTCR 2.010 includes a first-page blank area standard.", "Set first-page blank area to two inches.", true),
+            rule_definition("utcr-2-010-side-margins", "UTCR 2.010(4)(d)", "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf", "serious", "formatting", "formatting", "Side margins should be at least one inch.", "UTCR 2.010 includes side-margin standards.", "Set one-inch side margins.", true),
         ],
     }
 }
@@ -9724,7 +12102,8 @@ fn json_value<T: serde::Serialize>(value: &T) -> ApiResult<serde_json::Value> {
 }
 
 fn json_hash(value: &serde_json::Value) -> ApiResult<String> {
-    let payload = serde_json::to_string(value).map_err(|error| ApiError::Internal(error.to_string()))?;
+    let payload =
+        serde_json::to_string(value).map_err(|error| ApiError::Internal(error.to_string()))?;
     Ok(sha256_hex(payload.as_bytes()))
 }
 
@@ -9732,26 +12111,47 @@ fn hash_json<T: serde::Serialize>(value: &T) -> ApiResult<String> {
     json_hash(&json_value(value)?)
 }
 
+fn version_change_state_summary(
+    value: Option<serde_json::Value>,
+) -> ApiResult<(Option<String>, Option<serde_json::Value>)> {
+    let Some(value) = value else {
+        return Ok((None, None));
+    };
+    let state_hash = json_hash(&value)?;
+    let size_bytes = serde_json::to_vec(&value)
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .len() as u64;
+    Ok((
+        Some(state_hash.clone()),
+        Some(serde_json::json!({
+            "state_hash": state_hash,
+            "size_bytes": size_bytes,
+            "state_storage": "version_snapshot",
+            "inline_payload": false,
+        })),
+    ))
+}
+
 fn work_product_hashes(product: &WorkProduct) -> ApiResult<WorkProductHashes> {
     let document_state = serde_json::json!({
         "title": product.title,
         "product_type": product.product_type,
         "profile": product.profile,
-        "blocks": product.blocks,
+        "document_ast": product.document_ast,
     });
     let support_state = serde_json::json!({
-        "blocks": product.blocks.iter().map(|block| serde_json::json!({
+        "blocks": flatten_work_product_blocks(&product.document_ast.blocks).iter().map(|block| serde_json::json!({
             "block_id": block.block_id,
-            "fact_ids": block.fact_ids,
-            "evidence_ids": block.evidence_ids,
-            "authorities": block.authorities,
-            "mark_ids": block.mark_ids,
+            "links": block.links,
+            "citations": block.citations,
+            "exhibits": block.exhibits,
         })).collect::<Vec<_>>(),
-        "anchors": product.anchors,
-        "marks": product.marks,
+        "links": product.document_ast.links,
+        "citations": product.document_ast.citations,
+        "exhibits": product.document_ast.exhibits,
     });
     let qc_state = serde_json::json!({
-        "findings": product.findings,
+        "findings": product.document_ast.rule_findings,
         "review_status": product.review_status,
     });
     Ok(WorkProductHashes {
@@ -9780,7 +12180,17 @@ fn snapshot_manifest_for_product(
         &product.work_product_id,
         json_value(product)?,
     )?;
-    for block in &product.blocks {
+    push_entity_state(
+        &mut states,
+        &manifest_id,
+        snapshot_id,
+        matter_id,
+        &product.work_product_id,
+        "document_ast",
+        &product.document_ast.document_id,
+        json_value(&product.document_ast)?,
+    )?;
+    for block in flatten_work_product_blocks(&product.document_ast.blocks) {
         push_entity_state(
             &mut states,
             &manifest_id,
@@ -9789,10 +12199,10 @@ fn snapshot_manifest_for_product(
             &product.work_product_id,
             "block",
             &block.block_id,
-            json_value(block)?,
+            json_value(&block)?,
         )?;
     }
-    for anchor in &product.anchors {
+    for link in &product.document_ast.links {
         push_entity_state(
             &mut states,
             &manifest_id,
@@ -9800,11 +12210,35 @@ fn snapshot_manifest_for_product(
             matter_id,
             &product.work_product_id,
             "support_use",
-            &anchor.anchor_id,
-            json_value(anchor)?,
+            &link.link_id,
+            json_value(link)?,
         )?;
     }
-    for finding in &product.findings {
+    for citation in &product.document_ast.citations {
+        push_entity_state(
+            &mut states,
+            &manifest_id,
+            snapshot_id,
+            matter_id,
+            &product.work_product_id,
+            "citation",
+            &citation.citation_use_id,
+            json_value(citation)?,
+        )?;
+    }
+    for exhibit in &product.document_ast.exhibits {
+        push_entity_state(
+            &mut states,
+            &manifest_id,
+            snapshot_id,
+            matter_id,
+            &product.work_product_id,
+            "exhibit_reference",
+            &exhibit.exhibit_reference_id,
+            json_value(exhibit)?,
+        )?;
+    }
+    for finding in &product.document_ast.rule_findings {
         push_entity_state(
             &mut states,
             &manifest_id,
@@ -9828,12 +12262,7 @@ fn snapshot_manifest_for_product(
             json_value(artifact)?,
         )?;
     }
-    let manifest_hash = hash_json(
-        &states
-            .iter()
-            .map(|state| (&state.entity_type, &state.entity_id, &state.entity_hash))
-            .collect::<Vec<_>>(),
-    )?;
+    let manifest_hash = snapshot_manifest_hash_for_states(&states)?;
     Ok((
         SnapshotManifest {
             id: manifest_id.clone(),
@@ -9848,6 +12277,15 @@ fn snapshot_manifest_for_product(
         },
         states,
     ))
+}
+
+fn snapshot_manifest_hash_for_states(states: &[SnapshotEntityState]) -> ApiResult<String> {
+    hash_json(
+        &states
+            .iter()
+            .map(|state| (&state.entity_type, &state.entity_id, &state.entity_hash))
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn push_entity_state(
@@ -9882,18 +12320,15 @@ fn push_entity_state(
     Ok(())
 }
 
-fn snapshot_product(snapshot: &VersionSnapshot) -> ApiResult<WorkProduct> {
-    snapshot
-        .full_state_inline
-        .clone()
-        .ok_or_else(|| ApiError::Internal(format!("Snapshot {} has no state", snapshot.snapshot_id)))
-        .and_then(|value| serde_json::from_value(value).map_err(|error| ApiError::Internal(error.to_string())))
-}
-
 fn diff_work_product_blocks(from: &WorkProduct, to: &WorkProduct) -> Vec<VersionTextDiff> {
     let mut diffs = Vec::new();
-    for before in &from.blocks {
-        match to.blocks.iter().find(|block| block.block_id == before.block_id) {
+    let from_blocks = flatten_work_product_blocks(&from.document_ast.blocks);
+    let to_blocks = flatten_work_product_blocks(&to.document_ast.blocks);
+    for before in &from_blocks {
+        match to_blocks
+            .iter()
+            .find(|block| block.block_id == before.block_id)
+        {
             Some(after) => {
                 let status = if before.text == after.text && before.title == after.title {
                     "unchanged"
@@ -9919,8 +12354,11 @@ fn diff_work_product_blocks(from: &WorkProduct, to: &WorkProduct) -> Vec<Version
             }),
         }
     }
-    for after in &to.blocks {
-        if !from.blocks.iter().any(|block| block.block_id == after.block_id) {
+    for after in &to_blocks {
+        if !from_blocks
+            .iter()
+            .any(|block| block.block_id == after.block_id)
+        {
             diffs.push(VersionTextDiff {
                 target_type: "block".to_string(),
                 target_id: after.block_id.clone(),
@@ -9932,6 +12370,616 @@ fn diff_work_product_blocks(from: &WorkProduct, to: &WorkProduct) -> Vec<Version
         }
     }
     diffs
+}
+
+fn normalize_compare_layers(layers: Vec<String>) -> Vec<String> {
+    let defaults = [
+        "text",
+        "support",
+        "citations",
+        "exhibits",
+        "rule_findings",
+        "formatting",
+        "exports",
+    ];
+    let requested = if layers.is_empty() {
+        defaults.iter().map(|layer| layer.to_string()).collect()
+    } else {
+        layers
+    };
+    let mut normalized = Vec::new();
+    for layer in requested {
+        let layer = layer.trim().to_ascii_lowercase();
+        let expanded = match layer.as_str() {
+            "all" | "legal" | "ast" => defaults.to_vec(),
+            "text" | "blocks" => vec!["text"],
+            "support" | "links" | "support_links" => vec!["support"],
+            "citation" | "citations" => vec!["citations"],
+            "exhibit" | "exhibits" => vec!["exhibits"],
+            "rule_finding" | "rule_findings" | "qc" | "findings" | "rules" => {
+                vec!["rule_findings"]
+            }
+            "format" | "formatting" => vec!["formatting"],
+            "export" | "exports" | "artifacts" => vec!["exports"],
+            _ => Vec::new(),
+        };
+        for value in expanded {
+            if !normalized.iter().any(|existing| existing == value) {
+                normalized.push(value.to_string());
+            }
+        }
+    }
+    if normalized.is_empty() {
+        normalized = defaults.iter().map(|layer| layer.to_string()).collect();
+    }
+    normalized
+}
+
+fn diff_work_product_layers(
+    from: &WorkProduct,
+    to: &WorkProduct,
+    layers: &[String],
+) -> ApiResult<Vec<VersionLayerDiff>> {
+    let mut diffs = Vec::new();
+    if layers.iter().any(|layer| layer == "support") {
+        diffs.extend(diff_layer_items(
+            support_layer_items(from),
+            support_layer_items(to),
+        )?);
+    }
+    if layers.iter().any(|layer| layer == "citations") {
+        diffs.extend(diff_layer_items(
+            citation_layer_items(from),
+            citation_layer_items(to),
+        )?);
+    }
+    if layers.iter().any(|layer| layer == "exhibits") {
+        diffs.extend(diff_layer_items(
+            exhibit_layer_items(from),
+            exhibit_layer_items(to),
+        )?);
+    }
+    if layers.iter().any(|layer| layer == "rule_findings") {
+        diffs.extend(diff_layer_items(
+            rule_finding_layer_items(from),
+            rule_finding_layer_items(to),
+        )?);
+    }
+    if layers.iter().any(|layer| layer == "formatting") {
+        diffs.extend(diff_layer_items(
+            formatting_layer_items(from)?,
+            formatting_layer_items(to)?,
+        )?);
+    }
+    if layers.iter().any(|layer| layer == "exports") {
+        diffs.extend(diff_layer_items(
+            export_layer_items(from),
+            export_layer_items(to),
+        )?);
+    }
+    Ok(diffs)
+}
+
+fn diff_layer_items(
+    from: Vec<ComparableLayerItem>,
+    to: Vec<ComparableLayerItem>,
+) -> ApiResult<Vec<VersionLayerDiff>> {
+    let from_map = from
+        .into_iter()
+        .map(|item| (item.target_id.clone(), item))
+        .collect::<BTreeMap<_, _>>();
+    let to_map = to
+        .into_iter()
+        .map(|item| (item.target_id.clone(), item))
+        .collect::<BTreeMap<_, _>>();
+    let mut diffs = Vec::new();
+    for (target_id, before) in &from_map {
+        match to_map.get(target_id) {
+            Some(after) => {
+                let before_hash = json_hash(&before.value)?;
+                let after_hash = json_hash(&after.value)?;
+                if before_hash != after_hash {
+                    diffs.push(VersionLayerDiff {
+                        layer: before.layer.to_string(),
+                        target_type: after.target_type.to_string(),
+                        target_id: target_id.clone(),
+                        title: after.title.clone(),
+                        status: "modified".to_string(),
+                        before_hash: Some(before_hash),
+                        after_hash: Some(after_hash),
+                        before_summary: Some(before.summary.clone()),
+                        after_summary: Some(after.summary.clone()),
+                    });
+                }
+            }
+            None => diffs.push(VersionLayerDiff {
+                layer: before.layer.to_string(),
+                target_type: before.target_type.to_string(),
+                target_id: target_id.clone(),
+                title: before.title.clone(),
+                status: "removed".to_string(),
+                before_hash: Some(json_hash(&before.value)?),
+                after_hash: None,
+                before_summary: Some(before.summary.clone()),
+                after_summary: None,
+            }),
+        }
+    }
+    for (target_id, after) in &to_map {
+        if !from_map.contains_key(target_id) {
+            diffs.push(VersionLayerDiff {
+                layer: after.layer.to_string(),
+                target_type: after.target_type.to_string(),
+                target_id: target_id.clone(),
+                title: after.title.clone(),
+                status: "added".to_string(),
+                before_hash: None,
+                after_hash: Some(json_hash(&after.value)?),
+                before_summary: None,
+                after_summary: Some(after.summary.clone()),
+            });
+        }
+    }
+    Ok(diffs)
+}
+
+fn support_layer_items(product: &WorkProduct) -> Vec<ComparableLayerItem> {
+    product
+        .document_ast
+        .links
+        .iter()
+        .map(|link| ComparableLayerItem {
+            layer: "support",
+            target_type: match link.target_type.as_str() {
+                "authority" | "legal_authority" | "provision" | "legal_text" => "legal_authority",
+                value => value,
+            }
+            .to_string(),
+            target_id: link.link_id.clone(),
+            title: "Support link".to_string(),
+            summary: format!(
+                "{} {} on {}",
+                link.relation, link.target_type, link.source_block_id
+            ),
+            value: serde_json::json!({
+                "source_block_id": link.source_block_id,
+                "target_type": link.target_type,
+                "target_id": link.target_id,
+                "relation": link.relation,
+                "confidence": link.confidence,
+            }),
+        })
+        .collect()
+}
+
+fn citation_layer_items(product: &WorkProduct) -> Vec<ComparableLayerItem> {
+    product
+        .document_ast
+        .citations
+        .iter()
+        .map(|citation| ComparableLayerItem {
+            layer: "citations",
+            target_type: "citation".to_string(),
+            target_id: citation.citation_use_id.clone(),
+            title: "Citation use".to_string(),
+            summary: format!(
+                "{} citation on {}",
+                citation.status, citation.source_block_id
+            ),
+            value: serde_json::json!({
+                "source_block_id": citation.source_block_id,
+                "normalized_citation": citation.normalized_citation,
+                "target_type": citation.target_type,
+                "target_id": citation.target_id,
+                "pinpoint": citation.pinpoint,
+                "status": citation.status,
+            }),
+        })
+        .collect()
+}
+
+fn exhibit_layer_items(product: &WorkProduct) -> Vec<ComparableLayerItem> {
+    product
+        .document_ast
+        .exhibits
+        .iter()
+        .map(|exhibit| ComparableLayerItem {
+            layer: "exhibits",
+            target_type: "exhibit_reference".to_string(),
+            target_id: exhibit.exhibit_reference_id.clone(),
+            title: "Exhibit reference".to_string(),
+            summary: format!("{} exhibit on {}", exhibit.status, exhibit.source_block_id),
+            value: serde_json::json!({
+                "source_block_id": exhibit.source_block_id,
+                "exhibit_id": exhibit.exhibit_id,
+                "document_id": exhibit.document_id,
+                "page_range": exhibit.page_range,
+                "status": exhibit.status,
+            }),
+        })
+        .collect()
+}
+
+fn rule_finding_layer_items(product: &WorkProduct) -> Vec<ComparableLayerItem> {
+    product
+        .document_ast
+        .rule_findings
+        .iter()
+        .map(|finding| ComparableLayerItem {
+            layer: "rule_findings",
+            target_type: "rule_finding".to_string(),
+            target_id: finding.finding_id.clone(),
+            title: "Rule finding".to_string(),
+            summary: format!(
+                "{} {} finding on {}",
+                finding.status, finding.severity, finding.target_type
+            ),
+            value: serde_json::json!({
+                "rule_id": finding.rule_id,
+                "category": finding.category,
+                "severity": finding.severity,
+                "target_type": finding.target_type,
+                "target_id": finding.target_id,
+                "status": finding.status,
+            }),
+        })
+        .collect()
+}
+
+fn formatting_layer_items(product: &WorkProduct) -> ApiResult<Vec<ComparableLayerItem>> {
+    Ok(vec![ComparableLayerItem {
+        layer: "formatting",
+        target_type: "formatting_profile".to_string(),
+        target_id: product.formatting_profile.profile_id.clone(),
+        title: "Formatting profile".to_string(),
+        summary: format!(
+            "Formatting profile {}",
+            product.formatting_profile.profile_id
+        ),
+        value: json_value(&product.formatting_profile)?,
+    }])
+}
+
+fn export_layer_items(product: &WorkProduct) -> Vec<ComparableLayerItem> {
+    product
+        .artifacts
+        .iter()
+        .map(|artifact| ComparableLayerItem {
+            layer: "exports",
+            target_type: "export_artifact".to_string(),
+            target_id: artifact.artifact_id.clone(),
+            title: "Export artifact".to_string(),
+            summary: format!("{} export {}", artifact.format, artifact.status),
+            value: serde_json::json!({
+                "format": artifact.format,
+                "profile": artifact.profile,
+                "mode": artifact.mode,
+                "status": artifact.status,
+                "snapshot_id": artifact.snapshot_id,
+                "artifact_hash": artifact.artifact_hash,
+                "render_profile_hash": artifact.render_profile_hash,
+                "object_blob_id": artifact.object_blob_id,
+                "size_bytes": artifact.size_bytes,
+                "storage_status": artifact.storage_status,
+            }),
+        })
+        .collect()
+}
+
+fn layer_change_count(diffs: &[VersionLayerDiff], layer: &str) -> u64 {
+    diffs
+        .iter()
+        .filter(|diff| diff.layer == layer && diff.status != "unchanged")
+        .count() as u64
+}
+
+fn restore_work_product_scope(
+    current: &WorkProduct,
+    snapshot: &WorkProduct,
+    scope: &str,
+    target_ids: &[String],
+) -> ApiResult<(WorkProduct, Vec<String>)> {
+    let normalized_scope = scope.trim().to_ascii_lowercase();
+    let mut restored = current.clone();
+    let mut warnings = Vec::new();
+    if !target_ids.is_empty() {
+        warnings.push(
+            "Targeted restore will only apply matching targets in the selected scope.".to_string(),
+        );
+    }
+    match normalized_scope.as_str() {
+        "all" | "work_product" | "complaint" => {
+            warnings.push(
+                "This will replace the current work product with the selected snapshot."
+                    .to_string(),
+            );
+            restored = snapshot.clone();
+        }
+        "text" | "blocks" | "block" | "paragraph" => {
+            restore_blocks_from_snapshot(&mut restored, snapshot, target_ids, &mut warnings)?;
+        }
+        "metadata" | "document_metadata" => {
+            restored.title = snapshot.title.clone();
+            restored.status = snapshot.status.clone();
+            restored.review_status = snapshot.review_status.clone();
+            restored.setup_stage = snapshot.setup_stage.clone();
+            restored.document_ast.metadata = snapshot.document_ast.metadata.clone();
+            restored.document_ast.title = snapshot.document_ast.title.clone();
+        }
+        "support" | "links" | "support_links" => {
+            restore_links_from_snapshot(&mut restored, snapshot, target_ids);
+        }
+        "citations" | "citation" => {
+            restore_citations_from_snapshot(&mut restored, snapshot, target_ids);
+        }
+        "exhibits" | "exhibit" => {
+            restore_exhibits_from_snapshot(&mut restored, snapshot, target_ids);
+        }
+        "rule_findings" | "rule_finding" | "qc" => {
+            restore_rule_findings_from_snapshot(&mut restored, snapshot, target_ids);
+        }
+        "formatting" | "format" => {
+            restored.formatting_profile = snapshot.formatting_profile.clone();
+        }
+        "exports" | "export" | "export_state" | "artifacts" => {
+            merge_export_state_from_snapshot(&mut restored, snapshot);
+        }
+        _ => {
+            return Err(ApiError::BadRequest(
+                "Unsupported restore scope.".to_string(),
+            ));
+        }
+    }
+    refresh_work_product_state(&mut restored);
+    Ok((restored, warnings))
+}
+
+fn restore_blocks_from_snapshot(
+    restored: &mut WorkProduct,
+    snapshot: &WorkProduct,
+    target_ids: &[String],
+    warnings: &mut Vec<String>,
+) -> ApiResult<()> {
+    if target_ids.is_empty() {
+        restored.document_ast.blocks = snapshot.document_ast.blocks.clone();
+        return Ok(());
+    }
+    for target_id in target_ids {
+        let snapshot_block = find_ast_block(&snapshot.document_ast.blocks, target_id)
+            .cloned()
+            .ok_or_else(|| ApiError::NotFound("Snapshot block not found".to_string()))?;
+        let current_block = find_ast_block(&restored.document_ast.blocks, target_id).cloned();
+        match replace_ast_block(&mut restored.document_ast.blocks, &snapshot_block) {
+            true => {
+                if let Some(current_block) = current_block.as_ref() {
+                    if current_block.evidence_ids.len() > snapshot_block.evidence_ids.len()
+                        || current_block.links.len() > snapshot_block.links.len()
+                    {
+                        warnings.push(
+                            "Restoring a block may remove current support references on that block."
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            false => restored.document_ast.blocks.push(snapshot_block),
+        }
+    }
+    Ok(())
+}
+
+fn restore_links_from_snapshot(
+    restored: &mut WorkProduct,
+    snapshot: &WorkProduct,
+    target_ids: &[String],
+) {
+    if target_ids.is_empty() {
+        restored.document_ast.links = snapshot.document_ast.links.clone();
+        copy_block_refs(
+            &mut restored.document_ast.blocks,
+            &snapshot.document_ast.blocks,
+            "links",
+            None,
+        );
+        return;
+    }
+    restored
+        .document_ast
+        .links
+        .retain(|link| !target_ids.contains(&link.source_block_id));
+    restored.document_ast.links.extend(
+        snapshot
+            .document_ast
+            .links
+            .iter()
+            .filter(|link| target_ids.contains(&link.source_block_id))
+            .cloned(),
+    );
+    copy_block_refs(
+        &mut restored.document_ast.blocks,
+        &snapshot.document_ast.blocks,
+        "links",
+        Some(target_ids),
+    );
+}
+
+fn restore_citations_from_snapshot(
+    restored: &mut WorkProduct,
+    snapshot: &WorkProduct,
+    target_ids: &[String],
+) {
+    if target_ids.is_empty() {
+        restored.document_ast.citations = snapshot.document_ast.citations.clone();
+        copy_block_refs(
+            &mut restored.document_ast.blocks,
+            &snapshot.document_ast.blocks,
+            "citations",
+            None,
+        );
+        return;
+    }
+    restored
+        .document_ast
+        .citations
+        .retain(|citation| !target_ids.contains(&citation.source_block_id));
+    restored.document_ast.citations.extend(
+        snapshot
+            .document_ast
+            .citations
+            .iter()
+            .filter(|citation| target_ids.contains(&citation.source_block_id))
+            .cloned(),
+    );
+    copy_block_refs(
+        &mut restored.document_ast.blocks,
+        &snapshot.document_ast.blocks,
+        "citations",
+        Some(target_ids),
+    );
+}
+
+fn restore_exhibits_from_snapshot(
+    restored: &mut WorkProduct,
+    snapshot: &WorkProduct,
+    target_ids: &[String],
+) {
+    if target_ids.is_empty() {
+        restored.document_ast.exhibits = snapshot.document_ast.exhibits.clone();
+        copy_block_refs(
+            &mut restored.document_ast.blocks,
+            &snapshot.document_ast.blocks,
+            "exhibits",
+            None,
+        );
+        return;
+    }
+    restored
+        .document_ast
+        .exhibits
+        .retain(|exhibit| !target_ids.contains(&exhibit.source_block_id));
+    restored.document_ast.exhibits.extend(
+        snapshot
+            .document_ast
+            .exhibits
+            .iter()
+            .filter(|exhibit| target_ids.contains(&exhibit.source_block_id))
+            .cloned(),
+    );
+    copy_block_refs(
+        &mut restored.document_ast.blocks,
+        &snapshot.document_ast.blocks,
+        "exhibits",
+        Some(target_ids),
+    );
+}
+
+fn restore_rule_findings_from_snapshot(
+    restored: &mut WorkProduct,
+    snapshot: &WorkProduct,
+    target_ids: &[String],
+) {
+    if target_ids.is_empty() {
+        restored.document_ast.rule_findings = snapshot.document_ast.rule_findings.clone();
+        restored.findings = snapshot.findings.clone();
+        copy_block_refs(
+            &mut restored.document_ast.blocks,
+            &snapshot.document_ast.blocks,
+            "rule_findings",
+            None,
+        );
+        return;
+    }
+    restored
+        .document_ast
+        .rule_findings
+        .retain(|finding| !target_ids.contains(&finding.target_id));
+    restored.document_ast.rule_findings.extend(
+        snapshot
+            .document_ast
+            .rule_findings
+            .iter()
+            .filter(|finding| target_ids.contains(&finding.target_id))
+            .cloned(),
+    );
+    restored.findings = restored.document_ast.rule_findings.clone();
+    copy_block_refs(
+        &mut restored.document_ast.blocks,
+        &snapshot.document_ast.blocks,
+        "rule_findings",
+        Some(target_ids),
+    );
+}
+
+fn merge_export_state_from_snapshot(restored: &mut WorkProduct, snapshot: &WorkProduct) {
+    for artifact in &snapshot.artifacts {
+        if !restored
+            .artifacts
+            .iter()
+            .any(|current| current.artifact_id == artifact.artifact_id)
+        {
+            restored.artifacts.push(artifact.clone());
+        }
+    }
+}
+
+fn find_ast_block<'a>(
+    blocks: &'a [WorkProductBlock],
+    block_id: &str,
+) -> Option<&'a WorkProductBlock> {
+    for block in blocks {
+        if block.block_id == block_id {
+            return Some(block);
+        }
+        if let Some(found) = find_ast_block(&block.children, block_id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn replace_ast_block(blocks: &mut [WorkProductBlock], replacement: &WorkProductBlock) -> bool {
+    for block in blocks {
+        if block.block_id == replacement.block_id {
+            *block = replacement.clone();
+            return true;
+        }
+        if replace_ast_block(&mut block.children, replacement) {
+            return true;
+        }
+    }
+    false
+}
+
+fn copy_block_refs(
+    blocks: &mut [WorkProductBlock],
+    snapshot_blocks: &[WorkProductBlock],
+    ref_kind: &str,
+    only_block_ids: Option<&[String]>,
+) {
+    for block in blocks {
+        if only_block_ids
+            .map(|ids| ids.contains(&block.block_id))
+            .unwrap_or(true)
+        {
+            if let Some(snapshot_block) = find_ast_block(snapshot_blocks, &block.block_id) {
+                match ref_kind {
+                    "links" => block.links = snapshot_block.links.clone(),
+                    "citations" => block.citations = snapshot_block.citations.clone(),
+                    "exhibits" => block.exhibits = snapshot_block.exhibits.clone(),
+                    "rule_findings" => {
+                        block.rule_finding_ids = snapshot_block.rule_finding_ids.clone()
+                    }
+                    _ => {}
+                }
+            }
+        }
+        copy_block_refs(
+            &mut block.children,
+            snapshot_blocks,
+            ref_kind,
+            only_block_ids,
+        );
+    }
 }
 
 fn work_product_facade_change_inputs(
@@ -10158,7 +13206,10 @@ fn union_string_ids(left: &[String], right: &[String]) -> Vec<String> {
     values
 }
 
-fn legal_support_use_from_anchor(product: &WorkProduct, anchor: &WorkProductAnchor) -> LegalSupportUse {
+fn legal_support_use_from_anchor(
+    product: &WorkProduct,
+    anchor: &WorkProductAnchor,
+) -> LegalSupportUse {
     let source_type = match anchor.target_type.as_str() {
         "fact" => "fact",
         "evidence" => "evidence",
@@ -10206,11 +13257,18 @@ fn version_summary_for_changes(summary: &str, changes: &[VersionChange]) -> Vers
     VersionChangeSummary {
         text_changes: changes
             .iter()
-            .filter(|change| matches!(change.target_type.as_str(), "block" | "paragraph" | "work_product"))
+            .filter(|change| {
+                matches!(
+                    change.target_type.as_str(),
+                    "block" | "paragraph" | "work_product"
+                )
+            })
             .count() as u64,
         support_changes: changes
             .iter()
-            .filter(|change| change.target_type.contains("support") || change.target_type.contains("link"))
+            .filter(|change| {
+                change.target_type.contains("support") || change.target_type.contains("link")
+            })
             .count() as u64,
         citation_changes: changes
             .iter()
@@ -10222,7 +13280,9 @@ fn version_summary_for_changes(summary: &str, changes: &[VersionChange]) -> Vers
             .count() as u64,
         qc_changes: changes
             .iter()
-            .filter(|change| change.target_type.contains("finding") || change.target_type.contains("qc"))
+            .filter(|change| {
+                change.target_type.contains("finding") || change.target_type.contains("qc")
+            })
             .count() as u64,
         export_changes: changes
             .iter()
@@ -10253,17 +13313,33 @@ fn version_summary_for_changes(summary: &str, changes: &[VersionChange]) -> Vers
     }
 }
 
-fn merge_legal_impacts<'a>(impacts: impl Iterator<Item = &'a LegalImpactSummary>) -> LegalImpactSummary {
+fn merge_legal_impacts<'a>(
+    impacts: impl Iterator<Item = &'a LegalImpactSummary>,
+) -> LegalImpactSummary {
     let mut merged = LegalImpactSummary::default();
     for impact in impacts {
-        merged.affected_counts.extend(impact.affected_counts.clone());
-        merged.affected_elements.extend(impact.affected_elements.clone());
+        merged
+            .affected_counts
+            .extend(impact.affected_counts.clone());
+        merged
+            .affected_elements
+            .extend(impact.affected_elements.clone());
         merged.affected_facts.extend(impact.affected_facts.clone());
-        merged.affected_evidence.extend(impact.affected_evidence.clone());
-        merged.affected_authorities.extend(impact.affected_authorities.clone());
-        merged.affected_exhibits.extend(impact.affected_exhibits.clone());
-        merged.qc_warnings_added.extend(impact.qc_warnings_added.clone());
-        merged.qc_warnings_resolved.extend(impact.qc_warnings_resolved.clone());
+        merged
+            .affected_evidence
+            .extend(impact.affected_evidence.clone());
+        merged
+            .affected_authorities
+            .extend(impact.affected_authorities.clone());
+        merged
+            .affected_exhibits
+            .extend(impact.affected_exhibits.clone());
+        merged
+            .qc_warnings_added
+            .extend(impact.qc_warnings_added.clone());
+        merged
+            .qc_warnings_resolved
+            .extend(impact.qc_warnings_resolved.clone());
         merged
             .blocking_issues_added
             .extend(impact.blocking_issues_added.clone());
@@ -10460,6 +13536,94 @@ fn object_blob_id_for_hash(sha256: &str) -> String {
         .strip_prefix("sha256:")
         .unwrap_or(sha256.trim());
     format!("blob:sha256:{}", raw.to_ascii_lowercase())
+}
+
+fn should_inline_payload(byte_len: usize, limit: u64) -> bool {
+    byte_len as u64 <= limit
+}
+
+fn storage_hash_segment(hash: &str) -> String {
+    sanitize_path_segment(hash.trim().strip_prefix("sha256:").unwrap_or(hash.trim()))
+}
+
+fn work_product_storage_prefix(matter_id: &str, work_product_id: &str) -> String {
+    format!(
+        "casebuilder/matters/{}/work-products/{}",
+        hex_prefix(matter_id.as_bytes(), 24),
+        hex_prefix(work_product_id.as_bytes(), 24)
+    )
+}
+
+fn snapshot_full_state_key(
+    matter_id: &str,
+    work_product_id: &str,
+    snapshot_id: &str,
+    state_hash: &str,
+) -> String {
+    format!(
+        "{}/snapshots/{}/full-state.{}.json",
+        work_product_storage_prefix(matter_id, work_product_id),
+        hex_prefix(snapshot_id.as_bytes(), 24),
+        storage_hash_segment(state_hash)
+    )
+}
+
+fn snapshot_manifest_key(
+    matter_id: &str,
+    work_product_id: &str,
+    snapshot_id: &str,
+    manifest_hash: &str,
+) -> String {
+    format!(
+        "{}/snapshots/{}/manifest.{}.json",
+        work_product_storage_prefix(matter_id, work_product_id),
+        hex_prefix(snapshot_id.as_bytes(), 24),
+        storage_hash_segment(manifest_hash)
+    )
+}
+
+fn snapshot_entity_state_key(
+    matter_id: &str,
+    work_product_id: &str,
+    snapshot_id: &str,
+    entity_type: &str,
+    entity_hash: &str,
+) -> String {
+    format!(
+        "{}/snapshots/{}/states/{}/{}.json",
+        work_product_storage_prefix(matter_id, work_product_id),
+        hex_prefix(snapshot_id.as_bytes(), 24),
+        sanitize_path_segment(entity_type),
+        storage_hash_segment(entity_hash)
+    )
+}
+
+fn work_product_export_key(
+    matter_id: &str,
+    work_product_id: &str,
+    artifact_id: &str,
+    artifact_hash: &str,
+    ext: &str,
+) -> String {
+    format!(
+        "{}/exports/{}/{}.{}",
+        work_product_storage_prefix(matter_id, work_product_id),
+        hex_prefix(artifact_id.as_bytes(), 24),
+        storage_hash_segment(artifact_hash),
+        sanitize_path_segment(ext)
+    )
+}
+
+fn safe_work_product_download_filename(artifact: &WorkProductArtifact) -> String {
+    let seed = artifact
+        .artifact_hash
+        .as_deref()
+        .unwrap_or(artifact.artifact_id.as_str());
+    format!(
+        "work-product-export-{}.{}",
+        hex_prefix(seed.as_bytes(), 16),
+        sanitize_path_segment(&artifact.format)
+    )
 }
 
 fn original_version_id(document_id: &str) -> String {
@@ -10809,17 +13973,22 @@ fn parse_document_bytes(filename: &str, mime_type: Option<&str>, bytes: &[u8]) -
         let text = extract_pdf_embedded_text(bytes);
         return ParserOutcome {
             parser_id: "casebuilder-pdf-embedded-text-v1".to_string(),
-            status: if text.as_deref().is_some_and(|value| !value.trim().is_empty()) {
+            status: if text
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            {
                 "processed".to_string()
             } else {
                 "ocr_required".to_string()
             },
-            message: if text.as_deref().is_some_and(|value| !value.trim().is_empty()) {
+            message: if text
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            {
                 "Stored privately. Embedded PDF text is ready for deterministic extraction."
                     .to_string()
             } else {
-                "Stored privately. No embedded PDF text was detected; OCR is required."
-                    .to_string()
+                "Stored privately. No embedded PDF text was detected; OCR is required.".to_string()
             },
             text,
         };
@@ -10830,14 +13999,19 @@ fn parse_document_bytes(filename: &str, mime_type: Option<&str>, bytes: &[u8]) -
         let text = extract_docx_like_text(bytes);
         return ParserOutcome {
             parser_id: "casebuilder-docx-text-v1".to_string(),
-            status: if text.as_deref().is_some_and(|value| !value.trim().is_empty()) {
+            status: if text
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            {
                 "processed".to_string()
             } else {
                 "unsupported".to_string()
             },
-            message: if text.as_deref().is_some_and(|value| !value.trim().is_empty()) {
-                "Stored privately. DOCX XML text is ready for deterministic extraction."
-                    .to_string()
+            message: if text
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                "Stored privately. DOCX XML text is ready for deterministic extraction.".to_string()
             } else {
                 "Stored privately. Compressed DOCX parsing is deferred until the document parser worker is enabled."
                     .to_string()
@@ -10887,17 +14061,24 @@ fn parse_document_bytes(filename: &str, mime_type: Option<&str>, bytes: &[u8]) -
             "casebuilder-markdown-v1".to_string()
         } else if lower.ends_with(".csv") || mime_type == Some("text/csv") {
             "casebuilder-csv-text-v1".to_string()
-        } else if lower.ends_with(".html") || lower.ends_with(".htm") || mime_type == Some("text/html") {
+        } else if lower.ends_with(".html")
+            || lower.ends_with(".htm")
+            || mime_type == Some("text/html")
+        {
             "casebuilder-html-text-v1".to_string()
         } else {
             "casebuilder-plain-text-v1".to_string()
         },
-        status: if text.is_some() { "processed" } else { "failed" }.to_string(),
+        status: if text.is_some() {
+            "processed"
+        } else {
+            "failed"
+        }
+        .to_string(),
         message: if text.is_some() {
             "Stored privately. Text is ready for deterministic V0 extraction.".to_string()
         } else {
-            "Stored privately, but the text parser could not decode this file as UTF-8."
-                .to_string()
+            "Stored privately, but the text parser could not decode this file as UTF-8.".to_string()
         },
         text,
     }
@@ -10905,9 +14086,11 @@ fn parse_document_bytes(filename: &str, mime_type: Option<&str>, bytes: &[u8]) -
 
 fn is_image_file(lower: &str, mime: &str) -> bool {
     mime.starts_with("image/")
-        || [".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".tif", ".tiff"]
-            .iter()
-            .any(|suffix| lower.ends_with(suffix))
+        || [
+            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".tif", ".tiff",
+        ]
+        .iter()
+        .any(|suffix| lower.ends_with(suffix))
 }
 
 fn is_audio_video_file(lower: &str, mime: &str) -> bool {
@@ -10972,7 +14155,12 @@ fn extract_pdf_embedded_text(bytes: &[u8]) -> Option<String> {
                 escaped = true;
             } else if ch == ')' {
                 let cleaned = current.split_whitespace().collect::<Vec<_>>().join(" ");
-                if cleaned.chars().filter(|value| value.is_ascii_alphabetic()).count() >= 3 {
+                if cleaned
+                    .chars()
+                    .filter(|value| value.is_ascii_alphabetic())
+                    .count()
+                    >= 3
+                {
                     values.push(cleaned);
                 }
                 current.clear();
@@ -11083,7 +14271,8 @@ fn read_zip_entry(
     compression: u16,
     compressed_size: usize,
 ) -> Option<Vec<u8>> {
-    if local_header_offset + 30 > bytes.len() || le_u32(bytes, local_header_offset)? != 0x0403_4b50 {
+    if local_header_offset + 30 > bytes.len() || le_u32(bytes, local_header_offset)? != 0x0403_4b50
+    {
         return None;
     }
     let name_len = le_u16(bytes, local_header_offset + 26)? as usize;
@@ -11371,18 +14560,31 @@ fn io_error(error: std::io::Error) -> ApiError {
 
 #[cfg(test)]
 mod tests {
-	    use super::{
-	        CASE_INDEX_VERSION, CHUNKER_VERSION, CITATION_RESOLVER_VERSION, PARSER_REGISTRY_VERSION,
-	        canonical_id_for_citation, chunk_text, citation_uses_for_text, default_formatting_profile,
-	        failed_ingestion_run, generate_opaque_id, looks_like_complaint, object_blob_id_for_hash,
-	        oregon_civil_complaint_rule_pack, parse_complaint_structure, parse_document_bytes,
-	        prosemirror_doc_for_text, propose_facts, sanitize_filename, sha256_hex, slug,
-	        work_product_hashes, work_product_profile, SourceContext,
-	    };
+    use super::{
+        apply_ast_operation, canonical_id_for_citation, chunk_text, citation_uses_for_text,
+        default_formatting_profile, diff_work_product_layers, failed_ingestion_run,
+        generate_opaque_id, looks_like_complaint, markdown_to_work_product_ast,
+        normalize_compare_layers, object_blob_id_for_hash, oregon_civil_complaint_rule_pack,
+        parse_complaint_structure, parse_document_bytes, propose_facts, prosemirror_doc_for_text,
+        refresh_work_product_state, restore_work_product_scope,
+        safe_work_product_download_filename, sanitize_filename, sha256_hex, should_inline_payload,
+        slug, snapshot_entity_state_key, snapshot_full_state_key, snapshot_manifest_for_product,
+        snapshot_manifest_hash_for_states, snapshot_manifest_key,
+        summarize_version_snapshot_for_list, summarize_work_product_for_list,
+        validate_ast_patch_concurrency, validate_work_product_document,
+        version_change_state_summary, work_product_block_graph_payload, work_product_export_key,
+        work_product_finding, work_product_hashes, work_product_profile, SourceContext,
+        CASE_INDEX_VERSION, CHUNKER_VERSION, CITATION_RESOLVER_VERSION, PARSER_REGISTRY_VERSION,
+    };
+    use crate::error::ApiError;
     use crate::models::casebuilder::{
-        IngestionRun, WorkProduct, WorkProductAction, WorkProductBlock, WorkProductFinding,
+        AstOperation, AstPatch, IngestionRun, VersionChangeSummary, VersionSnapshot, WorkProduct,
+        WorkProductAction, WorkProductArtifact, WorkProductBlock, WorkProductCitationUse,
+        WorkProductDocument, WorkProductDownloadResponse, WorkProductExhibitReference,
+        WorkProductFinding, WorkProductLink,
     };
     use crate::services::object_store::build_document_object_key;
+    use std::collections::BTreeMap;
 
     #[test]
     fn sanitizes_file_names_to_local_paths() {
@@ -11404,7 +14606,8 @@ mod tests {
     fn work_product_hashes_are_stable_and_layered() {
         let base = test_work_product("Plaintiff paid rent.", Vec::new(), Vec::new(), None);
         let same = test_work_product("Plaintiff paid rent.", Vec::new(), Vec::new(), None);
-        let text_edit = test_work_product("Plaintiff timely paid rent.", Vec::new(), Vec::new(), None);
+        let text_edit =
+            test_work_product("Plaintiff timely paid rent.", Vec::new(), Vec::new(), None);
         let support_edit = test_work_product(
             "Plaintiff paid rent.",
             vec!["fact:rent".to_string()],
@@ -11424,7 +14627,10 @@ mod tests {
         let base_hashes = work_product_hashes(&base).unwrap();
         let same_hashes = work_product_hashes(&same).unwrap();
         assert_eq!(base_hashes.document_hash, same_hashes.document_hash);
-        assert_eq!(base_hashes.support_graph_hash, same_hashes.support_graph_hash);
+        assert_eq!(
+            base_hashes.support_graph_hash,
+            same_hashes.support_graph_hash
+        );
         assert_eq!(base_hashes.qc_state_hash, same_hashes.qc_state_hash);
         assert_eq!(base_hashes.formatting_hash, same_hashes.formatting_hash);
 
@@ -11448,6 +14654,98 @@ mod tests {
         );
     }
 
+    #[test]
+    fn work_product_ast_validation_rejects_duplicate_block_ids() {
+        let mut product = test_work_product("Plaintiff paid rent.", Vec::new(), Vec::new(), None);
+        let duplicate = product.document_ast.blocks[0].clone();
+        product.document_ast.blocks.push(duplicate);
+
+        let validation = validate_work_product_document(&product);
+
+        assert!(!validation.valid);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|issue| issue.code == "duplicate_block_id"));
+    }
+
+    #[test]
+    fn ast_patch_updates_block_text_in_place() {
+        let mut product = test_work_product("Plaintiff paid rent.", Vec::new(), Vec::new(), None);
+        let block_id = product.document_ast.blocks[0].block_id.clone();
+
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::UpdateBlock {
+                block_id: block_id.clone(),
+                before: None,
+                after: serde_json::json!({
+                    "text": "Plaintiff timely paid rent.",
+                    "title": "Paragraph 1"
+                }),
+            },
+        )
+        .expect("patch applies");
+
+        assert_eq!(product.document_ast.blocks[0].block_id, block_id);
+        assert_eq!(
+            product.document_ast.blocks[0].text,
+            "Plaintiff timely paid rent."
+        );
+    }
+
+    #[test]
+    fn ast_rule_finding_patch_survives_projection_refresh() {
+        let mut product = test_work_product("Plaintiff paid rent.", Vec::new(), Vec::new(), None);
+        let block_id = product.document_ast.blocks[0].block_id.clone();
+        let finding = work_product_finding(
+            &product,
+            "support-required",
+            "support",
+            "warning",
+            "paragraph",
+            &block_id,
+            "Paragraph needs support.",
+            "Factual allegations should point to support.",
+            "Link support.",
+            "2026-01-01T00:00:00Z",
+        );
+        let finding_id = finding.finding_id.clone();
+
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::AddRuleFinding { finding },
+        )
+        .expect("finding patch applies");
+        refresh_work_product_state(&mut product);
+
+        assert!(product
+            .document_ast
+            .rule_findings
+            .iter()
+            .any(|finding| finding.finding_id == finding_id));
+        assert!(product
+            .findings
+            .iter()
+            .any(|finding| finding.finding_id == finding_id));
+    }
+
+    #[test]
+    fn markdown_conversion_creates_ast_blocks() {
+        let product = test_work_product("Plaintiff paid rent.", Vec::new(), Vec::new(), None);
+
+        let (document, warnings) = markdown_to_work_product_ast(
+            &product,
+            "## COUNT I - Breach of Contract\n\n1. Plaintiff paid rent.\n\n2. Defendant refused repairs.",
+        );
+
+        assert!(warnings.is_empty());
+        assert_eq!(document.blocks.len(), 3);
+        assert_eq!(document.blocks[0].block_type, "count");
+        assert_eq!(document.blocks[1].block_type, "numbered_paragraph");
+        assert_eq!(document.blocks[1].paragraph_number, Some(1));
+    }
+
     fn test_work_product(
         text: &str,
         fact_ids: Vec<String>,
@@ -11455,7 +14753,7 @@ mod tests {
         qc_message: Option<&str>,
     ) -> WorkProduct {
         let block_id = "work-product:test:block:1".to_string();
-        WorkProduct {
+        let mut product = WorkProduct {
             id: "work-product:test".to_string(),
             work_product_id: "work-product:test".to_string(),
             matter_id: "matter:test".to_string(),
@@ -11469,6 +14767,7 @@ mod tests {
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             profile: work_product_profile("complaint"),
+            document_ast: WorkProductDocument::default(),
             blocks: vec![WorkProductBlock {
                 id: block_id.clone(),
                 block_id: block_id.clone(),
@@ -11487,6 +14786,7 @@ mod tests {
                 locked: false,
                 review_status: "needs_review".to_string(),
                 prosemirror_json: Some(prosemirror_doc_for_text(text)),
+                ..WorkProductBlock::default()
             }],
             marks: Vec::new(),
             anchors: Vec::new(),
@@ -11524,6 +14824,77 @@ mod tests {
             ai_commands: Vec::new(),
             formatting_profile: default_formatting_profile(),
             rule_pack: oregon_civil_complaint_rule_pack(),
+        };
+        refresh_work_product_state(&mut product);
+        product
+    }
+
+    fn test_version_snapshot(full_state_inline: Option<serde_json::Value>) -> VersionSnapshot {
+        VersionSnapshot {
+            id: "work-product:test:snapshot:1".to_string(),
+            snapshot_id: "work-product:test:snapshot:1".to_string(),
+            matter_id: "matter:test".to_string(),
+            subject_type: "work_product".to_string(),
+            subject_id: "work-product:test".to_string(),
+            product_type: "complaint".to_string(),
+            profile_id: "complaint".to_string(),
+            branch_id: "work-product:test:branch:main".to_string(),
+            sequence_number: 1,
+            title: "Snapshot 1".to_string(),
+            message: Some("Snapshot".to_string()),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            created_by: "system".to_string(),
+            actor_id: None,
+            snapshot_type: "auto".to_string(),
+            parent_snapshot_ids: Vec::new(),
+            document_hash: "sha256:document".to_string(),
+            support_graph_hash: "sha256:support".to_string(),
+            qc_state_hash: "sha256:qc".to_string(),
+            formatting_hash: "sha256:formatting".to_string(),
+            manifest_hash: "sha256:manifest".to_string(),
+            manifest_ref: None,
+            full_state_ref: None,
+            full_state_inline,
+            summary: VersionChangeSummary {
+                text_changes: 0,
+                support_changes: 0,
+                citation_changes: 0,
+                authority_changes: 0,
+                qc_changes: 0,
+                export_changes: 0,
+                ai_changes: 0,
+                targets_changed: Vec::new(),
+                risk_level: "low".to_string(),
+                user_summary: "Snapshot".to_string(),
+            },
+        }
+    }
+
+    fn test_work_product_artifact(artifact_id: &str, artifact_hash: &str) -> WorkProductArtifact {
+        WorkProductArtifact {
+            artifact_id: artifact_id.to_string(),
+            id: artifact_id.to_string(),
+            matter_id: "matter:test".to_string(),
+            work_product_id: "work-product:test".to_string(),
+            format: "html".to_string(),
+            profile: "review".to_string(),
+            mode: "review_needed".to_string(),
+            status: "generated_review_needed".to_string(),
+            download_url: "/api/v1/download".to_string(),
+            page_count: 1,
+            generated_at: "2026-01-01T00:00:00Z".to_string(),
+            warnings: vec!["review needed".to_string()],
+            content_preview: "bounded preview".to_string(),
+            snapshot_id: Some("snapshot:1".to_string()),
+            artifact_hash: Some(artifact_hash.to_string()),
+            render_profile_hash: Some("sha256:render".to_string()),
+            qc_status_at_export: Some("needs_review".to_string()),
+            changed_since_export: Some(false),
+            immutable: Some(true),
+            object_blob_id: Some("blob:sha256:artifact".to_string()),
+            size_bytes: Some(42),
+            mime_type: Some("text/html".to_string()),
+            storage_status: Some("stored".to_string()),
         }
     }
 
@@ -11568,6 +14939,479 @@ mod tests {
         assert!(!key.contains("Private"));
         assert!(!key.contains("Tenant"));
         assert!(key.ends_with("/original.pdf"));
+    }
+
+    #[test]
+    fn ast_storage_policy_inlines_only_within_threshold() {
+        assert!(should_inline_payload(64 * 1024, 64 * 1024));
+        assert!(!should_inline_payload(64 * 1024 + 1, 64 * 1024));
+    }
+
+    #[test]
+    fn ast_artifact_object_keys_are_hash_scoped() {
+        let matter_id = "matter:Smith v. ABC Property:123";
+        let work_product_id = "work-product:Private Motion:456";
+        let snapshot_id = "work-product:Private Motion:456:snapshot:1";
+        let key = snapshot_full_state_key(
+            matter_id,
+            work_product_id,
+            snapshot_id,
+            "sha256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+        );
+        assert!(key.starts_with("casebuilder/matters/"));
+        assert!(!key.contains("Smith"));
+        assert!(!key.contains("Private"));
+        assert!(!key.contains("Motion"));
+        assert!(key.ends_with(".json"));
+
+        let manifest_key = snapshot_manifest_key(
+            matter_id,
+            work_product_id,
+            snapshot_id,
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        );
+        assert!(!manifest_key.contains("Smith"));
+        assert!(!manifest_key.contains("Private"));
+        assert!(manifest_key.ends_with(".json"));
+
+        let state_key = snapshot_entity_state_key(
+            matter_id,
+            work_product_id,
+            snapshot_id,
+            "document_ast",
+            "sha256:0123456789abcdef",
+        );
+        assert!(state_key.contains("/states/document_ast/0123456789abcdef.json"));
+
+        let export_key = work_product_export_key(
+            matter_id,
+            work_product_id,
+            "artifact:Secret Draft:1",
+            "sha256:fedcba",
+            "html",
+        );
+        assert!(!export_key.contains("Secret"));
+        assert!(export_key.ends_with("/fedcba.html"));
+    }
+
+    #[test]
+    fn snapshot_manifest_hash_survives_state_object_offload() {
+        let product = test_work_product(
+            "Confidential allegation that belongs only in snapshot state.",
+            Vec::new(),
+            Vec::new(),
+            None,
+        );
+        let (mut manifest, mut states) = snapshot_manifest_for_product(
+            "matter:test",
+            "work-product:test:snapshot:1",
+            &product,
+            "2026-01-01T00:00:00Z",
+        )
+        .expect("manifest");
+        let before_hash = manifest.manifest_hash.clone();
+
+        for state in &mut states {
+            state.state_inline = None;
+            state.state_ref = Some(object_blob_id_for_hash(&state.entity_hash));
+        }
+        manifest.storage_ref = Some(object_blob_id_for_hash(&before_hash));
+
+        assert_eq!(
+            before_hash,
+            snapshot_manifest_hash_for_states(&states).expect("hash")
+        );
+        assert!(states.iter().all(|state| state
+            .state_ref
+            .as_deref()
+            .is_some_and(|value| value.starts_with("blob:sha256:"))));
+    }
+
+    #[test]
+    fn version_change_payloads_store_hash_summaries_not_document_text() {
+        let value = serde_json::json!({
+            "document_ast": {
+                "blocks": [{
+                    "block_id": "block:1",
+                    "text": "Secret merits analysis should not be duplicated in VersionChange."
+                }]
+            }
+        });
+
+        let (hash, summary) = version_change_state_summary(Some(value)).expect("summary");
+        let summary_text = serde_json::to_string(&summary).expect("json");
+
+        assert!(hash
+            .as_deref()
+            .is_some_and(|value| value.starts_with("sha256:")));
+        assert!(summary_text.contains("\"state_storage\":\"version_snapshot\""));
+        assert!(summary_text.contains("\"inline_payload\":false"));
+        assert!(!summary_text.contains("Secret merits analysis"));
+    }
+
+    #[test]
+    fn stale_ast_patch_base_document_hash_is_rejected_without_text() {
+        let patch = AstPatch {
+            patch_id: "patch:test".to_string(),
+            draft_id: None,
+            work_product_id: Some("work-product:test".to_string()),
+            base_document_hash: Some("sha256:stale".to_string()),
+            base_snapshot_id: None,
+            created_by: "user".to_string(),
+            reason: Some("Secret factual edit".to_string()),
+            operations: Vec::new(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+
+        let error = validate_ast_patch_concurrency(
+            &patch,
+            "work-product:test",
+            "sha256:current",
+            Some("work-product:test:snapshot:2"),
+        )
+        .expect_err("stale hash is rejected");
+
+        match error {
+            ApiError::Conflict(message) => {
+                assert!(!message.contains("patch_id=patch:test"));
+                assert!(message.contains("base_document_hash=sha256:stale"));
+                assert!(message.contains("current_document_hash=sha256:current"));
+                assert!(!message.contains("Secret factual edit"));
+            }
+            other => panic!("expected conflict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ast_patch_reference_errors_do_not_echo_legal_text_or_ids() {
+        let mut product = test_work_product(
+            "Secret factual edit should stay out of error messages.",
+            Vec::new(),
+            Vec::new(),
+            None,
+        );
+        let error = apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::AddLink {
+                link: WorkProductLink {
+                    link_id: "link:1".to_string(),
+                    source_block_id: "block:Secret Missing Block".to_string(),
+                    source_text_range: None,
+                    target_type: "fact".to_string(),
+                    target_id: "fact:Secret Tenant Payment".to_string(),
+                    relation: "supports".to_string(),
+                    confidence: None,
+                    created_by: "user".to_string(),
+                    created_at: "2026-01-01T00:00:00Z".to_string(),
+                },
+            },
+        )
+        .expect_err("missing source block is rejected");
+
+        match error {
+            ApiError::NotFound(message) => {
+                assert_eq!(message, "AST link source block not found");
+                assert!(!message.contains("Secret"));
+                assert!(!message.contains("Tenant"));
+                assert!(!message.contains("Payment"));
+            }
+            other => panic!("expected not found, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compare_layers_cover_legal_ast_without_copying_sensitive_payloads() {
+        let base = test_work_product(
+            "Confidential base allegation should not appear in layer diffs.",
+            Vec::new(),
+            Vec::new(),
+            None,
+        );
+        let mut changed = base.clone();
+        let block_id = changed.document_ast.blocks[0].block_id.clone();
+        changed.document_ast.links.push(WorkProductLink {
+            link_id: "link:1".to_string(),
+            source_block_id: block_id.clone(),
+            source_text_range: None,
+            target_type: "fact".to_string(),
+            target_id: "fact:secret-payment-detail".to_string(),
+            relation: "supports".to_string(),
+            confidence: Some(0.9),
+            created_by: "user".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        });
+        changed.document_ast.blocks[0]
+            .links
+            .push("link:1".to_string());
+        changed.document_ast.citations.push(WorkProductCitationUse {
+            citation_use_id: "citation:1".to_string(),
+            source_block_id: block_id.clone(),
+            source_text_range: None,
+            raw_text: "SECRET RAW CITATION TEXT".to_string(),
+            normalized_citation: Some("ORS 90.320".to_string()),
+            target_type: "provision".to_string(),
+            target_id: Some("or:ors:90.320".to_string()),
+            pinpoint: Some("SECRET PINPOINT".to_string()),
+            status: "resolved".to_string(),
+            resolver_message: Some("SECRET RESOLVER MESSAGE".to_string()),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        });
+        changed.document_ast.blocks[0]
+            .citations
+            .push("citation:1".to_string());
+        changed
+            .document_ast
+            .exhibits
+            .push(WorkProductExhibitReference {
+                exhibit_reference_id: "exhibit:1".to_string(),
+                source_block_id: block_id.clone(),
+                source_text_range: None,
+                label: "SECRET EXHIBIT LABEL".to_string(),
+                exhibit_id: Some("evidence:secret-exhibit".to_string()),
+                document_id: None,
+                page_range: Some("1-2".to_string()),
+                status: "resolved".to_string(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+            });
+        changed.document_ast.blocks[0]
+            .exhibits
+            .push("exhibit:1".to_string());
+        let finding = work_product_finding(
+            &changed,
+            "support-required",
+            "support",
+            "warning",
+            "paragraph",
+            &block_id,
+            "SECRET FINDING MESSAGE",
+            "SECRET FINDING EXPLANATION",
+            "SECRET FINDING FIX",
+            "2026-01-01T00:00:00Z",
+        );
+        changed.document_ast.rule_findings.push(finding.clone());
+        changed.findings.push(finding);
+        changed.formatting_profile.double_spaced = !changed.formatting_profile.double_spaced;
+        changed.artifacts.push(WorkProductArtifact {
+            artifact_id: "artifact:1".to_string(),
+            id: "artifact:1".to_string(),
+            matter_id: changed.matter_id.clone(),
+            work_product_id: changed.work_product_id.clone(),
+            format: "html".to_string(),
+            profile: "review".to_string(),
+            mode: "review_needed".to_string(),
+            status: "generated_review_needed".to_string(),
+            download_url: "/api/v1/download".to_string(),
+            page_count: 1,
+            generated_at: "2026-01-01T00:00:00Z".to_string(),
+            warnings: vec!["review needed".to_string()],
+            content_preview: "SECRET EXPORT PREVIEW".to_string(),
+            snapshot_id: Some("snapshot:1".to_string()),
+            artifact_hash: Some("sha256:artifact".to_string()),
+            render_profile_hash: Some("sha256:render".to_string()),
+            qc_status_at_export: Some("needs_review".to_string()),
+            changed_since_export: Some(false),
+            immutable: Some(true),
+            object_blob_id: Some("blob:sha256:artifact".to_string()),
+            size_bytes: Some(512),
+            mime_type: Some("text/html".to_string()),
+            storage_status: Some("stored".to_string()),
+        });
+
+        let diffs = diff_work_product_layers(
+            &base,
+            &changed,
+            &normalize_compare_layers(vec!["all".to_string()]),
+        )
+        .expect("layer diff");
+        for layer in [
+            "support",
+            "citations",
+            "exhibits",
+            "rule_findings",
+            "formatting",
+            "exports",
+        ] {
+            assert!(
+                diffs.iter().any(|diff| diff.layer == layer),
+                "missing {layer} diff"
+            );
+        }
+        let text = serde_json::to_string(&diffs).expect("diffs serialize");
+        for forbidden in [
+            "SECRET RAW CITATION TEXT",
+            "SECRET EXHIBIT LABEL",
+            "SECRET FINDING MESSAGE",
+            "SECRET EXPORT PREVIEW",
+            "Confidential base allegation",
+        ] {
+            assert!(!text.contains(forbidden), "leaked {forbidden}");
+        }
+    }
+
+    #[test]
+    fn scoped_restore_block_preserves_unrelated_current_ast_edits() {
+        let mut snapshot = test_work_product("Snapshot block one.", Vec::new(), Vec::new(), None);
+        let mut current = snapshot.clone();
+        let target_id = snapshot.document_ast.blocks[0].block_id.clone();
+        let mut second_snapshot = snapshot.document_ast.blocks[0].clone();
+        second_snapshot.block_id = "work-product:test:block:2".to_string();
+        second_snapshot.id = second_snapshot.block_id.clone();
+        second_snapshot.text = "Snapshot block two.".to_string();
+        second_snapshot.ordinal = 2;
+        snapshot.document_ast.blocks.push(second_snapshot.clone());
+        refresh_work_product_state(&mut snapshot);
+
+        current.document_ast.blocks[0].text = "Current block one edit.".to_string();
+        let mut second_current = second_snapshot;
+        second_current.text = "Current unrelated block two edit.".to_string();
+        current.document_ast.blocks.push(second_current);
+        refresh_work_product_state(&mut current);
+
+        let (restored, warnings) =
+            restore_work_product_scope(&current, &snapshot, "block", &[target_id.clone()])
+                .expect("restore block");
+
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.contains("Targeted restore")));
+        assert_eq!(restored.document_ast.blocks[0].text, "Snapshot block one.");
+        assert_eq!(
+            restored.document_ast.blocks[1].text,
+            "Current unrelated block two edit."
+        );
+    }
+
+    #[test]
+    fn scoped_restore_export_state_merges_without_deleting_newer_artifacts() {
+        let mut snapshot = test_work_product("Snapshot.", Vec::new(), Vec::new(), None);
+        let mut current = snapshot.clone();
+        snapshot.artifacts.push(test_work_product_artifact(
+            "artifact:snapshot",
+            "sha256:snapshot",
+        ));
+        current.artifacts.push(test_work_product_artifact(
+            "artifact:current",
+            "sha256:current",
+        ));
+
+        let (restored, _warnings) =
+            restore_work_product_scope(&current, &snapshot, "export_state", &[])
+                .expect("restore export state");
+
+        assert!(restored
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.artifact_id == "artifact:snapshot"));
+        assert!(restored
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.artifact_id == "artifact:current"));
+    }
+
+    #[test]
+    fn work_product_download_response_omits_storage_keys_and_safe_filename_omits_titles() {
+        let artifact = test_work_product_artifact("artifact:opaque", "sha256:artifact");
+        let response = WorkProductDownloadResponse {
+            method: "GET".to_string(),
+            url: "/api/v1/matters/matter/work-products/work-product/artifacts/artifact/download"
+                .to_string(),
+            expires_at: "2".to_string(),
+            headers: BTreeMap::new(),
+            filename: safe_work_product_download_filename(&artifact),
+            mime_type: Some("text/html".to_string()),
+            bytes: 42,
+            artifact,
+        };
+        let text = serde_json::to_string(&response).expect("response serializes");
+        assert!(!text.contains("storage_key"));
+        assert!(!text.contains("casebuilder/matters/private/raw-key"));
+
+        let sensitive_artifact = test_work_product_artifact(
+            "artifact:Secret Draft About Tenant Payment",
+            "sha256:artifact",
+        );
+        let filename = safe_work_product_download_filename(&sensitive_artifact);
+        assert!(!filename.contains("Secret"));
+        assert!(!filename.contains("Tenant"));
+        assert!(!filename.contains("Payment"));
+        assert!(filename.starts_with("work-product-export-"));
+    }
+
+    #[test]
+    fn work_product_list_summary_omits_ast_payload_by_default() {
+        let mut summary = test_work_product(
+            "Long legal document body should not ride along in list responses.",
+            Vec::new(),
+            Vec::new(),
+            None,
+        );
+
+        summarize_work_product_for_list(&mut summary);
+
+        assert!(summary.blocks.is_empty());
+        assert!(summary.document_ast.blocks.is_empty());
+        assert!(summary.document_ast.links.is_empty());
+        assert_eq!(summary.document_ast.title, "Test complaint");
+    }
+
+    #[test]
+    fn large_work_product_list_summary_omits_large_ast_by_default() {
+        let mut summary = test_work_product(
+            "Large legal document body should not ride along in list responses.",
+            Vec::new(),
+            Vec::new(),
+            None,
+        );
+        let template = summary.document_ast.blocks[0].clone();
+        for index in 2..=750 {
+            let mut block = template.clone();
+            block.block_id = format!("work-product:test:block:{index}");
+            block.id = block.block_id.clone();
+            block.ordinal = index;
+            block.text = format!("Large confidential paragraph {index}.");
+            summary.document_ast.blocks.push(block);
+        }
+        refresh_work_product_state(&mut summary);
+
+        summarize_work_product_for_list(&mut summary);
+
+        assert!(summary.blocks.is_empty());
+        assert!(summary.document_ast.blocks.is_empty());
+        assert_eq!(summary.document_ast.title, "Test complaint");
+    }
+
+    #[test]
+    fn snapshot_list_summary_omits_inline_full_state() {
+        let mut snapshot = test_version_snapshot(Some(serde_json::json!({
+            "document_ast": {
+                "blocks": [{
+                    "text": "Snapshot detail text should not appear in snapshot lists."
+                }]
+            }
+        })));
+        snapshot.full_state_ref = Some("blob:sha256:abcdef".to_string());
+
+        summarize_version_snapshot_for_list(&mut snapshot);
+
+        assert!(snapshot.full_state_inline.is_none());
+        assert_eq!(
+            snapshot.full_state_ref.as_deref(),
+            Some("blob:sha256:abcdef")
+        );
+    }
+
+    #[test]
+    fn oversized_block_graph_payload_keeps_excerpt_and_hash() {
+        let product = test_work_product(&"x".repeat(80), Vec::new(), Vec::new(), None);
+        let block = &product.blocks[0];
+        let payload = work_product_block_graph_payload(block, 8).expect("payload");
+        let value: serde_json::Value = serde_json::from_str(&payload).expect("json payload");
+        assert_eq!(value["text_storage_status"], "graph_excerpt");
+        assert_eq!(value["text_size_bytes"], 80);
+        assert!(value["text_hash"]
+            .as_str()
+            .expect("hash")
+            .starts_with("sha256:"));
     }
 
     #[test]
@@ -11645,27 +15489,30 @@ mod tests {
             Some("text/html"),
             b"<main><p>Tenant paid &amp; landlord accepted.</p></main>",
         );
-	        assert_eq!(
-	            html.text.as_deref(),
-	            Some("Tenant paid & landlord accepted.")
-	        );
+        assert_eq!(
+            html.text.as_deref(),
+            Some("Tenant paid & landlord accepted.")
+        );
 
-	        let docx = stored_zip_document_xml(
+        let docx = stored_zip_document_xml(
 	            br#"<w:document><w:body><w:p><w:r><w:t>Complaint paragraph from DOCX.</w:t></w:r></w:p></w:body></w:document>"#,
 	        );
-	        let docx = parse_document_bytes(
-	            "complaint.docx",
-	            Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
-	            &docx,
-	        );
-	        assert_eq!(docx.status, "processed");
-	        assert!(docx.text.unwrap().contains("Complaint paragraph from DOCX."));
+        let docx = parse_document_bytes(
+            "complaint.docx",
+            Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            &docx,
+        );
+        assert_eq!(docx.status, "processed");
+        assert!(docx
+            .text
+            .unwrap()
+            .contains("Complaint paragraph from DOCX."));
 
-	        let pdf = parse_document_bytes(
-	            "embedded.pdf",
-	            Some("application/pdf"),
-	            b"%PDF-1.4\nBT (Plaintiff paid rent on March 1, 2026.) Tj ET",
-	        );
+        let pdf = parse_document_bytes(
+            "embedded.pdf",
+            Some("application/pdf"),
+            b"%PDF-1.4\nBT (Plaintiff paid rent on March 1, 2026.) Tj ET",
+        );
         assert_eq!(pdf.status, "processed");
         assert!(pdf.text.unwrap().contains("Plaintiff paid rent"));
 
@@ -11674,68 +15521,68 @@ mod tests {
         assert!(image.text.is_none());
 
         let media = parse_document_bytes("hearing.mp4", Some("video/mp4"), b"not text");
-	        assert_eq!(media.status, "transcription_deferred");
-	    }
+        assert_eq!(media.status, "transcription_deferred");
+    }
 
-	    fn stored_zip_document_xml(xml: &[u8]) -> Vec<u8> {
-	        let name = b"word/document.xml";
-	        let mut zip = Vec::new();
-	        push_u32(&mut zip, 0x0403_4b50);
-	        push_u16(&mut zip, 20);
-	        push_u16(&mut zip, 0);
-	        push_u16(&mut zip, 0);
-	        push_u16(&mut zip, 0);
-	        push_u16(&mut zip, 0);
-	        push_u32(&mut zip, 0);
-	        push_u32(&mut zip, xml.len() as u32);
-	        push_u32(&mut zip, xml.len() as u32);
-	        push_u16(&mut zip, name.len() as u16);
-	        push_u16(&mut zip, 0);
-	        zip.extend_from_slice(name);
-	        zip.extend_from_slice(xml);
+    fn stored_zip_document_xml(xml: &[u8]) -> Vec<u8> {
+        let name = b"word/document.xml";
+        let mut zip = Vec::new();
+        push_u32(&mut zip, 0x0403_4b50);
+        push_u16(&mut zip, 20);
+        push_u16(&mut zip, 0);
+        push_u16(&mut zip, 0);
+        push_u16(&mut zip, 0);
+        push_u16(&mut zip, 0);
+        push_u32(&mut zip, 0);
+        push_u32(&mut zip, xml.len() as u32);
+        push_u32(&mut zip, xml.len() as u32);
+        push_u16(&mut zip, name.len() as u16);
+        push_u16(&mut zip, 0);
+        zip.extend_from_slice(name);
+        zip.extend_from_slice(xml);
 
-	        let central_directory_offset = zip.len();
-	        push_u32(&mut zip, 0x0201_4b50);
-	        push_u16(&mut zip, 20);
-	        push_u16(&mut zip, 20);
-	        push_u16(&mut zip, 0);
-	        push_u16(&mut zip, 0);
-	        push_u16(&mut zip, 0);
-	        push_u16(&mut zip, 0);
-	        push_u32(&mut zip, 0);
-	        push_u32(&mut zip, xml.len() as u32);
-	        push_u32(&mut zip, xml.len() as u32);
-	        push_u16(&mut zip, name.len() as u16);
-	        push_u16(&mut zip, 0);
-	        push_u16(&mut zip, 0);
-	        push_u16(&mut zip, 0);
-	        push_u16(&mut zip, 0);
-	        push_u32(&mut zip, 0);
-	        push_u32(&mut zip, 0);
-	        zip.extend_from_slice(name);
+        let central_directory_offset = zip.len();
+        push_u32(&mut zip, 0x0201_4b50);
+        push_u16(&mut zip, 20);
+        push_u16(&mut zip, 20);
+        push_u16(&mut zip, 0);
+        push_u16(&mut zip, 0);
+        push_u16(&mut zip, 0);
+        push_u16(&mut zip, 0);
+        push_u32(&mut zip, 0);
+        push_u32(&mut zip, xml.len() as u32);
+        push_u32(&mut zip, xml.len() as u32);
+        push_u16(&mut zip, name.len() as u16);
+        push_u16(&mut zip, 0);
+        push_u16(&mut zip, 0);
+        push_u16(&mut zip, 0);
+        push_u16(&mut zip, 0);
+        push_u32(&mut zip, 0);
+        push_u32(&mut zip, 0);
+        zip.extend_from_slice(name);
 
-	        let central_directory_size = zip.len() - central_directory_offset;
-	        push_u32(&mut zip, 0x0605_4b50);
-	        push_u16(&mut zip, 0);
-	        push_u16(&mut zip, 0);
-	        push_u16(&mut zip, 1);
-	        push_u16(&mut zip, 1);
-	        push_u32(&mut zip, central_directory_size as u32);
-	        push_u32(&mut zip, central_directory_offset as u32);
-	        push_u16(&mut zip, 0);
-	        zip
-	    }
+        let central_directory_size = zip.len() - central_directory_offset;
+        push_u32(&mut zip, 0x0605_4b50);
+        push_u16(&mut zip, 0);
+        push_u16(&mut zip, 0);
+        push_u16(&mut zip, 1);
+        push_u16(&mut zip, 1);
+        push_u32(&mut zip, central_directory_size as u32);
+        push_u32(&mut zip, central_directory_offset as u32);
+        push_u16(&mut zip, 0);
+        zip
+    }
 
-	    fn push_u16(bytes: &mut Vec<u8>, value: u16) {
-	        bytes.extend_from_slice(&value.to_le_bytes());
-	    }
+    fn push_u16(bytes: &mut Vec<u8>, value: u16) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
 
-	    fn push_u32(bytes: &mut Vec<u8>, value: u32) {
-	        bytes.extend_from_slice(&value.to_le_bytes());
-	    }
+    fn push_u32(bytes: &mut Vec<u8>, value: u32) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
 
-	    #[test]
-	    fn complaint_import_parser_preserves_labels_counts_and_citations() {
+    #[test]
+    fn complaint_import_parser_preserves_labels_counts_and_citations() {
         let text = r#"
 # PAYNTER v. BLUE OX RV PARK - MASTER CIVIL COMPLAINT
 ## CAPTION
@@ -11774,8 +15621,11 @@ mod tests {
             "paragraph",
             &parsed.paragraphs[3].text,
         );
-        assert_eq!(rule_citations[0].status, "resolved_external");
-        assert_eq!(rule_citations[0].canonical_id.as_deref(), Some("or:utcr:2.010"));
+        assert_eq!(rule_citations[0].status, "resolved");
+        assert_eq!(
+            rule_citations[0].canonical_id.as_deref(),
+            Some("or:utcr:2.010")
+        );
     }
 
     #[test]
@@ -11788,13 +15638,13 @@ mod tests {
             canonical_id_for_citation("ORCP 16 D"),
             Some("or:orcp:16_d".to_string())
         );
-	        assert_eq!(
-	            canonical_id_for_citation("UTCR 2.010(4)"),
-	            Some("or:utcr:2.010_4_".to_string())
-	        );
-	        assert_eq!(
-	            canonical_id_for_citation("Or Laws 2023, ch 13, § 4"),
-	            Some("or:session-law:2023:ch:13:sec:4".to_string())
-	        );
-	    }
+        assert_eq!(
+            canonical_id_for_citation("UTCR 2.010(4)"),
+            Some("or:utcr:2.010".to_string())
+        );
+        assert_eq!(
+            canonical_id_for_citation("Or Laws 2023, ch 13, § 4"),
+            Some("or:session-law:2023:ch:13:sec:4".to_string())
+        );
+    }
 }
