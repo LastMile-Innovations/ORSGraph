@@ -1294,7 +1294,8 @@ impl Neo4jService {
                        OPTIONAL MATCH (v)-[:HAS_SOURCE_NOTE]->(version_note:SourceNote)
                        WITH v, collect(DISTINCT version_note.text) AS version_notes
                        OPTIONAL MATCH (v)-[:CONTAINS]->(:Provision)-[:HAS_SOURCE_NOTE]->(provision_note:SourceNote)
-                       RETURN [note IN version_notes + collect(DISTINCT provision_note.text)
+                       WITH version_notes + collect(DISTINCT provision_note.text) AS notes
+                       RETURN [note IN notes
                                WHERE note IS NOT NULL AND note <> ''][0..25] AS source_notes
                      }
                      RETURN i.canonical_id as canonical_id, i.citation as citation, i.title as title,
