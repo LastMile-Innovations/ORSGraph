@@ -402,6 +402,11 @@ impl CaseBuilderService {
         })
     }
 
+    pub async fn list_matter_audit_events(&self, matter_id: &str) -> ApiResult<Vec<AuditEvent>> {
+        let matter = self.get_matter(matter_id).await?;
+        Ok(build_matter_audit_events(&matter))
+    }
+
     pub async fn patch_matter(
         &self,
         matter_id: &str,
@@ -7954,28 +7959,52 @@ fn default_work_product_from_matter(
             &matter.matter_id,
             work_product_id,
             &[
-                ("question", "Question presented", "State the legal question."),
-                ("brief_answer", "Brief answer", "Give the short answer with caveats."),
+                (
+                    "question",
+                    "Question presented",
+                    "State the legal question.",
+                ),
+                (
+                    "brief_answer",
+                    "Brief answer",
+                    "Give the short answer with caveats.",
+                ),
                 ("facts", "Relevant facts", "Link facts and evidence."),
                 ("analysis", "Analysis", "Add source-backed legal analysis."),
-                ("conclusion", "Conclusion", "State the recommended next step."),
+                (
+                    "conclusion",
+                    "Conclusion",
+                    "State the recommended next step.",
+                ),
             ],
         ),
         "notice" | "letter" => profile_blocks(
             &matter.matter_id,
             work_product_id,
             &[
-                ("recipient", "Recipient", "Identify the recipient and delivery context."),
+                (
+                    "recipient",
+                    "Recipient",
+                    "Identify the recipient and delivery context.",
+                ),
                 ("purpose", "Purpose", "State the notice or letter purpose."),
                 ("body", "Body", "Draft the operative text."),
-                ("signature", "Signature", "Add sender signature and contact details."),
+                (
+                    "signature",
+                    "Signature",
+                    "Add sender signature and contact details.",
+                ),
             ],
         ),
         "proposed_order" => profile_blocks(
             &matter.matter_id,
             work_product_id,
             &[
-                ("caption", "Caption", "Confirm court, parties, and case number."),
+                (
+                    "caption",
+                    "Caption",
+                    "Confirm court, parties, and case number.",
+                ),
                 ("findings", "Findings", "Add any findings or recitals."),
                 ("order", "Order", "State the ordered relief."),
                 ("signature", "Judge signature", "Reserve signature block."),
@@ -8359,7 +8388,13 @@ fn work_product_profile(product_type: &str) -> WorkProductProfile {
         ),
         "memo" => (
             "Legal Memo",
-            vec!["question", "brief_answer", "facts", "analysis", "conclusion"],
+            vec![
+                "question",
+                "brief_answer",
+                "facts",
+                "analysis",
+                "conclusion",
+            ],
             vec!["authorities", "exhibits"],
         ),
         "notice" => (
@@ -8377,11 +8412,7 @@ fn work_product_profile(product_type: &str) -> WorkProductProfile {
             vec!["caption", "findings", "order", "signature"],
             vec!["service"],
         ),
-        "exhibit_list" => (
-            "Exhibit List",
-            vec!["exhibits"],
-            vec!["foundation"],
-        ),
+        "exhibit_list" => ("Exhibit List", vec!["exhibits"], vec!["foundation"]),
         _ => (
             "Structured Work Product",
             vec!["summary", "facts", "analysis", "conclusion"],
@@ -8912,7 +8943,10 @@ fn build_case_graph(matter: &MatterBundle) -> CaseGraphResponse {
                 href: Some(format!("{base}/timeline")),
                 metadata: graph_metadata([
                     ("kind", event.kind.clone()),
-                    ("date_confidence", format!("{:.0}%", event.date_confidence * 100.0)),
+                    (
+                        "date_confidence",
+                        format!("{:.0}%", event.date_confidence * 100.0),
+                    ),
                 ]),
             },
         );
@@ -9061,8 +9095,11 @@ fn build_case_graph(matter: &MatterBundle) -> CaseGraphResponse {
                 label: product.title.clone(),
                 subtitle: Some(product.product_type.clone()),
                 status: Some(product.review_status.clone()),
-                risk: (!product.findings.iter().all(|finding| finding.status != "open"))
-                    .then(|| "open_findings".to_string()),
+                risk: (!product
+                    .findings
+                    .iter()
+                    .all(|finding| finding.status != "open"))
+                .then(|| "open_findings".to_string()),
                 href: Some(format!(
                     "{base}/work-products/{}/editor",
                     product.work_product_id
@@ -9126,6 +9163,7 @@ fn build_matter_qc_run(matter: &MatterBundle) -> QcRun {
         .flat_map(|product| product.findings.clone())
         .filter(|finding| finding.status == "open")
         .collect::<Vec<_>>();
+    let work_product_sentences = build_work_product_sentences(matter);
     let suggested_tasks = evidence_gaps
         .iter()
         .map(|gap| CreateTaskRequest {
@@ -9148,21 +9186,23 @@ fn build_matter_qc_run(matter: &MatterBundle) -> QcRun {
             source: Some("qc_run".to_string()),
             description: Some(gap.message.clone()),
         })
-        .chain(authority_gaps.iter().map(|gap| CreateTaskRequest {
-            title: format!("Resolve authority gap: {}", gap.title),
-            status: Some("todo".to_string()),
-            priority: Some("med".to_string()),
-            due_date: None,
-            assigned_to: None,
-            related_claim_ids: Some(
-                (gap.target_type == "claim")
-                    .then(|| vec![gap.target_id.clone()])
-                    .unwrap_or_default(),
-            ),
-            related_document_ids: Some(Vec::new()),
-            related_deadline_id: None,
-            source: Some("qc_run".to_string()),
-            description: Some(gap.message.clone()),
+        .chain(authority_gaps.iter().map(|gap| {
+            CreateTaskRequest {
+                title: format!("Resolve authority gap: {}", gap.title),
+                status: Some("todo".to_string()),
+                priority: Some("med".to_string()),
+                due_date: None,
+                assigned_to: None,
+                related_claim_ids: Some(
+                    (gap.target_type == "claim")
+                        .then(|| vec![gap.target_id.clone()])
+                        .unwrap_or_default(),
+                ),
+                related_document_ids: Some(Vec::new()),
+                related_deadline_id: None,
+                source: Some("qc_run".to_string()),
+                description: Some(gap.message.clone()),
+            }
         }))
         .take(20)
         .collect::<Vec<_>>();
@@ -9189,14 +9229,172 @@ fn build_matter_qc_run(matter: &MatterBundle) -> QcRun {
             .cloned()
             .collect(),
         work_product_findings,
+        work_product_sentences,
         suggested_tasks,
         warnings: vec![
-            "Matter QC is deterministic and provider-free; verify every filing decision manually.".to_string(),
+            "Matter QC is deterministic and provider-free; verify every filing decision manually."
+                .to_string(),
         ],
     }
 }
 
-fn build_issue_spot_response(matter: &MatterBundle, request: IssueSpotRequest) -> IssueSpotResponse {
+fn build_work_product_sentences(matter: &MatterBundle) -> Vec<WorkProductSentence> {
+    let mut sentences = Vec::new();
+    for product in &matter.work_products {
+        for (index, block) in flatten_work_product_blocks(&product.document_ast.blocks)
+            .into_iter()
+            .filter(|block| !block.text.trim().is_empty())
+            .enumerate()
+        {
+            let mut finding_ids = block.rule_finding_ids.clone();
+            for finding in product
+                .findings
+                .iter()
+                .filter(|finding| finding.status == "open" && finding.target_id == block.block_id)
+            {
+                if !finding_ids.iter().any(|id| id == &finding.finding_id) {
+                    finding_ids.push(finding.finding_id.clone());
+                }
+            }
+            let support_status = block.support_status.clone().unwrap_or_else(|| {
+                if !finding_ids.is_empty() {
+                    "needs_review".to_string()
+                } else if block.fact_ids.is_empty()
+                    && block.evidence_ids.is_empty()
+                    && block.authorities.is_empty()
+                {
+                    "unsupported".to_string()
+                } else {
+                    "supported".to_string()
+                }
+            });
+            sentences.push(WorkProductSentence {
+                sentence_id: generate_id(
+                    "wp-sentence",
+                    &format!("{}:{}:{index}", product.work_product_id, block.block_id),
+                ),
+                id: generate_id(
+                    "wp-sentence",
+                    &format!("{}:{}:{index}", product.work_product_id, block.block_id),
+                ),
+                matter_id: matter.summary.matter_id.clone(),
+                work_product_id: product.work_product_id.clone(),
+                block_id: block.block_id,
+                text: truncate_qc_text(&block.text),
+                index: index as u64,
+                support_status,
+                fact_ids: block.fact_ids,
+                evidence_ids: block.evidence_ids,
+                authority_refs: block.authorities,
+                finding_ids,
+            });
+            if sentences.len() >= 500 {
+                return sentences;
+            }
+        }
+    }
+    sentences
+}
+
+fn build_matter_audit_events(matter: &MatterBundle) -> Vec<AuditEvent> {
+    let mut events = vec![audit_event(
+        matter,
+        "matter_created",
+        "matter",
+        &matter.summary.matter_id,
+        format!("Matter created: {}.", matter.summary.name),
+        &matter.summary.created_at,
+        BTreeMap::new(),
+    )];
+    for document in &matter.documents {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("filename".to_string(), document.filename.clone());
+        metadata.insert(
+            "processing_status".to_string(),
+            document.processing_status.clone(),
+        );
+        events.push(audit_event(
+            matter,
+            "document_uploaded",
+            "document",
+            &document.document_id,
+            format!("Uploaded document: {}.", document.title),
+            &document.uploaded_at,
+            metadata,
+        ));
+    }
+    for task in &matter.tasks {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("status".to_string(), task.status.clone());
+        metadata.insert("priority".to_string(), task.priority.clone());
+        events.push(audit_event(
+            matter,
+            "task_recorded",
+            "task",
+            &task.task_id,
+            format!("Task tracked: {}.", task.title),
+            &matter.summary.updated_at,
+            metadata,
+        ));
+    }
+    for product in &matter.work_products {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("product_type".to_string(), product.product_type.clone());
+        metadata.insert("status".to_string(), product.status.clone());
+        events.push(audit_event(
+            matter,
+            "work_product_updated",
+            "work_product",
+            &product.work_product_id,
+            format!("Work product updated: {}.", product.title),
+            &product.updated_at,
+            metadata,
+        ));
+    }
+    events.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    events.truncate(200);
+    events
+}
+
+fn audit_event(
+    matter: &MatterBundle,
+    event_type: &str,
+    target_type: &str,
+    target_id: &str,
+    summary: String,
+    created_at: &str,
+    metadata: BTreeMap<String, String>,
+) -> AuditEvent {
+    AuditEvent {
+        audit_event_id: generate_id(
+            "audit",
+            &format!(
+                "{}:{event_type}:{target_type}:{target_id}:{created_at}",
+                matter.summary.matter_id
+            ),
+        ),
+        id: generate_id(
+            "audit",
+            &format!(
+                "{}:{event_type}:{target_type}:{target_id}:{created_at}",
+                matter.summary.matter_id
+            ),
+        ),
+        matter_id: matter.summary.matter_id.clone(),
+        event_type: event_type.to_string(),
+        actor: "system".to_string(),
+        target_type: target_type.to_string(),
+        target_id: target_id.to_string(),
+        summary,
+        created_at: created_at.to_string(),
+        metadata,
+    }
+}
+
+fn build_issue_spot_response(
+    matter: &MatterBundle,
+    request: IssueSpotRequest,
+) -> IssueSpotResponse {
     let mode = request
         .mode
         .unwrap_or_else(|| "deterministic_review".to_string());
@@ -9210,12 +9408,19 @@ fn build_issue_spot_response(matter: &MatterBundle, request: IssueSpotRequest) -
             .map(|fact| fact.fact_id.clone())
             .collect::<Vec<_>>();
         suggestions.push(IssueSuggestion {
-            suggestion_id: generate_id("issue", &format!("{}:claim-intake", matter.summary.matter_id)),
-            id: generate_id("issue", &format!("{}:claim-intake", matter.summary.matter_id)),
+            suggestion_id: generate_id(
+                "issue",
+                &format!("{}:claim-intake", matter.summary.matter_id),
+            ),
+            id: generate_id(
+                "issue",
+                &format!("{}:claim-intake", matter.summary.matter_id),
+            ),
             matter_id: matter.summary.matter_id.clone(),
             issue_type: "claim_suggestion".to_string(),
             title: "Build first claim theory from reviewed facts".to_string(),
-            summary: "Facts exist, but no claim or defense theory has been created yet.".to_string(),
+            summary: "Facts exist, but no claim or defense theory has been created yet."
+                .to_string(),
             confidence: 0.68,
             severity: "warning".to_string(),
             status: "open".to_string(),
@@ -9238,15 +9443,24 @@ fn build_issue_spot_response(matter: &MatterBundle, request: IssueSpotRequest) -
             suggestions.push(IssueSuggestion {
                 suggestion_id: generate_id(
                     "issue",
-                    &format!("{}:{}:missing-elements", matter.summary.matter_id, claim.claim_id),
+                    &format!(
+                        "{}:{}:missing-elements",
+                        matter.summary.matter_id, claim.claim_id
+                    ),
                 ),
                 id: generate_id(
                     "issue",
-                    &format!("{}:{}:missing-elements", matter.summary.matter_id, claim.claim_id),
+                    &format!(
+                        "{}:{}:missing-elements",
+                        matter.summary.matter_id, claim.claim_id
+                    ),
                 ),
                 matter_id: matter.summary.matter_id.clone(),
                 issue_type: "element_gap".to_string(),
-                title: format!("{} has {} missing element(s)", claim.title, missing_elements),
+                title: format!(
+                    "{} has {} missing element(s)",
+                    claim.title, missing_elements
+                ),
                 summary: "One or more elements lack reviewed facts or evidence.".to_string(),
                 confidence: 0.82,
                 severity: "serious".to_string(),
@@ -9255,7 +9469,9 @@ fn build_issue_spot_response(matter: &MatterBundle, request: IssueSpotRequest) -
                 evidence_ids: claim.evidence_ids.clone(),
                 document_ids: Vec::new(),
                 authority_refs: claim.authorities.clone(),
-                recommended_action: "Run element mapping and attach facts/evidence to each missing element.".to_string(),
+                recommended_action:
+                    "Run element mapping and attach facts/evidence to each missing element."
+                        .to_string(),
                 mode: mode.clone(),
             });
         }
@@ -9294,11 +9510,17 @@ fn build_issue_spot_response(matter: &MatterBundle, request: IssueSpotRequest) -
             suggestions.push(IssueSuggestion {
                 suggestion_id: generate_id(
                     "issue",
-                    &format!("{}:{}:deadline-risk", matter.summary.matter_id, deadline.deadline_id),
+                    &format!(
+                        "{}:{}:deadline-risk",
+                        matter.summary.matter_id, deadline.deadline_id
+                    ),
                 ),
                 id: generate_id(
                     "issue",
-                    &format!("{}:{}:deadline-risk", matter.summary.matter_id, deadline.deadline_id),
+                    &format!(
+                        "{}:{}:deadline-risk",
+                        matter.summary.matter_id, deadline.deadline_id
+                    ),
                 ),
                 matter_id: matter.summary.matter_id.clone(),
                 issue_type: "deadline_risk".to_string(),
@@ -9328,7 +9550,8 @@ fn build_issue_spot_response(matter: &MatterBundle, request: IssueSpotRequest) -
                     })
                     .into_iter()
                     .collect(),
-                recommended_action: "Confirm trigger date, create completion tasks, and update status.".to_string(),
+                recommended_action:
+                    "Confirm trigger date, create completion tasks, and update status.".to_string(),
                 mode: mode.clone(),
             });
         }
@@ -9380,7 +9603,10 @@ fn build_evidence_gaps(matter: &MatterBundle) -> Vec<EvidenceGap> {
             if !element.satisfied || element.fact_ids.is_empty() {
                 let gap_id = generate_id(
                     "evidence-gap",
-                    &format!("{}:{}:{}", matter.summary.matter_id, claim.claim_id, element.element_id),
+                    &format!(
+                        "{}:{}:{}",
+                        matter.summary.matter_id, claim.claim_id, element.element_id
+                    ),
                 );
                 gaps.push(EvidenceGap {
                     id: gap_id.clone(),
@@ -9389,7 +9615,10 @@ fn build_evidence_gaps(matter: &MatterBundle) -> Vec<EvidenceGap> {
                     target_type: "element".to_string(),
                     target_id: element.element_id.clone(),
                     title: truncate_graph_label(&element.text),
-                    message: format!("Element in '{}' is missing fact or evidence support.", claim.title),
+                    message: format!(
+                        "Element in '{}' is missing fact or evidence support.",
+                        claim.title
+                    ),
                     severity: "serious".to_string(),
                     status: "open".to_string(),
                     fact_ids: element.fact_ids.clone(),
@@ -9429,14 +9658,15 @@ fn build_authority_gaps(matter: &MatterBundle) -> Vec<AuthorityGap> {
         }
     }
     for product in &matter.work_products {
-        if product
-            .anchors
-            .iter()
-            .all(|anchor| anchor.target_type != "authority" && anchor.target_type != "legal_authority")
-        {
+        if product.anchors.iter().all(|anchor| {
+            anchor.target_type != "authority" && anchor.target_type != "legal_authority"
+        }) {
             let gap_id = generate_id(
                 "authority-gap",
-                &format!("{}:{}:authority", matter.summary.matter_id, product.work_product_id),
+                &format!(
+                    "{}:{}:authority",
+                    matter.summary.matter_id, product.work_product_id
+                ),
             );
             gaps.push(AuthorityGap {
                 id: gap_id.clone(),
@@ -9521,8 +9751,14 @@ fn build_matter_export_package(matter: &MatterBundle, format: &str) -> ExportPac
         warnings.push("No WorkProducts are available to include yet.".to_string());
     }
     ExportPackage {
-        export_package_id: generate_id("export-package", &format!("{}:{format}:{now}", matter.summary.matter_id)),
-        id: generate_id("export-package", &format!("{}:{format}:{now}", matter.summary.matter_id)),
+        export_package_id: generate_id(
+            "export-package",
+            &format!("{}:{format}:{now}", matter.summary.matter_id),
+        ),
+        id: generate_id(
+            "export-package",
+            &format!("{}:{format}:{now}", matter.summary.matter_id),
+        ),
         matter_id: matter.summary.matter_id.clone(),
         format: format.to_string(),
         status: if open_findings > 0 {
@@ -9620,6 +9856,16 @@ fn graph_metadata<const N: usize>(pairs: [(&str, String); N]) -> BTreeMap<String
 
 fn truncate_graph_label(value: &str) -> String {
     const LIMIT: usize = 120;
+    let trimmed = value.trim();
+    if trimmed.chars().count() <= LIMIT {
+        trimmed.to_string()
+    } else {
+        format!("{}...", trimmed.chars().take(LIMIT).collect::<String>())
+    }
+}
+
+fn truncate_qc_text(value: &str) -> String {
+    const LIMIT: usize = 280;
     let trimmed = value.trim();
     if trimmed.chars().count() <= LIMIT {
         trimmed.to_string()
@@ -10806,7 +11052,9 @@ fn validate_work_product_document(product: &WorkProduct) -> AstValidationRespons
             Some(&document.document_id),
         ));
     }
-    if document.document_type != product.product_type || document.product_type != product.product_type {
+    if document.document_type != product.product_type
+        || document.product_type != product.product_type
+    {
         errors.push(ast_issue(
             "ast_document_type_mismatch",
             "WorkProduct AST document_type/product_type does not match the work product.",
@@ -10877,7 +11125,8 @@ fn validate_work_product_document(product: &WorkProduct) -> AstValidationRespons
     for link in &document.links {
         match find_ast_block(&document.blocks, &link.source_block_id) {
             Some(block) => {
-                if validate_optional_text_range(&block.text, link.source_text_range.as_ref()).is_err()
+                if validate_optional_text_range(&block.text, link.source_text_range.as_ref())
+                    .is_err()
                 {
                     errors.push(ast_issue(
                         "invalid_link_text_range",
@@ -11269,9 +11518,9 @@ fn roman_or_number_after_count(text: &str) -> Option<u64> {
 fn work_product_findings(product: &WorkProduct) -> Vec<WorkProductFinding> {
     let now = now_string();
     let mut findings = Vec::new();
+    let blocks = canonical_work_product_blocks(product);
     for role in &product.profile.required_block_roles {
-        let missing = product
-            .blocks
+        let missing = blocks
             .iter()
             .find(|block| &block.role == role)
             .map(|block| block.text.trim().is_empty())
@@ -11292,7 +11541,7 @@ fn work_product_findings(product: &WorkProduct) -> Vec<WorkProductFinding> {
         }
     }
     if product.product_type == "motion" {
-        let has_relief = product.blocks.iter().any(|block| {
+        let has_relief = blocks.iter().any(|block| {
             block.role == "relief_requested" && block.text.split_whitespace().count() > 8
         });
         if !has_relief {
@@ -11309,13 +11558,17 @@ fn work_product_findings(product: &WorkProduct) -> Vec<WorkProductFinding> {
                 &now,
             ));
         }
-        let has_authority = product.blocks.iter().any(|block| {
+        let has_block_authority = blocks.iter().any(|block| {
             matches!(block.role.as_str(), "legal_standard" | "argument")
                 && !block.authorities.is_empty()
-        }) || product
-            .anchors
+        });
+        let has_link_authority = product
+            .document_ast
+            .links
             .iter()
-            .any(|anchor| anchor.anchor_type == "authority");
+            .any(|link| matches!(link.target_type.as_str(), "authority" | "legal_authority"));
+        let has_authority =
+            has_block_authority || has_link_authority || !product.document_ast.citations.is_empty();
         if !has_authority {
             findings.push(work_product_finding(
                 product,
@@ -11330,8 +11583,7 @@ fn work_product_findings(product: &WorkProduct) -> Vec<WorkProductFinding> {
                 &now,
             ));
         }
-        let has_conferral = product
-            .blocks
+        let has_conferral = blocks
             .iter()
             .any(|block| block.role == "conferral_certificate");
         if !has_conferral {
@@ -11413,13 +11665,14 @@ fn work_product_finding(
 
 fn render_work_product_preview(product: &WorkProduct) -> WorkProductPreviewResponse {
     let mut html = String::new();
+    let blocks = canonical_work_product_blocks(product);
     html.push_str("<article class=\"work-product-preview\">");
     html.push_str(&format!(
         "<header><p>{}</p><h1>{}</h1><p class=\"review\">Review needed - not legal advice or filing-ready.</p></header>",
         escape_html(&product.profile.name),
         escape_html(&product.title)
     ));
-    for block in &product.blocks {
+    for block in &blocks {
         html.push_str(&format!(
             "<section data-block-id=\"{}\"><h2>{}</h2><p>{}</p></section>",
             escape_html(&block.block_id),
@@ -11443,7 +11696,7 @@ fn render_work_product_preview(product: &WorkProduct) -> WorkProductPreviewRespo
 
 fn work_product_plain_text(product: &WorkProduct) -> String {
     let mut lines = vec![product.title.clone()];
-    for block in &product.blocks {
+    for block in canonical_work_product_blocks(product) {
         lines.push(String::new());
         lines.push(block.title.clone());
         lines.push(block.text.clone());
@@ -11475,7 +11728,7 @@ fn export_content_preview(content: &str) -> String {
 
 fn work_product_markdown(product: &WorkProduct) -> String {
     let mut lines = vec![format!("# {}", product.title)];
-    for block in &product.blocks {
+    for block in canonical_work_product_blocks(product) {
         lines.push(format!("\n## {}", block.title));
         lines.push(block.text.clone());
     }
@@ -11501,12 +11754,14 @@ fn work_product_export_warnings(
     if product.product_type == "motion" && !include_qc_report {
         warnings.push("Motion export excludes the QC report.".to_string());
     }
-    if include_exhibits
-        && product
-            .anchors
-            .iter()
-            .all(|anchor| anchor.target_type != "evidence")
-    {
+    let has_evidence_or_exhibit = !product.document_ast.exhibits.is_empty()
+        || product.document_ast.links.iter().any(|link| {
+            matches!(
+                link.target_type.as_str(),
+                "document" | "evidence" | "exhibit"
+            )
+        });
+    if include_exhibits && !has_evidence_or_exhibit {
         warnings.push("No exhibit or evidence anchors are currently linked.".to_string());
     }
     if matches!(format, "pdf" | "docx") {
@@ -11565,16 +11820,15 @@ fn normalize_export_format(value: &str) -> ApiResult<String> {
 }
 
 fn count_work_product_words(product: &WorkProduct) -> u64 {
-    product
-        .blocks
+    canonical_work_product_blocks(product)
         .iter()
         .map(|block| block.text.split_whitespace().count() as u64)
         .sum()
 }
 
 fn work_product_to_draft(product: &WorkProduct) -> CaseDraft {
-    let sections = product
-        .blocks
+    let blocks = canonical_work_product_blocks(product);
+    let sections = blocks
         .iter()
         .map(|block| DraftSection {
             section_id: block.block_id.clone(),
@@ -11583,8 +11837,7 @@ fn work_product_to_draft(product: &WorkProduct) -> CaseDraft {
             citations: block.authorities.clone(),
         })
         .collect::<Vec<_>>();
-    let paragraphs = product
-        .blocks
+    let paragraphs = blocks
         .iter()
         .map(|block| DraftParagraph {
             paragraph_id: block.block_id.clone(),
@@ -16460,22 +16713,42 @@ fn apply_work_product_support_update(
         }
         anchor.status = status.to_string();
     }
-    if request.citation.is_some() {
-        anchor.citation = request.citation;
-    }
-    if request.canonical_id.is_some() {
-        anchor.canonical_id = request.canonical_id;
-    }
-    if request.pinpoint.is_some() {
-        anchor.pinpoint = request.pinpoint;
-    }
-    if request.quote.is_some() {
-        anchor.quote = request.quote;
-    }
+    apply_support_optional_string_patch(&mut anchor.citation, request.citation, "citation")?;
+    apply_support_optional_string_patch(
+        &mut anchor.canonical_id,
+        request.canonical_id,
+        "canonical_id",
+    )?;
+    apply_support_optional_string_patch(&mut anchor.pinpoint, request.pinpoint, "pinpoint")?;
+    apply_support_optional_string_patch(&mut anchor.quote, request.quote, "quote")?;
     let updated_anchor = anchor.clone();
     sync_work_product_anchor_projection(product, &updated_anchor);
     rebuild_work_product_ast_from_projection(product);
     Ok(updated_anchor)
+}
+
+fn apply_support_optional_string_patch(
+    target: &mut Option<String>,
+    patch: NullableStringPatch,
+    field_name: &str,
+) -> ApiResult<()> {
+    match patch {
+        NullableStringPatch::Unset => Ok(()),
+        NullableStringPatch::Clear => {
+            *target = None;
+            Ok(())
+        }
+        NullableStringPatch::Set(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(ApiError::BadRequest(format!(
+                    "Support {field_name} cannot be empty; send null to clear it."
+                )));
+            }
+            *target = Some(trimmed.to_string());
+            Ok(())
+        }
+    }
 }
 
 fn apply_work_product_support_removal(
@@ -16628,7 +16901,8 @@ fn validate_text_range_request(
     block: &WorkProductBlock,
     request: &WorkProductTextRangeLinkRequest,
 ) -> ApiResult<String> {
-    let selected_quote = text_for_char_range(&block.text, request.start_offset, request.end_offset)?;
+    let selected_quote =
+        text_for_char_range(&block.text, request.start_offset, request.end_offset)?;
     validate_text_range_quote(&selected_quote, Some(&request.quote))?;
     Ok(selected_quote)
 }
@@ -16977,11 +17251,11 @@ mod tests {
     };
     use crate::error::ApiError;
     use crate::models::casebuilder::{
-        AstOperation, AstPatch, IngestionRun, PatchWorkProductSupportRequest, VersionChangeSummary,
-        VersionSnapshot, WorkProduct, WorkProductAction, WorkProductAnchor, WorkProductArtifact,
-        WorkProductBlock, WorkProductCitationUse, WorkProductDocument, WorkProductDownloadResponse,
-        WorkProductExhibitReference, WorkProductFinding, WorkProductLink,
-        WorkProductTextRangeLinkRequest,
+        AstOperation, AstPatch, IngestionRun, NullableStringPatch, PatchWorkProductSupportRequest,
+        TextRange, VersionChangeSummary, VersionSnapshot, WorkProduct, WorkProductAction,
+        WorkProductAnchor, WorkProductArtifact, WorkProductBlock, WorkProductCitationUse,
+        WorkProductDocument, WorkProductDownloadResponse, WorkProductExhibitReference,
+        WorkProductFinding, WorkProductLink, WorkProductTextRangeLinkRequest,
     };
     use crate::services::object_store::build_document_object_key;
     use std::collections::BTreeMap;
@@ -17157,10 +17431,10 @@ mod tests {
             PatchWorkProductSupportRequest {
                 relation: Some("contradicts".to_string()),
                 status: None,
-                citation: None,
-                canonical_id: None,
-                pinpoint: None,
-                quote: None,
+                citation: NullableStringPatch::Unset,
+                canonical_id: NullableStringPatch::Unset,
+                pinpoint: NullableStringPatch::Unset,
+                quote: NullableStringPatch::Unset,
             },
         )
         .expect("support relation updates");
@@ -17362,6 +17636,498 @@ mod tests {
         assert_eq!(range.start_offset, 7);
         assert_eq!(range.end_offset, 14);
         assert_eq!(range.quote.as_deref(), Some("receipt"));
+    }
+
+    #[test]
+    fn ast_patch_validates_add_support_text_ranges() {
+        let product = test_work_product(
+            "Plaintiff paid rent with receipt A.",
+            Vec::new(),
+            Vec::new(),
+            None,
+        );
+        let block_id = product.document_ast.blocks[0].block_id.clone();
+        let mut document = product.document_ast.clone();
+
+        apply_ast_operation(
+            &mut document,
+            &AstOperation::AddLink {
+                link: test_link(
+                    "link:valid",
+                    &block_id,
+                    Some(text_range(10, 19, Some("paid rent"))),
+                ),
+            },
+        )
+        .expect("valid link range applies");
+        apply_ast_operation(
+            &mut document,
+            &AstOperation::AddCitation {
+                citation: test_citation(
+                    "citation:valid",
+                    &block_id,
+                    Some(text_range(20, 24, Some("with"))),
+                ),
+            },
+        )
+        .expect("valid citation range applies");
+        apply_ast_operation(
+            &mut document,
+            &AstOperation::AddExhibitReference {
+                exhibit: test_exhibit(
+                    "exhibit:valid",
+                    &block_id,
+                    Some(text_range(25, 34, Some("receipt A"))),
+                ),
+            },
+        )
+        .expect("valid exhibit range applies");
+
+        let bad_link = apply_ast_operation(
+            &mut document,
+            &AstOperation::AddLink {
+                link: test_link(
+                    "link:bad",
+                    &block_id,
+                    Some(text_range(10, 19, Some("wrong quote"))),
+                ),
+            },
+        )
+        .expect_err("mismatched link quote should fail");
+        let bad_citation = apply_ast_operation(
+            &mut document,
+            &AstOperation::AddCitation {
+                citation: test_citation(
+                    "citation:bad",
+                    &block_id,
+                    Some(text_range(20, 99, Some("with"))),
+                ),
+            },
+        )
+        .expect_err("out-of-bounds citation range should fail");
+        let bad_exhibit = apply_ast_operation(
+            &mut document,
+            &AstOperation::AddExhibitReference {
+                exhibit: test_exhibit(
+                    "exhibit:bad",
+                    &block_id,
+                    Some(text_range(25, 25, Some("receipt A"))),
+                ),
+            },
+        )
+        .expect_err("empty exhibit range should fail");
+
+        assert!(matches!(bad_link, ApiError::BadRequest(_)));
+        assert!(matches!(bad_citation, ApiError::BadRequest(_)));
+        assert!(matches!(bad_exhibit, ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn split_block_rehomes_text_range_refs_and_keeps_whole_block_refs() {
+        let mut product = test_work_product("Alpha Beta Gamma", Vec::new(), Vec::new(), None);
+        let block_id = product.document_ast.blocks[0].block_id.clone();
+        let new_block_id = "work-product:test:block:2".to_string();
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::AddLink {
+                link: test_link(
+                    "link:before",
+                    &block_id,
+                    Some(text_range(0, 5, Some("Alpha"))),
+                ),
+            },
+        )
+        .expect("before link applies");
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::AddLink {
+                link: test_link(
+                    "link:after",
+                    &block_id,
+                    Some(text_range(11, 16, Some("Gamma"))),
+                ),
+            },
+        )
+        .expect("after link applies");
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::AddLink {
+                link: test_link("link:whole", &block_id, None),
+            },
+        )
+        .expect("whole-block link applies");
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::AddCitation {
+                citation: test_citation(
+                    "citation:after",
+                    &block_id,
+                    Some(text_range(11, 16, Some("Gamma"))),
+                ),
+            },
+        )
+        .expect("after citation applies");
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::AddExhibitReference {
+                exhibit: test_exhibit(
+                    "exhibit:after",
+                    &block_id,
+                    Some(text_range(11, 16, Some("Gamma"))),
+                ),
+            },
+        )
+        .expect("after exhibit applies");
+        let finding = work_product_finding(
+            &product,
+            "support-required",
+            "support",
+            "warning",
+            "paragraph",
+            &block_id,
+            "Paragraph needs support.",
+            "Factual allegations should point to support.",
+            "Link support.",
+            "2026-01-01T00:00:00Z",
+        );
+        let finding_id = finding.finding_id.clone();
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::AddRuleFinding { finding },
+        )
+        .expect("finding applies");
+
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::SplitBlock {
+                block_id: block_id.clone(),
+                offset: 11,
+                new_block_id: new_block_id.clone(),
+            },
+        )
+        .expect("split applies");
+
+        let original = product
+            .document_ast
+            .blocks
+            .iter()
+            .find(|block| block.block_id == block_id)
+            .expect("original block remains");
+        let split = product
+            .document_ast
+            .blocks
+            .iter()
+            .find(|block| block.block_id == new_block_id)
+            .expect("new block exists");
+        assert_eq!(original.text, "Alpha Beta ");
+        assert_eq!(split.text, "Gamma");
+        assert!(original.links.contains(&"link:before".to_string()));
+        assert!(original.links.contains(&"link:whole".to_string()));
+        assert!(!original.links.contains(&"link:after".to_string()));
+        assert!(original.rule_finding_ids.contains(&finding_id));
+        assert!(split.links.contains(&"link:after".to_string()));
+        assert!(split.citations.contains(&"citation:after".to_string()));
+        assert!(split.exhibits.contains(&"exhibit:after".to_string()));
+
+        let moved_link = product
+            .document_ast
+            .links
+            .iter()
+            .find(|link| link.link_id == "link:after")
+            .expect("after link exists");
+        assert_eq!(moved_link.source_block_id, new_block_id);
+        let moved_range = moved_link
+            .source_text_range
+            .as_ref()
+            .expect("after link keeps range");
+        assert_eq!(moved_range.start_offset, 0);
+        assert_eq!(moved_range.end_offset, 5);
+        assert_eq!(moved_range.quote.as_deref(), Some("Gamma"));
+        assert!(validate_work_product_document(&product).valid);
+    }
+
+    #[test]
+    fn split_block_rejects_straddling_text_range_refs() {
+        let mut product = test_work_product("Alpha Beta Gamma", Vec::new(), Vec::new(), None);
+        let block_id = product.document_ast.blocks[0].block_id.clone();
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::AddLink {
+                link: test_link(
+                    "link:straddle",
+                    &block_id,
+                    Some(text_range(6, 16, Some("Beta Gamma"))),
+                ),
+            },
+        )
+        .expect("straddling link can be stored before split");
+
+        let error = apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::SplitBlock {
+                block_id,
+                offset: 11,
+                new_block_id: "work-product:test:block:2".to_string(),
+            },
+        )
+        .expect_err("split should reject straddling range");
+
+        match error {
+            ApiError::BadRequest(message) => {
+                assert!(message.contains("divide an existing text-range reference"));
+            }
+            other => panic!("expected bad request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn merge_blocks_rehomes_support_records_and_shifts_ranges() {
+        let mut product = test_work_product("Alpha", Vec::new(), Vec::new(), None);
+        let first_block_id = product.document_ast.blocks[0].block_id.clone();
+        let second_block_id = "work-product:test:block:2".to_string();
+        product
+            .document_ast
+            .blocks
+            .push(test_block(&product, &second_block_id, "Beta Gamma", 2));
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::AddLink {
+                link: test_link(
+                    "link:second",
+                    &second_block_id,
+                    Some(text_range(5, 10, Some("Gamma"))),
+                ),
+            },
+        )
+        .expect("second link applies");
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::AddCitation {
+                citation: test_citation(
+                    "citation:second",
+                    &second_block_id,
+                    Some(text_range(5, 10, Some("Gamma"))),
+                ),
+            },
+        )
+        .expect("second citation applies");
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::AddExhibitReference {
+                exhibit: test_exhibit(
+                    "exhibit:second",
+                    &second_block_id,
+                    Some(text_range(5, 10, Some("Gamma"))),
+                ),
+            },
+        )
+        .expect("second exhibit applies");
+        let finding = work_product_finding(
+            &product,
+            "support-required",
+            "support",
+            "warning",
+            "paragraph",
+            &second_block_id,
+            "Paragraph needs support.",
+            "Factual allegations should point to support.",
+            "Link support.",
+            "2026-01-01T00:00:00Z",
+        );
+        let finding_id = finding.finding_id.clone();
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::AddRuleFinding { finding },
+        )
+        .expect("second finding applies");
+
+        apply_ast_operation(
+            &mut product.document_ast,
+            &AstOperation::MergeBlocks {
+                first_block_id: first_block_id.clone(),
+                second_block_id: second_block_id.clone(),
+            },
+        )
+        .expect("merge applies");
+
+        assert_eq!(product.document_ast.blocks.len(), 1);
+        assert_eq!(product.document_ast.blocks[0].text, "Alpha\n\nBeta Gamma");
+        assert!(product.document_ast.blocks[0]
+            .links
+            .contains(&"link:second".to_string()));
+        assert!(product.document_ast.blocks[0]
+            .citations
+            .contains(&"citation:second".to_string()));
+        assert!(product.document_ast.blocks[0]
+            .exhibits
+            .contains(&"exhibit:second".to_string()));
+        assert!(product.document_ast.blocks[0]
+            .rule_finding_ids
+            .contains(&finding_id));
+
+        let shifted_link = product
+            .document_ast
+            .links
+            .iter()
+            .find(|link| link.link_id == "link:second")
+            .expect("link exists");
+        assert_eq!(shifted_link.source_block_id, first_block_id);
+        let shifted_range = shifted_link
+            .source_text_range
+            .as_ref()
+            .expect("range exists");
+        assert_eq!(shifted_range.start_offset, 12);
+        assert_eq!(shifted_range.end_offset, 17);
+        assert_eq!(shifted_range.quote.as_deref(), Some("Gamma"));
+        assert!(product
+            .document_ast
+            .rule_findings
+            .iter()
+            .any(|finding| finding.finding_id == finding_id
+                && finding.target_id == product.document_ast.blocks[0].block_id));
+        assert!(validate_work_product_document(&product).valid);
+    }
+
+    #[test]
+    fn nullable_support_patch_fields_clear_and_omitted_fields_remain() {
+        let mut product = test_work_product("Plaintiff paid rent.", Vec::new(), Vec::new(), None);
+        add_test_support_anchor(&mut product, "fact:rent", "fact", "supports");
+        {
+            let anchor = product
+                .anchors
+                .iter_mut()
+                .find(|anchor| anchor.anchor_id == "work-product:test:block:1:anchor:1")
+                .expect("anchor exists");
+            anchor.citation = Some("Old citation".to_string());
+            anchor.canonical_id = Some("old:canonical".to_string());
+            anchor.pinpoint = Some("1".to_string());
+            anchor.quote = Some("paid rent".to_string());
+        }
+        rebuild_work_product_ast_from_projection(&mut product);
+
+        let unchanged = apply_work_product_support_update(
+            &mut product,
+            "work-product:test:block:1:anchor:1",
+            PatchWorkProductSupportRequest {
+                relation: None,
+                status: Some("verified".to_string()),
+                citation: NullableStringPatch::Unset,
+                canonical_id: NullableStringPatch::Unset,
+                pinpoint: NullableStringPatch::Unset,
+                quote: NullableStringPatch::Unset,
+            },
+        )
+        .expect("omitted fields remain unchanged");
+        assert_eq!(unchanged.citation.as_deref(), Some("Old citation"));
+        assert_eq!(unchanged.canonical_id.as_deref(), Some("old:canonical"));
+        assert_eq!(unchanged.pinpoint.as_deref(), Some("1"));
+        assert_eq!(unchanged.quote.as_deref(), Some("paid rent"));
+
+        let cleared = apply_work_product_support_update(
+            &mut product,
+            "work-product:test:block:1:anchor:1",
+            PatchWorkProductSupportRequest {
+                relation: None,
+                status: None,
+                citation: NullableStringPatch::Clear,
+                canonical_id: NullableStringPatch::Clear,
+                pinpoint: NullableStringPatch::Clear,
+                quote: NullableStringPatch::Clear,
+            },
+        )
+        .expect("null fields clear metadata");
+        assert!(cleared.citation.is_none());
+        assert!(cleared.canonical_id.is_none());
+        assert!(cleared.pinpoint.is_none());
+        assert!(cleared.quote.is_none());
+    }
+
+    fn text_range(start_offset: u64, end_offset: u64, quote: Option<&str>) -> TextRange {
+        TextRange {
+            start_offset,
+            end_offset,
+            quote: quote.map(str::to_string),
+        }
+    }
+
+    fn test_link(
+        link_id: &str,
+        source_block_id: &str,
+        source_text_range: Option<TextRange>,
+    ) -> WorkProductLink {
+        WorkProductLink {
+            link_id: link_id.to_string(),
+            source_block_id: source_block_id.to_string(),
+            source_text_range,
+            target_type: "fact".to_string(),
+            target_id: "fact:rent".to_string(),
+            relation: "supports".to_string(),
+            confidence: Some(1.0),
+            created_by: "test".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn test_citation(
+        citation_use_id: &str,
+        source_block_id: &str,
+        source_text_range: Option<TextRange>,
+    ) -> WorkProductCitationUse {
+        WorkProductCitationUse {
+            citation_use_id: citation_use_id.to_string(),
+            source_block_id: source_block_id.to_string(),
+            source_text_range,
+            raw_text: "ORS 90.320".to_string(),
+            normalized_citation: Some("ORS 90.320".to_string()),
+            target_type: "legal_authority".to_string(),
+            target_id: Some("ors:90.320".to_string()),
+            pinpoint: Some("(1)".to_string()),
+            status: "resolved".to_string(),
+            resolver_message: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn test_exhibit(
+        exhibit_reference_id: &str,
+        source_block_id: &str,
+        source_text_range: Option<TextRange>,
+    ) -> WorkProductExhibitReference {
+        WorkProductExhibitReference {
+            exhibit_reference_id: exhibit_reference_id.to_string(),
+            source_block_id: source_block_id.to_string(),
+            source_text_range,
+            label: "Exhibit A".to_string(),
+            exhibit_id: Some("exhibit:a".to_string()),
+            document_id: Some("document:receipt".to_string()),
+            page_range: Some("1".to_string()),
+            status: "linked".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn test_block(
+        product: &WorkProduct,
+        block_id: &str,
+        text: &str,
+        ordinal: u64,
+    ) -> WorkProductBlock {
+        WorkProductBlock {
+            id: block_id.to_string(),
+            block_id: block_id.to_string(),
+            matter_id: product.matter_id.clone(),
+            work_product_id: product.work_product_id.clone(),
+            block_type: "paragraph".to_string(),
+            role: "factual_allegation".to_string(),
+            title: format!("Paragraph {ordinal}"),
+            text: text.to_string(),
+            ordinal,
+            parent_block_id: None,
+            locked: false,
+            review_status: "needs_review".to_string(),
+            prosemirror_json: Some(prosemirror_doc_for_text(text)),
+            ..WorkProductBlock::default()
+        }
     }
 
     fn add_test_support_anchor(

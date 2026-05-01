@@ -71,6 +71,182 @@ export interface MatterSummary {
   next_deadline: { description: string; due_date: string; days_remaining: number } | null
 }
 
+export interface AuthorityRef {
+  citation: string
+  canonical_id: string
+  reason?: string | null
+  pinpoint?: string | null
+}
+
+export interface CaseGraphNode {
+  id: string
+  kind: string
+  label: string
+  subtitle?: string | null
+  status?: string | null
+  risk?: string | null
+  href?: string | null
+  metadata: Record<string, string>
+}
+
+export interface CaseGraphEdge {
+  id: string
+  source: string
+  target: string
+  kind: string
+  label: string
+  status?: string | null
+  metadata: Record<string, string>
+}
+
+export interface CaseGraphResponse {
+  matter_id: string
+  generated_at: string
+  modes: string[]
+  nodes: CaseGraphNode[]
+  edges: CaseGraphEdge[]
+  warnings: string[]
+}
+
+export interface IssueSuggestion {
+  suggestion_id: string
+  id: string
+  matter_id: string
+  issue_type: string
+  title: string
+  summary: string
+  confidence: number
+  severity: string
+  status: string
+  fact_ids: string[]
+  evidence_ids: string[]
+  document_ids: string[]
+  authority_refs: AuthorityRef[]
+  recommended_action: string
+  mode: string
+}
+
+export interface IssueSpotResponse {
+  matter_id: string
+  generated_at: string
+  mode: string
+  suggestions: IssueSuggestion[]
+  warnings: string[]
+}
+
+export interface EvidenceGap {
+  gap_id: string
+  id: string
+  matter_id: string
+  target_type: string
+  target_id: string
+  title: string
+  message: string
+  severity: string
+  status: string
+  fact_ids: string[]
+  evidence_ids: string[]
+}
+
+export interface AuthorityGap {
+  gap_id: string
+  id: string
+  matter_id: string
+  target_type: string
+  target_id: string
+  title: string
+  message: string
+  severity: string
+  status: string
+  authority_refs: AuthorityRef[]
+}
+
+export interface Contradiction {
+  contradiction_id: string
+  id: string
+  matter_id: string
+  title: string
+  message: string
+  severity: string
+  status: string
+  fact_ids: string[]
+  evidence_ids: string[]
+  source_document_ids: string[]
+}
+
+export interface WorkProductSentence {
+  sentence_id: string
+  id: string
+  matter_id: string
+  work_product_id: string
+  block_id: string
+  text: string
+  index: number
+  support_status: string
+  fact_ids: string[]
+  evidence_ids: string[]
+  authority_refs: AuthorityRef[]
+  finding_ids: string[]
+}
+
+export interface QcSuggestedTask {
+  title: string
+  status?: TaskStatus
+  priority?: TaskPriority
+  due_date?: string | null
+  assigned_to?: string | null
+  related_claim_ids?: string[]
+  related_document_ids?: string[]
+  related_deadline_id?: string | null
+  source?: string
+  description?: string | null
+}
+
+export interface QcRun {
+  qc_run_id: string
+  id: string
+  matter_id: string
+  status: string
+  mode: string
+  generated_at: string
+  evidence_gaps: EvidenceGap[]
+  authority_gaps: AuthorityGap[]
+  contradictions: Contradiction[]
+  fact_findings: CaseFactCheckFinding[]
+  citation_findings: CaseCitationCheckFinding[]
+  work_product_findings: WorkProductFinding[]
+  work_product_sentences: WorkProductSentence[]
+  suggested_tasks: QcSuggestedTask[]
+  warnings: string[]
+}
+
+export interface ExportPackage {
+  export_package_id: string
+  id: string
+  matter_id: string
+  format: string
+  status: string
+  profile: string
+  created_at: string
+  artifact_count: number
+  work_product_ids: string[]
+  warnings: string[]
+  download_url?: string | null
+}
+
+export interface AuditEvent {
+  audit_event_id: string
+  id: string
+  matter_id: string
+  event_type: string
+  actor: string
+  target_type: string
+  target_id: string
+  summary: string
+  created_at: string
+  metadata: Record<string, string>
+}
+
 // ===== Documents =====
 
 export type DocumentKind =
@@ -734,15 +910,16 @@ export interface AuthorityAttachmentResponse {
 
 export type WorkProductType =
   | "complaint"
-  | "motion"
   | "answer"
+  | "motion"
   | "declaration"
-  | "brief"
-  | "demand_letter"
-  | "legal_memo"
-  | "exhibit_list"
+  | "affidavit"
+  | "memo"
   | "notice"
+  | "letter"
+  | "exhibit_list"
   | "proposed_order"
+  | "custom"
 
 export interface WorkProduct {
   work_product_id: string
@@ -775,6 +952,8 @@ export interface WorkProductDocument {
   document_id: string
   work_product_id: string
   matter_id: string
+  draft_id?: string | null
+  document_type: string
   product_type: string
   title: string
   metadata: WorkProductMetadata

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -193,6 +193,7 @@ pub struct QcRun {
     pub fact_findings: Vec<FactCheckFinding>,
     pub citation_findings: Vec<CitationCheckFinding>,
     pub work_product_findings: Vec<WorkProductFinding>,
+    pub work_product_sentences: Vec<WorkProductSentence>,
     pub suggested_tasks: Vec<CreateTaskRequest>,
     pub warnings: Vec<String>,
 }
@@ -961,7 +962,10 @@ pub struct CitationCheckFinding {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct WorkProductDocument {
-    #[serde(default = "default_work_product_schema_version", alias = "schemaVersion")]
+    #[serde(
+        default = "default_work_product_schema_version",
+        alias = "schemaVersion"
+    )]
     pub schema_version: String,
     #[serde(default, alias = "documentId")]
     pub document_id: String,
@@ -1623,10 +1627,34 @@ pub struct WorkProductLinkRequest {
 pub struct PatchWorkProductSupportRequest {
     pub relation: Option<String>,
     pub status: Option<String>,
-    pub citation: Option<serde_json::Value>,
-    pub canonical_id: Option<serde_json::Value>,
-    pub pinpoint: Option<serde_json::Value>,
-    pub quote: Option<serde_json::Value>,
+    #[serde(default)]
+    pub citation: NullableStringPatch,
+    #[serde(default)]
+    pub canonical_id: NullableStringPatch,
+    #[serde(default)]
+    pub pinpoint: NullableStringPatch,
+    #[serde(default)]
+    pub quote: NullableStringPatch,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum NullableStringPatch {
+    #[default]
+    Unset,
+    Clear,
+    Set(String),
+}
+
+impl<'de> Deserialize<'de> for NullableStringPatch {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(match Option::<String>::deserialize(deserializer)? {
+            Some(value) => NullableStringPatch::Set(value),
+            None => NullableStringPatch::Clear,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]

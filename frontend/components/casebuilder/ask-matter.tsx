@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import {
   Send,
@@ -40,9 +40,35 @@ const STARTERS = [
 
 export function AskMatter({ matter }: AskMatterProps) {
   const [messages, setMessages] = useState<MatterChatMessage[]>(matter.chatHistory ?? [])
+  const [threadId, setThreadId] = useState(() => `thread-${matter.id}-${Date.now()}`)
+  const [loadedLocalThread, setLoadedLocalThread] = useState(false)
   const [input, setInput] = useState("")
   const [pending, setPending] = useState(false)
   const [scope, setScope] = useState<"all" | "documents" | "facts" | "claims">("all")
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(`casebuilder:ask:${matter.id}`)
+    if (!stored) {
+      setLoadedLocalThread(true)
+      return
+    }
+    try {
+      const parsed = JSON.parse(stored) as { threadId?: string; messages?: MatterChatMessage[] }
+      if (parsed.threadId) setThreadId(parsed.threadId)
+      if (Array.isArray(parsed.messages)) setMessages(parsed.messages)
+    } catch {
+      // Ignore stale local thread payloads.
+    }
+    setLoadedLocalThread(true)
+  }, [matter.id])
+
+  useEffect(() => {
+    if (!loadedLocalThread) return
+    window.localStorage.setItem(
+      `casebuilder:ask:${matter.id}`,
+      JSON.stringify({ threadId, messages }),
+    )
+  }, [loadedLocalThread, matter.id, messages, threadId])
 
   const send = async (text: string) => {
     if (!text.trim()) return
@@ -57,7 +83,7 @@ export function AskMatter({ matter }: AskMatterProps) {
     setInput("")
     setPending(true)
 
-    const result = await askMatter(matter.id, { question: text, scope })
+    const result = await askMatter(matter.id, { question: text, scope, thread_id: threadId })
     if (result.data) {
       const reply: MatterChatMessage = {
         id: `msg-${Date.now() + 1}`,
@@ -107,7 +133,10 @@ export function AskMatter({ matter }: AskMatterProps) {
               variant="outline"
               size="sm"
               className="gap-1.5 bg-transparent"
-              onClick={() => setMessages([])}
+              onClick={() => {
+                setMessages([])
+                setThreadId(`thread-${matter.id}-${Date.now()}`)
+              }}
             >
               <RotateCcw className="h-3.5 w-3.5" />
               New thread
@@ -247,7 +276,15 @@ export function AskMatter({ matter }: AskMatterProps) {
                     </li>
                   ))}
                 </ul>
-                <Button variant="ghost" size="sm" className="mt-1 w-full gap-1 text-[11px]">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-1 w-full gap-1 text-[11px]"
+                  onClick={() => {
+                    setMessages([])
+                    setThreadId(`thread-${matter.id}-${Date.now()}`)
+                  }}
+                >
                   <Plus className="h-3 w-3" />
                   New thread
                 </Button>

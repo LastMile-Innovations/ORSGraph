@@ -1,4 +1,5 @@
 import type {
+  AuditEvent,
   CaseAiActionResponse,
   AIEditAudit,
   AstDocumentResponse,
@@ -9,6 +10,7 @@ import type {
   AuthorityAttachmentResponse,
   AuthorityTargetType,
   CaseAuthoritySearchResponse,
+  CaseGraphResponse,
   CaseCitationCheckFinding,
   CaseDocument,
   CaseDefense,
@@ -23,6 +25,7 @@ import type {
   ComplaintSection,
   ComplaintCount,
   CompareVersionsResponse,
+  ExportPackage,
   ExportArtifact,
   FormattingProfile,
   LegalImpactSummary,
@@ -41,9 +44,11 @@ import type {
   DraftSection,
   ExtractedFact,
   IngestionRun,
+  IssueSpotResponse,
   Matter,
   MatterParty,
   MatterSummary,
+  QcRun,
   SourceSpan,
   TimelineEvent,
   WorkProduct,
@@ -876,6 +881,55 @@ export function patchTask(
       normalize: normalizeTask,
     },
   )
+}
+
+export async function getMatterGraphState(matterId: string): Promise<LoadState<CaseGraphResponse | null>> {
+  const decodedMatterId = decodeMatterRouteId(matterId)
+  try {
+    const live = await fetchCaseBuilder<unknown>(`/matters/${encodeURIComponent(decodedMatterId)}/graph`)
+    return { source: "live", data: normalizeCaseGraphResponse(live) }
+  } catch (error) {
+    return { source: "error", data: null, error: errorMessage(error) }
+  }
+}
+
+export async function getMatterAuditEventsState(matterId: string): Promise<LoadState<AuditEvent[]>> {
+  const decodedMatterId = decodeMatterRouteId(matterId)
+  try {
+    const live = await fetchCaseBuilder<unknown[]>(`/matters/${encodeURIComponent(decodedMatterId)}/audit`)
+    return { source: "live", data: live.map(normalizeAuditEvent) }
+  } catch (error) {
+    return { source: "error", data: [], error: errorMessage(error) }
+  }
+}
+
+export function runMatterQc(matterId: string): Promise<ActionState<QcRun>> {
+  return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/qc/run`, {
+    method: "POST",
+    normalize: normalizeQcRun,
+  })
+}
+
+export function spotIssues(
+  matterId: string,
+  input: { mode?: string; limit?: number } = {},
+): Promise<ActionState<IssueSpotResponse>> {
+  return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/issues/spot`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    normalize: normalizeIssueSpotResponse,
+  })
+}
+
+export function exportMatterPackage(
+  matterId: string,
+  format: "docx" | "pdf" | "filing_packet" | string,
+): Promise<ActionState<CaseAiActionResponse<ExportPackage>>> {
+  const pathFormat = format === "filing_packet" ? "filing-packet" : format
+  return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/export/${pathFormat}`, {
+    method: "POST",
+    normalize: (raw) => normalizeAiAction(raw, normalizeExportPackage),
+  })
 }
 
 export function createDraft(matterId: string, input: CreateDraftInput): Promise<ActionState<Draft>> {
@@ -2500,6 +2554,172 @@ function normalizeTask(input: any): CaseTask {
   }
 }
 
+function normalizeCaseGraphResponse(input: unknown): CaseGraphResponse {
+  const raw = input as any
+  return {
+    matter_id: string(raw.matter_id, raw.matterId),
+    generated_at: string(raw.generated_at, raw.generatedAt),
+    modes: array(raw.modes),
+    nodes: array(raw.nodes).map((node: any) => ({
+      id: string(node.id),
+      kind: string(node.kind, "node"),
+      label: string(node.label, node.id),
+      subtitle: node.subtitle ?? null,
+      status: node.status ?? null,
+      risk: node.risk ?? null,
+      href: node.href ?? null,
+      metadata: node.metadata ?? {},
+    })),
+    edges: array(raw.edges).map((edge: any) => ({
+      id: string(edge.id, `${edge.kind}:${edge.source}:${edge.target}`),
+      source: string(edge.source),
+      target: string(edge.target),
+      kind: string(edge.kind, "related"),
+      label: string(edge.label, edge.kind, "related"),
+      status: edge.status ?? null,
+      metadata: edge.metadata ?? {},
+    })),
+    warnings: array(raw.warnings),
+  }
+}
+
+function normalizeIssueSpotResponse(input: unknown): IssueSpotResponse {
+  const raw = input as any
+  return {
+    matter_id: string(raw.matter_id, raw.matterId),
+    generated_at: string(raw.generated_at, raw.generatedAt),
+    mode: string(raw.mode, "deterministic_review"),
+    suggestions: array(raw.suggestions).map((suggestion: any, index: number) => ({
+      suggestion_id: string(suggestion.suggestion_id, suggestion.id, `issue-${index + 1}`),
+      id: string(suggestion.id, suggestion.suggestion_id, `issue-${index + 1}`),
+      matter_id: string(suggestion.matter_id, raw.matter_id),
+      issue_type: string(suggestion.issue_type, suggestion.issueType, "issue"),
+      title: string(suggestion.title, "Issue suggestion"),
+      summary: string(suggestion.summary),
+      confidence: number(suggestion.confidence),
+      severity: string(suggestion.severity, "warning"),
+      status: string(suggestion.status, "open"),
+      fact_ids: array(suggestion.fact_ids, suggestion.factIds),
+      evidence_ids: array(suggestion.evidence_ids, suggestion.evidenceIds),
+      document_ids: array(suggestion.document_ids, suggestion.documentIds),
+      authority_refs: array(suggestion.authority_refs, suggestion.authorityRefs),
+      recommended_action: string(suggestion.recommended_action, suggestion.recommendedAction),
+      mode: string(suggestion.mode, raw.mode, "deterministic_review"),
+    })),
+    warnings: array(raw.warnings),
+  }
+}
+
+function normalizeQcRun(input: unknown): QcRun {
+  const raw = input as any
+  return {
+    qc_run_id: string(raw.qc_run_id, raw.id),
+    id: string(raw.id, raw.qc_run_id),
+    matter_id: string(raw.matter_id, raw.matterId),
+    status: string(raw.status, "complete"),
+    mode: string(raw.mode, "deterministic"),
+    generated_at: string(raw.generated_at, raw.generatedAt),
+    evidence_gaps: array(raw.evidence_gaps, raw.evidenceGaps).map((gap: any) => ({
+      gap_id: string(gap.gap_id, gap.id),
+      id: string(gap.id, gap.gap_id),
+      matter_id: string(gap.matter_id, raw.matter_id),
+      target_type: string(gap.target_type, gap.targetType),
+      target_id: string(gap.target_id, gap.targetId),
+      title: string(gap.title, "Evidence gap"),
+      message: string(gap.message),
+      severity: string(gap.severity, "warning"),
+      status: string(gap.status, "open"),
+      fact_ids: array(gap.fact_ids, gap.factIds),
+      evidence_ids: array(gap.evidence_ids, gap.evidenceIds),
+    })),
+    authority_gaps: array(raw.authority_gaps, raw.authorityGaps).map((gap: any) => ({
+      gap_id: string(gap.gap_id, gap.id),
+      id: string(gap.id, gap.gap_id),
+      matter_id: string(gap.matter_id, raw.matter_id),
+      target_type: string(gap.target_type, gap.targetType),
+      target_id: string(gap.target_id, gap.targetId),
+      title: string(gap.title, "Authority gap"),
+      message: string(gap.message),
+      severity: string(gap.severity, "warning"),
+      status: string(gap.status, "open"),
+      authority_refs: array(gap.authority_refs, gap.authorityRefs),
+    })),
+    contradictions: array(raw.contradictions).map((item: any) => ({
+      contradiction_id: string(item.contradiction_id, item.id),
+      id: string(item.id, item.contradiction_id),
+      matter_id: string(item.matter_id, raw.matter_id),
+      title: string(item.title, "Contradiction"),
+      message: string(item.message),
+      severity: string(item.severity, "warning"),
+      status: string(item.status, "open"),
+      fact_ids: array(item.fact_ids, item.factIds),
+      evidence_ids: array(item.evidence_ids, item.evidenceIds),
+      source_document_ids: array(item.source_document_ids, item.sourceDocumentIds),
+    })),
+    fact_findings: array(raw.fact_findings, raw.factFindings).map(normalizeFactCheckFinding),
+    citation_findings: array(raw.citation_findings, raw.citationFindings).map(normalizeCitationCheckFinding),
+    work_product_findings: array(raw.work_product_findings, raw.workProductFindings).map(normalizeWorkProductFinding),
+    work_product_sentences: array(raw.work_product_sentences, raw.workProductSentences).map((sentence: any, index: number) => ({
+      sentence_id: string(sentence.sentence_id, sentence.id, `sentence-${index + 1}`),
+      id: string(sentence.id, sentence.sentence_id, `sentence-${index + 1}`),
+      matter_id: string(sentence.matter_id, raw.matter_id),
+      work_product_id: string(sentence.work_product_id, sentence.workProductId),
+      block_id: string(sentence.block_id, sentence.blockId),
+      text: string(sentence.text),
+      index: number(sentence.index, index),
+      support_status: string(sentence.support_status, sentence.supportStatus, "unsupported"),
+      fact_ids: array(sentence.fact_ids, sentence.factIds),
+      evidence_ids: array(sentence.evidence_ids, sentence.evidenceIds),
+      authority_refs: array(sentence.authority_refs, sentence.authorityRefs),
+      finding_ids: array(sentence.finding_ids, sentence.findingIds),
+    })),
+    suggested_tasks: array(raw.suggested_tasks, raw.suggestedTasks).map((task: any) => ({
+      title: string(task.title),
+      status: task.status ?? "todo",
+      priority: task.priority ?? "med",
+      due_date: task.due_date ?? task.dueDate ?? null,
+      assigned_to: task.assigned_to ?? task.assignedTo ?? null,
+      related_claim_ids: array(task.related_claim_ids, task.relatedClaimIds),
+      related_document_ids: array(task.related_document_ids, task.relatedDocumentIds),
+      related_deadline_id: task.related_deadline_id ?? task.relatedDeadlineId ?? null,
+      source: string(task.source, "qc_run"),
+      description: task.description ?? null,
+    })),
+    warnings: array(raw.warnings),
+  }
+}
+
+function normalizeExportPackage(input: any): ExportPackage {
+  return {
+    export_package_id: string(input.export_package_id, input.id),
+    id: string(input.id, input.export_package_id),
+    matter_id: string(input.matter_id, input.matterId),
+    format: string(input.format),
+    status: string(input.status, "review_needed"),
+    profile: string(input.profile, "matter-package"),
+    created_at: string(input.created_at, input.createdAt),
+    artifact_count: number(input.artifact_count, input.artifactCount),
+    work_product_ids: array(input.work_product_ids, input.workProductIds),
+    warnings: array(input.warnings),
+    download_url: input.download_url ?? input.downloadUrl ?? null,
+  }
+}
+
+function normalizeAuditEvent(input: any): AuditEvent {
+  return {
+    audit_event_id: string(input.audit_event_id, input.id),
+    id: string(input.id, input.audit_event_id),
+    matter_id: string(input.matter_id, input.matterId),
+    event_type: string(input.event_type, input.eventType),
+    actor: string(input.actor, "system"),
+    target_type: string(input.target_type, input.targetType),
+    target_id: string(input.target_id, input.targetId),
+    summary: string(input.summary),
+    created_at: string(input.created_at, input.createdAt),
+    metadata: (input.metadata ?? {}) as Record<string, string>,
+  }
+}
+
 function normalizeMatterAskResponse(input: unknown): MatterAskResponse {
   const raw = input as any
   return {
@@ -2571,12 +2791,36 @@ function normalizeDraftParagraph(input: any): DraftParagraph {
   }
 }
 
+const CANONICAL_WORK_PRODUCT_TYPES = new Set([
+  "complaint",
+  "answer",
+  "motion",
+  "declaration",
+  "affidavit",
+  "memo",
+  "notice",
+  "letter",
+  "exhibit_list",
+  "proposed_order",
+  "custom",
+])
+
+function normalizeWorkProductType(...values: any[]): string {
+  const raw = string(...values)
+  const normalized = raw.trim().toLowerCase().replace(/-/g, "_")
+  if (normalized === "legal_memo" || normalized === "brief") return "memo"
+  if (normalized === "demand_letter") return "letter"
+  return CANONICAL_WORK_PRODUCT_TYPES.has(normalized) ? normalized : "custom"
+}
+
 function normalizeWorkProduct(input: any): WorkProduct {
   const workProductId = string(input.work_product_id, input.id, "work-product:demo")
+  const matterId = string(input.matter_id, input.matterId, "matter:demo")
+  const productType = normalizeWorkProductType(input.product_type, input.productType, "motion")
   const documentAst = normalizeWorkProductDocument(input.document_ast ?? input.documentAst ?? {}, {
     workProductId,
-    matterId: string(input.matter_id, "matter:demo"),
-    productType: string(input.product_type, "motion"),
+    matterId,
+    productType,
     title: string(input.title, "Work product"),
     fallbackBlocks: array(input.blocks).map((block) => normalizeWorkProductBlock(block, workProductId)),
     fallbackFindings: array(input.findings).map(normalizeWorkProductFinding),
@@ -2585,17 +2829,17 @@ function normalizeWorkProduct(input: any): WorkProduct {
     ...input,
     work_product_id: workProductId,
     id: string(input.id, workProductId),
-    matter_id: string(input.matter_id, "matter:demo"),
+    matter_id: matterId,
     title: string(input.title, "Work product"),
-    product_type: string(input.product_type, "motion"),
+    product_type: productType,
     status: string(input.status, "draft"),
     review_status: string(input.review_status, "needs_human_review"),
     setup_stage: string(input.setup_stage, "guided_setup"),
-    source_draft_id: input.source_draft_id ?? null,
-    source_complaint_id: input.source_complaint_id ?? null,
+    source_draft_id: input.source_draft_id ?? input.sourceDraftId ?? null,
+    source_complaint_id: input.source_complaint_id ?? input.sourceComplaintId ?? null,
     created_at: string(input.created_at, ""),
     updated_at: string(input.updated_at, ""),
-    profile: normalizeWorkProductProfile(input.profile ?? {}, string(input.product_type, "motion")),
+    profile: normalizeWorkProductProfile(input.profile ?? {}, productType),
     document_ast: documentAst,
     blocks: flattenWorkProductBlocks(documentAst.blocks),
     marks: array(input.marks).map(normalizeWorkProductMark),
@@ -2632,12 +2876,23 @@ function normalizeWorkProductDocument(
   const blocks = array(input.blocks).length
     ? array(input.blocks).map((block) => normalizeWorkProductBlock(block, context.workProductId))
     : context.fallbackBlocks
+  const documentType = normalizeWorkProductType(
+    input.document_type,
+    input.documentType,
+    input.product_type,
+    input.productType,
+    input.type,
+    context.productType,
+    "custom",
+  )
   return {
     schema_version: string(input.schema_version, input.schemaVersion, "work-product-ast-v1"),
     document_id: string(input.document_id, input.documentId, `${context.workProductId}:document`),
     work_product_id: string(input.work_product_id, input.workProductId, context.workProductId),
     matter_id: string(input.matter_id, input.matterId, context.matterId),
-    product_type: string(input.product_type, input.type, context.productType),
+    draft_id: input.draft_id ?? input.draftId ?? null,
+    document_type: documentType,
+    product_type: documentType,
     title: string(input.title, context.title),
     metadata: normalizeWorkProductMetadata(input.metadata ?? {}),
     blocks,
@@ -3058,7 +3313,7 @@ function normalizeAstDocumentResponse(input: any): AstDocumentResponse {
     document_ast: normalizeWorkProductDocument(raw, {
       workProductId,
       matterId: string(raw.matter_id, raw.matterId),
-      productType: string(raw.product_type, raw.type, "custom"),
+      productType: normalizeWorkProductType(raw.document_type, raw.documentType, raw.product_type, raw.type, "custom"),
       title: string(raw.title, "Work product"),
       fallbackBlocks: [],
       fallbackFindings: [],

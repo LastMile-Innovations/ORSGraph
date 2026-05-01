@@ -111,6 +111,10 @@ fn casebuilder_routes_cover_v0_contracts() {
     for expected in [
         "/matters",
         "/matters/:matter_id",
+        "/matters/:matter_id/graph",
+        "/matters/:matter_id/audit",
+        "/matters/:matter_id/qc/run",
+        "/matters/:matter_id/issues/spot",
         "/matters/:matter_id/files",
         "/matters/:matter_id/files/binary",
         "/matters/:matter_id/files/uploads",
@@ -183,6 +187,8 @@ fn casebuilder_routes_cover_v0_contracts() {
         "/matters/:matter_id/authority/search",
         "/matters/:matter_id/authority/attach",
         "/matters/:matter_id/authority/detach",
+        "/matters/:matter_id/export/docx",
+        "/matters/:matter_id/export/pdf",
         "/matters/:matter_id/export/filing-packet",
     ] {
         assert!(
@@ -482,6 +488,82 @@ fn complaint_editor_dtos_and_api_exist_in_backend_and_frontend() {
 }
 
 #[test]
+fn workproduct_ast_canonicalization_contract_is_explicit() {
+    let backend_service = include_str!("../src/services/casebuilder.rs");
+    let backend_models = include_str!("../src/models/casebuilder.rs");
+    let frontend_types = include_str!("../../../frontend/lib/casebuilder/types.ts");
+    let frontend_api = include_str!("../../../frontend/lib/casebuilder/api.ts");
+
+    for expected in [
+        "pub draft_id: Option<String>",
+        "pub document_type: String",
+        "alias = \"schemaVersion\"",
+        "alias = \"matterId\"",
+        "alias = \"workProductId\"",
+        "alias = \"draftId\"",
+        "alias = \"documentType\"",
+        "enum NullableStringPatch",
+        "Clear,",
+    ] {
+        assert!(
+            backend_models.contains(expected),
+            "missing backend canonical AST model contract {expected}"
+        );
+    }
+
+    for expected in [
+        "\"complaint\"",
+        "\"answer\"",
+        "\"motion\"",
+        "\"declaration\"",
+        "\"affidavit\"",
+        "\"memo\"",
+        "\"notice\"",
+        "\"letter\"",
+        "\"exhibit_list\"",
+        "\"proposed_order\"",
+        "\"custom\"",
+    ] {
+        assert!(
+            backend_service.contains(expected) && frontend_types.contains(expected),
+            "missing canonical WorkProduct type {expected}"
+        );
+    }
+
+    for expected in [
+        "\"legal_memo\" | \"brief\" => Some(\"memo\")",
+        "\"letter\" | \"demand_letter\" => Some(\"letter\")",
+        "ensure_work_product_ast_valid",
+        "validate_optional_text_range",
+        "split_ast_document_block",
+        "merge_ast_document_blocks",
+        "canonical_work_product_blocks(product)",
+    ] {
+        assert!(
+            backend_service.contains(expected),
+            "missing backend canonical AST behavior {expected}"
+        );
+    }
+
+    for expected in [
+        "draft_id?: string | null",
+        "document_type: string",
+        "CANONICAL_WORK_PRODUCT_TYPES",
+        "normalizeWorkProductType",
+        "input.schemaVersion",
+        "input.matterId",
+        "input.workProductId",
+        "input.draftId",
+        "input.documentType",
+    ] {
+        assert!(
+            frontend_types.contains(expected) || frontend_api.contains(expected),
+            "missing frontend canonical AST contract {expected}"
+        );
+    }
+}
+
+#[test]
 fn workproduct_hybrid_ast_storage_contract_is_bounded_and_object_backed() {
     let backend_service = include_str!("../src/services/casebuilder.rs");
     let backend_models = include_str!("../src/models/casebuilder.rs");
@@ -579,11 +661,15 @@ fn casebuilder_matter_isolation_contracts_cover_ast_and_object_backed_paths() {
     }
 
     assert!(
-        !backend_service.contains("AST patch conflict: patch_id=")
-            && backend_routes.contains(
-                "Export is deferred for CaseBuilder V0; DOCX/PDF/filing packets are V0.2+."
-            ),
+        !backend_service.contains("AST patch conflict: patch_id="),
         "CaseBuilder errors should avoid prompt/patch ids and matter ids"
+    );
+    assert!(
+        backend_routes.contains("post(export_work_product)")
+            && backend_routes.contains("post(export_matter_docx)")
+            && backend_routes.contains("post(export_matter_pdf)")
+            && backend_routes.contains("post(export_matter_filing_packet)"),
+        "CaseBuilder export routes should use AST-backed export handlers"
     );
 }
 
@@ -598,6 +684,16 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "struct DocumentVersion",
         "struct IngestionRun",
         "struct SourceSpan",
+        "struct CaseGraphNode",
+        "struct CaseGraphEdge",
+        "struct IssueSuggestion",
+        "struct QcRun",
+        "struct EvidenceGap",
+        "struct AuthorityGap",
+        "struct Contradiction",
+        "struct WorkProductSentence",
+        "struct ExportPackage",
+        "struct AuditEvent",
         "parser_version",
         "citation_resolver_version",
         "index_version",
@@ -613,6 +709,16 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "interface DocumentVersion",
         "interface IngestionRun",
         "interface SourceSpan",
+        "interface CaseGraphNode",
+        "interface CaseGraphEdge",
+        "interface IssueSuggestion",
+        "interface QcRun",
+        "interface EvidenceGap",
+        "interface AuthorityGap",
+        "interface Contradiction",
+        "interface WorkProductSentence",
+        "interface ExportPackage",
+        "interface AuditEvent",
         "parser_version",
         "citation_resolver_version",
         "index_version",
@@ -627,6 +733,11 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "normalizeDocumentVersion",
         "normalizeIngestionRun",
         "normalizeSourceSpan",
+        "normalizeCaseGraphResponse",
+        "normalizeIssueSpotResponse",
+        "normalizeQcRun",
+        "normalizeExportPackage",
+        "normalizeAuditEvent",
         "source_spans",
         "ingestion_run",
         "document_version",

@@ -33,6 +33,7 @@ pub fn routes() -> Router<AppState> {
             get(get_matter).patch(patch_matter).delete(delete_matter),
         )
         .route("/matters/:matter_id/graph", get(get_matter_graph))
+        .route("/matters/:matter_id/audit", get(list_matter_audit_events))
         .route("/matters/:matter_id/qc/run", post(run_matter_qc))
         .route("/matters/:matter_id/issues/spot", post(spot_issues))
         .route(
@@ -420,11 +421,25 @@ async fn get_matter_graph(
     ))
 }
 
+async fn list_matter_audit_events(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+) -> ApiResult<Json<Vec<AuditEvent>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .list_matter_audit_events(&matter_id)
+            .await?,
+    ))
+}
+
 async fn run_matter_qc(
     State(state): State<AppState>,
     Path(matter_id): Path<String>,
 ) -> ApiResult<Json<QcRun>> {
-    Ok(Json(state.casebuilder_service.run_matter_qc(&matter_id).await?))
+    Ok(Json(
+        state.casebuilder_service.run_matter_qc(&matter_id).await?,
+    ))
 }
 
 async fn spot_issues(
@@ -886,8 +901,11 @@ async fn ask_matter(
             .claims
             .iter()
             .filter(|claim| {
-                let text = format!("{} {} {}", claim.title, claim.claim_type, claim.legal_theory)
-                    .to_lowercase();
+                let text = format!(
+                    "{} {} {}",
+                    claim.title, claim.claim_type, claim.legal_theory
+                )
+                .to_lowercase();
                 terms.iter().any(|term| text.contains(term))
             })
             .flat_map(|claim| claim.fact_ids.clone())
@@ -1004,39 +1022,38 @@ async fn ask_matter(
         .take(8)
         .collect();
 
-    let answer =
-        if related_facts.is_empty() && related_documents.is_empty() && authority_count == 0 {
-            "I could not find matter records or source-backed authorities that match that question."
-                .to_string()
-        } else {
-            let mut parts = Vec::new();
-            if !related_facts.is_empty() {
-                parts.push(format!(
-                    "Found {} matching matter fact{}.",
-                    related_facts.len(),
-                    if related_facts.len() == 1 { "" } else { "s" }
-                ));
-            }
-            if !related_documents.is_empty() {
-                parts.push(format!(
-                    "Found {} matching document{}.",
-                    related_documents.len(),
-                    if related_documents.len() == 1 {
-                        ""
-                    } else {
-                        "s"
-                    }
-                ));
-            }
-            if let Some((citation, snippet)) = top_authority {
-                parts.push(format!(
-                    "The strongest source-backed authority match is {}: {}",
-                    citation,
-                    snippet
-                ));
-            }
-            parts.join(" ")
-        };
+    let answer = if related_facts.is_empty() && related_documents.is_empty() && authority_count == 0
+    {
+        "I could not find matter records or source-backed authorities that match that question."
+            .to_string()
+    } else {
+        let mut parts = Vec::new();
+        if !related_facts.is_empty() {
+            parts.push(format!(
+                "Found {} matching matter fact{}.",
+                related_facts.len(),
+                if related_facts.len() == 1 { "" } else { "s" }
+            ));
+        }
+        if !related_documents.is_empty() {
+            parts.push(format!(
+                "Found {} matching document{}.",
+                related_documents.len(),
+                if related_documents.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ));
+        }
+        if let Some((citation, snippet)) = top_authority {
+            parts.push(format!(
+                "The strongest source-backed authority match is {}: {}",
+                citation, snippet
+            ));
+        }
+        parts.join(" ")
+    };
 
     warnings.push(
         format!("Matter ask used '{}' scope in provider-free retrieval mode; verify legal conclusions before filing.", scope),
