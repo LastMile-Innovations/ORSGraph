@@ -240,6 +240,73 @@ async function main() {
       }),
     },
   )
+  const rangeFact = await request(
+    `/matters/${encodeURIComponent(matterId)}/work-products/${encodeURIComponent(workProduct.work_product_id)}/text-ranges`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        block_id: firstBlock.block_id,
+        start_offset: 0,
+        end_offset: 15,
+        quote: "Smoke AST patch",
+        target_type: "fact",
+        target_id: approvedFact.fact_id || approvedFact.id,
+        relation: "supports",
+      }),
+    },
+  )
+  assert(
+    rangeFact.document_ast?.links?.some(
+      (link) => link.target_type === "fact" && link.source_text_range?.quote === "Smoke AST patch",
+    ),
+    "selected text support link persisted",
+  )
+  const rangeCitation = await request(
+    `/matters/${encodeURIComponent(matterId)}/work-products/${encodeURIComponent(workProduct.work_product_id)}/text-ranges`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        block_id: firstBlock.block_id,
+        start_offset: 0,
+        end_offset: 15,
+        quote: "Smoke AST patch",
+        target_type: "authority",
+        target_id: "ORS 90.320",
+        relation: "cites",
+        citation: "ORS 90.320",
+        canonical_id: "ORS 90.320",
+      }),
+    },
+  )
+  assert(
+    rangeCitation.document_ast?.citations?.some(
+      (citation) => citation.raw_text === "ORS 90.320" && citation.source_text_range?.quote === "Smoke AST patch",
+    ),
+    "selected text citation persisted",
+  )
+  const rangeExhibit = await request(
+    `/matters/${encodeURIComponent(matterId)}/work-products/${encodeURIComponent(workProduct.work_product_id)}/text-ranges`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        block_id: firstBlock.block_id,
+        start_offset: 0,
+        end_offset: 15,
+        quote: "Smoke AST patch",
+        target_type: "document",
+        target_id: document.document_id,
+        relation: "authenticates",
+        exhibit_label: "Smoke Exhibit",
+        document_id: document.document_id,
+      }),
+    },
+  )
+  assert(
+    rangeExhibit.document_ast?.exhibits?.some(
+      (exhibit) => exhibit.label === "Smoke Exhibit" && exhibit.source_text_range?.quote === "Smoke AST patch",
+    ),
+    "selected text exhibit persisted",
+  )
   const astCompare = await request(
     `/matters/${encodeURIComponent(matterId)}/work-products/${encodeURIComponent(workProduct.work_product_id)}/compare?from=${encodeURIComponent(latestWorkProductSnapshot.snapshot_id)}&layers=all`,
   )

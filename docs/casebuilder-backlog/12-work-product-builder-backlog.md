@@ -25,6 +25,8 @@ The same AST, support graph, rule finding model, Case History, AI command surfac
 - `WorkProductBlock` is AST-capable with stable `block_id`, serialized `type`, `order_index`, optional `parent_id`, nested `children`, link/citation/exhibit/finding references, paragraph/count/section/sentence fields, support status, and legacy block projection fields.
 - Structured AST records exist for `WorkProductLink`, `WorkProductCitationUse`, `WorkProductExhibitReference`, `TextRange`, `AstPatch`, `AstOperation`, AST validation responses, markdown conversion responses, and rendered AST responses.
 - Existing create/update/block/support/QC/export/history paths refresh the AST and then rebuild old projections, rather than treating the flat arrays as truth.
+- WorkProduct support links have first-class create, update, and delete API routes; relation/status changes and removals rebuild the AST links, compatibility projections, and Case History support-use changes.
+- Text-range support/citation/exhibit links can be written through a dedicated WorkProduct route that adds AST `source_text_range` records and records Case History changes.
 - Existing block routes remain adapters. `POST /work-products/:id/ast/patch` is the canonical patch path for operations that flat block endpoints cannot express cleanly.
 - AST patch operations exist for insert/update/delete/move/split/merge blocks, paragraph renumbering, links, citations, exhibits, rule findings, and template application.
 - AST validation checks schema version, duplicate/missing block IDs, parent integrity, broken block references, unresolved citations/exhibits, and first-pass complaint structure warnings.
@@ -146,7 +148,8 @@ Release gates for a complete AST platform:
 - Implementation notes: Friendly aliases such as `/complaint`, `/answer`, `/motion`, `/declaration`, and `/memo` should resolve to a typed WorkProduct and then use the same editor.
 - Acceptance checks: Route smoke covers list, new, editor, QC, preview, export, history, and friendly aliases without losing matter/work-product context.
 - Dependencies: `CB-WPB-004`, current route helpers.
-- Status: Todo
+- Status: Done
+- Completed: Added canonical WorkProduct routes for list, new/template flow, detail, editor, QC, preview, export, and history, with `/answer`, `/motion`, `/declaration`, and `/memo` aliases resolving into existing WorkProducts or the typed new-product flow. Route smoke now covers the shared route family and aliases.
 
 ## CB-WPB-006 - Shared WorkProduct dashboard and template picker
 - Priority: P1
@@ -156,7 +159,8 @@ Release gates for a complete AST platform:
 - Implementation notes: Use user-facing wording: Documents, Drafts, Filings, Work Product. Keep demo/live/offline labels visible.
 - Acceptance checks: Empty, demo, and live matters can create or open a work product; complaint appears as a complaint-profile WorkProduct.
 - Dependencies: `CB-WPB-005`.
-- Status: Todo
+- Status: Done
+- Completed: Added a matter-level WorkProduct dashboard with search, status/QC/export summaries, product cards, template cards for complaint, answer, motion, declaration, legal memo, demand letter, notice, exhibit list, and proposed order, plus live `POST /work-products` creation into the shared editor route.
 
 ## CB-WPB-007 - Shared three-pane WorkProductEditor shell
 - Priority: P0
@@ -166,7 +170,8 @@ Release gates for a complete AST platform:
 - Implementation notes: Specialized panels such as caption builder, count builder, prayer for relief, signature block, and certificate of service appear only when the active profile requires them.
 - Acceptance checks: Answer, motion, declaration, and legal memo profiles can render in the same shell without copying complaint-specific components.
 - Dependencies: `CB-WPB-005`, `CB-WPB-006`.
-- Status: Todo
+- Status: Partial
+- Progress: Added the first reusable WorkProduct workbench with left AST outline, center overview/editor/QC/preview/export/history panels, and right inspector for support counts, support-link management, QC, and provider-free commands. Rich-text schema, profile-specific inspector panels, and text-range citation/exhibit editing remain in later shared-editor tasks.
 
 ## CB-WPB-008 - Tiptap/ProseMirror schema and custom nodes
 - Priority: P1
@@ -187,7 +192,7 @@ Release gates for a complete AST platform:
 - Acceptance checks: Legal memo, demand letter, motion, and complaint snippets convert predictably, with warnings for unsupported constructs and stable block IDs where metadata is supplied.
 - Dependencies: `CB-WPB-003`, `CB-WPB-007`.
 - Status: Partial
-- Progress: Backend routes and frontend helpers exist for AST patch/validate, AST-to-markdown, markdown-to-AST, AST-to-HTML, and AST-to-plain-text. Smoke covers conversion. Markdown editor UI and rich metadata round-trip remain.
+- Progress: Backend routes and frontend helpers exist for AST patch/validate, AST-to-markdown, markdown-to-AST, AST-to-HTML, and AST-to-plain-text. Smoke covers conversion. The shared WorkProduct workbench now includes a Markdown round-trip panel that loads the current AST as Markdown, converts edited Markdown back to `document_ast`, and saves it through the canonical WorkProduct patch path. Rich metadata preservation and split-preview editing remain.
 
 ## CB-WPB-010 - Structured support links, citations, and exhibit references
 - Priority: P0
@@ -198,7 +203,7 @@ Release gates for a complete AST platform:
 - Acceptance checks: Links/citations/exhibits attach to stable block IDs and text ranges, survive save/reload/history snapshots, materialize to graph edges, and cannot cross matter boundaries.
 - Dependencies: `CB-WPB-003`, `CB-X-002`.
 - Status: Partial
-- Progress: AST records, patch operations, validation of broken references, graph materialization, frontend types, and API normalization exist. Inspector UI, unlink/update flows, cross-matter tests, and richer source preview remain.
+- Progress: AST records, patch operations, validation of broken references, graph materialization, frontend types, and API normalization exist. The shared WorkProduct inspector now tracks the selected AST block, can link matter facts, evidence, documents/exhibits, and authority/citation text through first-class support-link API routes, previews block-local linked sources, updates relation labels, and removes block-local links. Selected text in the editor can now create range-level support, citation, and exhibit AST records that remain visible in the inspector. Rich inline ProseMirror marks and deeper cross-matter UI coverage remain.
 
 ## CB-WPB-011 - Universal QC and AST-targeted rule findings
 - Priority: P0

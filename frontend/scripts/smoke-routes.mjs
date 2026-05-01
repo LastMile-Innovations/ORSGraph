@@ -9,6 +9,7 @@ const routes = [
   { path: "/graph" },
   { path: "/qc" },
   { path: "/admin" },
+  { path: "/draft" },
   { path: "/statutes" },
   { path: "/statutes?chapter=3" },
   { path: "/statutes/or:ors:3.130" },
@@ -42,6 +43,13 @@ const routes = [
   { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/preview" },
   { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/export" },
   { path: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/history" },
+  {
+    path: "/casebuilder/matters/smith-abc/answer",
+    redirectTo: "/casebuilder/matters/smith-abc/work-products/work-product%3Amatter%3Asmith-abc%3Aanswer-demo/editor",
+  },
+  { path: "/casebuilder/matters/smith-abc/motion", redirectTo: "/casebuilder/matters/smith-abc/work-products/new" },
+  { path: "/casebuilder/matters/smith-abc/declaration", redirectTo: "/casebuilder/matters/smith-abc/work-products/new" },
+  { path: "/casebuilder/matters/smith-abc/memo", redirectTo: "/casebuilder/matters/smith-abc/work-products/new" },
   { path: "/casebuilder/matters/smith-abc/drafts" },
   { path: "/casebuilder/matters/smith-abc/drafts/draft%3Aanswer-v3" },
   { path: "/casebuilder/matters/smith-abc/ask" },
@@ -75,13 +83,14 @@ for (const route of routes) {
         new URL(location, baseUrl).pathname === expectedRedirect.pathname,
     )
     const hasNext404 = html.includes("This page could not be found")
+    const hasAppNotFound = html.includes("No matter matches this route.")
 
-    if ((!isOk && !isExpectedRedirect) || (!expectedRedirect && location) || hasNext404) {
+    if ((!isOk && !isExpectedRedirect) || (!expectedRedirect && location) || hasNext404 || hasAppNotFound) {
       failures.push({
         route: route.path,
         status: response.status,
         redirect: location,
-        reason: hasNext404 ? "default Next 404 body" : "non-2xx or redirect",
+        reason: hasNext404 || hasAppNotFound ? "not-found body" : "non-2xx or redirect",
       })
     } else {
       console.log(`ok ${response.status} ${route.path}${location ? ` -> ${location}` : ""}`)
@@ -121,14 +130,15 @@ async function smokeHomeLinks() {
       const location = response.headers.get("location")
       const body = await response.text().catch(() => "")
       const hasNext404 = body.includes("This page could not be found")
+      const hasAppNotFound = body.includes("No matter matches this route.")
       const isOk = response.status >= 200 && response.status < 300
 
-      if (!isOk || location || hasNext404) {
+      if (!isOk || location || hasNext404 || hasAppNotFound) {
         failures.push({
           route: `home link ${href}`,
           status: response.status,
           redirect: location,
-          reason: hasNext404 ? "default Next 404 body" : "home link failed",
+          reason: hasNext404 || hasAppNotFound ? "not-found body" : "home link failed",
         })
       } else {
         console.log(`ok ${response.status} home link ${href}`)

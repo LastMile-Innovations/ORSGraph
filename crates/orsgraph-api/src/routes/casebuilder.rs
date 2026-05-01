@@ -32,6 +32,9 @@ pub fn routes() -> Router<AppState> {
             "/matters/:matter_id",
             get(get_matter).patch(patch_matter).delete(delete_matter),
         )
+        .route("/matters/:matter_id/graph", get(get_matter_graph))
+        .route("/matters/:matter_id/qc/run", post(run_matter_qc))
+        .route("/matters/:matter_id/issues/spot", post(spot_issues))
         .route(
             "/matters/:matter_id/parties",
             get(list_parties).post(create_party),
@@ -133,6 +136,14 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/matters/:matter_id/work-products/:work_product_id/links",
             post(link_work_product_support),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/links/:anchor_id",
+            patch(patch_work_product_support).delete(delete_work_product_support),
+        )
+        .route(
+            "/matters/:matter_id/work-products/:work_product_id/text-ranges",
+            post(link_work_product_text_range),
         )
         .route(
             "/matters/:matter_id/work-products/:work_product_id/ast/patch",
@@ -366,11 +377,11 @@ pub fn routes() -> Router<AppState> {
             "/matters/:matter_id/authority/detach",
             post(authority_detach),
         )
-        .route("/matters/:matter_id/export/docx", post(export_not_ready))
-        .route("/matters/:matter_id/export/pdf", post(export_not_ready))
+        .route("/matters/:matter_id/export/docx", post(export_matter_docx))
+        .route("/matters/:matter_id/export/pdf", post(export_matter_pdf))
         .route(
             "/matters/:matter_id/export/filing-packet",
-            post(export_not_ready),
+            post(export_matter_filing_packet),
         )
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
 }
@@ -394,6 +405,38 @@ async fn get_matter(
 ) -> ApiResult<Json<MatterBundle>> {
     Ok(Json(
         state.casebuilder_service.get_matter(&matter_id).await?,
+    ))
+}
+
+async fn get_matter_graph(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+) -> ApiResult<Json<CaseGraphResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .get_matter_graph(&matter_id)
+            .await?,
+    ))
+}
+
+async fn run_matter_qc(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+) -> ApiResult<Json<QcRun>> {
+    Ok(Json(state.casebuilder_service.run_matter_qc(&matter_id).await?))
+}
+
+async fn spot_issues(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+    Json(request): Json<IssueSpotRequest>,
+) -> ApiResult<Json<IssueSpotResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .spot_issues(&matter_id, request)
+            .await?,
     ))
 }
 
@@ -813,6 +856,10 @@ async fn ask_matter(
     Json(request): Json<MatterAskRequest>,
 ) -> ApiResult<Json<MatterAskResponse>> {
     let matter = state.casebuilder_service.get_matter(&matter_id).await?;
+    let scope = request.scope.as_deref().unwrap_or("all");
+    let include_documents = matches!(scope, "all" | "documents");
+    let include_facts = matches!(scope, "all" | "facts" | "claims");
+    let include_authority = matches!(scope, "all" | "claims" | "authority" | "authorities");
     let needle = request.question.to_lowercase();
     let terms: Vec<&str> = needle
         .split(|ch: char| !ch.is_ascii_alphanumeric())
@@ -820,52 +867,60 @@ async fn ask_matter(
         .take(8)
         .collect();
 
-    let related_facts: Vec<CaseFact> = matter
-        .facts
-        .iter()
-        .filter(|fact| {
-            let text = fact.statement.to_lowercase();
-            terms.iter().any(|term| text.contains(term))
-        })
-        .take(5)
-        .cloned()
-        .collect();
-    let related_documents: Vec<CaseDocument> = matter
-        .documents
-        .iter()
-        .filter(|document| {
-            let text = format!(
-                "{} {} {}",
-                document.title, document.filename, document.summary
-            )
-            .to_lowercase();
-            terms.iter().any(|term| text.contains(term))
-        })
-        .take(5)
-        .cloned()
-        .collect();
-
-    let search = state
-        .search_service
-        .search(SearchQuery {
-            q: request.question.clone(),
-            r#type: Some("all".to_string()),
-            authority_family: None,
-            chapter: None,
-            status: None,
-            mode: Some(SearchMode::Auto),
-            limit: Some(5),
-            offset: Some(0),
-            include: None,
-            semantic_type: None,
-            current_only: Some(true),
-            source_backed: Some(true),
-            has_citations: None,
-            has_deadlines: None,
-            has_penalties: None,
-            needs_review: None,
-        })
-        .await?;
+    let mut related_facts: Vec<CaseFact> = if include_facts {
+        matter
+            .facts
+            .iter()
+            .filter(|fact| {
+                let text = fact.statement.to_lowercase();
+                terms.iter().any(|term| text.contains(term))
+            })
+            .take(5)
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if scope == "claims" {
+        let matched_fact_ids = matter
+            .claims
+            .iter()
+            .filter(|claim| {
+                let text = format!("{} {} {}", claim.title, claim.claim_type, claim.legal_theory)
+                    .to_lowercase();
+                terms.iter().any(|term| text.contains(term))
+            })
+            .flat_map(|claim| claim.fact_ids.clone())
+            .collect::<std::collections::HashSet<_>>();
+        for fact in &matter.facts {
+            if matched_fact_ids.contains(&fact.fact_id)
+                && !related_facts
+                    .iter()
+                    .any(|existing| existing.fact_id == fact.fact_id)
+            {
+                related_facts.push(fact.clone());
+            }
+        }
+        related_facts.truncate(5);
+    }
+    let related_documents: Vec<CaseDocument> = if include_documents {
+        matter
+            .documents
+            .iter()
+            .filter(|document| {
+                let text = format!(
+                    "{} {} {}",
+                    document.title, document.filename, document.summary
+                )
+                .to_lowercase();
+                terms.iter().any(|term| text.contains(term))
+            })
+            .take(5)
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let mut citations = Vec::new();
     for (index, document) in related_documents.iter().enumerate() {
@@ -886,22 +941,56 @@ async fn ask_matter(
             snippet: fact.notes.clone(),
         });
     }
-    for (index, result) in search.results.iter().take(5).enumerate() {
-        citations.push(MatterAskCitation {
-            citation_id: format!("authority-{}", index + 1),
-            kind: "statute".to_string(),
-            source_id: result
-                .graph
-                .as_ref()
-                .and_then(|graph| graph.canonical_id.clone())
-                .unwrap_or_else(|| result.id.clone()),
-            title: result
-                .citation
-                .clone()
-                .or_else(|| result.title.clone())
-                .unwrap_or_else(|| result.id.clone()),
-            snippet: Some(result.snippet.clone()),
-        });
+    let mut authority_count = 0usize;
+    let mut top_authority: Option<(String, String)> = None;
+    let mut warnings = Vec::new();
+    if include_authority {
+        let search = state
+            .search_service
+            .search(SearchQuery {
+                q: request.question.clone(),
+                r#type: Some("all".to_string()),
+                authority_family: None,
+                chapter: None,
+                status: None,
+                mode: Some(SearchMode::Auto),
+                limit: Some(5),
+                offset: Some(0),
+                include: None,
+                semantic_type: None,
+                current_only: Some(true),
+                source_backed: Some(true),
+                has_citations: None,
+                has_deadlines: None,
+                has_penalties: None,
+                needs_review: None,
+            })
+            .await?;
+        authority_count = search.results.len();
+        if let Some(top) = search.results.first() {
+            top_authority = Some((
+                top.citation.clone().unwrap_or_else(|| top.id.clone()),
+                top.snippet.clone(),
+            ));
+        }
+        for (index, result) in search.results.iter().take(5).enumerate() {
+            citations.push(MatterAskCitation {
+                citation_id: format!("authority-{}", index + 1),
+                kind: "statute".to_string(),
+                source_id: result
+                    .graph
+                    .as_ref()
+                    .and_then(|graph| graph.canonical_id.clone())
+                    .unwrap_or_else(|| result.id.clone()),
+                title: result
+                    .citation
+                    .clone()
+                    .or_else(|| result.title.clone())
+                    .unwrap_or_else(|| result.id.clone()),
+                snippet: Some(result.snippet.clone()),
+            });
+        }
+        warnings = search.warnings;
     }
 
     let source_spans = related_facts
@@ -916,7 +1005,7 @@ async fn ask_matter(
         .collect();
 
     let answer =
-        if related_facts.is_empty() && related_documents.is_empty() && search.results.is_empty() {
+        if related_facts.is_empty() && related_documents.is_empty() && authority_count == 0 {
             "I could not find matter records or source-backed authorities that match that question."
                 .to_string()
         } else {
@@ -939,20 +1028,18 @@ async fn ask_matter(
                     }
                 ));
             }
-            if let Some(top) = search.results.first() {
+            if let Some((citation, snippet)) = top_authority {
                 parts.push(format!(
                     "The strongest source-backed authority match is {}: {}",
-                    top.citation.clone().unwrap_or_else(|| top.id.clone()),
-                    top.snippet
+                    citation,
+                    snippet
                 ));
             }
             parts.join(" ")
         };
 
-    let mut warnings = search.warnings;
     warnings.push(
-        "Matter ask is provider-free retrieval mode; verify legal conclusions before filing."
-            .to_string(),
+        format!("Matter ask used '{}' scope in provider-free retrieval mode; verify legal conclusions before filing.", scope),
     );
 
     Ok(Json(MatterAskResponse {
@@ -1326,6 +1413,44 @@ async fn link_work_product_support(
         state
             .casebuilder_service
             .link_work_product_support(&matter_id, &work_product_id, request)
+            .await?,
+    ))
+}
+
+async fn patch_work_product_support(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id, anchor_id)): Path<(String, String, String)>,
+    Json(request): Json<PatchWorkProductSupportRequest>,
+) -> ApiResult<Json<WorkProduct>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_work_product_support(&matter_id, &work_product_id, &anchor_id, request)
+            .await?,
+    ))
+}
+
+async fn delete_work_product_support(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id, anchor_id)): Path<(String, String, String)>,
+) -> ApiResult<Json<WorkProduct>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .delete_work_product_support(&matter_id, &work_product_id, &anchor_id)
+            .await?,
+    ))
+}
+
+async fn link_work_product_text_range(
+    State(state): State<AppState>,
+    Path((matter_id, work_product_id)): Path<(String, String)>,
+    Json(request): Json<WorkProductTextRangeLinkRequest>,
+) -> ApiResult<Json<WorkProduct>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .link_work_product_text_range(&matter_id, &work_product_id, request)
             .await?,
     ))
 }
@@ -1808,11 +1933,39 @@ async fn authority_detach(
     ))
 }
 
-async fn export_not_ready(
-    Path(_matter_id): Path<String>,
-) -> ApiResult<Json<AiActionResponse<serde_json::Value>>> {
-    Err(ApiError::BadRequest(
-        "Export is deferred for CaseBuilder V0; DOCX/PDF/filing packets are V0.2+.".to_string(),
+async fn export_matter_docx(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+) -> ApiResult<Json<AiActionResponse<ExportPackage>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_matter_export_package(&matter_id, "docx")
+            .await?,
+    ))
+}
+
+async fn export_matter_pdf(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+) -> ApiResult<Json<AiActionResponse<ExportPackage>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_matter_export_package(&matter_id, "pdf")
+            .await?,
+    ))
+}
+
+async fn export_matter_filing_packet(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+) -> ApiResult<Json<AiActionResponse<ExportPackage>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_matter_export_package(&matter_id, "filing_packet")
+            .await?,
     ))
 }
 

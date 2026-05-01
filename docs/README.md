@@ -8,6 +8,7 @@
 
 - [Free Public Data Source Registry](data/source-registry.md): Master registry of free public Oregon, federal, case-law, legislative, business, evidence, GIS, and expansion sources for ORSGraph, NeighborOS, and CaseBuilder ingestion.
 - [Source Registry Schema](data/source-registry.schema.md): YAML-shaped source manifest schema, connector lifecycle values, provenance requirements, and validation rules for registry entries.
+- [Registry-Driven Crawler](data/registry-driven-crawler.md): Current crawler runtime, connector contract, CLI commands, artifact layout, OData connector behavior, offline fixture testing, QC, and admin wiring.
 
 ## Legal Corpora
 

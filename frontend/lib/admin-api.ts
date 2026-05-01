@@ -24,6 +24,7 @@ export interface AdminJobParams {
   edition_year?: number
   max_chapters?: number
   chapters?: string
+  session_key?: string
   fetch_only?: boolean
   skip_citation_resolution?: boolean
   dry_run?: boolean

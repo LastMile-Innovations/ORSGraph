@@ -39,11 +39,11 @@ impl SearchService {
     }
 
     fn resolve_mode(requested_mode: SearchMode, plan: &QueryPlan) -> SearchMode {
+        let pure_citation_or_chapter =
+            matches!(plan.intent, SearchIntent::Citation | SearchIntent::Chapter)
+                && plan.analysis.residual_text.is_none();
         match requested_mode {
-            SearchMode::Auto
-                if matches!(plan.intent, SearchIntent::Citation | SearchIntent::Chapter)
-                    && plan.analysis.residual_text.is_none() =>
-            {
+            SearchMode::Auto | SearchMode::Hybrid if pure_citation_or_chapter => {
                 SearchMode::Citation
             }
             SearchMode::Auto => SearchMode::Hybrid,
@@ -65,18 +65,29 @@ impl SearchService {
         if filters.authority_family.is_none() {
             filters.authority_family = plan.authority_filter.clone();
         }
+        if filters.result_type.is_none() {
+            if filters.chapter.is_some()
+                && plan.analysis.residual_text.is_some()
+                && matches!(plan.intent, SearchIntent::General)
+            {
+                filters.result_type = Some("statute".to_string());
+            } else if let Some(result_type) = default_result_type_for_intent(
+                plan.intent,
+                filters.chapter.is_some(),
+                &plan.retrieval_query,
+            ) {
+                filters.result_type = Some(result_type.to_string());
+            }
+        }
         plan.analysis.applied_filters = filters.applied_filter_names();
 
         let limit = query.limit.unwrap_or(20).clamp(1, 100);
         let offset = query.offset.unwrap_or(0);
-        let candidate_limit = self
-            .rerank
-            .as_ref()
-            .map(|r| r.candidates_limit())
-            .unwrap_or(limit as usize * 4)
-            .max(limit as usize)
-            .min(250);
-        let pre_expand_limit = (candidate_limit * 2).min(250).max(limit as usize);
+        let (candidate_limit, pre_expand_limit) = search_candidate_limits(
+            limit,
+            offset,
+            self.rerank.as_ref().map(|r| r.candidates_limit()),
+        );
 
         let mut warnings = Vec::new();
         let mut retrieval = RetrievalInfo::default();
@@ -100,7 +111,8 @@ impl SearchService {
             });
         }
 
-        if !plan.retrieval_query.is_empty() && mode != SearchMode::Citation {
+        let should_expand_terms = should_expand_query_terms(plan.intent);
+        if should_expand_terms && !plan.retrieval_query.is_empty() && mode != SearchMode::Citation {
             match self
                 .neo4j
                 .expand_query_terms(&plan.retrieval_query, &filters, 8)
@@ -114,8 +126,12 @@ impl SearchService {
             }
         }
 
-        let expanded_query =
-            build_expanded_retrieval_query(&plan.retrieval_query, &plan.analysis.expansion_terms);
+        let fulltext_query = fulltext_query_for_intent(&plan.retrieval_query, plan.intent);
+        let expanded_query = if should_expand_terms {
+            build_expanded_retrieval_query(&fulltext_query, &plan.analysis.expansion_terms)
+        } else {
+            fulltext_query.clone()
+        };
         let has_exact_signal = !plan.analysis.citations.is_empty()
             || !plan.analysis.ranges.is_empty()
             || (matches!(plan.intent, SearchIntent::Chapter)
@@ -172,6 +188,24 @@ impl SearchService {
                                         .push(format!("Parent citation lookup failed: {}", e)),
                                 }
                             }
+                        } else if let Some(parent_query) =
+                            parent_query_for_exact(&exact_query, &plan.analysis.citations)
+                        {
+                            match self
+                                .neo4j
+                                .search_exact(&parent_query, exact_authority)
+                                .await
+                            {
+                                Ok(mut parent_results) => {
+                                    for res in &mut parent_results {
+                                        mark_exact_result(res, 80.0, "parent");
+                                    }
+                                    exact_results.extend(parent_results);
+                                }
+                                Err(e) => {
+                                    warnings.push(format!("Parent citation lookup failed: {}", e))
+                                }
+                            }
                         }
 
                         retrieval.exact_candidates += exact_results.len();
@@ -190,7 +224,7 @@ impl SearchService {
         if should_run_keyword {
             match self
                 .neo4j
-                .search_fulltext(&plan.retrieval_query, &filters, candidate_limit as u32)
+                .search_fulltext(&fulltext_query, &filters, candidate_limit as u32)
                 .await
             {
                 Ok(mut keyword_results) => {
@@ -251,11 +285,7 @@ impl SearchService {
                         if mode == SearchMode::Semantic {
                             match self
                                 .neo4j
-                                .search_fulltext(
-                                    &plan.retrieval_query,
-                                    &filters,
-                                    candidate_limit as u32,
-                                )
+                                .search_fulltext(&fulltext_query, &filters, candidate_limit as u32)
                                 .await
                             {
                                 Ok(mut keyword_results) => {
@@ -277,7 +307,7 @@ impl SearchService {
                 if mode == SearchMode::Semantic {
                     match self
                         .neo4j
-                        .search_fulltext(&plan.retrieval_query, &filters, candidate_limit as u32)
+                        .search_fulltext(&fulltext_query, &filters, candidate_limit as u32)
                         .await
                     {
                         Ok(mut keyword_results) => {
@@ -313,6 +343,7 @@ impl SearchService {
             };
         plan.analysis.timings.graph_ms = graph_started.elapsed().as_millis() as u64;
         self.apply_filters(&mut candidates, &filters, FilterStage::Late);
+        enrich_actor_intent_semantics(&mut candidates, plan.intent, &plan.retrieval_query);
         self.apply_expansion_boosts(&mut candidates, &plan.analysis.expansion_terms);
 
         for candidate in &mut candidates {
@@ -1250,19 +1281,178 @@ fn authority_family_for_exact<'a>(
 
 fn build_expanded_retrieval_query(base: &str, terms: &[QueryExpansionTerm]) -> String {
     let mut parts = vec![base.trim().to_string()];
-    for term in terms.iter().take(5) {
-        if !parts
-            .iter()
-            .any(|part| part.eq_ignore_ascii_case(&term.term))
-        {
-            parts.push(term.term.clone());
-        }
+    for term in lexical_expansion_terms(base) {
+        push_expanded_query_part(&mut parts, term);
+    }
+    for term in terms
+        .iter()
+        .filter(|term| expansion_term_is_search_sized(&term.term))
+        .take(5)
+    {
+        push_expanded_query_part(&mut parts, &term.term);
     }
     parts
         .into_iter()
         .filter(|part| !part.trim().is_empty())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn default_result_type_for_intent(
+    intent: SearchIntent,
+    has_chapter_filter: bool,
+    retrieval_query: &str,
+) -> Option<&'static str> {
+    match (intent, has_chapter_filter) {
+        (SearchIntent::Penalty, _) => Some("penalty"),
+        (SearchIntent::Definition, true) => Some("statute"),
+        (SearchIntent::Definition, false) => Some("definition"),
+        (SearchIntent::History, _) => Some("history"),
+        (SearchIntent::Actor, _) if is_tax_actor_query(retrieval_query) => Some("statute"),
+        (SearchIntent::Actor, _) => Some("statute"),
+        _ => None,
+    }
+}
+
+fn should_expand_query_terms(intent: SearchIntent) -> bool {
+    !matches!(intent, SearchIntent::Penalty)
+}
+
+fn fulltext_query_for_intent(base: &str, intent: SearchIntent) -> String {
+    match intent {
+        SearchIntent::Penalty => {
+            conjunctive_fulltext_query(base).unwrap_or_else(|| base.trim().to_string())
+        }
+        SearchIntent::Actor if is_tax_actor_query(base) => {
+            conjunctive_fulltext_query(base).unwrap_or_else(|| base.trim().to_string())
+        }
+        _ => base.to_string(),
+    }
+}
+
+fn conjunctive_fulltext_query(base: &str) -> Option<String> {
+    let trimmed = base.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed
+        .split_whitespace()
+        .any(|term| matches!(term.to_ascii_uppercase().as_str(), "AND" | "OR" | "NOT"))
+    {
+        return None;
+    }
+
+    let terms = trimmed
+        .split_whitespace()
+        .map(|term| {
+            term.trim_matches(|ch: char| {
+                !(ch.is_ascii_alphanumeric() || matches!(ch, '.' | '(' | ')' | '-'))
+            })
+        })
+        .filter(|term| !term.is_empty() && !is_fulltext_stopword(term))
+        .collect::<Vec<_>>();
+
+    (terms.len() >= 2).then(|| terms.join(" AND "))
+}
+
+fn is_tax_actor_query(query: &str) -> bool {
+    let lower = query.to_ascii_lowercase();
+    lower.contains("tax") || lower.contains("revenue")
+}
+
+fn enrich_actor_intent_semantics(
+    candidates: &mut [SearchResult],
+    intent: SearchIntent,
+    retrieval_query: &str,
+) {
+    if intent != SearchIntent::Actor || !query_mentions_legal_actor(retrieval_query) {
+        return;
+    }
+
+    for candidate in candidates {
+        if candidate_mentions_query_actor(candidate, retrieval_query)
+            || candidate
+                .semantic_types
+                .iter()
+                .any(|value| value.eq_ignore_ascii_case("Obligation"))
+        {
+            push_unique(&mut candidate.semantic_types, "LegalActor".to_string());
+        }
+    }
+}
+
+fn query_mentions_legal_actor(query: &str) -> bool {
+    let lower = query.to_ascii_lowercase();
+    legal_actor_terms().iter().any(|term| lower.contains(term))
+}
+
+fn candidate_mentions_query_actor(candidate: &SearchResult, retrieval_query: &str) -> bool {
+    let query = retrieval_query.to_ascii_lowercase();
+    let mut haystack = candidate.snippet.to_ascii_lowercase();
+    if let Some(title) = &candidate.title {
+        haystack.push(' ');
+        haystack.push_str(&title.to_ascii_lowercase());
+    }
+    if let Some(citation) = &candidate.citation {
+        haystack.push(' ');
+        haystack.push_str(&citation.to_ascii_lowercase());
+    }
+
+    legal_actor_terms()
+        .iter()
+        .any(|term| query.contains(term) && haystack.contains(term))
+}
+
+fn legal_actor_terms() -> &'static [&'static str] {
+    &[
+        "landlord",
+        "tenant",
+        "department",
+        "director",
+        "public body",
+        "revenue",
+    ]
+}
+
+fn is_fulltext_stopword(term: &str) -> bool {
+    matches!(
+        term.to_ascii_lowercase().as_str(),
+        "a" | "an" | "and" | "of" | "or" | "the" | "to"
+    )
+}
+
+fn lexical_expansion_terms(base: &str) -> &'static [&'static str] {
+    let normalized = base.to_ascii_lowercase();
+    if normalized.contains("habitability") {
+        &["habitable"]
+    } else {
+        &[]
+    }
+}
+
+fn expansion_term_is_search_sized(term: &str) -> bool {
+    let trimmed = term.trim();
+    !trimmed.is_empty() && trimmed.chars().count() <= 80 && trimmed.split_whitespace().count() <= 8
+}
+
+fn push_expanded_query_part(parts: &mut Vec<String>, term: &str) {
+    if !parts.iter().any(|part| part.eq_ignore_ascii_case(term)) {
+        parts.push(term.trim().to_string());
+    }
+}
+
+fn search_candidate_limits(
+    limit: u32,
+    offset: u32,
+    rerank_candidate_limit: Option<usize>,
+) -> (usize, usize) {
+    let requested_window = offset.saturating_add(limit).min(250) as usize;
+    let candidate_limit = rerank_candidate_limit
+        .unwrap_or(limit as usize * 4)
+        .max(requested_window)
+        .min(250);
+    let pre_expand_limit = (candidate_limit * 2).min(250).max(requested_window);
+    (candidate_limit, pre_expand_limit)
 }
 
 fn push_unique(values: &mut Vec<String>, value: String) {
@@ -1731,13 +1921,149 @@ mod tests {
             SearchMode::Citation
         );
         assert_eq!(
+            SearchService::resolve_mode(SearchMode::Hybrid, &citation_plan),
+            SearchMode::Citation
+        );
+        assert_eq!(
             SearchService::resolve_mode(SearchMode::Auto, &chapter_topic_plan),
+            SearchMode::Hybrid
+        );
+        assert_eq!(
+            SearchService::resolve_mode(SearchMode::Hybrid, &chapter_topic_plan),
             SearchMode::Hybrid
         );
         assert_eq!(
             SearchService::resolve_mode(SearchMode::Auto, &general_plan),
             SearchMode::Hybrid
         );
+    }
+
+    #[test]
+    fn candidate_window_covers_requested_page_offset() {
+        assert_eq!(search_candidate_limits(20, 0, None), (80, 160));
+        assert_eq!(search_candidate_limits(20, 80, None), (100, 200));
+        assert_eq!(search_candidate_limits(20, 240, None), (250, 250));
+        assert_eq!(search_candidate_limits(10, 20, Some(25)), (30, 60));
+    }
+
+    #[test]
+    fn expanded_retrieval_query_keeps_terms_search_sized() {
+        let terms = vec![
+            QueryExpansionTerm {
+                term: "shall ensure that the housing substantially complies with any applicable law relating to the health safety or habitability of".to_string(),
+                normalized_term: None,
+                kind: "legal_action".to_string(),
+                source_id: None,
+                source_citation: None,
+                score: 0.68,
+            },
+            QueryExpansionTerm {
+                term: "ORS 90.368(1)".to_string(),
+                normalized_term: None,
+                kind: "definition".to_string(),
+                source_id: None,
+                source_citation: None,
+                score: 0.82,
+            },
+        ];
+
+        let expanded = build_expanded_retrieval_query("habitability", &terms);
+        assert!(expanded.contains("habitable"));
+        assert!(expanded.contains("ORS 90.368(1)"));
+        assert!(!expanded.contains("substantially complies"));
+    }
+
+    #[test]
+    fn penalty_intent_uses_tight_fulltext_shape() {
+        assert_eq!(
+            default_result_type_for_intent(SearchIntent::Penalty, false, "civil penalty"),
+            Some("penalty")
+        );
+        assert!(!should_expand_query_terms(SearchIntent::Penalty));
+        assert_eq!(
+            fulltext_query_for_intent("civil penalty", SearchIntent::Penalty),
+            "civil AND penalty"
+        );
+        assert_eq!(
+            fulltext_query_for_intent("civil AND penalty", SearchIntent::Penalty),
+            "civil AND penalty"
+        );
+        assert_eq!(
+            fulltext_query_for_intent("landlord notice", SearchIntent::Notice),
+            "landlord notice"
+        );
+    }
+
+    #[test]
+    fn definition_intent_uses_scope_appropriate_type() {
+        assert_eq!(
+            default_result_type_for_intent(
+                SearchIntent::Definition,
+                false,
+                "definition of dwelling unit"
+            ),
+            Some("definition")
+        );
+        assert_eq!(
+            default_result_type_for_intent(
+                SearchIntent::Definition,
+                true,
+                "definition of dwelling unit"
+            ),
+            Some("statute")
+        );
+    }
+
+    #[test]
+    fn history_intent_uses_history_type() {
+        assert_eq!(
+            default_result_type_for_intent(
+                SearchIntent::History,
+                false,
+                "operative January 1 2027"
+            ),
+            Some("history")
+        );
+    }
+
+    #[test]
+    fn tax_actor_queries_use_statute_conjunctive_search() {
+        assert_eq!(
+            default_result_type_for_intent(SearchIntent::Actor, false, "Department of Revenue tax"),
+            Some("statute")
+        );
+        assert_eq!(
+            fulltext_query_for_intent("Department of Revenue tax", SearchIntent::Actor),
+            "Department AND Revenue AND tax"
+        );
+        assert_eq!(
+            default_result_type_for_intent(SearchIntent::Actor, false, "what must a landlord do"),
+            Some("statute")
+        );
+    }
+
+    #[test]
+    fn actor_intent_enriches_actor_obligation_results() {
+        let mut candidates = vec![result("320", 1.0, None), result("300", 0.8, None)];
+        candidates[0].snippet =
+            "A landlord shall at all times maintain the dwelling unit.".to_string();
+        candidates[0].semantic_types.push("Obligation".to_string());
+        candidates[1].snippet = "The clerk shall record the notice.".to_string();
+
+        enrich_actor_intent_semantics(
+            &mut candidates,
+            SearchIntent::Actor,
+            "what must a landlord do",
+        );
+
+        assert!(candidates[0]
+            .semantic_types
+            .iter()
+            .any(|value| value == "LegalActor"));
+        assert!(!candidates[1]
+            .semantic_types
+            .iter()
+            .any(|value| value == "LegalActor"));
     }
 
     #[test]

@@ -51,6 +51,182 @@ pub struct MatterBundle {
     pub citation_check_findings: Vec<CitationCheckFinding>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseGraphNode {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub subtitle: Option<String>,
+    pub status: Option<String>,
+    pub risk: Option<String>,
+    pub href: Option<String>,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseGraphEdge {
+    pub id: String,
+    pub source: String,
+    pub target: String,
+    pub kind: String,
+    pub label: String,
+    pub status: Option<String>,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseGraphResponse {
+    pub matter_id: String,
+    pub generated_at: String,
+    pub modes: Vec<String>,
+    pub nodes: Vec<CaseGraphNode>,
+    pub edges: Vec<CaseGraphEdge>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct IssueSpotRequest {
+    pub mode: Option<String>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct IssueSuggestion {
+    pub suggestion_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub issue_type: String,
+    pub title: String,
+    pub summary: String,
+    pub confidence: f32,
+    pub severity: String,
+    pub status: String,
+    pub fact_ids: Vec<String>,
+    pub evidence_ids: Vec<String>,
+    pub document_ids: Vec<String>,
+    pub authority_refs: Vec<AuthorityRef>,
+    pub recommended_action: String,
+    pub mode: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct IssueSpotResponse {
+    pub matter_id: String,
+    pub generated_at: String,
+    pub mode: String,
+    pub suggestions: Vec<IssueSuggestion>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EvidenceGap {
+    pub gap_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub target_type: String,
+    pub target_id: String,
+    pub title: String,
+    pub message: String,
+    pub severity: String,
+    pub status: String,
+    pub fact_ids: Vec<String>,
+    pub evidence_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AuthorityGap {
+    pub gap_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub target_type: String,
+    pub target_id: String,
+    pub title: String,
+    pub message: String,
+    pub severity: String,
+    pub status: String,
+    pub authority_refs: Vec<AuthorityRef>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Contradiction {
+    pub contradiction_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub title: String,
+    pub message: String,
+    pub severity: String,
+    pub status: String,
+    pub fact_ids: Vec<String>,
+    pub evidence_ids: Vec<String>,
+    pub source_document_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WorkProductSentence {
+    pub sentence_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub work_product_id: String,
+    pub block_id: String,
+    pub text: String,
+    pub index: u64,
+    pub support_status: String,
+    pub fact_ids: Vec<String>,
+    pub evidence_ids: Vec<String>,
+    pub authority_refs: Vec<AuthorityRef>,
+    pub finding_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct QcRun {
+    pub qc_run_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub status: String,
+    pub mode: String,
+    pub generated_at: String,
+    pub evidence_gaps: Vec<EvidenceGap>,
+    pub authority_gaps: Vec<AuthorityGap>,
+    pub contradictions: Vec<Contradiction>,
+    pub fact_findings: Vec<FactCheckFinding>,
+    pub citation_findings: Vec<CitationCheckFinding>,
+    pub work_product_findings: Vec<WorkProductFinding>,
+    pub suggested_tasks: Vec<CreateTaskRequest>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExportPackage {
+    pub export_package_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub format: String,
+    pub status: String,
+    pub profile: String,
+    pub created_at: String,
+    pub artifact_count: u64,
+    pub work_product_ids: Vec<String>,
+    pub warnings: Vec<String>,
+    pub download_url: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AuditEvent {
+    pub audit_event_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub event_type: String,
+    pub actor: String,
+    pub target_type: String,
+    pub target_id: String,
+    pub summary: String,
+    pub created_at: String,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateMatterRequest {
     pub name: String,
@@ -671,7 +847,7 @@ pub struct CaseTask {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CreateTaskRequest {
     pub title: String,
     pub status: Option<String>,
@@ -785,14 +961,18 @@ pub struct CitationCheckFinding {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct WorkProductDocument {
-    #[serde(default = "default_work_product_schema_version")]
+    #[serde(default = "default_work_product_schema_version", alias = "schemaVersion")]
     pub schema_version: String,
-    #[serde(default)]
+    #[serde(default, alias = "documentId")]
     pub document_id: String,
-    #[serde(default)]
+    #[serde(default, alias = "workProductId")]
     pub work_product_id: String,
-    #[serde(default)]
+    #[serde(default, alias = "matterId")]
     pub matter_id: String,
+    #[serde(default, alias = "draftId")]
+    pub draft_id: Option<String>,
+    #[serde(default = "default_work_product_document_type", alias = "documentType")]
+    pub document_type: String,
     #[serde(default)]
     pub product_type: String,
     #[serde(default)]
@@ -817,6 +997,10 @@ pub struct WorkProductDocument {
 
 pub fn default_work_product_schema_version() -> String {
     "work-product-ast-v1".to_string()
+}
+
+pub fn default_work_product_document_type() -> String {
+    "custom".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -1433,6 +1617,33 @@ pub struct WorkProductLinkRequest {
     pub canonical_id: Option<String>,
     pub pinpoint: Option<String>,
     pub quote: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatchWorkProductSupportRequest {
+    pub relation: Option<String>,
+    pub status: Option<String>,
+    pub citation: Option<serde_json::Value>,
+    pub canonical_id: Option<serde_json::Value>,
+    pub pinpoint: Option<serde_json::Value>,
+    pub quote: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkProductTextRangeLinkRequest {
+    pub block_id: String,
+    pub start_offset: u64,
+    pub end_offset: u64,
+    pub quote: String,
+    pub target_type: String,
+    pub target_id: String,
+    pub relation: Option<String>,
+    pub citation: Option<String>,
+    pub canonical_id: Option<String>,
+    pub pinpoint: Option<String>,
+    pub exhibit_label: Option<String>,
+    pub document_id: Option<String>,
+    pub page_range: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

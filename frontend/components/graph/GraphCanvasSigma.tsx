@@ -83,6 +83,9 @@ export function GraphCanvasSigma({
 
         renderer = new Sigma(graph, container, {
           allowInvalidContainer: true,
+          stagePadding: nodes.length <= 6
+            ? container.clientWidth < 640 ? 150 : 96
+            : container.clientWidth < 640 ? 96 : 72,
           renderEdgeLabels: false,
           labelDensity: Math.max(0.08, forces.labelDensity / 100),
           defaultEdgeType: "arrow",

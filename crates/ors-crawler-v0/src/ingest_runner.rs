@@ -51,6 +51,7 @@ pub struct SourceIngestOptions {
     pub fetch_policy: FetchPolicy,
     pub edition_year: i32,
     pub chapters: Option<String>,
+    pub session_key: Option<String>,
     pub max_items: usize,
     pub fail_on_qc: bool,
 }
@@ -110,6 +111,7 @@ pub async fn run_source_ingest(options: SourceIngestOptions) -> Result<Vec<Inges
             ConnectorOptions {
                 edition_year: options.edition_year,
                 chapters: options.chapters.clone(),
+                session_key: options.session_key.clone(),
                 max_items: options.max_items,
             },
         ));

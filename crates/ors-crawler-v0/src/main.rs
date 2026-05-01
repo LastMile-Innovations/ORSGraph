@@ -202,6 +202,8 @@ enum Command {
         edition_year: i32,
         #[arg(long)]
         chapters: Option<String>,
+        #[arg(long)]
+        session_key: Option<String>,
         #[arg(long, default_value_t = 0)]
         max_items: usize,
         #[arg(
@@ -980,6 +982,7 @@ async fn main() -> Result<()> {
             fixture_dir,
             edition_year,
             chapters,
+            session_key,
             max_items,
             user_agent,
             delay_ms,
@@ -1012,6 +1015,7 @@ async fn main() -> Result<()> {
                 },
                 edition_year,
                 chapters,
+                session_key,
                 max_items,
                 fail_on_qc,
             })

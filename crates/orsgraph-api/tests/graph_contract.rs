@@ -51,6 +51,60 @@ fn container_runs_api_by_default_and_keeps_crawler_escape_hatch() {
 }
 
 #[test]
+fn graph_routes_and_frontend_are_wired_end_to_end() {
+    let routes = include_str!("../src/routes/mod.rs");
+    let graph_routes = include_str!("../src/routes/graph.rs");
+    let graph_page = include_str!("../../../frontend/app/graph/page.tsx");
+    let graph_viewer = include_str!("../../../frontend/components/graph/GraphViewer.tsx");
+    let graph_toolbar = include_str!("../../../frontend/components/graph/GraphToolbar.tsx");
+    let path_panel = include_str!("../../../frontend/components/graph/PathFinderPanel.tsx");
+
+    assert!(routes.contains("/graph/neighborhood"));
+    assert!(routes.contains("/graph/path"));
+    assert!(graph_routes.contains("GraphPathRequest"));
+    assert!(graph_page.contains("searchParams"));
+    assert!(graph_page.contains("initialFocus"));
+    assert!(graph_viewer.contains("updateGraphUrl"));
+    assert!(graph_viewer.contains("PathFinderPanel"));
+    assert!(graph_viewer.contains("SheetContent"));
+    assert!(graph_toolbar.contains("Open graph controls"));
+    assert!(graph_toolbar.contains("Open graph inspector"));
+    assert!(path_panel.contains("getGraphPath"));
+}
+
+#[test]
+fn graph_similarity_and_citation_contracts_are_supported() {
+    let service = include_str!("../src/services/neo4j.rs");
+    let frontend_constants = include_str!("../../../frontend/components/graph/constants.ts");
+
+    for expected in [
+        "CITES_VERSION",
+        "CITES_PROVISION",
+        "CITES_CHAPTER",
+        "CITES_RANGE",
+        "RESOLVES_TO_CHAPTER",
+        "RESOLVES_TO_EXTERNAL",
+        "SIMILAR_TO",
+    ] {
+        assert!(
+            service.contains(expected),
+            "backend graph contract should include {expected}"
+        );
+        assert!(
+            frontend_constants.contains(expected),
+            "frontend graph filters should include {expected}"
+        );
+    }
+
+    assert!(service.contains("params.include_similarity.unwrap_or(false)"));
+    assert!(service.contains("rel.similarity_score, rel.score, rel.weight"));
+    assert!(
+        !service.contains("Similarity edges are not included by /graph/neighborhood"),
+        "similarity mode should be implemented instead of warning as unavailable"
+    );
+}
+
+#[test]
 fn casebuilder_routes_cover_v0_contracts() {
     let routes = include_str!("../src/routes/casebuilder.rs");
 
@@ -72,6 +126,8 @@ fn casebuilder_routes_cover_v0_contracts() {
         "/matters/:matter_id/work-products/:work_product_id/blocks",
         "/matters/:matter_id/work-products/:work_product_id/blocks/:block_id",
         "/matters/:matter_id/work-products/:work_product_id/links",
+        "/matters/:matter_id/work-products/:work_product_id/links/:anchor_id",
+        "/matters/:matter_id/work-products/:work_product_id/text-ranges",
         "/matters/:matter_id/work-products/:work_product_id/ast/patch",
         "/matters/:matter_id/work-products/:work_product_id/ast/validate",
         "/matters/:matter_id/work-products/:work_product_id/ast/to-markdown",

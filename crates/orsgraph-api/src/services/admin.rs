@@ -19,7 +19,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom};
 use tokio::process::{ChildStderr, ChildStdout, Command};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
+use tokio::task::JoinSet;
+
+const SOURCE_HYDRATE_CONCURRENCY: usize = 16;
 
 #[derive(Clone)]
 pub struct AdminService {
@@ -154,16 +157,12 @@ impl AdminService {
         self.require_enabled()?;
         let data_dir = PathBuf::from(&self.inner.config.admin_data_dir);
         let mut sources = read_source_registry().await?;
+        filter_source_registry_entries(
+            &mut sources,
+            priority.as_deref(),
+            connector_status.as_deref(),
+        );
         sources = hydrate_source_local_status(sources, &data_dir).await;
-        if let Some(priority) = priority.as_deref().filter(|value| !value.trim().is_empty()) {
-            sources.retain(|source| source.priority.eq_ignore_ascii_case(priority));
-        }
-        if let Some(status) = connector_status
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        {
-            sources.retain(|source| source.connector_status.eq_ignore_ascii_case(status));
-        }
         sources.sort_by(|left, right| {
             left.priority
                 .cmp(&right.priority)
@@ -199,12 +198,12 @@ impl AdminService {
             return Err(ApiError::BadRequest("invalid source_id".to_string()));
         }
         let data_dir = PathBuf::from(&self.inner.config.admin_data_dir);
-        let mut sources =
-            hydrate_source_local_status(read_source_registry().await?, &data_dir).await;
-        let source = sources
-            .drain(..)
+        let source = read_source_registry()
+            .await?
+            .into_iter()
             .find(|source| source.source_id == source_id)
             .ok_or_else(|| ApiError::NotFound("source not found".to_string()))?;
+        let source = hydrate_one_source(source, &data_dir).await;
         let source_dir = data_dir.join("sources").join(source_id);
         let stats = read_json_value(&source_dir.join("stats.json")).await;
         let qc_report = read_json_value(&source_dir.join("qc/report.json")).await;
@@ -866,6 +865,13 @@ impl AdminService {
                 {
                     push_arg(&mut crawler_args, "--chapters", chapters);
                 }
+                if let Some(session_key) = params
+                    .session_key
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                {
+                    push_arg(&mut crawler_args, "--session-key", session_key);
+                }
                 output_paths.insert("sources_dir".to_string(), source_out.to_string());
             }
             AdminJobKind::CombineGraph => {
@@ -961,6 +967,14 @@ impl AdminService {
         }
         if let Some(chapters) = params.chapters.as_deref() {
             validate_chapters(chapters)?;
+        }
+        if let Some(session_key) = params.session_key.as_deref() {
+            validate_session_key(session_key)?;
+        }
+        if !matches!(kind, AdminJobKind::SourceIngest) && params.session_key.is_some() {
+            return Err(ApiError::BadRequest(
+                "session_key is reserved for connector-backed source_ingest jobs".to_string(),
+            ));
         }
         if let Some(path) = params.out_dir.as_deref() {
             self.safe_path_param("out_dir", path)?;
@@ -1185,6 +1199,25 @@ fn validate_chapters(chapters: &str) -> ApiResult<()> {
     }
 }
 
+fn validate_session_key(session_key: &str) -> ApiResult<()> {
+    let session_key = session_key.trim();
+    if session_key.is_empty() || session_key.len() > 32 {
+        return Err(ApiError::BadRequest(
+            "session_key must be a non-empty value under 32 characters".to_string(),
+        ));
+    }
+    if session_key
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+    {
+        Ok(())
+    } else {
+        Err(ApiError::BadRequest(
+            "session_key may contain only letters, numbers, dashes, and underscores".to_string(),
+        ))
+    }
+}
+
 fn join_path_display(base: &str, child: &str) -> String {
     let base = base.trim_end_matches('/');
     if base.is_empty() {
@@ -1342,6 +1375,19 @@ async fn read_source_registry() -> ApiResult<Vec<AdminSourceRegistryEntry>> {
         .collect())
 }
 
+fn filter_source_registry_entries(
+    sources: &mut Vec<AdminSourceRegistryEntry>,
+    priority: Option<&str>,
+    connector_status: Option<&str>,
+) {
+    if let Some(priority) = priority.filter(|value| !value.trim().is_empty()) {
+        sources.retain(|source| source.priority.eq_ignore_ascii_case(priority.trim()));
+    }
+    if let Some(status) = connector_status.filter(|value| !value.trim().is_empty()) {
+        sources.retain(|source| source.connector_status.eq_ignore_ascii_case(status.trim()));
+    }
+}
+
 fn source_registry_path() -> PathBuf {
     let cwd_path = PathBuf::from("docs/data/source-registry.yaml");
     if cwd_path.exists() {
@@ -1357,39 +1403,63 @@ async fn hydrate_source_local_status(
     sources: Vec<AdminSourceRegistryEntry>,
     data_dir: &Path,
 ) -> Vec<AdminSourceRegistryEntry> {
-    let mut hydrated = Vec::with_capacity(sources.len());
-    for mut source in sources {
-        let source_dir = data_dir.join("sources").join(&source.source_id);
-        let graph = summarize_graph(&source_dir.join("graph")).await;
-        let (_dirs, artifacts, bytes) = summarize_dir(&source_dir).await;
-        let qc_status = read_json_value(&source_dir.join("qc/report.json"))
-            .await
-            .and_then(|value| {
-                value
-                    .get("status")
-                    .and_then(|status| status.as_str())
-                    .map(ToOwned::to_owned)
-            });
-        let last_finished_at = read_json_value(&source_dir.join("stats.json"))
-            .await
-            .and_then(|value| {
-                value
-                    .get("finished_at")
-                    .and_then(|finished_at| finished_at.as_str())
-                    .map(ToOwned::to_owned)
-            });
-        source.local = AdminSourceLocalStatus {
-            source_dir_exists: source_dir.exists(),
-            source_artifacts: artifacts,
-            source_bytes: bytes,
-            graph_files: graph.jsonl_files,
-            graph_rows: graph.rows,
-            qc_status,
-            last_finished_at,
-        };
-        hydrated.push(source);
+    let mut tasks = JoinSet::new();
+    let data_dir = data_dir.to_path_buf();
+    let gate = Arc::new(Semaphore::new(SOURCE_HYDRATE_CONCURRENCY));
+    let source_count = sources.len();
+
+    for (index, source) in sources.into_iter().enumerate() {
+        let data_dir = data_dir.clone();
+        let gate = Arc::clone(&gate);
+        tasks.spawn(async move {
+            let _permit = gate.acquire_owned().await.ok();
+            (index, hydrate_one_source(source, &data_dir).await)
+        });
     }
-    hydrated
+
+    let mut hydrated = vec![None; source_count];
+    while let Some(result) = tasks.join_next().await {
+        if let Ok((index, source)) = result {
+            hydrated[index] = Some(source);
+        }
+    }
+    hydrated.into_iter().flatten().collect()
+}
+
+async fn hydrate_one_source(
+    mut source: AdminSourceRegistryEntry,
+    data_dir: &Path,
+) -> AdminSourceRegistryEntry {
+    let source_dir = data_dir.join("sources").join(&source.source_id);
+    let graph = summarize_graph(&source_dir.join("graph")).await;
+    let (_dirs, artifacts, bytes) = summarize_dir(&source_dir).await;
+    let source_dir_exists = fs::try_exists(&source_dir).await.unwrap_or(false);
+    let qc_status = read_json_value(&source_dir.join("qc/report.json"))
+        .await
+        .and_then(|value| {
+            value
+                .get("status")
+                .and_then(|status| status.as_str())
+                .map(ToOwned::to_owned)
+        });
+    let last_finished_at = read_json_value(&source_dir.join("stats.json"))
+        .await
+        .and_then(|value| {
+            value
+                .get("finished_at")
+                .and_then(|finished_at| finished_at.as_str())
+                .map(ToOwned::to_owned)
+        });
+    source.local = AdminSourceLocalStatus {
+        source_dir_exists,
+        source_artifacts: artifacts,
+        source_bytes: bytes,
+        graph_files: graph.jsonl_files,
+        graph_rows: graph.rows,
+        qc_status,
+        last_finished_at,
+    };
+    source
 }
 
 async fn list_source_graph_files(path: &Path) -> Vec<AdminSourceGraphFile> {
@@ -1704,6 +1774,19 @@ mod tests {
             .sources
             .iter()
             .all(|source| source.priority == "P0"));
+    }
+
+    #[tokio::test]
+    async fn gets_registry_source_detail_for_admin_api() {
+        let service = test_service(test_config());
+        let detail = service.get_source("or_leg_ors_html").await.unwrap();
+
+        assert_eq!(detail.source.source_id, "or_leg_ors_html");
+        assert_eq!(detail.source.priority, "P0");
+        assert!(detail.stats.is_none());
+        assert!(detail.qc_report.is_none());
+        assert!(detail.graph_files.is_empty());
+        assert!(detail.raw_artifacts.is_empty());
     }
 
     #[test]

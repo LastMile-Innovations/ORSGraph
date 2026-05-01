@@ -39,6 +39,7 @@ pub trait DataConnector: Send + Sync {
 pub struct ConnectorOptions {
     pub edition_year: i32,
     pub chapters: Option<String>,
+    pub session_key: Option<String>,
     pub max_items: usize,
 }
 
@@ -48,6 +49,10 @@ pub fn connector_for(
 ) -> Box<dyn DataConnector> {
     if entry.source_id == "or_leg_ors_html" {
         Box::new(OrsHtmlConnector { entry, options })
+    } else if entry.source_id == "or_leg_odata" {
+        Box::new(crate::oregon_leg_odata::OregonLegODataConnector::new(
+            entry, options,
+        ))
     } else {
         Box::new(RegistryBackedConnector { entry, options })
     }

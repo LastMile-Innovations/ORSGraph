@@ -365,6 +365,43 @@ impl CaseBuilderService {
         })
     }
 
+    pub async fn get_matter_graph(&self, matter_id: &str) -> ApiResult<CaseGraphResponse> {
+        let matter = self.get_matter(matter_id).await?;
+        Ok(build_case_graph(&matter))
+    }
+
+    pub async fn run_matter_qc(&self, matter_id: &str) -> ApiResult<QcRun> {
+        let matter = self.get_matter(matter_id).await?;
+        Ok(build_matter_qc_run(&matter))
+    }
+
+    pub async fn spot_issues(
+        &self,
+        matter_id: &str,
+        request: IssueSpotRequest,
+    ) -> ApiResult<IssueSpotResponse> {
+        let matter = self.get_matter(matter_id).await?;
+        Ok(build_issue_spot_response(&matter, request))
+    }
+
+    pub async fn create_matter_export_package(
+        &self,
+        matter_id: &str,
+        format: &str,
+    ) -> ApiResult<AiActionResponse<ExportPackage>> {
+        let matter = self.get_matter(matter_id).await?;
+        let package = build_matter_export_package(&matter, format);
+        Ok(AiActionResponse {
+            enabled: true,
+            mode: "deterministic_package".to_string(),
+            message: format!(
+                "{} export package prepared with review-needed warnings.",
+                humanize_export_format(format)
+            ),
+            result: Some(package),
+        })
+    }
+
     pub async fn patch_matter(
         &self,
         matter_id: &str,
@@ -2282,12 +2319,174 @@ impl CaseBuilderService {
         Ok(product)
     }
 
+    pub async fn patch_work_product_support(
+        &self,
+        matter_id: &str,
+        work_product_id: &str,
+        anchor_id: &str,
+        request: PatchWorkProductSupportRequest,
+    ) -> ApiResult<WorkProduct> {
+        let mut product = self.get_work_product(matter_id, work_product_id).await?;
+        let before_product = product.clone();
+        let before_anchor = product
+            .anchors
+            .iter()
+            .find(|anchor| support_anchor_id_matches(anchor, anchor_id))
+            .cloned()
+            .ok_or_else(|| ApiError::NotFound("Work product support link not found".to_string()))?;
+        let after_anchor = apply_work_product_support_update(&mut product, anchor_id, request)?;
+        product.history.push(work_product_event(
+            matter_id,
+            work_product_id,
+            "support_updated",
+            "anchor",
+            &after_anchor.anchor_id,
+            "Support link updated.",
+        ));
+        refresh_work_product_state(&mut product);
+        self.validate_work_product_matter_references(matter_id, &product)
+            .await?;
+        let product = self.save_work_product(matter_id, product).await?;
+        self.record_work_product_change(
+            matter_id,
+            Some(&before_product),
+            &product,
+            "support_link",
+            "auto",
+            "Support updated",
+            "Support link updated.",
+            vec![VersionChangeInput {
+                target_type: "support_use".to_string(),
+                target_id: after_anchor.anchor_id.clone(),
+                operation: "update".to_string(),
+                before: json_value(&before_anchor).ok(),
+                after: json_value(&after_anchor).ok(),
+                summary: "Support link updated.".to_string(),
+                legal_impact: legal_impact_for_support_anchor(&after_anchor),
+                ai_audit_id: None,
+            }],
+        )
+        .await?;
+        Ok(product)
+    }
+
+    pub async fn delete_work_product_support(
+        &self,
+        matter_id: &str,
+        work_product_id: &str,
+        anchor_id: &str,
+    ) -> ApiResult<WorkProduct> {
+        let mut product = self.get_work_product(matter_id, work_product_id).await?;
+        let before_product = product.clone();
+        let removed_anchor = apply_work_product_support_removal(&mut product, anchor_id)?;
+        product.history.push(work_product_event(
+            matter_id,
+            work_product_id,
+            "support_removed",
+            "anchor",
+            &removed_anchor.anchor_id,
+            "Support link removed.",
+        ));
+        refresh_work_product_state(&mut product);
+        self.validate_work_product_matter_references(matter_id, &product)
+            .await?;
+        let product = self.save_work_product(matter_id, product).await?;
+        self.record_work_product_change(
+            matter_id,
+            Some(&before_product),
+            &product,
+            "support_link",
+            "auto",
+            "Support removed",
+            "Support link removed.",
+            vec![VersionChangeInput {
+                target_type: "support_use".to_string(),
+                target_id: removed_anchor.anchor_id.clone(),
+                operation: "delete".to_string(),
+                before: json_value(&removed_anchor).ok(),
+                after: None,
+                summary: "Support link removed.".to_string(),
+                legal_impact: legal_impact_for_support_anchor(&removed_anchor),
+                ai_audit_id: None,
+            }],
+        )
+        .await?;
+        Ok(product)
+    }
+
+    pub async fn link_work_product_text_range(
+        &self,
+        matter_id: &str,
+        work_product_id: &str,
+        request: WorkProductTextRangeLinkRequest,
+    ) -> ApiResult<WorkProduct> {
+        let mut product = self.get_work_product(matter_id, work_product_id).await?;
+        let before_product = product.clone();
+        self.validate_work_product_link_target(matter_id, &request.target_type, &request.target_id)
+            .await?;
+        if let Some(document_id) = trimmed_optional_string(request.document_id.as_deref()) {
+            self.require_document(matter_id, &document_id).await?;
+        }
+        let operations = apply_work_product_text_range_link(&mut product, request)?;
+        normalize_work_product_ast(&mut product);
+        let validation = validate_work_product_document(&product);
+        if !validation.errors.is_empty() {
+            let codes = validation
+                .errors
+                .iter()
+                .map(|issue| issue.code.clone())
+                .collect::<Vec<_>>()
+                .join(",");
+            return Err(ApiError::BadRequest(format!(
+                "Text range link failed validation: issue_codes={codes}"
+            )));
+        }
+        product.blocks = flatten_work_product_blocks(&product.document_ast.blocks);
+        self.validate_work_product_matter_references(matter_id, &product)
+            .await?;
+        product.history.push(work_product_event(
+            matter_id,
+            work_product_id,
+            "text_range_linked",
+            "document_ast",
+            &product.document_ast.document_id,
+            "Text range linked to support, citation, or exhibit.",
+        ));
+        refresh_work_product_state(&mut product);
+        let product = self.save_work_product(matter_id, product).await?;
+        self.record_work_product_change(
+            matter_id,
+            Some(&before_product),
+            &product,
+            "support_link",
+            "auto",
+            "Text range linked",
+            "Text range linked to support, citation, or exhibit.",
+            vec![VersionChangeInput {
+                target_type: "text_range".to_string(),
+                target_id: operations
+                    .first()
+                    .map(ast_operation_target_id)
+                    .unwrap_or_else(|| work_product_id.to_string()),
+                operation: "link".to_string(),
+                before: None,
+                after: json_value(&operations).ok(),
+                summary: "Text range linked to support, citation, or exhibit.".to_string(),
+                legal_impact: legal_impact_for_ast_operations(&operations),
+                ai_audit_id: None,
+            }],
+        )
+        .await?;
+        Ok(product)
+    }
+
     pub async fn run_work_product_qc(
         &self,
         matter_id: &str,
         work_product_id: &str,
     ) -> ApiResult<AiActionResponse<Vec<WorkProductFinding>>> {
         let mut product = self.get_work_product(matter_id, work_product_id).await?;
+        ensure_work_product_ast_valid(&product, "Work product QC")?;
         let before_product = product.clone();
         product.findings = work_product_findings(&product);
         product.document_ast.rule_findings = product.findings.clone();
@@ -2426,6 +2625,7 @@ impl CaseBuilderService {
         work_product_id: &str,
     ) -> ApiResult<WorkProductPreviewResponse> {
         let product = self.get_work_product(matter_id, work_product_id).await?;
+        ensure_work_product_ast_valid(&product, "Work product preview")?;
         Ok(render_work_product_preview(&product))
     }
 
@@ -2438,6 +2638,7 @@ impl CaseBuilderService {
         let mut product = self.get_work_product(matter_id, work_product_id).await?;
         let before_product = product.clone();
         let format = normalize_export_format(&request.format)?;
+        ensure_work_product_ast_valid(&product, "Work product export")?;
         let profile = request.profile.unwrap_or_else(|| "review".to_string());
         let mode = request.mode.unwrap_or_else(|| "review_needed".to_string());
         let generated_at = now_string();
@@ -3424,6 +3625,7 @@ impl CaseBuilderService {
     ) -> ApiResult<WorkProduct> {
         product.updated_at = now_string();
         refresh_work_product_state(&mut product);
+        ensure_work_product_ast_valid(&product, "Work product save")?;
         self.save_work_product_internal(matter_id, product).await
     }
 
@@ -3433,6 +3635,7 @@ impl CaseBuilderService {
         mut product: WorkProduct,
     ) -> ApiResult<WorkProduct> {
         refresh_work_product_state(&mut product);
+        ensure_work_product_ast_valid(&product, "Work product save")?;
         let product = self
             .merge_node(
                 matter_id,
@@ -7649,25 +7852,31 @@ fn matter_reference_error(error: ApiError, target_type: &str) -> ApiError {
 }
 
 fn normalize_work_product_type(value: &str) -> ApiResult<String> {
-    let normalized = value.trim().to_ascii_lowercase().replace('-', "_");
-    let supported = [
-        "complaint",
-        "motion",
-        "answer",
-        "declaration",
-        "brief",
-        "demand_letter",
-        "legal_memo",
-        "exhibit_list",
-        "notice",
-        "proposed_order",
-    ];
-    if supported.contains(&normalized.as_str()) {
-        Ok(normalized)
-    } else {
-        Err(ApiError::BadRequest(format!(
-            "Unsupported work product type {value}"
-        )))
+    canonical_work_product_type(value)
+        .map(str::to_string)
+        .ok_or_else(|| ApiError::BadRequest(format!("Unsupported work product type {value}")))
+}
+
+fn normalize_work_product_type_lossy(value: &str) -> String {
+    canonical_work_product_type(value)
+        .unwrap_or("custom")
+        .to_string()
+}
+
+fn canonical_work_product_type(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "complaint" => Some("complaint"),
+        "answer" => Some("answer"),
+        "motion" => Some("motion"),
+        "declaration" => Some("declaration"),
+        "affidavit" => Some("affidavit"),
+        "memo" | "legal_memo" | "brief" => Some("memo"),
+        "notice" => Some("notice"),
+        "letter" | "demand_letter" => Some("letter"),
+        "exhibit_list" => Some("exhibit_list"),
+        "proposed_order" => Some("proposed_order"),
+        "custom" => Some("custom"),
+        _ => None,
     }
 }
 
@@ -7720,7 +7929,7 @@ fn default_work_product_from_matter(
                 ("prayer", "Prayer for relief", "State the requested relief."),
             ],
         ),
-        "declaration" => profile_blocks(
+        "declaration" | "affidavit" => profile_blocks(
             &matter.matter_id,
             work_product_id,
             &[
@@ -7739,6 +7948,37 @@ fn default_work_product_from_matter(
                     "Signature",
                     "Add date, place, signature, and review required language.",
                 ),
+            ],
+        ),
+        "memo" => profile_blocks(
+            &matter.matter_id,
+            work_product_id,
+            &[
+                ("question", "Question presented", "State the legal question."),
+                ("brief_answer", "Brief answer", "Give the short answer with caveats."),
+                ("facts", "Relevant facts", "Link facts and evidence."),
+                ("analysis", "Analysis", "Add source-backed legal analysis."),
+                ("conclusion", "Conclusion", "State the recommended next step."),
+            ],
+        ),
+        "notice" | "letter" => profile_blocks(
+            &matter.matter_id,
+            work_product_id,
+            &[
+                ("recipient", "Recipient", "Identify the recipient and delivery context."),
+                ("purpose", "Purpose", "State the notice or letter purpose."),
+                ("body", "Body", "Draft the operative text."),
+                ("signature", "Signature", "Add sender signature and contact details."),
+            ],
+        ),
+        "proposed_order" => profile_blocks(
+            &matter.matter_id,
+            work_product_id,
+            &[
+                ("caption", "Caption", "Confirm court, parties, and case number."),
+                ("findings", "Findings", "Add any findings or recitals."),
+                ("order", "Order", "State the ordered relief."),
+                ("signature", "Judge signature", "Reserve signature block."),
             ],
         ),
         "exhibit_list" => profile_blocks(
@@ -8108,10 +8348,39 @@ fn work_product_profile(product_type: &str) -> WorkProductProfile {
             vec!["responses", "affirmative_defenses", "prayer"],
             vec!["counterclaims"],
         ),
-        "declaration" => (
-            "Declaration",
+        "declaration" | "affidavit" => (
+            if product_type == "affidavit" {
+                "Affidavit"
+            } else {
+                "Declaration"
+            },
             vec!["declarant", "facts", "signature"],
             vec!["exhibits"],
+        ),
+        "memo" => (
+            "Legal Memo",
+            vec!["question", "brief_answer", "facts", "analysis", "conclusion"],
+            vec!["authorities", "exhibits"],
+        ),
+        "notice" => (
+            "Notice",
+            vec!["recipient", "purpose", "body", "signature"],
+            vec!["certificate", "exhibits"],
+        ),
+        "letter" => (
+            "Letter",
+            vec!["recipient", "purpose", "body", "signature"],
+            vec!["enclosures", "exhibits"],
+        ),
+        "proposed_order" => (
+            "Proposed Order",
+            vec!["caption", "findings", "order", "signature"],
+            vec!["service"],
+        ),
+        "exhibit_list" => (
+            "Exhibit List",
+            vec!["exhibits"],
+            vec!["foundation"],
         ),
         _ => (
             "Structured Work Product",
@@ -8276,6 +8545,1096 @@ fn slug_casebuilder_id(value: &str) -> String {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("_")
+}
+
+fn build_case_graph(matter: &MatterBundle) -> CaseGraphResponse {
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+    let mut seen_nodes = HashSet::new();
+    let mut seen_edges = HashSet::new();
+    let base = format!("/casebuilder/matters/{}", matter.summary.matter_id);
+
+    add_case_graph_node(
+        &mut nodes,
+        &mut seen_nodes,
+        CaseGraphNode {
+            id: matter.summary.matter_id.clone(),
+            kind: "matter".to_string(),
+            label: matter.summary.name.clone(),
+            subtitle: Some(matter.summary.court.clone()),
+            status: Some(matter.summary.status.clone()),
+            risk: None,
+            href: Some(base.clone()),
+            metadata: graph_metadata([
+                ("jurisdiction", matter.summary.jurisdiction.clone()),
+                (
+                    "case_number",
+                    matter
+                        .summary
+                        .case_number
+                        .clone()
+                        .unwrap_or_else(|| "unassigned".to_string()),
+                ),
+            ]),
+        },
+    );
+
+    for party in &matter.parties {
+        add_case_graph_node(
+            &mut nodes,
+            &mut seen_nodes,
+            CaseGraphNode {
+                id: party.party_id.clone(),
+                kind: "party".to_string(),
+                label: party.name.clone(),
+                subtitle: Some(format!("{} / {}", party.role, party.party_type)),
+                status: None,
+                risk: None,
+                href: Some(format!("{base}/parties")),
+                metadata: graph_metadata([
+                    ("role", party.role.clone()),
+                    ("party_type", party.party_type.clone()),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            &mut edges,
+            &mut seen_edges,
+            &matter.summary.matter_id,
+            &party.party_id,
+            "has_party",
+            "has party",
+            None,
+        );
+    }
+
+    for document in &matter.documents {
+        add_case_graph_node(
+            &mut nodes,
+            &mut seen_nodes,
+            CaseGraphNode {
+                id: document.document_id.clone(),
+                kind: "document".to_string(),
+                label: document.title.clone(),
+                subtitle: Some(document.filename.clone()),
+                status: Some(document.processing_status.clone()),
+                risk: document
+                    .contradictions_flagged
+                    .gt(&0)
+                    .then(|| "contradiction".to_string()),
+                href: Some(format!("{base}/documents/{}", document.document_id)),
+                metadata: graph_metadata([
+                    ("document_type", document.document_type.clone()),
+                    ("folder", document.folder.clone()),
+                    ("storage_status", document.storage_status.clone()),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            &mut edges,
+            &mut seen_edges,
+            &matter.summary.matter_id,
+            &document.document_id,
+            "has_document",
+            "has document",
+            Some(document.processing_status.as_str()),
+        );
+    }
+
+    for fact in &matter.facts {
+        add_case_graph_node(
+            &mut nodes,
+            &mut seen_nodes,
+            CaseGraphNode {
+                id: fact.fact_id.clone(),
+                kind: "fact".to_string(),
+                label: truncate_graph_label(&fact.statement),
+                subtitle: fact.date.clone(),
+                status: Some(fact.status.clone()),
+                risk: if fact.needs_verification {
+                    Some("needs_verification".to_string())
+                } else {
+                    None
+                },
+                href: Some(format!("{base}/facts#{}", fact.fact_id)),
+                metadata: graph_metadata([
+                    ("confidence", format!("{:.0}%", fact.confidence * 100.0)),
+                    ("sources", fact.source_document_ids.len().to_string()),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            &mut edges,
+            &mut seen_edges,
+            &matter.summary.matter_id,
+            &fact.fact_id,
+            "has_fact",
+            "has fact",
+            Some(fact.status.as_str()),
+        );
+        for document_id in &fact.source_document_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                document_id,
+                &fact.fact_id,
+                "supports_fact",
+                "supports fact",
+                Some(fact.status.as_str()),
+            );
+        }
+        for evidence_id in &fact.source_evidence_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                evidence_id,
+                &fact.fact_id,
+                "supports_fact",
+                "supports fact",
+                Some(fact.status.as_str()),
+            );
+        }
+        for evidence_id in &fact.contradicted_by_evidence_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                evidence_id,
+                &fact.fact_id,
+                "contradicts_fact",
+                "contradicts",
+                Some("open"),
+            );
+        }
+    }
+
+    for evidence in &matter.evidence {
+        add_case_graph_node(
+            &mut nodes,
+            &mut seen_nodes,
+            CaseGraphNode {
+                id: evidence.evidence_id.clone(),
+                kind: "evidence".to_string(),
+                label: truncate_graph_label(&evidence.quote),
+                subtitle: Some(evidence.evidence_type.clone()),
+                status: Some(evidence.strength.clone()),
+                risk: (!evidence.contradicts_fact_ids.is_empty())
+                    .then(|| "contradiction".to_string()),
+                href: Some(format!("{base}/evidence")),
+                metadata: graph_metadata([
+                    ("strength", evidence.strength.clone()),
+                    ("confidence", format!("{:.0}%", evidence.confidence * 100.0)),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            &mut edges,
+            &mut seen_edges,
+            &matter.summary.matter_id,
+            &evidence.evidence_id,
+            "has_evidence",
+            "has evidence",
+            Some(evidence.strength.as_str()),
+        );
+        add_case_graph_edge(
+            &mut edges,
+            &mut seen_edges,
+            &evidence.document_id,
+            &evidence.evidence_id,
+            "derived_from",
+            "derived from",
+            None,
+        );
+        for fact_id in &evidence.supports_fact_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                &evidence.evidence_id,
+                fact_id,
+                "supports_fact",
+                "supports",
+                Some("support"),
+            );
+        }
+        for fact_id in &evidence.contradicts_fact_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                &evidence.evidence_id,
+                fact_id,
+                "contradicts_fact",
+                "contradicts",
+                Some("open"),
+            );
+        }
+    }
+
+    for claim in &matter.claims {
+        add_case_graph_node(
+            &mut nodes,
+            &mut seen_nodes,
+            CaseGraphNode {
+                id: claim.claim_id.clone(),
+                kind: claim.kind.clone(),
+                label: claim.title.clone(),
+                subtitle: Some(claim.claim_type.clone()),
+                status: Some(claim.status.clone()),
+                risk: Some(claim.risk_level.clone()),
+                href: Some(format!("{base}/claims#{}", claim.claim_id)),
+                metadata: graph_metadata([
+                    ("elements", claim.elements.len().to_string()),
+                    ("authorities", claim.authorities.len().to_string()),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            &mut edges,
+            &mut seen_edges,
+            &matter.summary.matter_id,
+            &claim.claim_id,
+            "has_claim",
+            "has claim",
+            Some(claim.status.as_str()),
+        );
+        for fact_id in &claim.fact_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                fact_id,
+                &claim.claim_id,
+                "supports_claim",
+                "supports claim",
+                None,
+            );
+        }
+        for evidence_id in &claim.evidence_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                evidence_id,
+                &claim.claim_id,
+                "supports_claim",
+                "supports claim",
+                None,
+            );
+        }
+        for authority in &claim.authorities {
+            add_authority_node_and_edge(
+                &mut nodes,
+                &mut edges,
+                &mut seen_nodes,
+                &mut seen_edges,
+                &claim.claim_id,
+                authority,
+            );
+        }
+        for element in &claim.elements {
+            add_case_graph_node(
+                &mut nodes,
+                &mut seen_nodes,
+                CaseGraphNode {
+                    id: element.element_id.clone(),
+                    kind: "element".to_string(),
+                    label: truncate_graph_label(&element.text),
+                    subtitle: Some(claim.title.clone()),
+                    status: Some(if element.satisfied {
+                        "supported".to_string()
+                    } else {
+                        "missing".to_string()
+                    }),
+                    risk: (!element.satisfied).then(|| "gap".to_string()),
+                    href: Some(format!("{base}/claims#{}", claim.claim_id)),
+                    metadata: graph_metadata([
+                        ("facts", element.fact_ids.len().to_string()),
+                        ("evidence", element.evidence_ids.len().to_string()),
+                        ("authorities", element.authorities.len().to_string()),
+                    ]),
+                },
+            );
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                &claim.claim_id,
+                &element.element_id,
+                "has_element",
+                "has element",
+                if element.satisfied {
+                    Some("supported")
+                } else {
+                    Some("missing")
+                },
+            );
+            for fact_id in &element.fact_ids {
+                add_case_graph_edge(
+                    &mut edges,
+                    &mut seen_edges,
+                    fact_id,
+                    &element.element_id,
+                    "satisfies_element",
+                    "satisfies",
+                    None,
+                );
+            }
+            for evidence_id in &element.evidence_ids {
+                add_case_graph_edge(
+                    &mut edges,
+                    &mut seen_edges,
+                    evidence_id,
+                    &element.element_id,
+                    "supports_element",
+                    "supports",
+                    None,
+                );
+            }
+            for authority in &element.authorities {
+                add_authority_node_and_edge(
+                    &mut nodes,
+                    &mut edges,
+                    &mut seen_nodes,
+                    &mut seen_edges,
+                    &element.element_id,
+                    authority,
+                );
+            }
+        }
+    }
+
+    for event in &matter.timeline {
+        add_case_graph_node(
+            &mut nodes,
+            &mut seen_nodes,
+            CaseGraphNode {
+                id: event.event_id.clone(),
+                kind: "event".to_string(),
+                label: event.title.clone(),
+                subtitle: Some(event.date.clone()),
+                status: Some(event.status.clone()),
+                risk: event.disputed.then(|| "disputed".to_string()),
+                href: Some(format!("{base}/timeline")),
+                metadata: graph_metadata([
+                    ("kind", event.kind.clone()),
+                    ("date_confidence", format!("{:.0}%", event.date_confidence * 100.0)),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            &mut edges,
+            &mut seen_edges,
+            &matter.summary.matter_id,
+            &event.event_id,
+            "has_event",
+            "has event",
+            Some(event.status.as_str()),
+        );
+        if let Some(document_id) = &event.source_document_id {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                document_id,
+                &event.event_id,
+                "documents_event",
+                "documents",
+                None,
+            );
+        }
+        for fact_id in &event.linked_fact_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                fact_id,
+                &event.event_id,
+                "supports_event",
+                "supports event",
+                None,
+            );
+        }
+    }
+
+    for deadline in &matter.deadlines {
+        add_case_graph_node(
+            &mut nodes,
+            &mut seen_nodes,
+            CaseGraphNode {
+                id: deadline.deadline_id.clone(),
+                kind: "deadline".to_string(),
+                label: deadline.title.clone(),
+                subtitle: Some(deadline.due_date.clone()),
+                status: Some(deadline.status.clone()),
+                risk: Some(deadline.severity.clone()),
+                href: Some(format!("{base}/deadlines#{}", deadline.deadline_id)),
+                metadata: graph_metadata([
+                    ("kind", deadline.kind.clone()),
+                    ("source", deadline.source.clone()),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            &mut edges,
+            &mut seen_edges,
+            &matter.summary.matter_id,
+            &deadline.deadline_id,
+            "has_deadline",
+            "has deadline",
+            Some(deadline.status.as_str()),
+        );
+        if let Some(event_id) = &deadline.triggered_by_event_id {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                event_id,
+                &deadline.deadline_id,
+                "triggers_deadline",
+                "triggers",
+                None,
+            );
+        }
+    }
+
+    for task in &matter.tasks {
+        add_case_graph_node(
+            &mut nodes,
+            &mut seen_nodes,
+            CaseGraphNode {
+                id: task.task_id.clone(),
+                kind: "task".to_string(),
+                label: task.title.clone(),
+                subtitle: task.due_date.clone(),
+                status: Some(task.status.clone()),
+                risk: Some(task.priority.clone()),
+                href: Some(format!("{base}/tasks")),
+                metadata: graph_metadata([
+                    ("source", task.source.clone()),
+                    ("priority", task.priority.clone()),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            &mut edges,
+            &mut seen_edges,
+            &matter.summary.matter_id,
+            &task.task_id,
+            "has_task",
+            "has task",
+            Some(task.status.as_str()),
+        );
+        if let Some(deadline_id) = &task.related_deadline_id {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                deadline_id,
+                &task.task_id,
+                "drives_task",
+                "drives task",
+                None,
+            );
+        }
+        for claim_id in &task.related_claim_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                claim_id,
+                &task.task_id,
+                "requires_task",
+                "requires task",
+                None,
+            );
+        }
+        for document_id in &task.related_document_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                document_id,
+                &task.task_id,
+                "requires_task",
+                "requires task",
+                None,
+            );
+        }
+    }
+
+    for product in &matter.work_products {
+        add_case_graph_node(
+            &mut nodes,
+            &mut seen_nodes,
+            CaseGraphNode {
+                id: product.work_product_id.clone(),
+                kind: "work_product".to_string(),
+                label: product.title.clone(),
+                subtitle: Some(product.product_type.clone()),
+                status: Some(product.review_status.clone()),
+                risk: (!product.findings.iter().all(|finding| finding.status != "open"))
+                    .then(|| "open_findings".to_string()),
+                href: Some(format!(
+                    "{base}/work-products/{}/editor",
+                    product.work_product_id
+                )),
+                metadata: graph_metadata([
+                    ("blocks", product.blocks.len().to_string()),
+                    ("findings", product.findings.len().to_string()),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            &mut edges,
+            &mut seen_edges,
+            &matter.summary.matter_id,
+            &product.work_product_id,
+            "has_work_product",
+            "has work product",
+            Some(product.review_status.as_str()),
+        );
+        for anchor in &product.anchors {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                &product.work_product_id,
+                &anchor.target_id,
+                "cites_support",
+                "uses support",
+                Some(anchor.status.as_str()),
+            );
+        }
+    }
+
+    CaseGraphResponse {
+        matter_id: matter.summary.matter_id.clone(),
+        generated_at: now_string(),
+        modes: vec![
+            "overview".to_string(),
+            "evidence".to_string(),
+            "claims".to_string(),
+            "timeline".to_string(),
+            "authority".to_string(),
+            "work_product".to_string(),
+            "tasks".to_string(),
+        ],
+        nodes,
+        edges,
+        warnings: vec![
+            "Graph is derived from current matter records; large-matter paging and graph persistence remain future hardening.".to_string(),
+        ],
+    }
+}
+
+fn build_matter_qc_run(matter: &MatterBundle) -> QcRun {
+    let now = now_string();
+    let evidence_gaps = build_evidence_gaps(matter);
+    let authority_gaps = build_authority_gaps(matter);
+    let contradictions = build_contradictions(matter);
+    let work_product_findings = matter
+        .work_products
+        .iter()
+        .flat_map(|product| product.findings.clone())
+        .filter(|finding| finding.status == "open")
+        .collect::<Vec<_>>();
+    let suggested_tasks = evidence_gaps
+        .iter()
+        .map(|gap| CreateTaskRequest {
+            title: format!("Resolve evidence gap: {}", gap.title),
+            status: Some("todo".to_string()),
+            priority: Some(match gap.severity.as_str() {
+                "blocking" | "critical" => "high".to_string(),
+                "warning" => "med".to_string(),
+                _ => "low".to_string(),
+            }),
+            due_date: None,
+            assigned_to: None,
+            related_claim_ids: Some(
+                (gap.target_type == "claim")
+                    .then(|| vec![gap.target_id.clone()])
+                    .unwrap_or_default(),
+            ),
+            related_document_ids: Some(Vec::new()),
+            related_deadline_id: None,
+            source: Some("qc_run".to_string()),
+            description: Some(gap.message.clone()),
+        })
+        .chain(authority_gaps.iter().map(|gap| CreateTaskRequest {
+            title: format!("Resolve authority gap: {}", gap.title),
+            status: Some("todo".to_string()),
+            priority: Some("med".to_string()),
+            due_date: None,
+            assigned_to: None,
+            related_claim_ids: Some(
+                (gap.target_type == "claim")
+                    .then(|| vec![gap.target_id.clone()])
+                    .unwrap_or_default(),
+            ),
+            related_document_ids: Some(Vec::new()),
+            related_deadline_id: None,
+            source: Some("qc_run".to_string()),
+            description: Some(gap.message.clone()),
+        }))
+        .take(20)
+        .collect::<Vec<_>>();
+    QcRun {
+        qc_run_id: generate_id("qc-run", &format!("{}:{now}", matter.summary.matter_id)),
+        id: generate_id("qc-run", &format!("{}:{now}", matter.summary.matter_id)),
+        matter_id: matter.summary.matter_id.clone(),
+        status: "complete".to_string(),
+        mode: "deterministic".to_string(),
+        generated_at: now,
+        evidence_gaps,
+        authority_gaps,
+        contradictions,
+        fact_findings: matter
+            .fact_check_findings
+            .iter()
+            .filter(|finding| finding.status == "open")
+            .cloned()
+            .collect(),
+        citation_findings: matter
+            .citation_check_findings
+            .iter()
+            .filter(|finding| finding.status == "open")
+            .cloned()
+            .collect(),
+        work_product_findings,
+        suggested_tasks,
+        warnings: vec![
+            "Matter QC is deterministic and provider-free; verify every filing decision manually.".to_string(),
+        ],
+    }
+}
+
+fn build_issue_spot_response(matter: &MatterBundle, request: IssueSpotRequest) -> IssueSpotResponse {
+    let mode = request
+        .mode
+        .unwrap_or_else(|| "deterministic_review".to_string());
+    let limit = request.limit.unwrap_or(12) as usize;
+    let mut suggestions = Vec::new();
+    if matter.claims.is_empty() && !matter.facts.is_empty() {
+        let fact_ids = matter
+            .facts
+            .iter()
+            .take(5)
+            .map(|fact| fact.fact_id.clone())
+            .collect::<Vec<_>>();
+        suggestions.push(IssueSuggestion {
+            suggestion_id: generate_id("issue", &format!("{}:claim-intake", matter.summary.matter_id)),
+            id: generate_id("issue", &format!("{}:claim-intake", matter.summary.matter_id)),
+            matter_id: matter.summary.matter_id.clone(),
+            issue_type: "claim_suggestion".to_string(),
+            title: "Build first claim theory from reviewed facts".to_string(),
+            summary: "Facts exist, but no claim or defense theory has been created yet.".to_string(),
+            confidence: 0.68,
+            severity: "warning".to_string(),
+            status: "open".to_string(),
+            fact_ids,
+            evidence_ids: Vec::new(),
+            document_ids: Vec::new(),
+            authority_refs: Vec::new(),
+            recommended_action: "Create a claim and map facts to each element.".to_string(),
+            mode: mode.clone(),
+        });
+    }
+
+    for claim in &matter.claims {
+        let missing_elements = claim
+            .elements
+            .iter()
+            .filter(|element| !element.satisfied || element.fact_ids.is_empty())
+            .count();
+        if missing_elements > 0 {
+            suggestions.push(IssueSuggestion {
+                suggestion_id: generate_id(
+                    "issue",
+                    &format!("{}:{}:missing-elements", matter.summary.matter_id, claim.claim_id),
+                ),
+                id: generate_id(
+                    "issue",
+                    &format!("{}:{}:missing-elements", matter.summary.matter_id, claim.claim_id),
+                ),
+                matter_id: matter.summary.matter_id.clone(),
+                issue_type: "element_gap".to_string(),
+                title: format!("{} has {} missing element(s)", claim.title, missing_elements),
+                summary: "One or more elements lack reviewed facts or evidence.".to_string(),
+                confidence: 0.82,
+                severity: "serious".to_string(),
+                status: "open".to_string(),
+                fact_ids: claim.fact_ids.clone(),
+                evidence_ids: claim.evidence_ids.clone(),
+                document_ids: Vec::new(),
+                authority_refs: claim.authorities.clone(),
+                recommended_action: "Run element mapping and attach facts/evidence to each missing element.".to_string(),
+                mode: mode.clone(),
+            });
+        }
+    }
+
+    for document in &matter.documents {
+        if document.document_type == "complaint" {
+            suggestions.push(IssueSuggestion {
+                suggestion_id: generate_id(
+                    "issue",
+                    &format!("{}:{}:answer-profile", matter.summary.matter_id, document.document_id),
+                ),
+                id: generate_id(
+                    "issue",
+                    &format!("{}:{}:answer-profile", matter.summary.matter_id, document.document_id),
+                ),
+                matter_id: matter.summary.matter_id.clone(),
+                issue_type: "answer_workflow".to_string(),
+                title: "Uploaded complaint may need an answer workflow".to_string(),
+                summary: "A complaint document is present; parse allegations and build admit/deny responses before answer drafting.".to_string(),
+                confidence: 0.74,
+                severity: "warning".to_string(),
+                status: "open".to_string(),
+                fact_ids: Vec::new(),
+                evidence_ids: Vec::new(),
+                document_ids: vec![document.document_id.clone()],
+                authority_refs: Vec::new(),
+                recommended_action: "Open the Answer profile and create a response grid from numbered allegations.".to_string(),
+                mode: mode.clone(),
+            });
+        }
+    }
+
+    for deadline in &matter.deadlines {
+        if deadline.status != "complete" && deadline.days_remaining <= 14 {
+            suggestions.push(IssueSuggestion {
+                suggestion_id: generate_id(
+                    "issue",
+                    &format!("{}:{}:deadline-risk", matter.summary.matter_id, deadline.deadline_id),
+                ),
+                id: generate_id(
+                    "issue",
+                    &format!("{}:{}:deadline-risk", matter.summary.matter_id, deadline.deadline_id),
+                ),
+                matter_id: matter.summary.matter_id.clone(),
+                issue_type: "deadline_risk".to_string(),
+                title: format!("Deadline due soon: {}", deadline.title),
+                summary: format!("{} is due on {}.", deadline.title, deadline.due_date),
+                confidence: 0.9,
+                severity: if deadline.days_remaining < 0 {
+                    "critical".to_string()
+                } else {
+                    deadline.severity.clone()
+                },
+                status: "open".to_string(),
+                fact_ids: Vec::new(),
+                evidence_ids: Vec::new(),
+                document_ids: Vec::new(),
+                authority_refs: deadline
+                    .source_citation
+                    .as_ref()
+                    .map(|citation| AuthorityRef {
+                        citation: citation.clone(),
+                        canonical_id: deadline
+                            .source_canonical_id
+                            .clone()
+                            .unwrap_or_else(|| citation.clone()),
+                        reason: Some("Deadline source".to_string()),
+                        pinpoint: None,
+                    })
+                    .into_iter()
+                    .collect(),
+                recommended_action: "Confirm trigger date, create completion tasks, and update status.".to_string(),
+                mode: mode.clone(),
+            });
+        }
+    }
+
+    IssueSpotResponse {
+        matter_id: matter.summary.matter_id.clone(),
+        generated_at: now_string(),
+        mode,
+        suggestions: suggestions.into_iter().take(limit).collect(),
+        warnings: vec![
+            "Issue spotting is deterministic and conservative; live AI suggestions are provider-gated.".to_string(),
+        ],
+    }
+}
+
+fn build_evidence_gaps(matter: &MatterBundle) -> Vec<EvidenceGap> {
+    let mut gaps = Vec::new();
+    for fact in &matter.facts {
+        if fact.source_document_ids.is_empty()
+            && fact.source_evidence_ids.is_empty()
+            && fact.source_spans.is_empty()
+        {
+            let gap_id = generate_id(
+                "evidence-gap",
+                &format!("{}:{}:source", matter.summary.matter_id, fact.fact_id),
+            );
+            gaps.push(EvidenceGap {
+                id: gap_id.clone(),
+                gap_id,
+                matter_id: matter.summary.matter_id.clone(),
+                target_type: "fact".to_string(),
+                target_id: fact.fact_id.clone(),
+                title: truncate_graph_label(&fact.statement),
+                message: "Fact has no document, evidence, or source-span support.".to_string(),
+                severity: if fact.status == "supported" {
+                    "warning".to_string()
+                } else {
+                    "info".to_string()
+                },
+                status: "open".to_string(),
+                fact_ids: vec![fact.fact_id.clone()],
+                evidence_ids: Vec::new(),
+            });
+        }
+    }
+    for claim in &matter.claims {
+        for element in &claim.elements {
+            if !element.satisfied || element.fact_ids.is_empty() {
+                let gap_id = generate_id(
+                    "evidence-gap",
+                    &format!("{}:{}:{}", matter.summary.matter_id, claim.claim_id, element.element_id),
+                );
+                gaps.push(EvidenceGap {
+                    id: gap_id.clone(),
+                    gap_id,
+                    matter_id: matter.summary.matter_id.clone(),
+                    target_type: "element".to_string(),
+                    target_id: element.element_id.clone(),
+                    title: truncate_graph_label(&element.text),
+                    message: format!("Element in '{}' is missing fact or evidence support.", claim.title),
+                    severity: "serious".to_string(),
+                    status: "open".to_string(),
+                    fact_ids: element.fact_ids.clone(),
+                    evidence_ids: element.evidence_ids.clone(),
+                });
+            }
+        }
+    }
+    gaps
+}
+
+fn build_authority_gaps(matter: &MatterBundle) -> Vec<AuthorityGap> {
+    let mut gaps = Vec::new();
+    for claim in &matter.claims {
+        if claim.authorities.is_empty()
+            && claim
+                .elements
+                .iter()
+                .all(|element| element.authority.is_none() && element.authorities.is_empty())
+        {
+            let gap_id = generate_id(
+                "authority-gap",
+                &format!("{}:{}:authority", matter.summary.matter_id, claim.claim_id),
+            );
+            gaps.push(AuthorityGap {
+                id: gap_id.clone(),
+                gap_id,
+                matter_id: matter.summary.matter_id.clone(),
+                target_type: "claim".to_string(),
+                target_id: claim.claim_id.clone(),
+                title: claim.title.clone(),
+                message: "Claim has no attached controlling authority.".to_string(),
+                severity: "warning".to_string(),
+                status: "open".to_string(),
+                authority_refs: Vec::new(),
+            });
+        }
+    }
+    for product in &matter.work_products {
+        if product
+            .anchors
+            .iter()
+            .all(|anchor| anchor.target_type != "authority" && anchor.target_type != "legal_authority")
+        {
+            let gap_id = generate_id(
+                "authority-gap",
+                &format!("{}:{}:authority", matter.summary.matter_id, product.work_product_id),
+            );
+            gaps.push(AuthorityGap {
+                id: gap_id.clone(),
+                gap_id,
+                matter_id: matter.summary.matter_id.clone(),
+                target_type: "work_product".to_string(),
+                target_id: product.work_product_id.clone(),
+                title: product.title.clone(),
+                message: "Work product has no authority anchors yet.".to_string(),
+                severity: "info".to_string(),
+                status: "open".to_string(),
+                authority_refs: Vec::new(),
+            });
+        }
+    }
+    gaps
+}
+
+fn build_contradictions(matter: &MatterBundle) -> Vec<Contradiction> {
+    matter
+        .evidence
+        .iter()
+        .filter(|evidence| !evidence.contradicts_fact_ids.is_empty())
+        .map(|evidence| {
+            let contradiction_id = generate_id(
+                "contradiction",
+                &format!("{}:{}", matter.summary.matter_id, evidence.evidence_id),
+            );
+            Contradiction {
+                id: contradiction_id.clone(),
+                contradiction_id,
+                matter_id: matter.summary.matter_id.clone(),
+                title: "Contradictory evidence linked".to_string(),
+                message: truncate_graph_label(&evidence.quote),
+                severity: "warning".to_string(),
+                status: "open".to_string(),
+                fact_ids: evidence.contradicts_fact_ids.clone(),
+                evidence_ids: vec![evidence.evidence_id.clone()],
+                source_document_ids: vec![evidence.document_id.clone()],
+            }
+        })
+        .collect()
+}
+
+fn build_matter_export_package(matter: &MatterBundle, format: &str) -> ExportPackage {
+    let now = now_string();
+    let work_product_ids = matter
+        .work_products
+        .iter()
+        .map(|product| product.work_product_id.clone())
+        .collect::<Vec<_>>();
+    let open_findings = matter
+        .work_products
+        .iter()
+        .flat_map(|product| product.findings.iter())
+        .filter(|finding| finding.status == "open")
+        .count()
+        + matter
+            .fact_check_findings
+            .iter()
+            .filter(|finding| finding.status == "open")
+            .count()
+        + matter
+            .citation_check_findings
+            .iter()
+            .filter(|finding| finding.status == "open")
+            .count();
+    let mut warnings = vec![
+        "Package is review-needed and not court-ready until final formatting/QC review is complete."
+            .to_string(),
+    ];
+    if matches!(format, "pdf" | "docx") {
+        warnings.push(
+            "Matter-level PDF/DOCX package currently references AST-backed WorkProduct exports; dedicated final renderer remains required."
+                .to_string(),
+        );
+    }
+    if open_findings > 0 {
+        warnings.push(format!("{open_findings} open QC finding(s) remain."));
+    }
+    if work_product_ids.is_empty() {
+        warnings.push("No WorkProducts are available to include yet.".to_string());
+    }
+    ExportPackage {
+        export_package_id: generate_id("export-package", &format!("{}:{format}:{now}", matter.summary.matter_id)),
+        id: generate_id("export-package", &format!("{}:{format}:{now}", matter.summary.matter_id)),
+        matter_id: matter.summary.matter_id.clone(),
+        format: format.to_string(),
+        status: if open_findings > 0 {
+            "blocked_review_needed".to_string()
+        } else {
+            "review_needed".to_string()
+        },
+        profile: "oregon-circuit-civil-matter-package".to_string(),
+        created_at: now,
+        artifact_count: work_product_ids.len() as u64,
+        work_product_ids,
+        warnings,
+        download_url: None,
+    }
+}
+
+fn add_case_graph_node(
+    nodes: &mut Vec<CaseGraphNode>,
+    seen: &mut HashSet<String>,
+    node: CaseGraphNode,
+) {
+    if seen.insert(node.id.clone()) {
+        nodes.push(node);
+    }
+}
+
+fn add_case_graph_edge(
+    edges: &mut Vec<CaseGraphEdge>,
+    seen: &mut HashSet<String>,
+    source: &str,
+    target: &str,
+    kind: &str,
+    label: &str,
+    status: Option<&str>,
+) {
+    if source.is_empty() || target.is_empty() {
+        return;
+    }
+    let id = format!("{kind}:{source}:{target}");
+    if seen.insert(id.clone()) {
+        edges.push(CaseGraphEdge {
+            id,
+            source: source.to_string(),
+            target: target.to_string(),
+            kind: kind.to_string(),
+            label: label.to_string(),
+            status: status.map(str::to_string),
+            metadata: BTreeMap::new(),
+        });
+    }
+}
+
+fn add_authority_node_and_edge(
+    nodes: &mut Vec<CaseGraphNode>,
+    edges: &mut Vec<CaseGraphEdge>,
+    seen_nodes: &mut HashSet<String>,
+    seen_edges: &mut HashSet<String>,
+    source_id: &str,
+    authority: &AuthorityRef,
+) {
+    add_case_graph_node(
+        nodes,
+        seen_nodes,
+        CaseGraphNode {
+            id: authority.canonical_id.clone(),
+            kind: "authority".to_string(),
+            label: authority.citation.clone(),
+            subtitle: authority.reason.clone(),
+            status: Some("attached".to_string()),
+            risk: None,
+            href: Some(format!(
+                "/statutes/{}",
+                authority.canonical_id.replace('/', "%2F")
+            )),
+            metadata: graph_metadata([("canonical_id", authority.canonical_id.clone())]),
+        },
+    );
+    add_case_graph_edge(
+        edges,
+        seen_edges,
+        source_id,
+        &authority.canonical_id,
+        "supported_by_authority",
+        "authority",
+        Some("attached"),
+    );
+}
+
+fn graph_metadata<const N: usize>(pairs: [(&str, String); N]) -> BTreeMap<String, String> {
+    pairs
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value))
+        .collect()
+}
+
+fn truncate_graph_label(value: &str) -> String {
+    const LIMIT: usize = 120;
+    let trimmed = value.trim();
+    if trimmed.chars().count() <= LIMIT {
+        trimmed.to_string()
+    } else {
+        format!("{}...", trimmed.chars().take(LIMIT).collect::<String>())
+    }
+}
+
+fn humanize_export_format(format: &str) -> String {
+    match format {
+        "docx" => "DOCX".to_string(),
+        "pdf" => "PDF".to_string(),
+        "filing_packet" => "Filing packet".to_string(),
+        other => humanize_product_type(other),
+    }
 }
 
 fn oregon_civil_motion_rule_pack() -> RulePack {
@@ -8458,6 +9817,15 @@ fn normalize_work_product_ast(product: &mut WorkProduct) {
     } else {
         product.updated_at.clone()
     };
+    let document_type_source = if product.document_ast.document_type.trim().is_empty()
+        || product.document_ast.document_type == "custom"
+    {
+        product.product_type.as_str()
+    } else {
+        product.document_ast.document_type.as_str()
+    };
+    let document_type = normalize_work_product_type_lossy(document_type_source);
+    product.product_type = document_type.clone();
     product.document_ast.schema_version = if product.document_ast.schema_version.is_empty() {
         default_work_product_schema_version()
     } else {
@@ -8470,7 +9838,9 @@ fn normalize_work_product_ast(product: &mut WorkProduct) {
     };
     product.document_ast.work_product_id = product.work_product_id.clone();
     product.document_ast.matter_id = product.matter_id.clone();
-    product.document_ast.product_type = product.product_type.clone();
+    product.document_ast.draft_id = product.source_draft_id.clone();
+    product.document_ast.document_type = document_type.clone();
+    product.document_ast.product_type = document_type;
     product.document_ast.title = product.title.clone();
     product.document_ast.metadata.status = product.status.clone();
     product.document_ast.metadata.rule_pack_id = Some(product.rule_pack.rule_pack_id.clone());
@@ -8695,6 +10065,8 @@ fn work_product_document_from_projection(
         document_id: format!("{}:document", product.work_product_id),
         work_product_id: product.work_product_id.clone(),
         matter_id: product.matter_id.clone(),
+        draft_id: product.source_draft_id.clone(),
+        document_type: product.product_type.clone(),
         product_type: product.product_type.clone(),
         title: product.title.clone(),
         metadata: WorkProductMetadata {
@@ -8768,6 +10140,10 @@ fn flatten_work_product_block(block: &WorkProductBlock, flattened: &mut Vec<Work
     for child in &block.children {
         flatten_work_product_block(child, flattened);
     }
+}
+
+fn canonical_work_product_blocks(product: &WorkProduct) -> Vec<WorkProductBlock> {
+    flatten_work_product_blocks(&product.document_ast.blocks)
 }
 
 fn block_text_excerpt(text: &str, inline_limit: u64) -> String {
@@ -8856,11 +10232,11 @@ fn apply_ast_operation(
             block_id,
             offset,
             new_block_id,
-        } => split_ast_block(&mut document.blocks, block_id, *offset, new_block_id),
+        } => split_ast_document_block(document, block_id, *offset, new_block_id),
         AstOperation::MergeBlocks {
             first_block_id,
             second_block_id,
-        } => merge_ast_blocks(&mut document.blocks, first_block_id, second_block_id),
+        } => merge_ast_document_blocks(document, first_block_id, second_block_id),
         AstOperation::RenumberParagraphs => {
             let mut next = 1;
             renumber_ast_paragraphs(&mut document.blocks, &mut next);
@@ -8872,6 +10248,7 @@ fn apply_ast_operation(
                 .ok_or_else(|| {
                     ApiError::NotFound("AST citation source block not found".to_string())
                 })?;
+            validate_optional_text_range(&block.text, citation.source_text_range.as_ref())?;
             push_unique(&mut block.citations, citation_id.clone());
             document
                 .citations
@@ -8918,6 +10295,7 @@ fn apply_ast_operation(
             let link_id = link.link_id.clone();
             let block = find_ast_block_mut(&mut document.blocks, &link.source_block_id)
                 .ok_or_else(|| ApiError::NotFound("AST link source block not found".to_string()))?;
+            validate_optional_text_range(&block.text, link.source_text_range.as_ref())?;
             push_unique(&mut block.links, link_id.clone());
             document.links.retain(|item| item.link_id != link_id);
             document.links.push(link.clone());
@@ -8934,6 +10312,7 @@ fn apply_ast_operation(
                 .ok_or_else(|| {
                     ApiError::NotFound("AST exhibit source block not found".to_string())
                 })?;
+            validate_optional_text_range(&block.text, exhibit.source_text_range.as_ref())?;
             push_unique(&mut block.exhibits, exhibit_id.clone());
             document
                 .exhibits
@@ -9091,18 +10470,52 @@ fn split_ast_block(
     let (parent_id, new_block) = {
         let block = find_ast_block_mut(blocks, block_id)
             .ok_or_else(|| ApiError::NotFound(format!("AST block {block_id} not found")))?;
-        let split_at = offset.min(block.text.chars().count() as u64) as usize;
+        let text_len = block.text.chars().count() as u64;
+        if offset > text_len {
+            return Err(ApiError::BadRequest(
+                "AST split offset extends past the source block.".to_string(),
+            ));
+        }
+        let split_at = offset as usize;
         let left = block.text.chars().take(split_at).collect::<String>();
         let right = block.text.chars().skip(split_at).collect::<String>();
-        block.text = left.trim_end().to_string();
+        block.text = left;
         let mut new_block = block.clone();
         new_block.block_id = new_block_id.to_string();
         new_block.id = new_block_id.to_string();
-        new_block.text = right.trim_start().to_string();
+        new_block.text = right;
         new_block.ordinal = block.ordinal + 1;
+        new_block.fact_ids.clear();
+        new_block.evidence_ids.clear();
+        new_block.authorities.clear();
+        new_block.mark_ids.clear();
+        new_block.links.clear();
+        new_block.citations.clear();
+        new_block.exhibits.clear();
+        new_block.rule_finding_ids.clear();
         (block.parent_block_id.clone(), new_block)
     };
     insert_ast_block(blocks, parent_id.as_deref(), Some(block_id), new_block)
+}
+
+fn split_ast_document_block(
+    document: &mut WorkProductDocument,
+    block_id: &str,
+    offset: u64,
+    new_block_id: &str,
+) -> ApiResult<()> {
+    let source = find_ast_block(&document.blocks, block_id)
+        .ok_or_else(|| ApiError::NotFound(format!("AST block {block_id} not found")))?;
+    if offset > source.text.chars().count() as u64 {
+        return Err(ApiError::BadRequest(
+            "AST split offset extends past the source block.".to_string(),
+        ));
+    }
+    ensure_split_does_not_straddle_ranges(document, block_id, offset)?;
+    split_ast_block(&mut document.blocks, block_id, offset, new_block_id)?;
+    rehome_split_records(document, block_id, offset, new_block_id);
+    rebuild_document_block_refs(document);
+    Ok(())
 }
 
 fn merge_ast_blocks(
@@ -9131,6 +10544,196 @@ fn merge_ast_blocks(
         push_unique(&mut first.rule_finding_ids, id);
     }
     Ok(())
+}
+
+fn merge_ast_document_blocks(
+    document: &mut WorkProductDocument,
+    first_block_id: &str,
+    second_block_id: &str,
+) -> ApiResult<()> {
+    let first = find_ast_block(&document.blocks, first_block_id)
+        .ok_or_else(|| ApiError::NotFound(format!("AST block {first_block_id} not found")))?;
+    let second = find_ast_block(&document.blocks, second_block_id)
+        .ok_or_else(|| ApiError::NotFound(format!("AST block {second_block_id} not found")))?;
+    let separator_len = if !first.text.is_empty() && !second.text.is_empty() {
+        2
+    } else {
+        0
+    };
+    let range_shift = first.text.chars().count() as u64 + separator_len;
+    merge_ast_blocks(&mut document.blocks, first_block_id, second_block_id)?;
+    rehome_merge_records(document, first_block_id, second_block_id, range_shift);
+    rebuild_document_block_refs(document);
+    Ok(())
+}
+
+fn ensure_split_does_not_straddle_ranges(
+    document: &WorkProductDocument,
+    block_id: &str,
+    offset: u64,
+) -> ApiResult<()> {
+    for link in &document.links {
+        ensure_range_does_not_straddle_split(
+            &link.source_block_id,
+            link.source_text_range.as_ref(),
+            block_id,
+            offset,
+        )?;
+    }
+    for citation in &document.citations {
+        ensure_range_does_not_straddle_split(
+            &citation.source_block_id,
+            citation.source_text_range.as_ref(),
+            block_id,
+            offset,
+        )?;
+    }
+    for exhibit in &document.exhibits {
+        ensure_range_does_not_straddle_split(
+            &exhibit.source_block_id,
+            exhibit.source_text_range.as_ref(),
+            block_id,
+            offset,
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_range_does_not_straddle_split(
+    source_block_id: &str,
+    range: Option<&TextRange>,
+    block_id: &str,
+    offset: u64,
+) -> ApiResult<()> {
+    if source_block_id == block_id
+        && range
+            .map(|range| range.start_offset < offset && range.end_offset > offset)
+            .unwrap_or(false)
+    {
+        return Err(ApiError::BadRequest(
+            "AST split would divide an existing text-range reference.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn rehome_split_records(
+    document: &mut WorkProductDocument,
+    block_id: &str,
+    offset: u64,
+    new_block_id: &str,
+) {
+    for link in &mut document.links {
+        if link.source_block_id == block_id {
+            if let Some(range) = link.source_text_range.as_mut() {
+                if range.start_offset >= offset {
+                    link.source_block_id = new_block_id.to_string();
+                    shift_text_range_back(range, offset);
+                }
+            }
+        }
+    }
+    for citation in &mut document.citations {
+        if citation.source_block_id == block_id {
+            if let Some(range) = citation.source_text_range.as_mut() {
+                if range.start_offset >= offset {
+                    citation.source_block_id = new_block_id.to_string();
+                    shift_text_range_back(range, offset);
+                }
+            }
+        }
+    }
+    for exhibit in &mut document.exhibits {
+        if exhibit.source_block_id == block_id {
+            if let Some(range) = exhibit.source_text_range.as_mut() {
+                if range.start_offset >= offset {
+                    exhibit.source_block_id = new_block_id.to_string();
+                    shift_text_range_back(range, offset);
+                }
+            }
+        }
+    }
+}
+
+fn rehome_merge_records(
+    document: &mut WorkProductDocument,
+    first_block_id: &str,
+    second_block_id: &str,
+    range_shift: u64,
+) {
+    for link in &mut document.links {
+        if link.source_block_id == second_block_id {
+            link.source_block_id = first_block_id.to_string();
+            if let Some(range) = link.source_text_range.as_mut() {
+                shift_text_range_forward(range, range_shift);
+            }
+        }
+    }
+    for citation in &mut document.citations {
+        if citation.source_block_id == second_block_id {
+            citation.source_block_id = first_block_id.to_string();
+            if let Some(range) = citation.source_text_range.as_mut() {
+                shift_text_range_forward(range, range_shift);
+            }
+        }
+    }
+    for exhibit in &mut document.exhibits {
+        if exhibit.source_block_id == second_block_id {
+            exhibit.source_block_id = first_block_id.to_string();
+            if let Some(range) = exhibit.source_text_range.as_mut() {
+                shift_text_range_forward(range, range_shift);
+            }
+        }
+    }
+    for finding in &mut document.rule_findings {
+        if finding.target_id == second_block_id {
+            finding.target_id = first_block_id.to_string();
+        }
+    }
+}
+
+fn shift_text_range_back(range: &mut TextRange, amount: u64) {
+    range.start_offset = range.start_offset.saturating_sub(amount);
+    range.end_offset = range.end_offset.saturating_sub(amount);
+}
+
+fn shift_text_range_forward(range: &mut TextRange, amount: u64) {
+    range.start_offset = range.start_offset.saturating_add(amount);
+    range.end_offset = range.end_offset.saturating_add(amount);
+}
+
+fn rebuild_document_block_refs(document: &mut WorkProductDocument) {
+    clear_document_block_refs(&mut document.blocks);
+    for link in &document.links {
+        if let Some(block) = find_ast_block_mut(&mut document.blocks, &link.source_block_id) {
+            push_unique(&mut block.links, link.link_id.clone());
+        }
+    }
+    for citation in &document.citations {
+        if let Some(block) = find_ast_block_mut(&mut document.blocks, &citation.source_block_id) {
+            push_unique(&mut block.citations, citation.citation_use_id.clone());
+        }
+    }
+    for exhibit in &document.exhibits {
+        if let Some(block) = find_ast_block_mut(&mut document.blocks, &exhibit.source_block_id) {
+            push_unique(&mut block.exhibits, exhibit.exhibit_reference_id.clone());
+        }
+    }
+    for finding in &document.rule_findings {
+        if let Some(block) = find_ast_block_mut(&mut document.blocks, &finding.target_id) {
+            push_unique(&mut block.rule_finding_ids, finding.finding_id.clone());
+        }
+    }
+}
+
+fn clear_document_block_refs(blocks: &mut [WorkProductBlock]) {
+    for block in blocks {
+        block.links.clear();
+        block.citations.clear();
+        block.exhibits.clear();
+        block.rule_finding_ids.clear();
+        clear_document_block_refs(&mut block.children);
+    }
 }
 
 fn renumber_ast_paragraphs(blocks: &mut [WorkProductBlock], next: &mut u64) {
@@ -9175,6 +10778,38 @@ fn validate_work_product_document(product: &WorkProduct) -> AstValidationRespons
         errors.push(ast_issue(
             "missing_schema_version",
             "WorkProduct AST is missing schema_version.",
+            Some("document"),
+            Some(&document.document_id),
+        ));
+    }
+    if document.matter_id != product.matter_id {
+        errors.push(ast_issue(
+            "ast_matter_mismatch",
+            "WorkProduct AST matter_id does not match the work product.",
+            Some("document"),
+            Some(&document.document_id),
+        ));
+    }
+    if document.work_product_id != product.work_product_id {
+        errors.push(ast_issue(
+            "ast_work_product_mismatch",
+            "WorkProduct AST work_product_id does not match the work product.",
+            Some("document"),
+            Some(&document.document_id),
+        ));
+    }
+    if document.document_type.trim().is_empty() {
+        errors.push(ast_issue(
+            "missing_document_type",
+            "WorkProduct AST is missing document_type.",
+            Some("document"),
+            Some(&document.document_id),
+        ));
+    }
+    if document.document_type != product.product_type || document.product_type != product.product_type {
+        errors.push(ast_issue(
+            "ast_document_type_mismatch",
+            "WorkProduct AST document_type/product_type does not match the work product.",
             Some("document"),
             Some(&document.document_id),
         ));
@@ -9239,6 +10874,71 @@ fn validate_work_product_document(product: &WorkProduct) -> AstValidationRespons
         .iter()
         .map(|exhibit| exhibit.exhibit_reference_id.clone())
         .collect::<HashSet<_>>();
+    for link in &document.links {
+        match find_ast_block(&document.blocks, &link.source_block_id) {
+            Some(block) => {
+                if validate_optional_text_range(&block.text, link.source_text_range.as_ref()).is_err()
+                {
+                    errors.push(ast_issue(
+                        "invalid_link_text_range",
+                        "Link text range does not match the source block.",
+                        Some("link"),
+                        Some(&link.link_id),
+                    ));
+                }
+            }
+            None => errors.push(ast_issue(
+                "missing_link_source_block",
+                "Link source block does not exist.",
+                Some("link"),
+                Some(&link.link_id),
+            )),
+        }
+    }
+    for citation in &document.citations {
+        match find_ast_block(&document.blocks, &citation.source_block_id) {
+            Some(block) => {
+                if validate_optional_text_range(&block.text, citation.source_text_range.as_ref())
+                    .is_err()
+                {
+                    errors.push(ast_issue(
+                        "invalid_citation_text_range",
+                        "Citation text range does not match the source block.",
+                        Some("citation"),
+                        Some(&citation.citation_use_id),
+                    ));
+                }
+            }
+            None => errors.push(ast_issue(
+                "missing_citation_source_block",
+                "Citation source block does not exist.",
+                Some("citation"),
+                Some(&citation.citation_use_id),
+            )),
+        }
+    }
+    for exhibit in &document.exhibits {
+        match find_ast_block(&document.blocks, &exhibit.source_block_id) {
+            Some(block) => {
+                if validate_optional_text_range(&block.text, exhibit.source_text_range.as_ref())
+                    .is_err()
+                {
+                    errors.push(ast_issue(
+                        "invalid_exhibit_text_range",
+                        "Exhibit text range does not match the source block.",
+                        Some("exhibit"),
+                        Some(&exhibit.exhibit_reference_id),
+                    ));
+                }
+            }
+            None => errors.push(ast_issue(
+                "missing_exhibit_source_block",
+                "Exhibit source block does not exist.",
+                Some("exhibit"),
+                Some(&exhibit.exhibit_reference_id),
+            )),
+        }
+    }
     for block in flatten_work_product_blocks(&document.blocks) {
         for link_id in &block.links {
             if !link_ids.contains(link_id) {
@@ -9308,6 +11008,22 @@ fn validate_work_product_document(product: &WorkProduct) -> AstValidationRespons
         errors,
         warnings,
     }
+}
+
+fn ensure_work_product_ast_valid(product: &WorkProduct, context: &str) -> ApiResult<()> {
+    let validation = validate_work_product_document(product);
+    if validation.errors.is_empty() {
+        return Ok(());
+    }
+    let codes = validation
+        .errors
+        .iter()
+        .map(|issue| issue.code.clone())
+        .collect::<Vec<_>>()
+        .join(",");
+    Err(ApiError::BadRequest(format!(
+        "{context} failed AST validation: issue_codes={codes}"
+    )))
 }
 
 fn validate_ast_blocks(
@@ -14708,6 +16424,501 @@ fn push_unique(values: &mut Vec<String>, value: String) {
     }
 }
 
+fn support_anchor_id_matches(anchor: &WorkProductAnchor, anchor_id: &str) -> bool {
+    anchor.anchor_id == anchor_id || anchor.id == anchor_id
+}
+
+fn apply_work_product_support_update(
+    product: &mut WorkProduct,
+    anchor_id: &str,
+    request: PatchWorkProductSupportRequest,
+) -> ApiResult<WorkProductAnchor> {
+    let anchor_index = product
+        .anchors
+        .iter()
+        .position(|anchor| support_anchor_id_matches(anchor, anchor_id))
+        .ok_or_else(|| ApiError::NotFound("Work product support link not found".to_string()))?;
+    let anchor = product
+        .anchors
+        .get_mut(anchor_index)
+        .expect("anchor index was resolved");
+    if let Some(value) = request.relation {
+        let relation = value.trim();
+        if relation.is_empty() {
+            return Err(ApiError::BadRequest(
+                "Support relation cannot be empty.".to_string(),
+            ));
+        }
+        anchor.relation = relation.to_string();
+    }
+    if let Some(value) = request.status {
+        let status = value.trim();
+        if status.is_empty() {
+            return Err(ApiError::BadRequest(
+                "Support status cannot be empty.".to_string(),
+            ));
+        }
+        anchor.status = status.to_string();
+    }
+    if request.citation.is_some() {
+        anchor.citation = request.citation;
+    }
+    if request.canonical_id.is_some() {
+        anchor.canonical_id = request.canonical_id;
+    }
+    if request.pinpoint.is_some() {
+        anchor.pinpoint = request.pinpoint;
+    }
+    if request.quote.is_some() {
+        anchor.quote = request.quote;
+    }
+    let updated_anchor = anchor.clone();
+    sync_work_product_anchor_projection(product, &updated_anchor);
+    rebuild_work_product_ast_from_projection(product);
+    Ok(updated_anchor)
+}
+
+fn apply_work_product_support_removal(
+    product: &mut WorkProduct,
+    anchor_id: &str,
+) -> ApiResult<WorkProductAnchor> {
+    let anchor_index = product
+        .anchors
+        .iter()
+        .position(|anchor| support_anchor_id_matches(anchor, anchor_id))
+        .ok_or_else(|| ApiError::NotFound("Work product support link not found".to_string()))?;
+    let removed_anchor = product.anchors.remove(anchor_index);
+    let removed_mark_id = format!("{}:mark", removed_anchor.anchor_id);
+    product.marks.retain(|mark| {
+        mark.target_id != removed_anchor.anchor_id
+            && mark.target_id != removed_anchor.id
+            && mark.mark_id != removed_mark_id
+            && mark.id != removed_mark_id
+    });
+    for block in &mut product.blocks {
+        if !support_anchor_targets_block(&removed_anchor, block) {
+            continue;
+        }
+        block.mark_ids.retain(|mark_id| {
+            mark_id != &removed_anchor.anchor_id
+                && mark_id != &removed_anchor.id
+                && mark_id != &removed_mark_id
+        });
+        remove_anchor_from_block_projection(block, &removed_anchor, &product.anchors);
+    }
+    rebuild_work_product_ast_from_projection(product);
+    Ok(removed_anchor)
+}
+
+fn apply_work_product_text_range_link(
+    product: &mut WorkProduct,
+    request: WorkProductTextRangeLinkRequest,
+) -> ApiResult<Vec<AstOperation>> {
+    normalize_work_product_ast(product);
+    let block = find_ast_block(&product.document_ast.blocks, &request.block_id)
+        .ok_or_else(|| ApiError::NotFound("AST text range source block not found".to_string()))?;
+    let selected_quote = validate_text_range_request(block, &request)?;
+    let now = now_string();
+    let creates_citation = text_range_request_creates_citation(&request);
+    let creates_exhibit = text_range_request_creates_exhibit(&request);
+    let range = TextRange {
+        start_offset: request.start_offset,
+        end_offset: request.end_offset,
+        quote: Some(selected_quote),
+    };
+    let relation = trimmed_optional_string(request.relation.as_deref())
+        .unwrap_or_else(|| "supports".to_string());
+    let suffix = sanitize_path_segment(&format!(
+        "{}:{}:{}:{}",
+        request.start_offset, request.end_offset, request.target_type, request.target_id
+    ));
+    let link_id = format!("{}:range-link:{suffix}", request.block_id);
+    let link = WorkProductLink {
+        link_id: link_id.clone(),
+        source_block_id: request.block_id.clone(),
+        source_text_range: Some(range.clone()),
+        target_type: request.target_type.clone(),
+        target_id: request.target_id.clone(),
+        relation,
+        confidence: None,
+        created_by: "user".to_string(),
+        created_at: now.clone(),
+    };
+    let mut operation_capacity = 1;
+    if creates_citation {
+        operation_capacity += 1;
+    }
+    if creates_exhibit {
+        operation_capacity += 1;
+    }
+    let mut operations = Vec::with_capacity(operation_capacity);
+    operations.push(AstOperation::AddLink { link });
+
+    if creates_citation {
+        let canonical_id = trimmed_optional_string(request.canonical_id.as_deref());
+        let citation_text = trimmed_optional_string(request.citation.as_deref())
+            .unwrap_or_else(|| request.target_id.clone());
+        let citation_use_id = format!("{}:citation:{suffix}", request.block_id);
+        operations.push(AstOperation::AddCitation {
+            citation: WorkProductCitationUse {
+                citation_use_id,
+                source_block_id: request.block_id.clone(),
+                source_text_range: Some(range.clone()),
+                raw_text: citation_text.clone(),
+                normalized_citation: Some(citation_text),
+                target_type: if request.target_type == "authority" {
+                    "provision".to_string()
+                } else {
+                    request.target_type.clone()
+                },
+                target_id: Some(
+                    canonical_id
+                        .clone()
+                        .unwrap_or_else(|| request.target_id.clone()),
+                ),
+                pinpoint: trimmed_optional_string(request.pinpoint.as_deref()),
+                status: if canonical_id.is_some() {
+                    "resolved".to_string()
+                } else {
+                    "needs_review".to_string()
+                },
+                resolver_message: None,
+                created_at: now.clone(),
+            },
+        });
+    }
+
+    if creates_exhibit {
+        let document_id = trimmed_optional_string(request.document_id.as_deref()).or_else(|| {
+            if matches!(request.target_type.as_str(), "document" | "case_document") {
+                Some(request.target_id.clone())
+            } else {
+                None
+            }
+        });
+        let exhibit_id = if request.target_type == "exhibit" {
+            Some(request.target_id.clone())
+        } else {
+            None
+        };
+        let exhibit_reference_id = format!("{}:exhibit:{suffix}", request.block_id);
+        operations.push(AstOperation::AddExhibitReference {
+            exhibit: WorkProductExhibitReference {
+                exhibit_reference_id,
+                source_block_id: request.block_id.clone(),
+                source_text_range: Some(range),
+                label: trimmed_optional_string(request.exhibit_label.as_deref())
+                    .unwrap_or_else(|| "Exhibit".to_string()),
+                exhibit_id,
+                document_id,
+                page_range: trimmed_optional_string(request.page_range.as_deref()),
+                status: "linked".to_string(),
+                created_at: now,
+            },
+        });
+    }
+
+    for operation in &operations {
+        apply_ast_operation(&mut product.document_ast, operation)?;
+    }
+    Ok(operations)
+}
+
+fn validate_text_range_request(
+    block: &WorkProductBlock,
+    request: &WorkProductTextRangeLinkRequest,
+) -> ApiResult<String> {
+    let selected_quote = text_for_char_range(&block.text, request.start_offset, request.end_offset)?;
+    validate_text_range_quote(&selected_quote, Some(&request.quote))?;
+    Ok(selected_quote)
+}
+
+fn validate_optional_text_range(text: &str, range: Option<&TextRange>) -> ApiResult<()> {
+    if let Some(range) = range {
+        let selected_quote = text_for_char_range(text, range.start_offset, range.end_offset)?;
+        validate_text_range_quote(&selected_quote, range.quote.as_deref())?;
+    }
+    Ok(())
+}
+
+fn validate_text_range_quote(selected_quote: &str, quote: Option<&str>) -> ApiResult<()> {
+    let Some(quote) = quote else {
+        return Ok(());
+    };
+    if quote.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "Text range quote is empty.".to_string(),
+        ));
+    }
+    if selected_quote != quote && selected_quote.trim() != quote.trim() {
+        return Err(ApiError::BadRequest(
+            "Text range quote does not match the source block.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn text_for_char_range(text: &str, start_offset: u64, end_offset: u64) -> ApiResult<String> {
+    if start_offset >= end_offset {
+        return Err(ApiError::BadRequest(
+            "Text range must have a positive length.".to_string(),
+        ));
+    }
+    let mut selected = String::new();
+    let mut char_index = 0_u64;
+    for ch in text.chars() {
+        if char_index >= start_offset && char_index < end_offset {
+            selected.push(ch);
+        }
+        char_index += 1;
+        if char_index >= end_offset {
+            break;
+        }
+    }
+    if char_index < end_offset {
+        return Err(ApiError::BadRequest(
+            "Text range extends past the source block.".to_string(),
+        ));
+    }
+    Ok(selected)
+}
+
+fn text_range_request_creates_citation(request: &WorkProductTextRangeLinkRequest) -> bool {
+    has_non_empty_value(request.citation.as_deref())
+        || matches!(
+            request.target_type.as_str(),
+            "authority" | "legal_authority" | "provision" | "legal_text"
+        )
+}
+
+fn text_range_request_creates_exhibit(request: &WorkProductTextRangeLinkRequest) -> bool {
+    has_non_empty_value(request.exhibit_label.as_deref())
+        || has_non_empty_value(request.document_id.as_deref())
+        || matches!(
+            request.target_type.as_str(),
+            "document" | "case_document" | "exhibit"
+        )
+}
+
+fn trimmed_optional_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|trimmed| !trimmed.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn has_non_empty_value(value: Option<&str>) -> bool {
+    matches!(value, Some(item) if !item.trim().is_empty())
+}
+
+fn sync_work_product_anchor_projection(product: &mut WorkProduct, anchor: &WorkProductAnchor) {
+    let relation_projects = support_relation_projects_to_block_ids(&anchor.relation);
+    let has_projected_anchor =
+        relation_projects || has_projected_anchor_for_target(&product.anchors, anchor);
+    for block in &mut product.blocks {
+        if !support_anchor_targets_block(anchor, block) {
+            continue;
+        }
+        match anchor.target_type.as_str() {
+            "fact" => {
+                if relation_projects {
+                    push_unique(&mut block.fact_ids, anchor.target_id.clone());
+                } else if !has_projected_anchor {
+                    block
+                        .fact_ids
+                        .retain(|fact_id| fact_id != &anchor.target_id);
+                }
+            }
+            "evidence" | "document" | "source_span" => {
+                if relation_projects {
+                    push_unique(&mut block.evidence_ids, anchor.target_id.clone());
+                } else if !has_projected_anchor {
+                    block
+                        .evidence_ids
+                        .retain(|evidence_id| evidence_id != &anchor.target_id);
+                }
+            }
+            "authority" | "legal_authority" | "provision" | "legal_text" => {
+                let authority = authority_ref_from_anchor(anchor);
+                let mut updated = false;
+                for existing in &mut block.authorities {
+                    if same_authority(existing, &authority) {
+                        *existing = authority.clone();
+                        updated = true;
+                    }
+                }
+                if !updated {
+                    block.authorities.push(authority);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn remove_anchor_from_block_projection(
+    block: &mut WorkProductBlock,
+    anchor: &WorkProductAnchor,
+    remaining_anchors: &[WorkProductAnchor],
+) {
+    match anchor.target_type.as_str() {
+        "fact" => {
+            if !has_projected_anchor_for_target(remaining_anchors, anchor) {
+                block
+                    .fact_ids
+                    .retain(|fact_id| fact_id != &anchor.target_id);
+            }
+        }
+        "evidence" | "document" | "source_span" => {
+            if !has_projected_anchor_for_target(remaining_anchors, anchor) {
+                block
+                    .evidence_ids
+                    .retain(|evidence_id| evidence_id != &anchor.target_id);
+            }
+        }
+        "authority" | "legal_authority" | "provision" | "legal_text" => {
+            if !has_authority_anchor_for_target(remaining_anchors, anchor) {
+                remove_authority(&mut block.authorities, &authority_ref_from_anchor(anchor));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn support_anchor_targets_block(anchor: &WorkProductAnchor, block: &WorkProductBlock) -> bool {
+    anchor.block_id == block.block_id || anchor.block_id == block.id
+}
+
+fn has_projected_anchor_for_target(
+    anchors: &[WorkProductAnchor],
+    target: &WorkProductAnchor,
+) -> bool {
+    anchors.iter().any(|anchor| {
+        support_anchor_targets_same_projection(anchor, target)
+            && support_relation_projects_to_block_ids(&anchor.relation)
+    })
+}
+
+fn has_authority_anchor_for_target(
+    anchors: &[WorkProductAnchor],
+    target: &WorkProductAnchor,
+) -> bool {
+    anchors
+        .iter()
+        .any(|anchor| support_anchor_targets_same_projection(anchor, target))
+}
+
+fn support_anchor_targets_same_projection(
+    left: &WorkProductAnchor,
+    right: &WorkProductAnchor,
+) -> bool {
+    left.block_id == right.block_id
+        && left.target_type == right.target_type
+        && left.target_id == right.target_id
+}
+
+fn support_relation_projects_to_block_ids(relation: &str) -> bool {
+    matches!(
+        relation,
+        "supports" | "partially_supports" | "authenticates"
+    )
+}
+
+fn authority_ref_from_anchor(anchor: &WorkProductAnchor) -> AuthorityRef {
+    AuthorityRef {
+        citation: anchor
+            .citation
+            .clone()
+            .unwrap_or_else(|| anchor.target_id.clone()),
+        canonical_id: anchor
+            .canonical_id
+            .clone()
+            .unwrap_or_else(|| anchor.target_id.clone()),
+        reason: Some(anchor.relation.clone()),
+        pinpoint: anchor.pinpoint.clone(),
+    }
+}
+
+fn legal_impact_for_support_anchor(anchor: &WorkProductAnchor) -> LegalImpactSummary {
+    let mut impact = LegalImpactSummary::default();
+    match anchor.target_type.as_str() {
+        "fact" => impact.affected_facts.push(anchor.target_id.clone()),
+        "evidence" | "document" | "source_span" => {
+            impact.affected_evidence.push(anchor.target_id.clone())
+        }
+        "authority" | "legal_authority" | "provision" | "legal_text" => {
+            impact.affected_authorities.push(
+                anchor
+                    .canonical_id
+                    .clone()
+                    .unwrap_or_else(|| anchor.target_id.clone()),
+            )
+        }
+        _ => {}
+    }
+    impact
+}
+
+fn legal_impact_for_ast_operations(operations: &[AstOperation]) -> LegalImpactSummary {
+    let mut impact = LegalImpactSummary::default();
+    for operation in operations {
+        match operation {
+            AstOperation::AddLink { link } => match link.target_type.as_str() {
+                "fact" => push_unique(&mut impact.affected_facts, link.target_id.clone()),
+                "evidence" | "document" | "source_span" | "exhibit" => {
+                    push_unique(&mut impact.affected_evidence, link.target_id.clone())
+                }
+                "authority" | "legal_authority" | "provision" | "legal_text" => {
+                    push_unique(&mut impact.affected_authorities, link.target_id.clone())
+                }
+                _ => {}
+            },
+            AstOperation::AddCitation { citation } => {
+                if let Some(target_id) = citation.target_id.clone() {
+                    push_unique(&mut impact.affected_authorities, target_id);
+                }
+            }
+            AstOperation::AddExhibitReference { exhibit } => {
+                if let Some(exhibit_id) = exhibit.exhibit_id.clone() {
+                    push_unique(&mut impact.affected_exhibits, exhibit_id);
+                }
+                if let Some(document_id) = exhibit.document_id.clone() {
+                    push_unique(&mut impact.affected_exhibits, document_id);
+                }
+            }
+            _ => {}
+        }
+    }
+    impact
+}
+
+fn ast_operation_target_id(operation: &AstOperation) -> String {
+    match operation {
+        AstOperation::AddLink { link } => link.link_id.clone(),
+        AstOperation::AddCitation { citation } => citation.citation_use_id.clone(),
+        AstOperation::AddExhibitReference { exhibit } => exhibit.exhibit_reference_id.clone(),
+        AstOperation::UpdateBlock { block_id, .. }
+        | AstOperation::DeleteBlock { block_id, .. }
+        | AstOperation::MoveBlock { block_id, .. }
+        | AstOperation::SplitBlock { block_id, .. } => block_id.clone(),
+        AstOperation::RemoveLink { link_id } => link_id.clone(),
+        AstOperation::ResolveCitation {
+            citation_use_id, ..
+        }
+        | AstOperation::RemoveCitation { citation_use_id } => citation_use_id.clone(),
+        AstOperation::ResolveExhibitReference {
+            exhibit_reference_id,
+            ..
+        } => exhibit_reference_id.clone(),
+        AstOperation::AddRuleFinding { finding } => finding.finding_id.clone(),
+        AstOperation::ResolveRuleFinding { finding_id, .. } => finding_id.clone(),
+        AstOperation::InsertBlock { block, .. } => block.block_id.clone(),
+        AstOperation::MergeBlocks { first_block_id, .. } => first_block_id.clone(),
+        AstOperation::RenumberParagraphs => "paragraphs".to_string(),
+        AstOperation::ApplyTemplate { template_id } => template_id.clone(),
+    }
+}
+
 fn push_authority(values: &mut Vec<AuthorityRef>, value: AuthorityRef) {
     if !values
         .iter()
@@ -14747,11 +16958,13 @@ fn io_error(error: std::io::Error) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_ast_operation, canonical_id_for_citation, chunk_text, citation_uses_for_text,
-        default_formatting_profile, diff_work_product_layers, failed_ingestion_run,
-        generate_opaque_id, looks_like_complaint, markdown_to_work_product_ast,
-        normalize_compare_layers, object_blob_id_for_hash, oregon_civil_complaint_rule_pack,
-        parse_complaint_structure, parse_document_bytes, propose_facts, prosemirror_doc_for_text,
+        apply_ast_operation, apply_work_product_support_removal, apply_work_product_support_update,
+        apply_work_product_text_range_link, canonical_id_for_citation, chunk_text,
+        citation_uses_for_text, default_formatting_profile, diff_work_product_layers,
+        failed_ingestion_run, generate_opaque_id, looks_like_complaint,
+        markdown_to_work_product_ast, normalize_compare_layers, object_blob_id_for_hash,
+        oregon_civil_complaint_rule_pack, parse_complaint_structure, parse_document_bytes,
+        propose_facts, prosemirror_doc_for_text, rebuild_work_product_ast_from_projection,
         refresh_work_product_state, restore_work_product_scope,
         safe_work_product_download_filename, sanitize_filename, sha256_hex, should_inline_payload,
         slug, snapshot_entity_state_key, snapshot_full_state_key, snapshot_manifest_for_product,
@@ -14764,10 +16977,11 @@ mod tests {
     };
     use crate::error::ApiError;
     use crate::models::casebuilder::{
-        AstOperation, AstPatch, IngestionRun, VersionChangeSummary, VersionSnapshot, WorkProduct,
-        WorkProductAction, WorkProductArtifact, WorkProductBlock, WorkProductCitationUse,
-        WorkProductDocument, WorkProductDownloadResponse, WorkProductExhibitReference,
-        WorkProductFinding, WorkProductLink,
+        AstOperation, AstPatch, IngestionRun, PatchWorkProductSupportRequest, VersionChangeSummary,
+        VersionSnapshot, WorkProduct, WorkProductAction, WorkProductAnchor, WorkProductArtifact,
+        WorkProductBlock, WorkProductCitationUse, WorkProductDocument, WorkProductDownloadResponse,
+        WorkProductExhibitReference, WorkProductFinding, WorkProductLink,
+        WorkProductTextRangeLinkRequest,
     };
     use crate::services::object_store::build_document_object_key;
     use std::collections::BTreeMap;
@@ -14930,6 +17144,253 @@ mod tests {
         assert_eq!(document.blocks[0].block_type, "count");
         assert_eq!(document.blocks[1].block_type, "numbered_paragraph");
         assert_eq!(document.blocks[1].paragraph_number, Some(1));
+    }
+
+    #[test]
+    fn support_relation_update_rebuilds_ast_links_and_projection() {
+        let mut product = test_work_product("Plaintiff paid rent.", Vec::new(), Vec::new(), None);
+        add_test_support_anchor(&mut product, "fact:rent", "fact", "supports");
+
+        let updated = apply_work_product_support_update(
+            &mut product,
+            "work-product:test:block:1:anchor:1",
+            PatchWorkProductSupportRequest {
+                relation: Some("contradicts".to_string()),
+                status: None,
+                citation: None,
+                canonical_id: None,
+                pinpoint: None,
+                quote: None,
+            },
+        )
+        .expect("support relation updates");
+
+        assert_eq!(updated.relation, "contradicts");
+        assert!(product.blocks[0].fact_ids.is_empty());
+        assert!(product.document_ast.links.iter().any(|link| {
+            link.target_type == "fact"
+                && link.target_id == "fact:rent"
+                && link.relation == "contradicts"
+        }));
+    }
+
+    #[test]
+    fn support_removal_rebuilds_ast_links_and_projection() {
+        let mut product = test_work_product("Plaintiff paid rent.", Vec::new(), Vec::new(), None);
+        add_test_support_anchor(&mut product, "fact:rent", "fact", "supports");
+
+        let removed =
+            apply_work_product_support_removal(&mut product, "work-product:test:block:1:anchor:1")
+                .expect("support link removes");
+
+        assert_eq!(removed.target_id, "fact:rent");
+        assert!(product.anchors.is_empty());
+        assert!(product.marks.is_empty());
+        assert!(product.blocks[0].fact_ids.is_empty());
+        assert!(!product
+            .document_ast
+            .links
+            .iter()
+            .any(|link| link.target_id == "fact:rent"));
+    }
+
+    #[test]
+    fn text_range_link_adds_support_citation_and_exhibit_records() {
+        let mut product = test_work_product(
+            "Plaintiff paid rent with receipt A.",
+            Vec::new(),
+            Vec::new(),
+            None,
+        );
+        let block_id = product.document_ast.blocks[0].block_id.clone();
+
+        apply_work_product_text_range_link(
+            &mut product,
+            WorkProductTextRangeLinkRequest {
+                block_id: block_id.clone(),
+                start_offset: 10,
+                end_offset: 19,
+                quote: "paid rent".to_string(),
+                target_type: "fact".to_string(),
+                target_id: "fact:rent".to_string(),
+                relation: Some("supports".to_string()),
+                citation: None,
+                canonical_id: None,
+                pinpoint: None,
+                exhibit_label: None,
+                document_id: None,
+                page_range: None,
+            },
+        )
+        .expect("range support link applies");
+
+        apply_work_product_text_range_link(
+            &mut product,
+            WorkProductTextRangeLinkRequest {
+                block_id: block_id.clone(),
+                start_offset: 20,
+                end_offset: 24,
+                quote: "with".to_string(),
+                target_type: "authority".to_string(),
+                target_id: "ORS 90.320".to_string(),
+                relation: Some("cites".to_string()),
+                citation: Some("ORS 90.320".to_string()),
+                canonical_id: Some("ors:90.320".to_string()),
+                pinpoint: Some("(1)".to_string()),
+                exhibit_label: None,
+                document_id: None,
+                page_range: None,
+            },
+        )
+        .expect("range citation applies");
+
+        apply_work_product_text_range_link(
+            &mut product,
+            WorkProductTextRangeLinkRequest {
+                block_id: block_id.clone(),
+                start_offset: 25,
+                end_offset: 34,
+                quote: "receipt A".to_string(),
+                target_type: "document".to_string(),
+                target_id: "document:receipt".to_string(),
+                relation: Some("authenticates".to_string()),
+                citation: None,
+                canonical_id: None,
+                pinpoint: None,
+                exhibit_label: Some("Exhibit A".to_string()),
+                document_id: Some("document:receipt".to_string()),
+                page_range: Some("1".to_string()),
+            },
+        )
+        .expect("range exhibit applies");
+
+        assert!(product.document_ast.links.iter().any(|link| {
+            link.target_type == "fact"
+                && link.target_id == "fact:rent"
+                && link
+                    .source_text_range
+                    .as_ref()
+                    .and_then(|range| range.quote.as_deref())
+                    == Some("paid rent")
+        }));
+        assert!(product.document_ast.citations.iter().any(|citation| {
+            citation.raw_text == "ORS 90.320"
+                && citation.target_id.as_deref() == Some("ors:90.320")
+                && citation
+                    .source_text_range
+                    .as_ref()
+                    .and_then(|range| range.quote.as_deref())
+                    == Some("with")
+        }));
+        assert!(product.document_ast.exhibits.iter().any(|exhibit| {
+            exhibit.label == "Exhibit A"
+                && exhibit.document_id.as_deref() == Some("document:receipt")
+                && exhibit
+                    .source_text_range
+                    .as_ref()
+                    .and_then(|range| range.quote.as_deref())
+                    == Some("receipt A")
+        }));
+        let ast_block = &product.document_ast.blocks[0];
+        assert_eq!(ast_block.links.len(), 3);
+        assert_eq!(ast_block.citations.len(), 1);
+        assert_eq!(ast_block.exhibits.len(), 1);
+    }
+
+    #[test]
+    fn text_range_link_rejects_quote_that_does_not_match_source() {
+        let mut product = test_work_product("Plaintiff paid rent.", Vec::new(), Vec::new(), None);
+        let block_id = product.document_ast.blocks[0].block_id.clone();
+
+        let error = apply_work_product_text_range_link(
+            &mut product,
+            WorkProductTextRangeLinkRequest {
+                block_id,
+                start_offset: 10,
+                end_offset: 19,
+                quote: "wrong quote".to_string(),
+                target_type: "fact".to_string(),
+                target_id: "fact:rent".to_string(),
+                relation: Some("supports".to_string()),
+                citation: None,
+                canonical_id: None,
+                pinpoint: None,
+                exhibit_label: None,
+                document_id: None,
+                page_range: None,
+            },
+        )
+        .expect_err("mismatched selected text should fail");
+
+        match error {
+            ApiError::BadRequest(message) => {
+                assert!(message.contains("does not match"));
+            }
+            other => panic!("expected bad request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_range_link_uses_character_offsets_for_unicode_text() {
+        let mut product = test_work_product("Lead 🧾 receipt A.", Vec::new(), Vec::new(), None);
+        let block_id = product.document_ast.blocks[0].block_id.clone();
+
+        apply_work_product_text_range_link(
+            &mut product,
+            WorkProductTextRangeLinkRequest {
+                block_id,
+                start_offset: 7,
+                end_offset: 14,
+                quote: "receipt".to_string(),
+                target_type: "fact".to_string(),
+                target_id: "fact:receipt".to_string(),
+                relation: Some("supports".to_string()),
+                citation: None,
+                canonical_id: None,
+                pinpoint: None,
+                exhibit_label: None,
+                document_id: None,
+                page_range: None,
+            },
+        )
+        .expect("unicode-prefixed range should apply");
+
+        let range = product.document_ast.links[0]
+            .source_text_range
+            .as_ref()
+            .expect("range is stored");
+        assert_eq!(range.start_offset, 7);
+        assert_eq!(range.end_offset, 14);
+        assert_eq!(range.quote.as_deref(), Some("receipt"));
+    }
+
+    fn add_test_support_anchor(
+        product: &mut WorkProduct,
+        target_id: &str,
+        target_type: &str,
+        relation: &str,
+    ) {
+        let block_id = product.blocks[0].block_id.clone();
+        let anchor_id = format!("{block_id}:anchor:1");
+        product.blocks[0].fact_ids.push(target_id.to_string());
+        product.blocks[0].mark_ids.push(anchor_id.clone());
+        product.anchors.push(WorkProductAnchor {
+            id: anchor_id.clone(),
+            anchor_id: anchor_id.clone(),
+            matter_id: product.matter_id.clone(),
+            work_product_id: product.work_product_id.clone(),
+            block_id,
+            anchor_type: target_type.to_string(),
+            target_type: target_type.to_string(),
+            target_id: target_id.to_string(),
+            relation: relation.to_string(),
+            citation: None,
+            canonical_id: None,
+            pinpoint: None,
+            quote: None,
+            status: "needs_review".to_string(),
+        });
+        rebuild_work_product_ast_from_projection(product);
     }
 
     fn test_work_product(

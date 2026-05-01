@@ -20,6 +20,7 @@ import {
 } from "lucide-react"
 import {
   getAdminOverview,
+  getAdminSource,
   isTerminalJob,
   listAdminSources,
   startAdminJob,
@@ -27,6 +28,7 @@ import {
   type AdminJobKind,
   type AdminJobParams,
   type AdminOverview,
+  type AdminSourceDetail,
   type AdminSourceRegistryEntry,
   type AdminSourceRegistryResponse,
 } from "@/lib/admin-api"
@@ -130,7 +132,11 @@ export function AdminDashboardClient() {
   const [starting, setStarting] = useState<string | null>(null)
   const [maxChapters, setMaxChapters] = useState("2")
   const [chapters, setChapters] = useState("")
+  const [sessionKey, setSessionKey] = useState("2025R1")
   const [selectedSourceId, setSelectedSourceId] = useState("")
+  const [sourceDetail, setSourceDetail] = useState<AdminSourceDetail | null>(null)
+  const [sourceDetailLoading, setSourceDetailLoading] = useState(false)
+  const [sourceDetailError, setSourceDetailError] = useState<string | null>(null)
 
   async function load() {
     try {
@@ -158,6 +164,47 @@ export function AdminDashboardClient() {
     return () => window.clearInterval(interval)
   }, [])
 
+  useEffect(() => {
+    if (!selectedSourceId) {
+      setSourceDetail(null)
+      setSourceDetailError(null)
+      return
+    }
+
+    let cancelled = false
+    let firstLoad = true
+    let inFlight = false
+    setSourceDetail(null)
+
+    async function refreshSourceDetail() {
+      if (inFlight) return
+      inFlight = true
+      if (firstLoad) setSourceDetailLoading(true)
+      try {
+        const detail = await getAdminSource(selectedSourceId)
+        if (cancelled) return
+        setSourceDetail(detail)
+        setSourceDetailError(null)
+      } catch (err) {
+        if (cancelled) return
+        setSourceDetail(null)
+        setSourceDetailError(err instanceof Error ? err.message : "Source detail unavailable")
+      } finally {
+        if (!cancelled && firstLoad) setSourceDetailLoading(false)
+        firstLoad = false
+        inFlight = false
+      }
+    }
+
+    refreshSourceDetail()
+    const interval = window.setInterval(refreshSourceDetail, REFRESH_MS)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [selectedSourceId])
+
   const activeJob = overview?.active_job ?? null
   const adminReady = Boolean(overview && !error)
   const activeMutating = Boolean(activeJob && !activeJob.is_read_only && !isTerminalJob(activeJob.status))
@@ -165,6 +212,8 @@ export function AdminDashboardClient() {
     () => sourceRegistry?.sources.find((source) => source.source_id === selectedSourceId) ?? null,
     [selectedSourceId, sourceRegistry],
   )
+  const selectedSourceDetail = sourceDetail?.source.source_id === selectedSourceId ? sourceDetail : null
+  const displayedSource = selectedSourceDetail?.source ?? selectedSource
   const graphProgress = useMemo(() => {
     if (!overview?.graph.rows) return 0
     return Math.min(100, Math.round((overview.graph.jsonl_files / 70) * 100))
@@ -190,6 +239,7 @@ export function AdminDashboardClient() {
       }
       if (workflow.id === "source-ingest" && params.priority === "P0") {
         params.out_dir = `${overview.paths.data_dir.replace(/\/$/, "")}/sources`
+        if (sessionKey.trim()) params.session_key = sessionKey.trim()
       }
       const detail = await startAdminJob(workflow.kind, params)
       router.push(`/admin/jobs/${encodeURIComponent(detail.job.job_id)}`)
@@ -219,6 +269,7 @@ export function AdminDashboardClient() {
           : kind === "p0"
             ? { priority: "P0", out_dir: `${dataDir}/sources`, edition_year: 2025 }
             : { source_id: selectedSourceId, out_dir: `${dataDir}/sources`, edition_year: 2025 }
+      if (kind !== "combine" && sessionKey.trim()) params.session_key = sessionKey.trim()
       const detail = await startAdminJob(kind === "combine" ? "combine_graph" : "source_ingest", params)
       router.push(`/admin/jobs/${encodeURIComponent(detail.job.job_id)}`)
     } catch (err) {
@@ -305,8 +356,17 @@ export function AdminDashboardClient() {
                 <MiniStat label="local dirs" value={sourceRegistry?.totals.local_source_dirs ?? 0} />
                 <MiniStat label="artifacts" value={sourceRegistry?.totals.local_artifacts ?? 0} />
               </div>
+              <div>
+                <Label htmlFor="session-key" className="text-xs">Legislature session</Label>
+                <Input id="session-key" value={sessionKey} onChange={(event) => setSessionKey(event.target.value)} placeholder="2025R1" className="mt-1 h-8" />
+              </div>
             </div>
-            <SourceSummary source={selectedSource} />
+            <SourceSummary
+              source={displayedSource}
+              detail={selectedSourceDetail}
+              loading={sourceDetailLoading}
+              error={sourceDetailError}
+            />
           </div>
         </section>
 
@@ -439,7 +499,17 @@ export function AdminDashboardClient() {
   )
 }
 
-function SourceSummary({ source }: { source: AdminSourceRegistryEntry | null }) {
+function SourceSummary({
+  source,
+  detail,
+  loading,
+  error,
+}: {
+  source: AdminSourceRegistryEntry | null
+  detail: AdminSourceDetail | null
+  loading: boolean
+  error: string | null
+}) {
   if (!source) {
     return (
       <div className="rounded-md border border-border bg-background/40 p-4 text-sm text-muted-foreground">
@@ -447,6 +517,16 @@ function SourceSummary({ source }: { source: AdminSourceRegistryEntry | null }) 
       </div>
     )
   }
+
+  const stats = detail?.stats && typeof detail.stats === "object" ? detail.stats as Record<string, unknown> : null
+  const qc = detail?.qc_report && typeof detail.qc_report === "object" ? detail.qc_report as Record<string, unknown> : null
+  const warnings = Array.isArray(qc?.warnings) ? qc.warnings.filter((item): item is string => typeof item === "string") : []
+  const errors = Array.isArray(qc?.errors) ? qc.errors.filter((item): item is string => typeof item === "string") : []
+  const fetchedArtifacts = Array.isArray(stats?.artifacts) ? stats.artifacts.length : source.local.source_artifacts
+  const graphRows = numberFrom(stats?.graph_rows) ?? source.local.graph_rows
+  const discoveredItems = numberFrom(stats?.discovered_items)
+  const graphFiles = detail?.graph_files ?? []
+  const artifacts = detail?.raw_artifacts ?? []
 
   return (
     <div className="rounded-md border border-border bg-background/40 p-4">
@@ -464,10 +544,30 @@ function SourceSummary({ source }: { source: AdminSourceRegistryEntry | null }) 
       </div>
 
       <div className="mt-4 grid gap-2 sm:grid-cols-4">
-        <MiniStat label="graph files" value={source.local.graph_files} />
-        <MiniStat label="graph rows" value={source.local.graph_rows} />
-        <MiniStat label="files" value={source.local.source_artifacts} />
+        <MiniStat label="graph files" value={graphFiles.length || source.local.graph_files} />
+        <MiniStat label="graph rows" value={graphRows} />
+        <MiniStat label="items" value={discoveredItems ?? 0} />
+        <MiniStat label="files" value={fetchedArtifacts} />
+      </div>
+
+      {loading && (
+        <div className="mt-3 flex items-center gap-2 rounded-md border border-border bg-card/50 px-3 py-2 text-xs text-muted-foreground">
+          <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
+          Loading source details
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          {error}
+        </div>
+      )}
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-4">
         <MiniStat label="bytes" value={source.local.source_bytes} />
+        <MiniStat label="warnings" value={warnings.length} />
+        <MiniStat label="errors" value={errors.length} />
+        <MiniStat label="raw files" value={artifacts.length} />
       </div>
 
       <div className="mt-4 grid gap-2 text-xs sm:grid-cols-2">
@@ -475,6 +575,46 @@ function SourceSummary({ source }: { source: AdminSourceRegistryEntry | null }) 
         <PathRow label="edges" value={source.graph_edges_created.slice(0, 4).join(", ") || "none"} />
         <PathRow label="status" value={source.connector_status} />
         <PathRow label="access" value={source.access} />
+        <PathRow label="last run" value={source.local.last_finished_at ? formatDateTime(source.local.last_finished_at) : "not run"} />
+        <PathRow label="official" value={source.official_status} />
+      </div>
+
+      {(graphFiles.length > 0 || artifacts.length > 0) && (
+        <div className="mt-4 grid gap-3 text-xs lg:grid-cols-2">
+          <SourceFileList
+            title="Graph output"
+            empty="No graph files"
+            rows={graphFiles.slice(0, 4).map((file) => ({
+              label: file.file,
+              value: `${formatNumber(file.rows)} rows`,
+            }))}
+          />
+          <SourceFileList
+            title="Raw artifacts"
+            empty="No raw artifacts"
+            rows={artifacts.slice(0, 4).map((artifact) => ({
+              label: artifact.file,
+              value: artifact.status ?? artifact.content_type ?? `${formatNumber(artifact.bytes)} bytes`,
+            }))}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SourceFileList({ title, empty, rows }: { title: string; empty: string; rows: Array<{ label: string; value: string }> }) {
+  return (
+    <div className="rounded-md border border-border bg-card/50 p-3">
+      <div className="mb-2 font-mono text-[10px] uppercase text-muted-foreground">{title}</div>
+      <div className="space-y-1">
+        {rows.map((row) => (
+          <div key={`${row.label}:${row.value}`} className="flex items-center justify-between gap-3">
+            <span className="min-w-0 truncate font-mono text-foreground">{row.label}</span>
+            <span className="shrink-0 text-muted-foreground">{row.value}</span>
+          </div>
+        ))}
+        {rows.length === 0 && <div className="text-muted-foreground">{empty}</div>}
       </div>
     </div>
   )
@@ -571,4 +711,14 @@ function formatTime(value?: number) {
 
 function formatNumber(value?: number) {
   return (value ?? 0).toLocaleString()
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(date)
+}
+
+function numberFrom(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }

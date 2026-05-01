@@ -398,6 +398,31 @@ export interface WorkProductLinkInput {
   quote?: string
 }
 
+export interface PatchWorkProductSupportInput {
+  relation?: string
+  status?: string
+  citation?: string | null
+  canonical_id?: string | null
+  pinpoint?: string | null
+  quote?: string | null
+}
+
+export interface WorkProductTextRangeLinkInput {
+  block_id: string
+  start_offset: number
+  end_offset: number
+  quote: string
+  target_type: string
+  target_id: string
+  relation?: string
+  citation?: string
+  canonical_id?: string
+  pinpoint?: string
+  exhibit_label?: string
+  document_id?: string
+  page_range?: string
+}
+
 export interface ExportWorkProductInput {
   format: string
   profile?: string
@@ -963,10 +988,11 @@ export async function getWorkProductState(
   options: GetWorkProductsOptions = {},
 ): Promise<LoadState<WorkProduct | null>> {
   const decodedMatterId = decodeMatterRouteId(matterId)
+  const decodedWorkProductId = workProductId ? decodeRouteSegment(workProductId) : undefined
   try {
-    if (workProductId) {
+    if (decodedWorkProductId) {
       const live = await fetchCaseBuilder<unknown>(
-        `/matters/${encodeURIComponent(decodedMatterId)}/work-products/${encodeURIComponent(workProductId)}`,
+        `/matters/${encodeURIComponent(decodedMatterId)}/work-products/${encodeURIComponent(decodedWorkProductId)}`,
       )
       return { source: "live", data: normalizeWorkProduct(live) }
     }
@@ -984,8 +1010,8 @@ export async function getWorkProductState(
     const products = demo ? buildDemoWorkProducts(demo) : []
     return {
       source: demo ? "demo" : "error",
-      data: workProductId
-        ? products.find((product) => product.id === workProductId || product.work_product_id === workProductId) ?? null
+      data: decodedWorkProductId
+        ? products.find((product) => product.id === decodedWorkProductId || product.work_product_id === decodedWorkProductId) ?? null
         : products[0] ?? null,
       error: errorMessage(error),
     }
@@ -1056,6 +1082,51 @@ export function linkWorkProductSupport(
 ): Promise<ActionState<WorkProduct>> {
   return runCaseBuilderAction(
     `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/work-products/${encodeURIComponent(workProductId)}/links`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      normalize: normalizeWorkProduct,
+    },
+  )
+}
+
+export function patchWorkProductSupport(
+  matterId: string,
+  workProductId: string,
+  anchorId: string,
+  input: PatchWorkProductSupportInput,
+): Promise<ActionState<WorkProduct>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/work-products/${encodeURIComponent(workProductId)}/links/${encodeURIComponent(anchorId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+      normalize: normalizeWorkProduct,
+    },
+  )
+}
+
+export function deleteWorkProductSupport(
+  matterId: string,
+  workProductId: string,
+  anchorId: string,
+): Promise<ActionState<WorkProduct>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/work-products/${encodeURIComponent(workProductId)}/links/${encodeURIComponent(anchorId)}`,
+    {
+      method: "DELETE",
+      normalize: normalizeWorkProduct,
+    },
+  )
+}
+
+export function linkWorkProductTextRange(
+  matterId: string,
+  workProductId: string,
+  input: WorkProductTextRangeLinkInput,
+): Promise<ActionState<WorkProduct>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/work-products/${encodeURIComponent(workProductId)}/text-ranges`,
     {
       method: "POST",
       body: JSON.stringify(input),
@@ -3151,6 +3222,14 @@ function array(...values: any[]): any[] {
     if (Array.isArray(value)) return value
   }
   return []
+}
+
+function decodeRouteSegment(value: string) {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
 }
 
 function string(...values: any[]): string {

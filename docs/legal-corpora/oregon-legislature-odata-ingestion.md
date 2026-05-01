@@ -2,6 +2,20 @@
 
 This document describes the Oregon Legislature OData service as a source for measures, sessions, committees, legislative actions, votes, testimony, and bill-document metadata. This source is the missing bridge between ORSGraph's current ORS text graph and richer legislative history/currentness data.
 
+## Current Implementation Status
+
+`or_leg_odata` is implemented as a registry-driven connector in `crates/ors-crawler-v0/src/oregon_leg_odata.rs`. It is selected by `source-ingest --source-id or_leg_odata` through `crates/ors-crawler-v0/src/connectors/mod.rs`.
+
+The connector currently:
+
+- Discovers `$metadata`, `LegislativeSessions`, and session-scoped entity sets for measures, documents, history actions, sponsors, committees, legislators, meetings, and votes.
+- Uses `--session-key` for explicit sessions such as `2025R1`; if absent, it defaults to `<edition_year>R1`.
+- Preserves raw artifacts under `data/sources/or_leg_odata/raw/`.
+- Parses legacy OData JSON shapes including `d.results`, `d`, `value`, `results`, top-level arrays, and object keys matching the entity set.
+- Emits normalized legislative JSONL rows and source-backed projections into existing `SourceDocument`, `SessionLaw`, `StatusEvent`, `LineageEvent`, and `LegalActor` contracts.
+- Records `odata_entity_set_stats.jsonl` row counts and parser diagnostics.
+- Detects OData next links and warns, but does not yet follow pagination automatically.
+
 ## Source Service
 
 Service root:
@@ -234,32 +248,42 @@ The first implementation can stay conservative: cache raw OData responses, emit 
 
 ## Output Shape
 
-Use an isolated output folder until the pipeline is mature:
+The registry-driven output folder is:
 
 ```text
-data/oregon_leg_odata/raw/service.xml
-data/oregon_leg_odata/raw/metadata.xml
-data/oregon_leg_odata/raw/{session_key}/{entity_set}.json
-data/oregon_leg_odata/graph/
-data/oregon_leg_odata/stats.json
+data/sources/or_leg_odata/
+  raw/
+  normalized/
+  graph/
+  qc/report.json
+  manifest.json
+  stats.json
 ```
 
-Initial normalized graph files:
+Current normalized graph files:
 
 ```text
 legislative_sessions.jsonl
 legislative_measures.jsonl
 legislative_measure_documents.jsonl
+legislative_measure_versions.jsonl
 legislative_measure_history_actions.jsonl
 legislative_measure_sponsors.jsonl
 legislative_committees.jsonl
 legislative_legislators.jsonl
+legislative_committee_meetings.jsonl
 legislative_votes.jsonl
+vote_events.jsonl
+vote_records.jsonl
 source_documents.jsonl
 session_laws.jsonl
 status_events.jsonl
 lineage_events.jsonl
 legal_actors.jsonl
+legislative_edges.jsonl
+odata_entity_sets.jsonl
+odata_metadata_summary.jsonl
+odata_entity_set_stats.jsonl
 parser_diagnostics.jsonl
 ```
 
@@ -280,7 +304,7 @@ orleg:vote:measure:2025R1:987654
 1. Fetch and cache the service document and `$metadata`.
 2. Parse `$metadata` into a schema summary with entity sets, keys, properties, navigation properties, and referential constraints.
 3. Discover sessions and choose either `DefaultSession` or an explicit `--session-key`.
-4. Fetch session-scoped entity sets with paging until no next link remains.
+4. Fetch session-scoped entity sets as separate raw artifacts. Current code records diagnostics if a next link is present; automatic paging is still pending.
 5. Write raw responses before normalization.
 6. Normalize property names and scalar types, especially `Edm.DateTime`, `Edm.Decimal`, nullable booleans, and URLs.
 7. Build deterministic IDs.
@@ -304,22 +328,39 @@ Minimum QC for a session ingest:
 
 ## Implementation Notes
 
-This should be implemented as a separate crawler command, not as part of the ORS chapter crawl:
+This is implemented through the registry-driven source ingest command:
 
 ```text
-cargo run -p ors-crawler-v0 --bin ors-crawler-v0 -- crawl-oregon-leg-odata \
-  --out data/oregon_leg_odata \
-  --session-key 2025R1
+cargo run -p ors-crawler-v0 --bin ors-crawler-v0 -- source-ingest \
+  --source-id or_leg_odata \
+  --out data/sources \
+  --session-key 2025R1 \
+  --mode all
 ```
 
 Use the existing project conventions:
 
 - Rust-first parser/client under `crates/ors-crawler-v0/src/`.
-- Raw artifacts before normalization.
-- JSONL graph outputs under an isolated `graph/` directory.
+- Raw artifacts before graph output.
+- JSONL graph outputs under `data/sources/or_leg_odata/graph/`.
 - `parser_diagnostics.jsonl` for non-fatal data shape and join issues.
 - Seed dry-run before Neo4j writes.
 - Live Neo4j materialization only after the JSONL contract is stable.
+
+Offline fixture command:
+
+```text
+cargo run -p ors-crawler-v0 --bin ors-crawler-v0 -- source-ingest \
+  --source-id or_leg_odata \
+  --fixture-dir /private/tmp/orsgraph-odata-fixture \
+  --out /private/tmp/orsgraph-odata-out \
+  --session-key 2025R1 \
+  --mode all \
+  --allow-network false \
+  --fail-on-qc
+```
+
+Fixture lookup currently supports `.json`, `.html`, `.txt`, and `.pdf`. Use `metadata.txt` for `$metadata` XML fixtures.
 
 ## Known Metadata Issues To Preserve
 

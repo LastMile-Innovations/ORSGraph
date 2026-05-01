@@ -77,6 +77,29 @@ Follow-up implementation update on 2026-05-01 for WorkProduct AST hardening:
 - Tightened privacy edges: AST conflict/errors avoid prompts/patch IDs/legal text, R2 storage errors avoid raw backend details, WorkProduct download filenames are hash-derived, and new document object keys use hashed path segments.
 - Added focused unit/contract/smoke coverage for bounded list payloads, layer diffs, scoped restore, safe download responses, matter-isolated object-backed paths, and frontend `layer_diffs` normalization.
 
+Follow-up implementation update on 2026-05-01 for shared WorkProduct frontend routes:
+
+- Added canonical frontend routes for WorkProduct list, new/template creation, detail, editor, QC, preview, export, and history under `/casebuilder/matters/:matterId/work-products`.
+- Added `/answer`, `/motion`, `/declaration`, and `/memo` aliases that resolve into an existing typed WorkProduct or the shared new-product flow.
+- Added a matter-level WorkProduct dashboard/template picker and a first reusable three-pane WorkProduct workbench over the canonical AST.
+- Added a Markdown round-trip panel to the shared workbench that loads AST-backed Markdown, converts edits back into `document_ast`, and saves through the canonical WorkProduct patch path.
+- Added selected-block support controls so the shared WorkProduct inspector can link matter facts, evidence, documents/exhibits, and authority/citation text to AST blocks through first-class support-link API routes, preview the linked source, update support relations, and remove block-local links.
+- Added backend PATCH/DELETE support-link routes that rebuild AST links/projections, validate matter scope, and record Case History support-use changes for relation updates and removals.
+- Verification: `pnpm run typecheck`, `pnpm run lint` (passes with existing admin warnings), `pnpm run build`, `node --check scripts/smoke-routes.mjs`, `node --check scripts/smoke-casebuilder.mjs`, `SMOKE_BASE_URL=http://localhost:3000 node scripts/smoke-routes.mjs` (55 checks), `cargo test -p orsgraph-api casebuilder_routes_cover_v0_contracts`, and `cargo test -p orsgraph-api casebuilder` passed. A later live `pnpm run smoke:casebuilder` attempt was not completed because no API was listening on `localhost:8080`; no further smoke tests should run without explicit approval.
+
+Follow-up implementation update on 2026-05-01 for first-class WorkProduct support-link lifecycle:
+
+- Added dedicated backend support-link update/delete service methods, routes, frontend API helpers, and WorkProduct inspector calls.
+- Relation changes and removals now rebuild AST support links, compatibility block projections, marks, validation state, and Case History support-use changes from the backend.
+- Verification: `cargo test -p orsgraph-api support_relation_update_rebuilds_ast_links_and_projection`, `cargo test -p orsgraph-api support_removal_rebuilds_ast_links_and_projection`, `cargo test -p orsgraph-api casebuilder_routes_cover_v0_contracts`, `cargo test -p orsgraph-api casebuilder`, `pnpm run typecheck`, `pnpm run lint` (passes with existing admin warnings), and `pnpm run build` passed. No additional smoke test was run.
+
+Follow-up implementation update on 2026-05-01 for WorkProduct selected-text links:
+
+- Added a backend text-range route that writes AST `source_text_range` support links, citation uses, and exhibit references from one selected text payload.
+- Added frontend API helpers and WorkProduct editor selection tracking so selected text can be linked to a fact, evidence item, exhibit/document, or authority citation from the inspector.
+- Added inspector visibility for range-level links/citations/exhibits on the selected block.
+- Verification: `cargo test -p orsgraph-api text_range_link_adds_support_citation_and_exhibit_records`, `cargo test -p orsgraph-api casebuilder_routes_cover_v0_contracts`, and `pnpm run typecheck` passed. No smoke test was run.
+
 Follow-up implementation update on 2026-05-01 for the 2025 UTCR graph corpus:
 
 - Added `/Users/grey/Downloads/2025_UTCR.pdf` as a first-class `or:utcr` court-rule corpus with its own `LegalCorpus`, `CorpusEdition`, `SourceDocument`, `SourcePage`, `CourtRuleChapter`, rule identity/version, provision, citation, procedural requirement, retrieval chunk, and WorkProduct rule-pack outputs.
@@ -209,6 +232,14 @@ Follow-up implementation and docs update on 2026-05-01 for the Court Rules Regis
 - Completed behavior: The WorkProduct Builder backlog now has explicit tickets for finishing, testing, optimizing, securing, and releasing the AST platform and all major systems that consume it.
 - Evidence: `docs/casebuilder-backlog/12-work-product-builder-backlog.md`.
 - Verification: Docs consistency and whitespace checks.
+- Status: Done
+
+### DONE-015 - Shared WorkProduct frontend routes and dashboard
+- Priority: P0
+- Area: WorkProduct Builder/frontend
+- Completed behavior: CaseBuilder has canonical WorkProduct list, new/template, detail, editor, QC, preview, export, and history routes under `/casebuilder/matters/:id/work-products`, plus typed answer/motion/declaration/memo aliases. Users can see all WorkProducts for a matter, create supported product types from templates, open a reusable AST-backed workbench, edit blocks, round-trip Markdown into the canonical AST, link facts/evidence/documents/authorities to selected AST blocks, preview/update/remove those support links through dedicated backend routes, run QC, preview, export, and inspect history surfaces.
+- Evidence: `frontend/app/matters/[id]/work-products/*`, `frontend/app/casebuilder/matters/[id]/work-products/*`, `frontend/app/matters/[id]/work-product-alias-page.tsx`, `frontend/components/casebuilder/work-product-dashboard.tsx`, `frontend/components/casebuilder/work-product-workbench.tsx`, `frontend/lib/casebuilder/routes.ts`, `frontend/scripts/smoke-routes.mjs`.
+- Verification: `pnpm run typecheck`, `pnpm run lint`, `pnpm run build`, `SMOKE_BASE_URL=http://localhost:3000 node scripts/smoke-routes.mjs`, `cargo test -p orsgraph-api casebuilder_routes_cover_v0_contracts`, and `cargo test -p orsgraph-api casebuilder`.
 - Status: Done
 
 ## Partial

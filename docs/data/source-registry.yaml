@@ -47,7 +47,7 @@
         "HELD_MEETING",
         "DERIVED_FROM"
       ],
-      "connector_status": "planned",
+      "connector_status": "implemented",
       "priority": "P0",
       "risks": [
         "Legacy OData shape",

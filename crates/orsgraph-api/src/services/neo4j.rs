@@ -40,21 +40,45 @@ impl Neo4jService {
             "CREATE INDEX provision_id IF NOT EXISTS FOR (n:Provision) ON (n.provision_id)",
             "CREATE INDEX provision_version_id IF NOT EXISTS FOR (n:Provision) ON (n.version_id)",
             "CREATE INDEX provision_canonical_id IF NOT EXISTS FOR (n:Provision) ON (n.canonical_id)",
+            "CREATE INDEX retrieval_chunk_id IF NOT EXISTS FOR (n:RetrievalChunk) ON (n.chunk_id)",
+            "CREATE INDEX legal_semantic_id IF NOT EXISTS FOR (n:LegalSemanticNode) ON (n.semantic_id)",
             "CREATE INDEX citation_mention_source_provision IF NOT EXISTS FOR (n:CitationMention) ON (n.source_provision_id)",
             "CREATE INDEX legal_semantic_source_provision IF NOT EXISTS FOR (n:LegalSemanticNode) ON (n.source_provision_id)",
+            "CREATE INDEX obligation_id IF NOT EXISTS FOR (n:Obligation) ON (n.obligation_id)",
+            "CREATE INDEX exception_id IF NOT EXISTS FOR (n:Exception) ON (n.exception_id)",
+            "CREATE INDEX deadline_id IF NOT EXISTS FOR (n:Deadline) ON (n.deadline_id)",
+            "CREATE INDEX penalty_id IF NOT EXISTS FOR (n:Penalty) ON (n.penalty_id)",
+            "CREATE INDEX remedy_id IF NOT EXISTS FOR (n:Remedy) ON (n.remedy_id)",
+            "CREATE INDEX required_notice_id IF NOT EXISTS FOR (n:RequiredNotice) ON (n.required_notice_id)",
+            "CREATE INDEX form_text_id IF NOT EXISTS FOR (n:FormText) ON (n.form_text_id)",
+            "CREATE INDEX procedural_requirement_id IF NOT EXISTS FOR (n:ProceduralRequirement) ON (n.requirement_id)",
             "CREATE INDEX definition_source_provision IF NOT EXISTS FOR (n:Definition) ON (n.source_provision_id)",
+            "CREATE INDEX definition_id IF NOT EXISTS FOR (n:Definition) ON (n.definition_id)",
+            "CREATE INDEX defined_term_id IF NOT EXISTS FOR (n:DefinedTerm) ON (n.defined_term_id)",
             "CREATE INDEX source_note_version_id IF NOT EXISTS FOR (n:SourceNote) ON (n.version_id)",
             "CREATE INDEX source_note_provision_id IF NOT EXISTS FOR (n:SourceNote) ON (n.provision_id)",
             "CREATE INDEX source_note_canonical_id IF NOT EXISTS FOR (n:SourceNote) ON (n.canonical_id)",
+            "CREATE INDEX source_note_id IF NOT EXISTS FOR (n:SourceNote) ON (n.source_note_id)",
+            "CREATE INDEX chapter_version_id IF NOT EXISTS FOR (n:ChapterVersion) ON (n.chapter_id)",
             "CREATE INDEX sidebar_saved_search_scope IF NOT EXISTS FOR (n:SavedSearch) ON (n.scope)",
             "CREATE INDEX sidebar_saved_search_id IF NOT EXISTS FOR (n:SavedSearch) ON (n.saved_search_id)",
             "CREATE INDEX sidebar_saved_statute_scope IF NOT EXISTS FOR (n:SavedStatute) ON (n.scope)",
             "CREATE INDEX sidebar_recent_statute_scope IF NOT EXISTS FOR (n:RecentStatute) ON (n.scope)",
             "CREATE INDEX status_event_canonical_id IF NOT EXISTS FOR (n:StatusEvent) ON (n.canonical_id)",
             "CREATE INDEX status_event_version_id IF NOT EXISTS FOR (n:StatusEvent) ON (n.version_id)",
+            "CREATE INDEX status_event_id IF NOT EXISTS FOR (n:StatusEvent) ON (n.status_event_id)",
             "CREATE INDEX temporal_effect_canonical_id IF NOT EXISTS FOR (n:TemporalEffect) ON (n.canonical_id)",
             "CREATE INDEX temporal_effect_version_id IF NOT EXISTS FOR (n:TemporalEffect) ON (n.version_id)",
             "CREATE INDEX temporal_effect_source_provision IF NOT EXISTS FOR (n:TemporalEffect) ON (n.source_provision_id)",
+            "CREATE INDEX temporal_effect_id IF NOT EXISTS FOR (n:TemporalEffect) ON (n.temporal_effect_id)",
+            "CREATE INDEX session_law_id IF NOT EXISTS FOR (n:SessionLaw) ON (n.session_law_id)",
+            "CREATE INDEX amendment_id IF NOT EXISTS FOR (n:Amendment) ON (n.amendment_id)",
+            "CREATE INDEX lineage_event_id IF NOT EXISTS FOR (n:LineageEvent) ON (n.lineage_event_id)",
+            "CREATE INDEX tax_rule_id IF NOT EXISTS FOR (n:TaxRule) ON (n.tax_rule_id)",
+            "CREATE INDEX money_amount_id IF NOT EXISTS FOR (n:MoneyAmount) ON (n.money_amount_id)",
+            "CREATE INDEX rate_limit_id IF NOT EXISTS FOR (n:RateLimit) ON (n.rate_limit_id)",
+            "CREATE INDEX legal_actor_id IF NOT EXISTS FOR (n:LegalActor) ON (n.actor_id)",
+            "CREATE INDEX legal_action_id IF NOT EXISTS FOR (n:LegalAction) ON (n.action_id)",
             "CREATE INDEX rule_authority_document_id IF NOT EXISTS FOR (n:RuleAuthorityDocument) ON (n.authority_document_id)",
             "CREATE INDEX rule_authority_document_applicability IF NOT EXISTS FOR (n:RuleAuthorityDocument) ON (n.jurisdiction_id, n.effective_start_date, n.effective_end_date)",
             "CREATE INDEX rule_authority_document_kind IF NOT EXISTS FOR (n:RuleAuthorityDocument) ON (n.authority_kind, n.date_status)",
@@ -465,6 +489,7 @@ impl Neo4jService {
                   WHEN coalesce(node.source_provision_id, node.citation, '') STARTS WITH 'UTCR ' THEN 'UTCR'
                   ELSE 'ORS'
              END";
+        let search_id = search_node_id_expr("node");
 
         let queries: Vec<(&str, String, f32)> = match filters
             .result_type
@@ -501,7 +526,7 @@ impl Neo4jService {
             Some("definition") | Some("definedterm") => vec![(
                 "definition_fulltext",
                 format!("MATCH (node)
-                 RETURN coalesce(node.term, node.definition_id) as id, node.term as citation, null as title,
+                 RETURN {search_id} as id, node.term as citation, null as title,
                         null as chapter, null as status, 'definition' as kind, score,
                         coalesce(node.definition_text, node.term) as text,
                         {inferred_authority} as authority_family,
@@ -514,7 +539,7 @@ impl Neo4jService {
                 vec![(
                     "semantic_fulltext",
                     format!("MATCH (node)
-                     RETURN coalesce(node.semantic_id, node.provision_id) as id, node.citation as citation, null as title,
+                     RETURN {search_id} as id, node.citation as citation, null as title,
                             node.chapter as chapter, null as status, {semantic_kind} as kind, score,
                             node.text as text,
                             {inferred_authority} as authority_family,
@@ -527,7 +552,7 @@ impl Neo4jService {
             | Some("temporal_effect") | Some("sessionlaw") | Some("amendment") => vec![(
                 "history_fulltext",
                 format!("MATCH (node)
-                 RETURN coalesce(node.source_note_id, node.version_id) as id, node.citation as citation, null as title,
+                 RETURN {search_id} as id, node.citation as citation, null as title,
                         null as chapter, null as status, {history_kind} as kind, score,
                         coalesce(node.text, node.raw_text) as text,
                         {inferred_authority} as authority_family,
@@ -550,7 +575,7 @@ impl Neo4jService {
             Some("actor") => vec![(
                 "actor_action_fulltext",
                 format!("MATCH (node)
-                 RETURN coalesce(node.actor_id, node.action_id) as id, null as citation, null as title,
+                 RETURN {search_id} as id, null as citation, null as title,
                         null as chapter, null as status, {specialized_kind} as kind, score,
                         coalesce(node.actor_text, node.object_text) as text,
                         {inferred_authority} as authority_family,
@@ -562,7 +587,7 @@ impl Neo4jService {
             | Some("legalactor") => vec![(
                 "specialized_legal_fulltext",
                 format!("MATCH (node)
-                 RETURN coalesce(node.tax_rule_id, node.money_amount_id, node.rate_limit_id, node.action_id, node.actor_id) as id,
+                 RETURN {search_id} as id,
                         node.citation as citation, null as title, node.chapter as chapter, null as status,
                         {specialized_kind} as kind, score,
                         coalesce(node.text, node.normalized_text, node.actor_text, node.action_text, node.object_text, node.tax_type, node.rate_type, node.amount_type) as text,
@@ -574,10 +599,10 @@ impl Neo4jService {
             _ => vec![
                 ("statute_fulltext", "MATCH (node) RETURN node.canonical_id as id, node.citation as citation, node.title as title, node.chapter as chapter, node.status as status, 'statute' as kind, score, coalesce(node.text, node.title) as text, coalesce(node.authority_family, 'ORS') as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id".to_string(), 1.05),
                 ("provision_fulltext", "MATCH (node) RETURN node.provision_id as id, node.display_citation as citation, null as title, node.chapter as chapter, node.status as status, 'provision' as kind, score, node.text as text, coalesce(node.authority_family, 'ORS') as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id".to_string(), 1.15),
-                ("definition_fulltext", format!("MATCH (node) RETURN coalesce(node.term, node.definition_id) as id, node.term as citation, null as title, null as chapter, null as status, 'definition' as kind, score, coalesce(node.definition_text, node.term) as text, {inferred_authority} as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id"), 1.1),
-                ("semantic_fulltext", format!("MATCH (node) RETURN coalesce(node.semantic_id, node.provision_id) as id, node.citation as citation, null as title, node.chapter as chapter, null as status, {semantic_kind} as kind, score, node.text as text, {inferred_authority} as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id"), 1.0),
-                ("specialized_legal_fulltext", format!("MATCH (node) RETURN coalesce(node.tax_rule_id, node.money_amount_id, node.rate_limit_id, node.action_id, node.actor_id) as id, node.citation as citation, null as title, node.chapter as chapter, null as status, {specialized_kind} as kind, score, coalesce(node.text, node.normalized_text, node.actor_text, node.action_text, node.object_text, node.tax_type, node.rate_type, node.amount_type) as text, {inferred_authority} as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id"), 0.95),
-                ("history_fulltext", format!("MATCH (node) RETURN coalesce(node.source_note_id, node.version_id) as id, node.citation as citation, null as title, null as chapter, null as status, {history_kind} as kind, score, coalesce(node.text, node.raw_text) as text, {inferred_authority} as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id"), 0.9),
+                ("definition_fulltext", format!("MATCH (node) RETURN {search_id} as id, node.term as citation, null as title, null as chapter, null as status, 'definition' as kind, score, coalesce(node.definition_text, node.term) as text, {inferred_authority} as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id"), 1.1),
+                ("semantic_fulltext", format!("MATCH (node) RETURN {search_id} as id, node.citation as citation, null as title, node.chapter as chapter, null as status, {semantic_kind} as kind, score, node.text as text, {inferred_authority} as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id"), 1.0),
+                ("specialized_legal_fulltext", format!("MATCH (node) RETURN {search_id} as id, node.citation as citation, null as title, node.chapter as chapter, null as status, {specialized_kind} as kind, score, coalesce(node.text, node.normalized_text, node.actor_text, node.action_text, node.object_text, node.tax_type, node.rate_type, node.amount_type) as text, {inferred_authority} as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id"), 0.95),
+                ("history_fulltext", format!("MATCH (node) RETURN {search_id} as id, node.citation as citation, null as title, null as chapter, null as status, {history_kind} as kind, score, coalesce(node.text, node.raw_text) as text, {inferred_authority} as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id"), 0.9),
                 ("chunk_fulltext", "MATCH (node) RETURN node.chunk_id as id, node.citation as citation, null as title, node.chapter as chapter, null as status, 'chunk' as kind, score, node.text as text, coalesce(node.authority_family, 'ORS') as authority_family, node.authority_type as authority_type, node.corpus_id as corpus_id".to_string(), 0.85),
             ],
         };
@@ -798,28 +823,24 @@ impl Neo4jService {
             return Ok(0);
         }
 
-        let ids: Vec<String> = results.iter().map(|r| r.id.clone()).collect();
-        let mut rows = self
-            .graph
-            .execute(
-                query(
-                    "UNWIND $ids as id
-                     MATCH (n)
-                     WHERE n.canonical_id = id
-                        OR n.provision_id = id
-                        OR n.version_id = id
-                        OR n.semantic_id = id
-                        OR n.definition_id = id
-                        OR n.deadline_id = id
-                        OR n.penalty_id = id
-                        OR n.source_note_id = id
-                        OR n.chunk_id = id
+        let buckets = search_node_id_buckets(results);
+        let expansion_query = format!(
+            "{}
+                     WITH id, head(collect(DISTINCT n)) AS n
+                     WHERE n IS NOT NULL
                      OPTIONAL MATCH (n:RetrievalChunk)-[:DERIVED_FROM]->(chunk_source)
-                     WITH id, n, coalesce(chunk_source, n) AS source
+                     WITH id, n, chunk_source, coalesce(n.source_provision_id, chunk_source.source_provision_id) AS support_provision_id
+                     OPTIONAL MATCH (support:Provision {{provision_id: support_provision_id}})
+                     WITH id, n, coalesce(chunk_source, support, n) AS source
                      OPTIONAL MATCH (source:Provision)-[:PART_OF_VERSION]->(v:LegalTextVersion)-[:VERSION_OF]->(identity:LegalTextIdentity)
                      OPTIONAL MATCH (source:LegalTextVersion)-[:VERSION_OF]->(identity2:LegalTextIdentity)
-                     WITH id, n, source, coalesce(v, source) AS version, coalesce(identity, identity2) AS identity
+                     OPTIONAL MATCH (source:LegalTextIdentity)<-[:VERSION_OF]-(identity_version:LegalTextVersion)
+                     WITH id, n, source, coalesce(v, identity_version, source) AS version,
+                          coalesce(identity, identity2, source) AS identity
                      OPTIONAL MATCH (source)-[:EXPRESSES]->(sem)
+                     OPTIONAL MATCH (version)<-[:PART_OF_VERSION]-(version_provision:Provision)
+                     WHERE source:LegalTextIdentity OR source:LegalTextVersion
+                     OPTIONAL MATCH (version_provision)-[:EXPRESSES]->(version_sem)
                      OPTIONAL MATCH (source)-[:DEFINES]->(def)
                      OPTIONAL MATCH (source)-[:MENTIONS_CITATION]->(cm:CitationMention)
                      OPTIONAL MATCH (cm)-[:RESOLVES_TO]->(target:LegalTextIdentity)
@@ -830,8 +851,9 @@ impl Neo4jService {
                      OPTIONAL MATCH (source)-[:CITES]->(out)
                      OPTIONAL MATCH (in)-[:CITES]->(source)
                      WITH id, n, source, version, identity,
-                          collect(DISTINCT coalesce(sem.semantic_type, labels(sem)[0])) AS semantic_types,
-                          count(DISTINCT sem) AS semantic_count,
+                          collect(DISTINCT coalesce(sem.semantic_type, labels(sem)[0]))
+                            + collect(DISTINCT coalesce(version_sem.semantic_type, labels(version_sem)[0])) AS semantic_types,
+                          count(DISTINCT sem) + count(DISTINCT version_sem) AS semantic_count,
                           count(DISTINCT def) AS definition_count,
                           count(DISTINCT target) AS citation_target_count,
                           count(DISTINCT source_note) + count(DISTINCT version_note) AS source_note_count,
@@ -851,9 +873,14 @@ impl Neo4jService {
                             temporal_effect_count,
                             outbound_count,
                             inbound_count",
-                )
-                .param("ids", ids),
-            )
+            search_node_resolver_cypher()
+        );
+        let mut rows = self
+            .graph
+            .execute(with_search_node_bucket_params(
+                query(&expansion_query),
+                &buckets,
+            ))
             .await
             .map_err(ApiError::Neo4jConnection)?;
 
@@ -972,15 +999,25 @@ impl Neo4jService {
             return Ok(std::collections::HashMap::new());
         }
 
-        let mut result = self.graph.execute(
-            query("UNWIND $ids as id
-                   MATCH (n) WHERE n.canonical_id = id OR n.provision_id = id OR n.semantic_id = id OR n.chunk_id = id
+        let buckets = SearchNodeIdBuckets::from_generic_ids(ids.iter().cloned());
+        let metadata_query = format!(
+            "{}
+                   WITH id, head(collect(DISTINCT n)) AS n
+                   WHERE n IS NOT NULL
                    OPTIONAL MATCH (n)-[:CITES]->(out)
                    OPTIONAL MATCH (in)-[:CITES]->(n)
                    OPTIONAL MATCH (n)-[:HAS_SEMANTIC_NODE|DEFINED_BY]-(s)
-                   RETURN id, count(DISTINCT out) as outbound, count(DISTINCT in) as inbound, count(DISTINCT s) as semantic")
-            .param("ids", ids.to_vec())
-        ).await.map_err(ApiError::Neo4jConnection)?;
+                   RETURN id, count(DISTINCT out) as outbound, count(DISTINCT in) as inbound, count(DISTINCT s) as semantic",
+            search_node_resolver_cypher()
+        );
+        let mut result = self
+            .graph
+            .execute(with_search_node_bucket_params(
+                query(&metadata_query),
+                &buckets,
+            ))
+            .await
+            .map_err(ApiError::Neo4jConnection)?;
 
         let mut map = std::collections::HashMap::new();
         while let Some(row) = result.next().await.map_err(ApiError::Neo4jConnection)? {
@@ -1045,7 +1082,10 @@ impl Neo4jService {
             .unwrap_or_else(|_| "unknown".to_string())
             .to_lowercase();
         let id = row.get::<String>("id").unwrap_or_default();
-        let citation = row.get::<String>("citation").ok();
+        let citation = row
+            .get::<String>("citation")
+            .ok()
+            .or_else(|| citation_from_canonical_id(&id));
         let title: Option<String> = row.get("title").ok();
         let authority_family = row.get::<String>("authority_family").ok().or_else(|| {
             citation
@@ -1092,6 +1132,8 @@ impl Neo4jService {
             ),
             _ => format!("/search?q={}", id),
         };
+        let mut semantic_types = semantic_types_for_search_kind(&kind);
+        seed_history_semantic_types(&mut semantic_types, &id, &kind, &snippet);
 
         Ok(SearchResultModel {
             id,
@@ -1112,7 +1154,7 @@ impl Neo4jService {
             pre_rerank_score: None,
             rank_source: None,
             score_breakdown: None,
-            semantic_types: vec![],
+            semantic_types,
             source_backed: true,
             qc_warnings: vec![],
             href,
@@ -3126,6 +3168,378 @@ fn graph_csv(value: Option<&str>) -> Vec<String> {
         .collect()
 }
 
+#[derive(Debug, Default)]
+struct SearchNodeIdBuckets {
+    identity_ids: Vec<String>,
+    provision_ids: Vec<String>,
+    chunk_ids: Vec<String>,
+    definition_ids: Vec<String>,
+    semantic_ids: Vec<String>,
+    history_ids: Vec<String>,
+    specialized_ids: Vec<String>,
+    chapter_ids: Vec<String>,
+}
+
+impl SearchNodeIdBuckets {
+    fn from_generic_ids(ids: impl IntoIterator<Item = String>) -> Self {
+        let mut buckets = Self::default();
+        for id in ids {
+            buckets.push_generic(id);
+        }
+        buckets.dedup();
+        buckets
+    }
+
+    fn push_generic(&mut self, id: String) {
+        self.identity_ids.push(id.clone());
+        self.provision_ids.push(id.clone());
+        self.chunk_ids.push(id.clone());
+        self.definition_ids.push(id.clone());
+        self.semantic_ids.push(id.clone());
+        self.history_ids.push(id.clone());
+        self.specialized_ids.push(id.clone());
+        self.chapter_ids.push(id);
+    }
+
+    fn dedup(&mut self) {
+        dedup_strings(&mut self.identity_ids);
+        dedup_strings(&mut self.provision_ids);
+        dedup_strings(&mut self.chunk_ids);
+        dedup_strings(&mut self.definition_ids);
+        dedup_strings(&mut self.semantic_ids);
+        dedup_strings(&mut self.history_ids);
+        dedup_strings(&mut self.specialized_ids);
+        dedup_strings(&mut self.chapter_ids);
+    }
+}
+
+fn search_node_id_buckets(results: &[SearchResultModel]) -> SearchNodeIdBuckets {
+    let mut buckets = SearchNodeIdBuckets::default();
+    for result in results {
+        match result.kind.as_str() {
+            "statute" | "court_rule" | "legaltextidentity" | "utcrrule" => {
+                buckets.identity_ids.push(result.id.clone())
+            }
+            "provision" | "court_rule_provision" | "utcrprovision" => {
+                buckets.provision_ids.push(result.id.clone())
+            }
+            "chunk" | "retrievalchunk" => buckets.chunk_ids.push(result.id.clone()),
+            "definition" | "definedterm" => buckets.definition_ids.push(result.id.clone()),
+            "semantic"
+            | "legalsemanticnode"
+            | "obligation"
+            | "exception"
+            | "deadline"
+            | "penalty"
+            | "remedy"
+            | "requirednotice"
+            | "notice"
+            | "proceduralrequirement"
+            | "formtext" => buckets.semantic_ids.push(result.id.clone()),
+            "sourcenote" | "source_note" | "statusevent" | "status_event" | "temporaleffect"
+            | "temporal_effect" | "sessionlaw" | "session_law" | "amendment" | "lineageevent"
+            | "lineage_event" => buckets.history_ids.push(result.id.clone()),
+            "taxrule" | "tax_rule" | "moneyamount" | "money_amount" | "ratelimit"
+            | "rate_limit" | "legalactor" | "legal_actor" | "legalaction" | "legal_action" => {
+                buckets.specialized_ids.push(result.id.clone())
+            }
+            "chapter" | "court_rule_chapter" | "chapterversion" => {
+                buckets.chapter_ids.push(result.id.clone())
+            }
+            _ => buckets.push_generic(result.id.clone()),
+        }
+    }
+    buckets.dedup();
+    buckets
+}
+
+fn dedup_strings(values: &mut Vec<String>) {
+    let mut seen = HashSet::new();
+    values.retain(|value| seen.insert(value.clone()));
+}
+
+fn with_search_node_bucket_params(
+    q: neo4rs::Query,
+    buckets: &SearchNodeIdBuckets,
+) -> neo4rs::Query {
+    q.param("identity_ids", buckets.identity_ids.clone())
+        .param("provision_ids", buckets.provision_ids.clone())
+        .param("chunk_ids", buckets.chunk_ids.clone())
+        .param("definition_ids", buckets.definition_ids.clone())
+        .param("semantic_ids", buckets.semantic_ids.clone())
+        .param("history_ids", buckets.history_ids.clone())
+        .param("specialized_ids", buckets.specialized_ids.clone())
+        .param("chapter_ids", buckets.chapter_ids.clone())
+}
+
+fn search_node_resolver_cypher() -> &'static str {
+    "CALL {
+        UNWIND $identity_ids AS id
+        MATCH (n:LegalTextIdentity {canonical_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $identity_ids AS id
+        MATCH (n:LegalTextVersion {canonical_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $identity_ids AS id
+        MATCH (n:LegalTextVersion {version_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $provision_ids AS id
+        MATCH (n:Provision {provision_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $provision_ids AS id
+        MATCH (n:Provision {canonical_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $chunk_ids AS id
+        MATCH (n:RetrievalChunk {chunk_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $definition_ids AS id
+        MATCH (n:Definition {definition_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $definition_ids AS id
+        MATCH (n:Definition {source_provision_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $definition_ids AS id
+        MATCH (n:DefinedTerm {defined_term_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $definition_ids AS id
+        MATCH (n:DefinedTerm {term: id})
+        RETURN id, n
+        UNION
+        UNWIND $semantic_ids AS id
+        MATCH (n:LegalSemanticNode {semantic_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $semantic_ids AS id
+        MATCH (n:LegalSemanticNode {source_provision_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $semantic_ids AS id
+        MATCH (n:Obligation {obligation_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $semantic_ids AS id
+        MATCH (n:Exception {exception_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $semantic_ids AS id
+        MATCH (n:Deadline {deadline_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $semantic_ids AS id
+        MATCH (n:Penalty {penalty_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $semantic_ids AS id
+        MATCH (n:Remedy {remedy_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $semantic_ids AS id
+        MATCH (n:RequiredNotice {required_notice_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $semantic_ids AS id
+        MATCH (n:FormText {form_text_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $semantic_ids AS id
+        MATCH (n:ProceduralRequirement {requirement_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $history_ids AS id
+        MATCH (n:SourceNote {source_note_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $history_ids AS id
+        MATCH (n:SourceNote {canonical_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $history_ids AS id
+        MATCH (n:StatusEvent {status_event_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $history_ids AS id
+        MATCH (n:StatusEvent {canonical_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $history_ids AS id
+        MATCH (n:TemporalEffect {temporal_effect_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $history_ids AS id
+        MATCH (n:TemporalEffect {canonical_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $history_ids AS id
+        MATCH (n:TemporalEffect {source_provision_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $history_ids AS id
+        MATCH (n:SessionLaw {session_law_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $history_ids AS id
+        MATCH (n:Amendment {amendment_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $history_ids AS id
+        MATCH (n:LineageEvent {lineage_event_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $specialized_ids AS id
+        MATCH (n:TaxRule {tax_rule_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $specialized_ids AS id
+        MATCH (n:MoneyAmount {money_amount_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $specialized_ids AS id
+        MATCH (n:RateLimit {rate_limit_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $specialized_ids AS id
+        MATCH (n:LegalActor {actor_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $specialized_ids AS id
+        MATCH (n:LegalAction {action_id: id})
+        RETURN id, n
+        UNION
+        UNWIND $chapter_ids AS id
+        MATCH (n:ChapterVersion {chapter_id: id})
+        RETURN id, n
+    }"
+}
+
+const SEARCH_NODE_ID_PROPERTIES: &[&str] = &[
+    "canonical_id",
+    "version_id",
+    "provision_id",
+    "chunk_id",
+    "semantic_id",
+    "source_note_id",
+    "definition_id",
+    "defined_term_id",
+    "deadline_id",
+    "penalty_id",
+    "obligation_id",
+    "exception_id",
+    "remedy_id",
+    "required_notice_id",
+    "notice_id",
+    "form_text_id",
+    "requirement_id",
+    "tax_rule_id",
+    "money_amount_id",
+    "rate_limit_id",
+    "actor_id",
+    "action_id",
+    "mention_id",
+    "citation_mention_id",
+    "external_citation_id",
+    "status_event_id",
+    "temporal_effect_id",
+    "lineage_event_id",
+    "session_law_id",
+    "amendment_id",
+    "chapter_id",
+    "source_provision_id",
+    "source_document_id",
+    "term",
+];
+
+fn search_node_id_expr(alias: &str) -> String {
+    let properties = SEARCH_NODE_ID_PROPERTIES
+        .iter()
+        .map(|property| format!("{alias}.{property}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("coalesce({properties}, elementId({alias}))")
+}
+
+fn citation_from_canonical_id(id: &str) -> Option<String> {
+    let trimmed = id.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if !lower.starts_with("or:ors:") {
+        return None;
+    }
+
+    let rest = &trimmed["or:ors:".len()..];
+    let looks_like_statute = !rest.is_empty()
+        && rest.chars().any(|ch| ch.is_ascii_digit())
+        && rest
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '(' | ')' | '-'));
+
+    looks_like_statute.then(|| format!("ORS {}", rest.to_ascii_uppercase()))
+}
+
+fn semantic_types_for_search_kind(kind: &str) -> Vec<String> {
+    match kind.to_ascii_lowercase().as_str() {
+        "definition" => vec!["Definition".to_string(), "DefinedTerm".to_string()],
+        "definedterm" | "defined_term" => vec!["DefinedTerm".to_string()],
+        "obligation" => vec!["Obligation".to_string()],
+        "exception" => vec!["Exception".to_string()],
+        "deadline" => vec!["Deadline".to_string()],
+        "penalty" => vec!["Penalty".to_string()],
+        "remedy" => vec!["Remedy".to_string()],
+        "requirednotice" | "required_notice" | "notice" => vec!["RequiredNotice".to_string()],
+        "proceduralrequirement" | "procedural_requirement" => {
+            vec!["ProceduralRequirement".to_string()]
+        }
+        "sourcenote" | "source_note" => vec!["SourceNote".to_string()],
+        "statusevent" | "status_event" => vec!["StatusEvent".to_string()],
+        "temporaleffect" | "temporal_effect" => vec!["TemporalEffect".to_string()],
+        "sessionlaw" | "session_law" => vec!["SessionLaw".to_string()],
+        "amendment" => vec!["Amendment".to_string()],
+        "lineageevent" | "lineage_event" => vec!["LineageEvent".to_string()],
+        "taxrule" | "tax_rule" => vec!["TaxRule".to_string()],
+        "moneyamount" | "money_amount" => vec!["MoneyAmount".to_string()],
+        "ratelimit" | "rate_limit" => vec!["RateLimit".to_string()],
+        "legalactor" | "legal_actor" => vec!["LegalActor".to_string()],
+        "legalaction" | "legal_action" => vec!["LegalAction".to_string()],
+        _ => Vec::new(),
+    }
+}
+
+fn seed_history_semantic_types(
+    semantic_types: &mut Vec<String>,
+    id: &str,
+    kind: &str,
+    snippet: &str,
+) {
+    let kind = kind.to_ascii_lowercase();
+    let snippet = snippet.to_ascii_lowercase();
+    if id.starts_with("source_note:") || snippet.starts_with("note:") {
+        push_semantic_type(semantic_types, "SourceNote");
+    }
+    if matches!(
+        kind.as_str(),
+        "sourcenote" | "source_note" | "sessionlaw" | "session_law" | "temporaleffect"
+    ) && (snippet.contains("operative")
+        || snippet.contains("effective")
+        || snippet.contains("become operative")
+        || snippet.contains("applies to"))
+    {
+        push_semantic_type(semantic_types, "TemporalEffect");
+    }
+}
+
+fn push_semantic_type(semantic_types: &mut Vec<String>, semantic_type: &str) {
+    if !semantic_types.iter().any(|value| value == semantic_type) {
+        semantic_types.push(semantic_type.to_string());
+    }
+}
+
 pub(crate) fn sanitize_fulltext_query(input: &str) -> String {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -3221,6 +3635,88 @@ mod search_support_tests {
     fn rejects_unsafe_dynamic_vector_index_names() {
         assert!(safe_vector_index_name("retrieval_chunk_embedding_1024").is_ok());
         assert!(safe_vector_index_name("retrieval`) MATCH (n) //").is_err());
+    }
+
+    #[test]
+    fn search_id_helpers_cover_specialized_fulltext_nodes() {
+        let expr = search_node_id_expr("node");
+        for property in [
+            "node.definition_id",
+            "node.defined_term_id",
+            "node.obligation_id",
+            "node.requirement_id",
+            "node.required_notice_id",
+            "node.form_text_id",
+            "node.source_provision_id",
+        ] {
+            assert!(
+                expr.contains(property),
+                "ID expression should include {property}"
+            );
+        }
+        assert!(expr.contains("elementId(node)"));
+
+        let resolver = search_node_resolver_cypher();
+        for branch in [
+            "MATCH (n:Definition {definition_id: id})",
+            "MATCH (n:DefinedTerm {defined_term_id: id})",
+            "MATCH (n:LegalSemanticNode {semantic_id: id})",
+            "MATCH (n:Obligation {obligation_id: id})",
+            "MATCH (n:ProceduralRequirement {requirement_id: id})",
+            "MATCH (n:RequiredNotice {required_notice_id: id})",
+            "MATCH (n:FormText {form_text_id: id})",
+            "MATCH (n:TemporalEffect {canonical_id: id})",
+        ] {
+            assert!(
+                resolver.contains(branch),
+                "resolver should include {branch}"
+            );
+        }
+        assert!(
+            !resolver.contains("MATCH (n)\n"),
+            "resolver should avoid label-free graph scans"
+        );
+    }
+
+    #[test]
+    fn derives_ors_citation_from_canonical_id() {
+        assert_eq!(
+            citation_from_canonical_id("or:ors:90.300"),
+            Some("ORS 90.300".to_string())
+        );
+        assert_eq!(
+            citation_from_canonical_id("OR:ORS:90.320(1)(a)"),
+            Some("ORS 90.320(1)(A)".to_string())
+        );
+        assert_eq!(citation_from_canonical_id("or:utcr:2.010"), None);
+        assert_eq!(citation_from_canonical_id("or:ors:"), None);
+    }
+
+    #[test]
+    fn seeds_semantic_types_from_search_kind() {
+        assert_eq!(
+            semantic_types_for_search_kind("definition"),
+            vec!["Definition".to_string(), "DefinedTerm".to_string()]
+        );
+        assert_eq!(
+            semantic_types_for_search_kind("temporaleffect"),
+            vec!["TemporalEffect".to_string()]
+        );
+        assert_eq!(
+            semantic_types_for_search_kind("legal_actor"),
+            vec!["LegalActor".to_string()]
+        );
+
+        let mut history_types = semantic_types_for_search_kind("sessionlaw");
+        seed_history_semantic_types(
+            &mut history_types,
+            "source_note:abc",
+            "sessionlaw",
+            "Note: The amendments become operative January 1, 2027.",
+        );
+        assert!(history_types.contains(&"SessionLaw".to_string()));
+        assert!(history_types.contains(&"SourceNote".to_string()));
+        assert!(history_types.contains(&"TemporalEffect".to_string()));
     }
 
     #[test]

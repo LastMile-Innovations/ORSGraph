@@ -79,6 +79,8 @@ pub struct AdminJobParams {
     #[serde(default)]
     pub chapters: Option<String>,
     #[serde(default)]
+    pub session_key: Option<String>,
+    #[serde(default)]
     pub fetch_only: Option<bool>,
     #[serde(default)]
     pub skip_citation_resolution: Option<bool>,

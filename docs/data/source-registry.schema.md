@@ -1,6 +1,6 @@
 # Source Registry Schema
 
-This file defines the documentation schema for `source-registry.md`. It is not a Rust type contract yet. It is the checklist future connector configs, source manifests, and QC reports should satisfy.
+This file defines the documentation schema for `source-registry.md` and the machine-readable `source-registry.yaml`. The Rust runtime type is `SourceRegistryEntry` in `crates/ors-crawler-v0/src/source_registry.rs`; this document is the human-facing checklist for registry rows, source manifests, connector configs, and QC reports.
 
 ## YAML Shape
 
@@ -31,7 +31,7 @@ graph_edges_created:
   - IN_SESSION
   - HAS_DOCUMENT
   - CAST_VOTE
-connector_status: planned
+connector_status: implemented
 priority: P0
 risks:
   - Legacy OData shape and composite keys.
@@ -174,7 +174,7 @@ Every connector output must include:
 
 ```yaml
 raw_artifact:
-  path: data/<source_id>/raw/...
+  path: data/sources/<source_id>/raw/...
   content_type: text/html
   raw_hash: sha256:...
   retrieved_at: 2026-05-01T00:00:00Z
@@ -188,14 +188,14 @@ source_metadata:
   terms_status: reviewed
   robots_status: allowed
 parser_diagnostics:
-  path: data/<source_id>/graph/parser_diagnostics.jsonl
+  path: data/sources/<source_id>/graph/parser_diagnostics.jsonl
 graph_outputs:
   nodes:
-    - data/<source_id>/graph/source_documents.jsonl
+    - data/sources/<source_id>/graph/source_documents.jsonl
   edges:
-    - data/<source_id>/graph/source_edges.jsonl
+    - data/sources/<source_id>/graph/legislative_edges.jsonl
 qc_report:
-  path: data/<source_id>/qc/report.json
+  path: data/sources/<source_id>/qc/report.json
 ```
 
 Minimum provenance fields:
@@ -216,25 +216,30 @@ Minimum provenance fields:
 
 ## Connector Contract
 
-Target Rust abstraction:
+Current Rust abstraction:
 
 ```rust
+#[async_trait]
 pub trait DataConnector {
     fn source_id(&self) -> &'static str;
     fn source_kind(&self) -> SourceKind;
     async fn discover(&self) -> Result<Vec<SourceItem>>;
-    async fn fetch(&self, item: &SourceItem) -> Result<RawArtifact>;
     async fn parse(&self, artifact: &RawArtifact) -> Result<GraphBatch>;
-    async fn qc(&self, batch: &GraphBatch) -> Result<QcReport>;
+    async fn qc(
+        &self,
+        artifacts: &[ArtifactMetadata],
+        batch: &GraphBatch,
+    ) -> Result<QcReport>;
 }
 ```
+
+Fetch is centralized in `fetcher.rs` and `ingest_runner.rs`, not implemented by each connector. Connectors discover source items, parse preserved raw artifacts into JSONL graph batches, and run source-specific QC against artifacts and graph output.
 
 The method contract:
 
 | Method | Responsibility |
 | --- | --- |
 | `discover` | Find candidate API records, pages, PDFs, packages, datasets, or search targets without mutating the graph. |
-| `fetch` | Retrieve and hash immutable raw artifacts with retrieval metadata. |
 | `parse` | Convert raw/normalized artifacts into source-backed JSONL nodes and edges. |
 | `qc` | Verify provenance, graph ID stability, record counts, diagnostics, and source-specific invariants. |
 
