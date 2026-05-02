@@ -12,6 +12,7 @@ export function PendingClient({ callbackUrl }: { callbackUrl: string }) {
   const router = useRouter()
   const session = useSession()
   const status = session.data?.accessStatus || "unknown"
+  const isAdmin = session.data?.isAdmin === true
 
   useEffect(() => {
     if (session.status === "authenticated") {
@@ -20,10 +21,10 @@ export function PendingClient({ callbackUrl }: { callbackUrl: string }) {
   }, [session])
 
   useEffect(() => {
-    if (session.status === "authenticated" && session.data?.accessStatus === "active") {
+    if (session.status === "authenticated" && (session.data?.accessStatus === "active" || isAdmin)) {
       router.replace(callbackUrl)
     }
-  }, [callbackUrl, router, session.data?.accessStatus, session.status])
+  }, [callbackUrl, isAdmin, router, session.data?.accessStatus, session.status])
 
   return (
     <AuthFrame

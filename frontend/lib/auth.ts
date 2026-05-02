@@ -4,7 +4,7 @@ import { orsBackendApiBaseUrl } from "./ors-api-url"
 
 type AccessStatus = "active" | "pending" | "blocked" | "unknown"
 
-type AuthMeResponse = {
+export type AuthMeResponse = {
   access_status?: string
   roles?: string[]
   is_admin?: boolean
@@ -113,14 +113,18 @@ async function fetchAccessState(accessToken: string): Promise<{
     if (!response.ok) {
       return { accessStatus: response.status === 403 ? "pending" : "unknown", roles: [], isAdmin: false }
     }
-    const body = (await response.json()) as AuthMeResponse
-    return {
-      accessStatus: normalizeAccessStatus(body.access_status),
-      roles: Array.isArray(body.roles) ? body.roles.filter((role): role is string => typeof role === "string") : [],
-      isAdmin: Boolean(body.is_admin),
-    }
+    return accessStateFromAuthMe((await response.json()) as AuthMeResponse)
   } catch {
     return { accessStatus: "unknown", roles: [], isAdmin: false }
+  }
+}
+
+export function accessStateFromAuthMe(body: AuthMeResponse) {
+  const isAdmin = Boolean(body.is_admin)
+  return {
+    accessStatus: isAdmin ? "active" : normalizeAccessStatus(body.access_status),
+    roles: Array.isArray(body.roles) ? body.roles.filter((role): role is string => typeof role === "string") : [],
+    isAdmin,
   }
 }
 

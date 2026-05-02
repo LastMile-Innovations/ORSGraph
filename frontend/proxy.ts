@@ -30,7 +30,8 @@ export async function proxy(request: NextRequest) {
   }
 
   const accessStatus = typeof token.accessStatus === "string" ? token.accessStatus : "unknown"
-  if (accessStatus !== "active" && !pathname.startsWith("/auth/pending")) {
+  const isAdmin = token.isAdmin === true
+  if (accessStatus !== "active" && !isAdmin && !pathname.startsWith("/auth/pending")) {
     const url = request.nextUrl.clone()
     url.pathname = "/auth/pending"
     url.search = ""

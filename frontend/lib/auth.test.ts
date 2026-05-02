@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { rolesFromZitadelClaims } from "./auth"
+import { accessStateFromAuthMe, rolesFromZitadelClaims } from "./auth"
 
 describe("Zitadel auth claim helpers", () => {
   it("extracts latest project-scoped role keys without leaking org ids or domains", () => {
@@ -34,5 +34,19 @@ describe("Zitadel auth claim helpers", () => {
         },
       }),
     ).toEqual(["editor", "legacy_admin", "owner", "project_admin"])
+  })
+
+  it("treats backend-confirmed admins as active even before user access approval", () => {
+    expect(
+      accessStateFromAuthMe({
+        access_status: "pending",
+        roles: ["orsgraph_admin"],
+        is_admin: true,
+      }),
+    ).toEqual({
+      accessStatus: "active",
+      roles: ["orsgraph_admin"],
+      isAdmin: true,
+    })
   })
 })
