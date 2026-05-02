@@ -1184,6 +1184,7 @@ fn mark_exact_result(result: &mut SearchResult, score: f32, rank_source: &str) {
     });
 }
 
+#[cfg(test)]
 fn analyze_search_query(q: &str) -> QueryPlan {
     analyze_search_query_with_authority(q, None)
 }
@@ -1476,6 +1477,7 @@ fn push_unique(values: &mut Vec<String>, value: String) {
     }
 }
 
+#[cfg(test)]
 fn normalize_search_query(q: &str) -> String {
     normalize_search_query_with_authority(q, None)
 }
@@ -2428,14 +2430,18 @@ mod tests {
             "what must a landlord do",
         );
 
-        assert!(candidates[0]
-            .semantic_types
-            .iter()
-            .any(|value| value == "LegalActor"));
-        assert!(!candidates[1]
-            .semantic_types
-            .iter()
-            .any(|value| value == "LegalActor"));
+        assert!(
+            candidates[0]
+                .semantic_types
+                .iter()
+                .any(|value| value == "LegalActor")
+        );
+        assert!(
+            !candidates[1]
+                .semantic_types
+                .iter()
+                .any(|value| value == "LegalActor")
+        );
     }
 
     #[test]

@@ -15,7 +15,7 @@ use crate::models::{
     TimeInterval, TitleChapterEntry, WorkProductRulePack, WorkProductRulePackAuthority,
 };
 use anyhow::{Context, Result};
-use neo4rs::{query, ConfigBuilder, Graph};
+use neo4rs::{ConfigBuilder, Graph, query};
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

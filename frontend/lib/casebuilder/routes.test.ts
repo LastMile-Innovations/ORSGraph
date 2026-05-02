@@ -10,6 +10,7 @@ import {
   matterDraftHref,
   matterFactsHref,
   matterHref,
+  matterTimelineHref,
   matterWorkProductHref,
   newMatterHref,
   newWorkProductHref,
@@ -55,6 +56,9 @@ describe("casebuilder route helpers", () => {
     expect(matterDraftHref("matter:smith-abc", "draft:1")).toBe("/casebuilder/matters/smith-abc/drafts/draft%3A1")
     expect(matterFactsHref("matter:smith-abc", "fact:rent ledger")).toBe(
       "/casebuilder/matters/smith-abc/facts#fact%3Arent%20ledger",
+    )
+    expect(matterTimelineHref("matter:smith-abc", { suggestionId: "timeline suggestion:1", status: "suggested", sourceType: "document_index" })).toBe(
+      "/casebuilder/matters/smith-abc/timeline?status=suggested&source=document_index#timeline%20suggestion%3A1",
     )
     expect(matterClaimsHref("matter:smith-abc")).toBe("/casebuilder/matters/smith-abc/claims")
   })

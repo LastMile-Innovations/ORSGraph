@@ -243,7 +243,7 @@ mod tests {
         expected_formatting_profile_id, expected_profile_id, expected_rule_pack_id,
     };
     use super::*;
-    use crate::models::casebuilder::{default_work_product_schema_version, RuleProfileSummary};
+    use crate::models::casebuilder::{RuleProfileSummary, default_work_product_schema_version};
 
     fn test_product(blocks: Vec<WorkProductBlock>) -> WorkProduct {
         WorkProduct {
@@ -338,9 +338,11 @@ mod tests {
     fn flags_unsupported_factual_blocks() {
         let product = test_product(vec![factual_block()]);
         let findings = work_product_findings(&product);
-        assert!(findings
-            .iter()
-            .any(|finding| finding.rule_id == "unsupported-factual-assertion"));
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.rule_id == "unsupported-factual-assertion")
+        );
     }
 
     #[test]
@@ -358,8 +360,10 @@ mod tests {
             created_at: "1".to_string(),
         });
         let findings = work_product_findings(&product);
-        assert!(!findings
-            .iter()
-            .any(|finding| finding.rule_id == "unsupported-factual-assertion"));
+        assert!(
+            !findings
+                .iter()
+                .any(|finding| finding.rule_id == "unsupported-factual-assertion")
+        );
     }
 }

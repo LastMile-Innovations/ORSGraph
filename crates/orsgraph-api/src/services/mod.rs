@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod analytics;
+pub mod auth_access;
 pub mod casebuilder;
 pub mod embedding;
 pub mod graph_expand;

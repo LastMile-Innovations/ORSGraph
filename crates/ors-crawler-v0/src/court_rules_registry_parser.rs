@@ -4,7 +4,7 @@ use crate::models::{
     ParserDiagnostic, RuleApplicabilityEdge, RuleAuthorityDocument, RulePublicationEntry,
     RuleSupersessionEdge, RuleTopic, SupplementaryLocalRuleEdition, WorkProductRulePackAuthority,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{Datelike, NaiveDate};
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -915,22 +915,28 @@ Linn County Supplementary Local Court Rules (SLR) (PDF)	Linn	Rule	2/1/2025	1/31/
         )
         .unwrap();
         assert_eq!(parsed.publication_entries.len(), 5);
-        assert!(parsed
-            .authority_documents
-            .iter()
-            .any(|doc| doc.authority_document_id == "or:linn:slr@2026"
-                && doc.date_status == "current"));
-        assert!(parsed
-            .authority_documents
-            .iter()
-            .any(
-                |doc| doc.authority_identifier.as_deref() == Some("CJO 25-018")
-                    && doc.status_flags.iter().any(|flag| flag == "open_ended")
-            ));
-        assert!(parsed
-            .out_of_cycle_amendments
-            .iter()
-            .any(|doc| doc.authority_identifier.as_deref() == Some("SLR 6.101; Appendix B")));
+        assert!(
+            parsed
+                .authority_documents
+                .iter()
+                .any(|doc| doc.authority_document_id == "or:linn:slr@2026"
+                    && doc.date_status == "current")
+        );
+        assert!(
+            parsed
+                .authority_documents
+                .iter()
+                .any(
+                    |doc| doc.authority_identifier.as_deref() == Some("CJO 25-018")
+                        && doc.status_flags.iter().any(|flag| flag == "open_ended")
+                )
+        );
+        assert!(
+            parsed
+                .out_of_cycle_amendments
+                .iter()
+                .any(|doc| doc.authority_identifier.as_deref() == Some("SLR 6.101; Appendix B"))
+        );
     }
 
     #[test]

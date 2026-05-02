@@ -1,6 +1,6 @@
 use anyhow::Result;
-use serde::{de::DeserializeOwned, Serialize};
-use std::fs::{create_dir_all, rename, File};
+use serde::{Serialize, de::DeserializeOwned};
+use std::fs::{File, create_dir_all, rename};
 use std::io::{BufRead, BufReader, BufWriter, Lines, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};

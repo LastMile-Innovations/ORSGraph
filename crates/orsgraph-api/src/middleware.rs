@@ -1,6 +1,6 @@
 use crate::auth::{
-    bearer_token, header_value, is_admin_operation, is_public_path, matter_id_from_path,
-    AuthContext,
+    AuthContext, bearer_token, header_value, is_admin_operation, is_public_path,
+    is_auth_access_bootstrap_path, matter_id_from_path,
 };
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -27,7 +27,7 @@ pub async fn optional_api_key_middleware(
     let path = req.uri().path().to_string();
     let method = req.method().clone();
 
-    let auth = if method == axum::http::Method::OPTIONS || is_public_path(&path) {
+    let auth = if method == axum::http::Method::OPTIONS || is_public_path(&method, &path) {
         AuthContext::anonymous()
     } else if expected_key.is_some_and(|key| !key.trim().is_empty())
         && is_authorized(req.headers(), expected_key)
@@ -45,7 +45,7 @@ pub async fn optional_api_key_middleware(
     };
 
     if method != axum::http::Method::OPTIONS
-        && !is_public_path(&path)
+        && !is_public_path(&method, &path)
         && state.config.auth_enabled
         && !auth.is_authenticated()
     {
@@ -57,6 +57,18 @@ pub async fn optional_api_key_middleware(
         && !auth.is_admin(&state.config.auth_admin_role)
     {
         return Err(ApiError::Forbidden("Admin role required".to_string()));
+    }
+
+    if method != axum::http::Method::OPTIONS
+        && state.config.auth_enabled
+        && auth.is_authenticated()
+        && !is_public_path(&method, &path)
+        && !is_auth_access_bootstrap_path(&method, &path)
+    {
+        state
+            .auth_access_service
+            .require_active_user(&auth, &state.config.auth_admin_role)
+            .await?;
     }
 
     if method != axum::http::Method::OPTIONS {
@@ -97,7 +109,7 @@ pub(crate) fn is_assemblyai_webhook_authorized(
 #[cfg(test)]
 mod tests {
     use super::{is_assemblyai_webhook_authorized, is_authorized};
-    use axum::http::{header, HeaderMap, HeaderValue};
+    use axum::http::{HeaderMap, HeaderValue, header};
 
     #[test]
     fn allows_requests_when_no_key_is_configured() {

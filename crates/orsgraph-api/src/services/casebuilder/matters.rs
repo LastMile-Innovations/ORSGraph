@@ -200,6 +200,7 @@ impl CaseBuilderService {
             parties: self.list_parties(matter_id).await?,
             facts: self.list_facts(matter_id).await?,
             timeline: self.list_timeline(matter_id).await?,
+            timeline_suggestions: self.list_timeline_suggestions(matter_id).await?,
             claims: self.list_claims(matter_id).await?,
             evidence: self.list_evidence(matter_id).await?,
             defenses: self.list_defenses(matter_id).await?,
@@ -453,11 +454,18 @@ impl CaseBuilderService {
             party_ids: request.party_ids.unwrap_or_default(),
             linked_fact_ids: request.linked_fact_ids.unwrap_or_default(),
             linked_claim_ids: request.linked_claim_ids.unwrap_or_default(),
+            source_span_ids: request.source_span_ids.unwrap_or_default(),
+            text_chunk_ids: request.text_chunk_ids.unwrap_or_default(),
+            suggestion_id: request.suggestion_id,
+            agent_run_id: request.agent_run_id,
             date_confidence: 1.0,
             disputed: false,
         };
-        self.merge_node(matter_id, timeline_spec(), &event.event_id, &event)
-            .await
+        let event = self
+            .merge_node(matter_id, timeline_spec(), &event.event_id, &event)
+            .await?;
+        self.materialize_timeline_event_edges(&event).await?;
+        Ok(event)
     }
 
     pub async fn list_timeline(&self, matter_id: &str) -> ApiResult<Vec<CaseTimelineEvent>> {

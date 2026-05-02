@@ -477,6 +477,7 @@ impl CaseBuilderService {
         let mut processed = 0_u64;
         let mut skipped = 0_u64;
         let mut failed = 0_u64;
+        let mut produced_timeline_suggestions = 0_u64;
         let mut results = Vec::with_capacity(targets.len());
 
         for document_id in targets {
@@ -490,6 +491,7 @@ impl CaseBuilderService {
                     message: index_skip_message(&document),
                     produced_chunks: 0,
                     produced_facts: document.facts_extracted,
+                    produced_timeline_suggestions: 0,
                 });
                 continue;
             }
@@ -497,6 +499,8 @@ impl CaseBuilderService {
             match self.extract_document(matter_id, &document_id).await {
                 Ok(extraction) if extraction.status == "processed" => {
                     processed += 1;
+                    let suggestion_count = extraction.timeline_suggestions.len() as u64;
+                    produced_timeline_suggestions += suggestion_count;
                     results.push(MatterIndexRunDocumentResult {
                         document_id,
                         status: "indexed".to_string(),
@@ -504,10 +508,12 @@ impl CaseBuilderService {
                         message: extraction.message,
                         produced_chunks: extraction.chunks.len() as u64,
                         produced_facts: extraction.proposed_facts.len() as u64,
+                        produced_timeline_suggestions: suggestion_count,
                     });
                 }
                 Ok(extraction) => {
                     skipped += 1;
+                    let suggestion_count = extraction.timeline_suggestions.len() as u64;
                     results.push(MatterIndexRunDocumentResult {
                         document_id,
                         status: "skipped".to_string(),
@@ -515,6 +521,7 @@ impl CaseBuilderService {
                         message: extraction.message,
                         produced_chunks: extraction.chunks.len() as u64,
                         produced_facts: extraction.proposed_facts.len() as u64,
+                        produced_timeline_suggestions: suggestion_count,
                     });
                 }
                 Err(error) => {
@@ -526,6 +533,7 @@ impl CaseBuilderService {
                         message: error.to_string(),
                         produced_chunks: 0,
                         produced_facts: 0,
+                        produced_timeline_suggestions: 0,
                     });
                 }
             }
@@ -538,6 +546,7 @@ impl CaseBuilderService {
             processed,
             skipped,
             failed,
+            produced_timeline_suggestions,
             results,
             summary,
         })
@@ -913,6 +922,7 @@ impl CaseBuilderService {
                 entity_mentions: Vec::new(),
                 search_index_records: Vec::new(),
                 source_spans: Vec::new(),
+                timeline_suggestions: Vec::new(),
             });
         }
 
@@ -929,25 +939,61 @@ impl CaseBuilderService {
             chunk.object_blob_id = source_context.object_blob_id.clone();
             chunk.source_span_id = Some(source_span_id(document_id, "chunk", chunk.page));
         }
-        let (
-            pages,
-            text_chunks,
-            evidence_spans,
-            entity_mentions,
-            search_index_records,
-        ) = build_extraction_index_records(
-            matter_id,
-            document_id,
-            &chunks,
-            &source_context,
-            &index_run_id_value,
-        );
+        let (pages, text_chunks, evidence_spans, entity_mentions, search_index_records) =
+            build_extraction_index_records(
+                matter_id,
+                document_id,
+                &chunks,
+                &source_context,
+                &index_run_id_value,
+            );
         let mut source_spans =
             source_spans_for_chunks(matter_id, document_id, &chunks, &source_context);
         let proposed_facts = propose_facts(matter_id, document_id, &text, &source_context);
         for fact in &proposed_facts {
             source_spans.extend(fact.source_spans.clone());
         }
+        let mut timeline_suggestions = timeline_suggestions_from_facts(
+            matter_id,
+            Some(document_id),
+            &proposed_facts,
+            &chunks,
+            "document_index",
+            None,
+            None,
+            None,
+            Some(&index_run_id_value),
+            50,
+        );
+        let timeline_agent_run = if timeline_suggestions.is_empty() {
+            None
+        } else {
+            let mut run = TimelineAgentRun {
+                agent_run_id: generate_id("timeline-agent-run", document_id),
+                id: String::new(),
+                matter_id: matter_id.to_string(),
+                subject_type: "document_index".to_string(),
+                subject_id: Some(document_id.to_string()),
+                mode: "template".to_string(),
+                provider_mode: "template".to_string(),
+                status: "recorded".to_string(),
+                message: "Provider-free timeline agent recorded deterministic indexing suggestions; no unsupported text was inserted.".to_string(),
+                produced_suggestion_ids: timeline_suggestions
+                    .iter()
+                    .map(|suggestion| suggestion.suggestion_id.clone())
+                    .collect(),
+                warnings: vec![
+                    "Timeline AI agent is provider-free during indexing; deterministic suggestions require review."
+                        .to_string(),
+                ],
+                created_at: now_string(),
+            };
+            run.id = run.agent_run_id.clone();
+            for suggestion in &mut timeline_suggestions {
+                suggestion.agent_run_id = Some(run.agent_run_id.clone());
+            }
+            Some(run)
+        };
         let (index_artifacts, artifact_manifest) = self
             .store_extraction_index_artifacts(
                 matter_id,
@@ -1042,6 +1088,12 @@ impl CaseBuilderService {
             Some(&artifact_manifest),
             &index_artifacts,
         );
+        if let Some(run) = &timeline_agent_run {
+            push_unique(&mut produced_ids, run.agent_run_id.clone());
+        }
+        for suggestion in &timeline_suggestions {
+            push_unique(&mut produced_ids, suggestion.suggestion_id.clone());
+        }
         let mut produced_object_keys = provenance
             .as_ref()
             .map(|provenance| provenance.ingestion_run.produced_object_keys.clone())
@@ -1079,6 +1131,16 @@ impl CaseBuilderService {
         for record in &search_index_records {
             self.merge_search_index_record(matter_id, record).await?;
         }
+        if let Some(run) = &timeline_agent_run {
+            self.merge_timeline_agent_run(matter_id, run).await?;
+        }
+        let mut stored_timeline_suggestions = Vec::with_capacity(timeline_suggestions.len());
+        for suggestion in &timeline_suggestions {
+            stored_timeline_suggestions.push(
+                self.merge_timeline_suggestion(matter_id, suggestion)
+                    .await?,
+            );
+        }
         let ingestion_run = provenance.as_ref().map(|provenance| {
             completed_ingestion_run_with_objects(
                 &provenance.ingestion_run,
@@ -1111,6 +1173,7 @@ impl CaseBuilderService {
             entity_mentions,
             search_index_records,
             source_spans,
+            timeline_suggestions: stored_timeline_suggestions,
         })
     }
 
@@ -1190,8 +1253,10 @@ impl CaseBuilderService {
             source_context.document_version_id.as_deref(),
             text_sha256,
         );
-        let mut produced_object_keys =
-            vec![normalized_artifact.storage_key.clone(), pages_artifact.storage_key.clone()];
+        let mut produced_object_keys = vec![
+            normalized_artifact.storage_key.clone(),
+            pages_artifact.storage_key.clone(),
+        ];
         let mut manifest = ExtractionArtifactManifest {
             manifest_id: manifest_id.clone(),
             id: manifest_id,
@@ -1227,8 +1292,8 @@ impl CaseBuilderService {
             produced_object_keys: produced_object_keys.clone(),
             created_at: now_string(),
         };
-        let manifest_bytes = serde_json::to_vec(&manifest)
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let manifest_bytes =
+            serde_json::to_vec(&manifest).map_err(|error| ApiError::Internal(error.to_string()))?;
         let manifest_artifact = self
             .store_document_artifact_version_for_creator(
                 matter_id,
@@ -1450,7 +1515,7 @@ fn build_extraction_index_records(
     let mut pages = Vec::with_capacity(chunks.len());
     let mut text_chunks = Vec::with_capacity(chunks.len());
     let mut evidence_spans = Vec::with_capacity(chunks.len());
-    let entity_mentions = Vec::new();
+    let mut entity_mentions = Vec::new();
     let mut search_index_records = Vec::with_capacity(chunks.len());
     let now = now_string();
 
@@ -1539,6 +1604,11 @@ fn build_extraction_index_records(
             created_at: now.clone(),
             indexed_at: Some(now.clone()),
         });
+        entity_mentions.extend(date_entity_mentions_for_chunk(
+            matter_id,
+            document_id,
+            chunk,
+        ));
     }
 
     (
@@ -1953,9 +2023,15 @@ mod tests {
         assert_eq!(text_chunks[0].text_chunk_id, "chunk:doc_1:1");
         assert!(text_chunks[0].text_hash.starts_with("sha256:"));
         assert_eq!(text_chunks[0].byte_start, Some(4));
-        assert_eq!(evidence_spans[0].text_chunk_id.as_deref(), Some("chunk:doc_1:1"));
+        assert_eq!(
+            evidence_spans[0].text_chunk_id.as_deref(),
+            Some("chunk:doc_1:1")
+        );
         assert_eq!(search_records[0].index_name, "casebuilder_document_text");
-        assert_eq!(search_records[0].index_run_id.as_deref(), Some("index-run:doc_1:abc"));
+        assert_eq!(
+            search_records[0].index_run_id.as_deref(),
+            Some("index-run:doc_1:abc")
+        );
         assert!(entity_mentions.is_empty());
     }
 

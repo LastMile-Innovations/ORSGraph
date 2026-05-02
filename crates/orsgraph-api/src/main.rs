@@ -1,4 +1,4 @@
-use axum::{http::Method, routing::get, Router};
+use axum::{Router, http::Method, routing::get};
 use orsgraph_api::{config::ApiConfig, middleware, routes, state::AppState};
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

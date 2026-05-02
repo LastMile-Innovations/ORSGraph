@@ -1,8 +1,8 @@
 use super::work_product_ast::{
-    ast_block_spec, expected_formatting_profile_id, expected_profile_id, expected_rule_pack_id,
-    find_ast_block, flatten_work_product_blocks, normalize_work_product_type_lossy,
-    registered_template_product_type, required_role_specs_for_work_product,
-    role_spec_matches_block, validate_optional_text_range, SUPPORTED_BLOCK_TYPES,
+    SUPPORTED_BLOCK_TYPES, ast_block_spec, expected_formatting_profile_id, expected_profile_id,
+    expected_rule_pack_id, find_ast_block, flatten_work_product_blocks,
+    normalize_work_product_type_lossy, registered_template_product_type,
+    required_role_specs_for_work_product, role_spec_matches_block, validate_optional_text_range,
 };
 use crate::error::{ApiError, ApiResult};
 use crate::models::casebuilder::*;
@@ -1028,10 +1028,12 @@ mod tests {
     fn rejects_duplicate_block_ids() {
         let product = test_product(vec![block("b1"), block("b1")]);
         let validation = validate_work_product_document(&product);
-        assert!(validation
-            .errors
-            .iter()
-            .any(|issue| issue.code == "duplicate_block_id"));
+        assert!(
+            validation
+                .errors
+                .iter()
+                .any(|issue| issue.code == "duplicate_block_id")
+        );
     }
 
     #[test]
@@ -1040,10 +1042,12 @@ mod tests {
         b.links.push("missing".to_string());
         let product = test_product(vec![b]);
         let validation = validate_work_product_document(&product);
-        assert!(validation
-            .errors
-            .iter()
-            .any(|issue| issue.code == "broken_block_link"));
+        assert!(
+            validation
+                .errors
+                .iter()
+                .any(|issue| issue.code == "broken_block_link")
+        );
     }
 
     #[test]
@@ -1102,10 +1106,12 @@ mod tests {
         )]);
         product.document_ast.metadata.template_id = Some("answer-response-grid".to_string());
         let validation = validate_work_product_document(&product);
-        assert!(validation
-            .errors
-            .iter()
-            .any(|issue| issue.code == "template_product_type_mismatch"));
+        assert!(
+            validation
+                .errors
+                .iter()
+                .any(|issue| issue.code == "template_product_type_mismatch")
+        );
     }
 
     #[test]
@@ -1121,10 +1127,12 @@ mod tests {
         ));
         let product = test_product(vec![parent]);
         let validation = validate_work_product_document(&product);
-        assert!(validation
-            .errors
-            .iter()
-            .any(|issue| issue.code == "block_children_not_allowed"));
+        assert!(
+            validation
+                .errors
+                .iter()
+                .any(|issue| issue.code == "block_children_not_allowed")
+        );
     }
 
     #[test]
@@ -1175,10 +1183,12 @@ mod tests {
         ];
 
         let validation = validate_work_product_document(&product);
-        assert!(!validation
-            .errors
-            .iter()
-            .any(|issue| issue.code == "missing_rule_finding_target"));
+        assert!(
+            !validation
+                .errors
+                .iter()
+                .any(|issue| issue.code == "missing_rule_finding_target")
+        );
     }
 
     #[test]

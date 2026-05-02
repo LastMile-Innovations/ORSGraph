@@ -315,7 +315,7 @@ fn resolve_section_citation(
                 target_provision_id: None,
                 unresolved_subpath: None,
                 qc_severity: Some("warning".to_string()),
-            }
+            };
         }
     };
     let version_id = table.resolve_version_id(&canonical_id, edition_year);
@@ -357,7 +357,7 @@ fn resolve_subsection_citation(
                 target_provision_id: None,
                 unresolved_subpath: None,
                 qc_severity: Some("warning".to_string()),
-            }
+            };
         }
     };
     let section_citation = format!("ORS {}", caps.get(1).unwrap().as_str());
@@ -375,7 +375,7 @@ fn resolve_subsection_citation(
                 target_provision_id: None,
                 unresolved_subpath: Some(path),
                 qc_severity: Some("warning".to_string()),
-            }
+            };
         }
     };
     let version_id = table.resolve_version_id(&canonical_id, edition_year);
@@ -428,7 +428,7 @@ fn resolve_chapter_citation(
                 target_provision_id: None,
                 unresolved_subpath: None,
                 qc_severity: Some("warning".to_string()),
-            }
+            };
         }
     };
     let chapter = caps.get(1).unwrap().as_str();
@@ -441,7 +441,7 @@ fn resolve_chapter_citation(
                 target_provision_id: None,
                 unresolved_subpath: None,
                 qc_severity: Some("warning".to_string()),
-            }
+            };
         }
     };
     let edge = CitesEdge {

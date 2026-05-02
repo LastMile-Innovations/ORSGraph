@@ -1274,10 +1274,12 @@ mod tests {
         let (_, rules) = parse_body_rules(&lines, &toc);
         assert_eq!(rules.len(), 2);
         assert_eq!(rules[0].citation, "13.095");
-        assert!(rules[0]
-            .body_lines
-            .iter()
-            .any(|line| line.starts_with("13.090")));
+        assert!(
+            rules[0]
+                .body_lines
+                .iter()
+                .any(|line| line.starts_with("13.090"))
+        );
     }
 
     #[test]
@@ -1376,17 +1378,21 @@ mod tests {
             &config,
         );
 
-        assert!(rows
-            .iter()
-            .any(|(_, normalized, _, target)| normalized == "UTCR 13.090"
-                && target.as_deref() == Some("or:utcr:13.090")));
-        assert!(rows
-            .iter()
-            .any(|(_, normalized, _, target)| normalized == "Linn SLR 13.095"
-                && target.as_deref() == Some("or:linn:slr:13.095")));
-        assert!(!rows
-            .iter()
-            .any(|(_, normalized, _, target)| normalized == "Linn SLR 13.090"
-                || target.as_deref() == Some("or:linn:slr:13.090")));
+        assert!(
+            rows.iter()
+                .any(|(_, normalized, _, target)| normalized == "UTCR 13.090"
+                    && target.as_deref() == Some("or:utcr:13.090"))
+        );
+        assert!(
+            rows.iter()
+                .any(|(_, normalized, _, target)| normalized == "Linn SLR 13.095"
+                    && target.as_deref() == Some("or:linn:slr:13.095"))
+        );
+        assert!(
+            !rows
+                .iter()
+                .any(|(_, normalized, _, target)| normalized == "Linn SLR 13.090"
+                    || target.as_deref() == Some("or:linn:slr:13.090"))
+        );
     }
 }

@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod analytics;
 pub mod ask;
+pub mod auth_access;
 pub mod casebuilder;
 pub mod graph;
 pub mod health;
@@ -19,6 +20,7 @@ use axum::Router;
 pub fn create_routes() -> Router<AppState> {
     Router::new()
         .merge(admin::routes())
+        .merge(auth_access::routes())
         .merge(sidebar::routes())
         .merge(casebuilder::routes())
         .merge(rules::routes())

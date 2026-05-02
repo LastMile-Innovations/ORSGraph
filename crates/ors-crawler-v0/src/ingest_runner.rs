@@ -1,15 +1,15 @@
 use crate::artifact_store::{ArtifactMetadata, ArtifactStore, RawArtifact};
-use crate::connectors::{connector_for, ConnectorOptions, DataConnector, SourceItem};
+use crate::connectors::{ConnectorOptions, DataConnector, SourceItem, connector_for};
 use crate::fetcher::{
-    client, fetch_item_with_cache_validation, CacheValidators, FetchOutcome, FetchPolicy,
-    FetchResult,
+    CacheValidators, FetchOutcome, FetchPolicy, FetchResult, client,
+    fetch_item_with_cache_validation,
 };
 use crate::graph_batch::GraphBatch;
 use crate::source_registry::{
-    by_id, load_default_registry, load_registry, validate_registry, write_canonical_registry_json,
-    SourcePriority, SourceRegistry, SourceRegistryEntry,
+    SourcePriority, SourceRegistry, SourceRegistryEntry, by_id, load_default_registry,
+    load_registry, validate_registry, write_canonical_registry_json,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use futures::stream::{self, StreamExt};
 use reqwest::Client;

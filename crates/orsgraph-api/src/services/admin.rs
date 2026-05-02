@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicU64, Ordering},
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
@@ -1850,7 +1850,7 @@ async fn count_non_empty_lines(path: &Path) -> std::io::Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     fn test_config() -> Arc<ApiConfig> {
         test_config_with_jobs_dir("data/admin/test-jobs")
@@ -1975,10 +1975,12 @@ mod tests {
             location,
             format!("embedded {SOURCE_REGISTRY_RELATIVE_PATH}")
         );
-        assert!(registry
-            .sources
-            .iter()
-            .any(|source| source.source_id == "or_leg_ors_html"));
+        assert!(
+            registry
+                .sources
+                .iter()
+                .any(|source| source.source_id == "or_leg_ors_html")
+        );
     }
 
     #[test]
@@ -2048,14 +2050,18 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.totals.p0_sources, response.sources.len());
-        assert!(response
-            .sources
-            .iter()
-            .any(|source| source.source_id == "or_leg_ors_html"));
-        assert!(response
-            .sources
-            .iter()
-            .all(|source| source.priority == "P0"));
+        assert!(
+            response
+                .sources
+                .iter()
+                .any(|source| source.source_id == "or_leg_ors_html")
+        );
+        assert!(
+            response
+                .sources
+                .iter()
+                .all(|source| source.priority == "P0")
+        );
     }
 
     #[tokio::test]
@@ -2157,9 +2163,11 @@ mod tests {
             summary.last_terminal_status,
             Some(AdminJobStatus::Succeeded)
         );
-        assert!(summary
-            .command_prefix
-            .contains(&"ors-crawler-v0".to_string()));
+        assert!(
+            summary
+                .command_prefix
+                .contains(&"ors-crawler-v0".to_string())
+        );
         assert!(summary.last_success_at_ms.is_some());
     }
 
@@ -2324,11 +2332,13 @@ mod tests {
             .unwrap();
         let recovered = service.get_job(job_id).await.unwrap();
         assert_eq!(recovered.status, AdminJobStatus::Failed);
-        assert!(recovered
-            .message
-            .as_deref()
-            .unwrap_or_default()
-            .contains("API restarted"));
+        assert!(
+            recovered
+                .message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("API restarted")
+        );
 
         let _ = fs::remove_dir_all(jobs_dir).await;
     }

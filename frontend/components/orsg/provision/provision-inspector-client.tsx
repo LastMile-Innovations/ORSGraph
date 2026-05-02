@@ -30,7 +30,7 @@ export function ProvisionInspectorClient({ data }: { data: ProvisionInspectorDat
         {/* Header */}
         <div className="border-b border-border bg-card px-6 py-4">
           <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono mb-2">
-            <Link href="/" className="hover:text-foreground">orsgraph</Link>
+            <Link href="/dashboard" className="hover:text-foreground">orsgraph</Link>
             <ChevronRight className="h-3 w-3" />
             <Link href={`/statutes/${data.parent_statute.canonical_id}`} className="hover:text-foreground">
               {data.parent_statute.citation}

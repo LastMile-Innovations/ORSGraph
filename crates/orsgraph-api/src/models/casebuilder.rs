@@ -48,6 +48,8 @@ pub struct MatterBundle {
     pub parties: Vec<CaseParty>,
     pub facts: Vec<CaseFact>,
     pub timeline: Vec<CaseTimelineEvent>,
+    #[serde(default)]
+    pub timeline_suggestions: Vec<TimelineSuggestion>,
     pub claims: Vec<CaseClaim>,
     pub evidence: Vec<CaseEvidence>,
     pub defenses: Vec<CaseDefense>,
@@ -1059,6 +1061,7 @@ pub struct DocumentExtractionResponse {
     pub entity_mentions: Vec<EntityMention>,
     pub search_index_records: Vec<SearchIndexRecord>,
     pub source_spans: Vec<SourceSpan>,
+    pub timeline_suggestions: Vec<TimelineSuggestion>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1127,6 +1130,8 @@ pub struct MatterIndexRunDocumentResult {
     pub message: String,
     pub produced_chunks: u64,
     pub produced_facts: u64,
+    #[serde(default)]
+    pub produced_timeline_suggestions: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1136,6 +1141,8 @@ pub struct MatterIndexRunResponse {
     pub processed: u64,
     pub skipped: u64,
     pub failed: u64,
+    #[serde(default)]
+    pub produced_timeline_suggestions: u64,
     pub results: Vec<MatterIndexRunDocumentResult>,
     pub summary: MatterIndexSummary,
 }
@@ -1279,6 +1286,14 @@ pub struct CaseTimelineEvent {
     pub party_ids: Vec<String>,
     pub linked_fact_ids: Vec<String>,
     pub linked_claim_ids: Vec<String>,
+    #[serde(default)]
+    pub source_span_ids: Vec<String>,
+    #[serde(default)]
+    pub text_chunk_ids: Vec<String>,
+    #[serde(default)]
+    pub suggestion_id: Option<String>,
+    #[serde(default)]
+    pub agent_run_id: Option<String>,
     pub date_confidence: f32,
     pub disputed: bool,
 }
@@ -1293,6 +1308,97 @@ pub struct CreateTimelineEventRequest {
     pub party_ids: Option<Vec<String>>,
     pub linked_fact_ids: Option<Vec<String>>,
     pub linked_claim_ids: Option<Vec<String>>,
+    pub source_span_ids: Option<Vec<String>>,
+    pub text_chunk_ids: Option<Vec<String>>,
+    pub suggestion_id: Option<String>,
+    pub agent_run_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TimelineAgentRun {
+    pub agent_run_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub subject_type: String,
+    pub subject_id: Option<String>,
+    pub mode: String,
+    pub provider_mode: String,
+    pub status: String,
+    pub message: String,
+    pub produced_suggestion_ids: Vec<String>,
+    pub warnings: Vec<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TimelineSuggestion {
+    pub suggestion_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub date: String,
+    pub date_text: String,
+    pub date_confidence: f32,
+    pub title: String,
+    pub description: Option<String>,
+    pub kind: String,
+    pub source_type: String,
+    pub source_document_id: Option<String>,
+    pub source_span_ids: Vec<String>,
+    pub text_chunk_ids: Vec<String>,
+    pub linked_fact_ids: Vec<String>,
+    pub linked_claim_ids: Vec<String>,
+    pub work_product_id: Option<String>,
+    pub block_id: Option<String>,
+    pub agent_run_id: Option<String>,
+    pub index_run_id: Option<String>,
+    pub status: String,
+    pub warnings: Vec<String>,
+    pub approved_event_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TimelineSuggestRequest {
+    pub document_ids: Option<Vec<String>>,
+    pub source_span_ids: Option<Vec<String>>,
+    pub work_product_id: Option<String>,
+    pub block_id: Option<String>,
+    pub limit: Option<u64>,
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TimelineSuggestResponse {
+    pub enabled: bool,
+    pub mode: String,
+    pub message: String,
+    pub suggestions: Vec<TimelineSuggestion>,
+    pub agent_run: Option<TimelineAgentRun>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatchTimelineSuggestionRequest {
+    pub date: Option<String>,
+    pub date_text: Option<String>,
+    pub date_confidence: Option<f32>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub kind: Option<String>,
+    pub source_document_id: Option<String>,
+    pub source_span_ids: Option<Vec<String>>,
+    pub text_chunk_ids: Option<Vec<String>>,
+    pub linked_fact_ids: Option<Vec<String>>,
+    pub linked_claim_ids: Option<Vec<String>>,
+    pub status: Option<String>,
+    pub warnings: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TimelineSuggestionApprovalResponse {
+    pub suggestion: TimelineSuggestion,
+    pub event: CaseTimelineEvent,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

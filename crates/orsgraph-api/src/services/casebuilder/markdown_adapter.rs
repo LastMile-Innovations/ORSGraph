@@ -715,12 +715,16 @@ mod tests {
         let product = product();
         let markdown = "# Test\n\n1. A supported fact.";
         let (document, warnings) = markdown_to_work_product_ast(&product, markdown);
-        assert!(warnings
-            .iter()
-            .any(|warning| warning.contains("sidecar metadata")));
-        assert!(warnings
-            .iter()
-            .any(|warning| warning.contains("block metadata comments")));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("sidecar metadata"))
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("block metadata comments"))
+        );
         assert!(document.links.is_empty());
         assert!(document.citations.is_empty());
         assert!(document.exhibits.is_empty());

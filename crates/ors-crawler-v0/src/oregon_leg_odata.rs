@@ -5,14 +5,14 @@ use crate::hash::{sha256_hex, stable_id};
 use crate::models::{
     LegalActor, LineageEvent, ParserDiagnostic, SessionLaw, SourceDocument, StatusEvent,
 };
-use crate::source_qc::{qc_source_batch, QcReport, QcReportStatus};
+use crate::source_qc::{QcReport, QcReportStatus, qc_source_batch};
 use crate::source_registry::{SourceKind, SourceRegistryEntry};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use once_cell::sync::Lazy;
 use regex::Regex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use url::Url;
 
@@ -30,7 +30,9 @@ static PROPERTY_RE: Lazy<Regex> = Lazy::new(|| {
 const SESSION_ENTITY_SETS: &[(&str, Option<&str>, Option<&str>)] = &[
     (
         "Measures",
-        Some("SessionKey,MeasurePrefix,MeasureNumber,CatchLine,MeasureSummary,ChapterNumber,CurrentLocation,CurrentCommitteeCode,EffectiveDate,EmergencyClause,Vetoed,CreatedDate,ModifiedDate"),
+        Some(
+            "SessionKey,MeasurePrefix,MeasureNumber,CatchLine,MeasureSummary,ChapterNumber,CurrentLocation,CurrentCommitteeCode,EffectiveDate,EmergencyClause,Vetoed,CreatedDate,ModifiedDate",
+        ),
         None,
     ),
     ("MeasureDocuments", None, None),
@@ -1757,10 +1759,12 @@ mod tests {
         let batch = connector.parse(&raw).await.unwrap();
         let report = connector.qc(&[raw.metadata], &batch).await.unwrap();
         assert_eq!(report.status, QcReportStatus::Fail);
-        assert!(report
-            .errors
-            .iter()
-            .any(|error| error.contains("MeasurePrefix")));
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("MeasurePrefix"))
+        );
     }
 
     #[tokio::test]

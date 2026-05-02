@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use once_cell::sync::Lazy;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -407,39 +407,31 @@ enum VoyageError {
 impl VoyageError {
     fn from_status_code(status: StatusCode, error_text: String) -> Self {
         match status {
-            StatusCode::BAD_REQUEST => {
-                VoyageError::InvalidRequest(format!(
-                    "Invalid request: {}. Check request body, parameters, batch size, or token limits.",
-                    error_text
-                ))
-            }
-            StatusCode::UNAUTHORIZED => {
-                VoyageError::Unauthorized(format!(
-                    "Unauthorized: {}. Check your API key in the Voyage dashboard.",
-                    error_text
-                ))
-            }
-            StatusCode::FORBIDDEN => {
-                VoyageError::Forbidden(format!(
-                    "Forbidden: {}. Your IP address may be blocked. Try a different IP.",
-                    error_text
-                ))
-            }
-            StatusCode::TOO_MANY_REQUESTS => {
-                VoyageError::RateLimitExceeded(format!(
-                    "Rate limit exceeded: {}. Pace your requests.",
-                    error_text
-                ))
-            }
-            StatusCode::INTERNAL_SERVER_ERROR => {
-                VoyageError::ServerError(format!(
-                    "Server error: {}. Retry after a brief wait.",
-                    error_text
-                ))
-            }
-            code if code.is_server_error() || code == StatusCode::BAD_GATEWAY
+            StatusCode::BAD_REQUEST => VoyageError::InvalidRequest(format!(
+                "Invalid request: {}. Check request body, parameters, batch size, or token limits.",
+                error_text
+            )),
+            StatusCode::UNAUTHORIZED => VoyageError::Unauthorized(format!(
+                "Unauthorized: {}. Check your API key in the Voyage dashboard.",
+                error_text
+            )),
+            StatusCode::FORBIDDEN => VoyageError::Forbidden(format!(
+                "Forbidden: {}. Your IP address may be blocked. Try a different IP.",
+                error_text
+            )),
+            StatusCode::TOO_MANY_REQUESTS => VoyageError::RateLimitExceeded(format!(
+                "Rate limit exceeded: {}. Pace your requests.",
+                error_text
+            )),
+            StatusCode::INTERNAL_SERVER_ERROR => VoyageError::ServerError(format!(
+                "Server error: {}. Retry after a brief wait.",
+                error_text
+            )),
+            code if code.is_server_error()
+                || code == StatusCode::BAD_GATEWAY
                 || code == StatusCode::SERVICE_UNAVAILABLE
-                || code == StatusCode::GATEWAY_TIMEOUT => {
+                || code == StatusCode::GATEWAY_TIMEOUT =>
+            {
                 VoyageError::ServiceUnavailable(format!(
                     "Service unavailable ({}): {}. Servers are experiencing high traffic. Retry after a brief wait.",
                     code.as_u16(),

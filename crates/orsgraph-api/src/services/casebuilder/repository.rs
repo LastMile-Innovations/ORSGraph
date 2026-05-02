@@ -1067,6 +1067,195 @@ impl CaseBuilderService {
         Ok(run)
     }
 
+    pub(super) async fn merge_timeline_agent_run(
+        &self,
+        matter_id: &str,
+        run: &TimelineAgentRun,
+    ) -> ApiResult<TimelineAgentRun> {
+        self.merge_node(matter_id, timeline_agent_run_spec(), &run.agent_run_id, run)
+            .await
+    }
+
+    pub(super) async fn merge_timeline_suggestion(
+        &self,
+        matter_id: &str,
+        suggestion: &TimelineSuggestion,
+    ) -> ApiResult<TimelineSuggestion> {
+        let suggestion = self
+            .merge_node(
+                matter_id,
+                timeline_suggestion_spec(),
+                &suggestion.suggestion_id,
+                suggestion,
+            )
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (s:TimelineSuggestion {suggestion_id: $suggestion_id})
+                     SET s.matter_id = $matter_id,
+                         s.status = $status,
+                         s.date = $date,
+                         s.source_document_id = $source_document_id
+                     OPTIONAL MATCH (d:CaseDocument {document_id: $source_document_id})
+                     OPTIONAL MATCH (w:WorkProduct {work_product_id: $work_product_id})
+                     OPTIONAL MATCH (b:WorkProductBlock {block_id: $block_id})
+                     OPTIONAL MATCH (i:IndexRun {index_run_id: $index_run_id})
+                     OPTIONAL MATCH (a:TimelineAgentRun {agent_run_id: $agent_run_id})
+                     FOREACH (_ IN CASE WHEN d IS NULL THEN [] ELSE [1] END |
+                       MERGE (d)-[:PROPOSES_TIMELINE]->(s)
+                     )
+                     FOREACH (_ IN CASE WHEN w IS NULL THEN [] ELSE [1] END |
+                       MERGE (w)-[:PROPOSES_TIMELINE]->(s)
+                     )
+                     FOREACH (_ IN CASE WHEN b IS NULL THEN [] ELSE [1] END |
+                       MERGE (b)-[:PROPOSES_TIMELINE]->(s)
+                     )
+                     FOREACH (_ IN CASE WHEN i IS NULL THEN [] ELSE [1] END |
+                       MERGE (i)-[:PRODUCES_TIMELINE_SUGGESTION]->(s)
+                     )
+                     FOREACH (_ IN CASE WHEN a IS NULL THEN [] ELSE [1] END |
+                       MERGE (a)-[:PRODUCES_TIMELINE_SUGGESTION]->(s)
+                     )",
+                )
+                .param("suggestion_id", suggestion.suggestion_id.clone())
+                .param("matter_id", matter_id)
+                .param("status", suggestion.status.clone())
+                .param("date", suggestion.date.clone())
+                .param(
+                    "source_document_id",
+                    suggestion.source_document_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "work_product_id",
+                    suggestion.work_product_id.clone().unwrap_or_default(),
+                )
+                .param("block_id", suggestion.block_id.clone().unwrap_or_default())
+                .param(
+                    "index_run_id",
+                    suggestion.index_run_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "agent_run_id",
+                    suggestion.agent_run_id.clone().unwrap_or_default(),
+                ),
+            )
+            .await?;
+
+        for source_span_id in &suggestion.source_span_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (s:TimelineSuggestion {suggestion_id: $suggestion_id})
+                         MATCH (span:SourceSpan {source_span_id: $source_span_id})
+                         MERGE (span)-[:PROPOSES_TIMELINE]->(s)",
+                    )
+                    .param("suggestion_id", suggestion.suggestion_id.clone())
+                    .param("source_span_id", source_span_id.clone()),
+                )
+                .await?;
+        }
+        for text_chunk_id in &suggestion.text_chunk_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (s:TimelineSuggestion {suggestion_id: $suggestion_id})
+                         MATCH (chunk:TextChunk {text_chunk_id: $text_chunk_id})
+                         MERGE (chunk)-[:PROPOSES_TIMELINE]->(s)",
+                    )
+                    .param("suggestion_id", suggestion.suggestion_id.clone())
+                    .param("text_chunk_id", text_chunk_id.clone()),
+                )
+                .await?;
+        }
+        for fact_id in &suggestion.linked_fact_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (s:TimelineSuggestion {suggestion_id: $suggestion_id})
+                         MATCH (f:Fact {fact_id: $fact_id})
+                         MERGE (f)-[:PROPOSES_TIMELINE]->(s)",
+                    )
+                    .param("suggestion_id", suggestion.suggestion_id.clone())
+                    .param("fact_id", fact_id.clone()),
+                )
+                .await?;
+        }
+        for claim_id in &suggestion.linked_claim_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (s:TimelineSuggestion {suggestion_id: $suggestion_id})
+                         MATCH (c:Claim {claim_id: $claim_id})
+                         MERGE (c)-[:RELATES_TO_TIMELINE]->(s)",
+                    )
+                    .param("suggestion_id", suggestion.suggestion_id.clone())
+                    .param("claim_id", claim_id.clone()),
+                )
+                .await?;
+        }
+        Ok(suggestion)
+    }
+
+    pub(super) async fn materialize_timeline_event_edges(
+        &self,
+        event: &CaseTimelineEvent,
+    ) -> ApiResult<()> {
+        if let Some(document_id) = &event.source_document_id {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (e:TimelineEvent {event_id: $event_id})
+                         MATCH (d:CaseDocument {document_id: $document_id})
+                         MERGE (d)-[:DOCUMENTS_EVENT]->(e)",
+                    )
+                    .param("event_id", event.event_id.clone())
+                    .param("document_id", document_id.clone()),
+                )
+                .await?;
+        }
+        for fact_id in &event.linked_fact_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (e:TimelineEvent {event_id: $event_id})
+                         MATCH (f:Fact {fact_id: $fact_id})
+                         MERGE (f)-[:SUPPORTS_EVENT]->(e)",
+                    )
+                    .param("event_id", event.event_id.clone())
+                    .param("fact_id", fact_id.clone()),
+                )
+                .await?;
+        }
+        for source_span_id in &event.source_span_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (e:TimelineEvent {event_id: $event_id})
+                         MATCH (s:SourceSpan {source_span_id: $source_span_id})
+                         MERGE (s)-[:SUPPORTS_EVENT]->(e)",
+                    )
+                    .param("event_id", event.event_id.clone())
+                    .param("source_span_id", source_span_id.clone()),
+                )
+                .await?;
+        }
+        if let Some(suggestion_id) = &event.suggestion_id {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (e:TimelineEvent {event_id: $event_id})
+                         MATCH (s:TimelineSuggestion {suggestion_id: $suggestion_id})
+                         MERGE (s)-[:APPROVED_AS]->(e)",
+                    )
+                    .param("event_id", event.event_id.clone())
+                    .param("suggestion_id", suggestion_id.clone()),
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
     pub(super) async fn merge_page(&self, matter_id: &str, page: &Page) -> ApiResult<Page> {
         let page = self
             .merge_node(matter_id, page_spec(), &page.page_id, page)
@@ -1112,7 +1301,10 @@ impl CaseBuilderService {
                     "ingestion_run_id",
                     page.ingestion_run_id.clone().unwrap_or_default(),
                 )
-                .param("index_run_id", page.index_run_id.clone().unwrap_or_default())
+                .param(
+                    "index_run_id",
+                    page.index_run_id.clone().unwrap_or_default(),
+                )
                 .param("page_number", page.page_number as i64)
                 .param("status", page.status.clone()),
             )
@@ -1184,7 +1376,10 @@ impl CaseBuilderService {
                     "ingestion_run_id",
                     chunk.ingestion_run_id.clone().unwrap_or_default(),
                 )
-                .param("index_run_id", chunk.index_run_id.clone().unwrap_or_default())
+                .param(
+                    "index_run_id",
+                    chunk.index_run_id.clone().unwrap_or_default(),
+                )
                 .param("ordinal", chunk.ordinal as i64)
                 .param("status", chunk.status.clone())
                 .param("text_hash", chunk.text_hash.clone())
@@ -1200,7 +1395,12 @@ impl CaseBuilderService {
         span: &EvidenceSpan,
     ) -> ApiResult<EvidenceSpan> {
         let span = self
-            .merge_node(matter_id, evidence_span_spec(), &span.evidence_span_id, span)
+            .merge_node(
+                matter_id,
+                evidence_span_spec(),
+                &span.evidence_span_id,
+                span,
+            )
             .await?;
         self.neo4j
             .run_rows(
@@ -1243,7 +1443,10 @@ impl CaseBuilderService {
                     "ingestion_run_id",
                     span.ingestion_run_id.clone().unwrap_or_default(),
                 )
-                .param("index_run_id", span.index_run_id.clone().unwrap_or_default())
+                .param(
+                    "index_run_id",
+                    span.index_run_id.clone().unwrap_or_default(),
+                )
                 .param("review_status", span.review_status.clone())
                 .param("quote_hash", span.quote_hash.clone()),
             )

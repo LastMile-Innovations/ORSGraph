@@ -12,10 +12,12 @@ import {
   Filter,
   Download,
   Plus,
+  Sparkles,
+  X,
 } from "lucide-react"
-import type { Matter } from "@/lib/casebuilder/types"
+import type { Matter, TimelineSuggestion } from "@/lib/casebuilder/types"
 import { matterDocumentHref, matterFactsHref, matterHref } from "@/lib/casebuilder/routes"
-import { createTimelineEvent } from "@/lib/casebuilder/api"
+import { approveTimelineSuggestion, createTimelineEvent, patchTimelineSuggestion, suggestTimeline } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -79,7 +81,24 @@ export function TimelineView({ matter }: TimelineViewProps) {
   const [sourceDocumentId, setSourceDocumentId] = useState("")
   const [linkedFactId, setLinkedFactId] = useState("")
   const [saving, setSaving] = useState(false)
+  const [reviewStatus, setReviewStatus] = useState("suggested")
+  const [sourceType, setSourceType] = useState("all")
+  const [pendingSuggestionId, setPendingSuggestionId] = useState<string | null>(null)
+  const [reviewMessage, setReviewMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const filteredSuggestions = useMemo(() => {
+    return (matter.timeline_suggestions ?? []).filter((suggestion) => {
+      if (reviewStatus === "disputed") return suggestion.warnings.length > 0
+      if (reviewStatus !== "all" && suggestion.status !== reviewStatus) return false
+      if (sourceType !== "all" && suggestion.source_type !== sourceType) return false
+      return true
+    })
+  }, [matter.timeline_suggestions, reviewStatus, sourceType])
+
+  const sourceTypes = useMemo(() => {
+    return Array.from(new Set((matter.timeline_suggestions ?? []).map((suggestion) => suggestion.source_type))).sort()
+  }, [matter.timeline_suggestions])
 
   const entries: TimelineEntry[] = useMemo(() => {
     const out: TimelineEntry[] = []
@@ -196,6 +215,44 @@ export function TimelineView({ matter }: TimelineViewProps) {
     router.refresh()
   }
 
+  async function onSuggestTimeline() {
+    setSaving(true)
+    setError(null)
+    setReviewMessage(null)
+    const result = await suggestTimeline(matter.id, { limit: 100 })
+    setSaving(false)
+    if (!result.data) {
+      setError(result.error || "Timeline suggestions could not be generated.")
+      return
+    }
+    setReviewMessage(`${result.data.suggestions.length} timeline suggestion${result.data.suggestions.length === 1 ? "" : "s"} ready for review.`)
+    router.refresh()
+  }
+
+  async function onApproveSuggestion(suggestion: TimelineSuggestion) {
+    setPendingSuggestionId(suggestion.suggestion_id)
+    const result = await approveTimelineSuggestion(matter.id, suggestion.suggestion_id)
+    setPendingSuggestionId(null)
+    if (!result.data) {
+      setError(result.error || "Timeline suggestion could not be approved.")
+      return
+    }
+    setReviewMessage("Timeline event approved.")
+    router.refresh()
+  }
+
+  async function onRejectSuggestion(suggestion: TimelineSuggestion) {
+    setPendingSuggestionId(suggestion.suggestion_id)
+    const result = await patchTimelineSuggestion(matter.id, suggestion.suggestion_id, { status: "rejected" })
+    setPendingSuggestionId(null)
+    if (!result.data) {
+      setError(result.error || "Timeline suggestion could not be rejected.")
+      return
+    }
+    setReviewMessage("Timeline suggestion rejected.")
+    router.refresh()
+  }
+
   return (
     <div className="flex flex-col">
       {/* Header */}
@@ -211,6 +268,10 @@ export function TimelineView({ matter }: TimelineViewProps) {
             <Button size="sm" className="gap-1.5" onClick={() => setShowCreate((value) => !value)}>
               <Plus className="h-3.5 w-3.5" />
               Add event
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent" onClick={onSuggestTimeline} disabled={saving}>
+              <Sparkles className="h-3.5 w-3.5" />
+              Suggest
             </Button>
             <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
               <Download className="h-3.5 w-3.5" />
@@ -245,6 +306,59 @@ export function TimelineView({ matter }: TimelineViewProps) {
             )
           })}
         </div>
+
+        <div className="mt-4 rounded-md border border-border bg-card">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2">
+            <div>
+              <h2 className="text-sm font-medium text-foreground">Review queue</h2>
+              <p className="text-xs text-muted-foreground">
+                {filteredSuggestions.length} candidate{filteredSuggestions.length === 1 ? "" : "s"} from graph, documents, and AST sources
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={reviewStatus}
+                onChange={(event) => setReviewStatus(event.target.value)}
+                className="rounded border border-border bg-background px-2 py-1 font-mono text-[11px]"
+              >
+                {["suggested", "approved", "rejected", "disputed", "all"].map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={sourceType}
+                onChange={(event) => setSourceType(event.target.value)}
+                className="rounded border border-border bg-background px-2 py-1 font-mono text-[11px]"
+              >
+                <option value="all">all sources</option>
+                {sourceTypes.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="grid max-h-72 gap-2 overflow-y-auto p-3 md:grid-cols-2">
+            {filteredSuggestions.map((suggestion) => (
+              <TimelineSuggestionCard
+                key={suggestion.suggestion_id}
+                suggestion={suggestion}
+                pending={pendingSuggestionId === suggestion.suggestion_id}
+                onApprove={() => onApproveSuggestion(suggestion)}
+                onReject={() => onRejectSuggestion(suggestion)}
+              />
+            ))}
+            {filteredSuggestions.length === 0 && (
+              <div className="rounded border border-dashed border-border p-4 text-sm text-muted-foreground md:col-span-2">
+                No suggestions match the current filters.
+              </div>
+            )}
+          </div>
+        </div>
+        {reviewMessage && <p className="mt-2 text-xs text-muted-foreground">{reviewMessage}</p>}
 
         {showCreate && (
           <div className="mt-4 grid gap-3 rounded-md border border-border bg-card p-3 md:grid-cols-[140px_minmax(0,1fr)_160px]">
@@ -343,6 +457,64 @@ export function TimelineView({ matter }: TimelineViewProps) {
         </div>
       </ScrollArea>
     </div>
+  )
+}
+
+function TimelineSuggestionCard({
+  suggestion,
+  pending,
+  onApprove,
+  onReject,
+}: {
+  suggestion: TimelineSuggestion
+  pending: boolean
+  onApprove: () => void
+  onReject: () => void
+}) {
+  const approved = suggestion.status === "approved"
+  const rejected = suggestion.status === "rejected"
+
+  return (
+    <article id={suggestion.suggestion_id} className="rounded border border-border bg-background p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
+            <span>{suggestion.date}</span>
+            <Badge variant="outline" className="text-[9px]">
+              {Math.round(suggestion.date_confidence * 100)}%
+            </Badge>
+            <Badge variant="outline" className="text-[9px]">
+              {suggestion.source_type}
+            </Badge>
+            {suggestion.warnings.length > 0 && (
+              <Badge variant="outline" className="border-amber-500/40 text-[9px] text-amber-600 dark:text-amber-400">
+                review
+              </Badge>
+            )}
+          </div>
+          <h3 className="mt-1 line-clamp-2 text-sm font-medium leading-snug text-foreground">{suggestion.title}</h3>
+          {suggestion.description && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{suggestion.description}</p>}
+        </div>
+        <Badge variant={approved ? "default" : rejected ? "secondary" : "outline"} className="shrink-0 text-[9px] uppercase">
+          {suggestion.status}
+        </Badge>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="outline" className="h-7 gap-1 bg-transparent text-xs" onClick={onApprove} disabled={pending || approved}>
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          Approve
+        </Button>
+        <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={onReject} disabled={pending || rejected}>
+          <X className="h-3.5 w-3.5" />
+          Reject
+        </Button>
+        {suggestion.source_document_id && (
+          <Link href={matterDocumentHref(suggestion.matter_id, suggestion.source_document_id)} className="ml-auto text-xs text-primary hover:underline">
+            source
+          </Link>
+        )}
+      </div>
+    </article>
   )
 }
 

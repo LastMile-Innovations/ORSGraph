@@ -27,7 +27,7 @@ export function RouteLoadingState({ title = "Loading", message }: Partial<RouteS
 export function RouteErrorState({
   title,
   message = "The page hit an unexpected error while loading.",
-  homeHref = "/",
+  homeHref = "/dashboard",
   homeLabel = "Home",
   reset,
 }: RouteStateProps) {

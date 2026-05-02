@@ -31,7 +31,7 @@ export function MatterGraphView({
               : mode === "claims"
                 ? ["matter", "claim", "counterclaim", "defense", "element", "fact", "evidence", "authority"]
                 : mode === "timeline"
-                  ? ["matter", "event", "deadline", "fact", "document", "task"]
+                  ? ["matter", "event", "timeline_suggestion", "deadline", "fact", "document", "task"]
                   : mode === "authority"
                     ? ["matter", "claim", "element", "authority", "work_product"]
                     : mode === "work_product"
@@ -169,6 +169,7 @@ function toneForKind(kind: string) {
   if (kind === "matter") return "border-primary/40"
   if (kind === "claim" || kind === "counterclaim" || kind === "defense" || kind === "element") return "border-blue-500/30"
   if (kind === "evidence" || kind === "fact") return "border-emerald-500/30"
+  if (kind === "timeline_suggestion") return "border-cyan-500/30"
   if (kind === "deadline" || kind === "task") return "border-amber-500/30"
   if (kind === "authority") return "border-purple-500/30"
   if (kind === "work_product") return "border-cyan-500/30"

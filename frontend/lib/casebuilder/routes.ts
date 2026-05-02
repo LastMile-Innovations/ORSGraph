@@ -76,6 +76,18 @@ export function matterFactsHref(matterId: string, factId?: string) {
   return withHash(matterHref(matterId, "facts"), factId)
 }
 
+export function matterTimelineHref(
+  matterId: string,
+  target?: { suggestionId?: string; status?: string; sourceType?: string; agentRunId?: string },
+) {
+  const params = new URLSearchParams()
+  if (target?.status) params.set("status", target.status)
+  if (target?.sourceType) params.set("source", target.sourceType)
+  if (target?.agentRunId) params.set("agentRun", target.agentRunId)
+  const query = params.toString()
+  return withHash(query ? `${matterHref(matterId, "timeline")}?${query}` : matterHref(matterId, "timeline"), target?.suggestionId)
+}
+
 export function matterClaimsHref(matterId: string, claimId?: string) {
   return withHash(matterHref(matterId, "claims"), claimId)
 }

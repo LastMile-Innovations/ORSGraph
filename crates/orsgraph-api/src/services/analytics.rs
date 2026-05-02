@@ -1,19 +1,15 @@
 use crate::error::ApiResult;
 use crate::models::home::GraphInsightCard;
-use crate::services::neo4j::Neo4jService;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 pub struct AnalyticsService {
-    neo4j: Arc<Neo4jService>,
     cache: RwLock<Option<(Instant, Vec<GraphInsightCard>)>>,
 }
 
 impl AnalyticsService {
-    pub fn new(neo4j: Arc<Neo4jService>) -> Self {
+    pub fn new() -> Self {
         Self {
-            neo4j,
             cache: RwLock::new(None),
         }
     }

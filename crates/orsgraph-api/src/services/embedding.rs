@@ -74,9 +74,16 @@ impl EmbeddingService {
             )));
         }
 
-        let voyage_res: VoyageEmbeddingResponse = response.json().await?;
+        let VoyageEmbeddingResponse { mut data, usage } = response.json().await?;
+        data.sort_by_key(|item| item.index);
+        tracing::debug!(
+            model = %self.model,
+            total_tokens = usage.total_tokens,
+            embedding_count = data.len(),
+            "Voyage embedding response"
+        );
 
-        if let Some(first) = voyage_res.data.into_iter().next() {
+        if let Some(first) = data.into_iter().next() {
             Ok(first.embedding)
         } else {
             Err(crate::error::ApiError::Internal(

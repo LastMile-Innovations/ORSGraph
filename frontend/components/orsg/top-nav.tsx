@@ -15,6 +15,7 @@ import {
   CircleDashed,
   Database,
   GitGraphIcon,
+  LayoutDashboard,
   LogIn,
   LogOut,
   Menu,
@@ -59,6 +60,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  { href: "/dashboard", label: "Home", icon: LayoutDashboard, match: ["/dashboard"] },
   { href: "/search", label: "Search", icon: Search, match: ["/search"] },
   { href: "/ask", label: "Ask", icon: MessageSquare, match: ["/ask"] },
   { href: "/statutes", label: "Statutes", icon: BookOpen, match: ["/statutes", "/provisions"] },
@@ -259,7 +261,7 @@ export function TopNav() {
         </SheetContent>
       </Sheet>
 
-      <Link href="/" className="group flex min-w-0 shrink-0 items-center gap-2 rounded-md pr-1 outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
+      <Link href="/dashboard" className="group flex min-w-0 shrink-0 items-center gap-2 rounded-md pr-1 outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
         <BrandMark />
         <span className="truncate font-mono text-sm font-semibold tracking-tight">ORSGraph</span>
         <span className="hidden font-mono text-[10px] uppercase tracking-widest text-muted-foreground xl:inline">
@@ -341,7 +343,7 @@ function AccountMenu({
             Sign out
           </DropdownMenuItem>
         ) : (
-          <DropdownMenuItem className="cursor-pointer" onClick={() => signIn("zitadel")}>
+          <DropdownMenuItem className="cursor-pointer" onClick={() => signIn("zitadel", { callbackUrl: "/dashboard" })}>
             <LogIn className="h-4 w-4" />
             Sign in
           </DropdownMenuItem>

@@ -3,7 +3,7 @@ use regex::Regex;
 
 use crate::hash::sha256_hex;
 use crate::models::{LegalTextVersion, Provision, RetrievalChunk};
-use crate::voyage::{estimate_tokens, VOYAGE_4_LARGE};
+use crate::voyage::{VOYAGE_4_LARGE, estimate_tokens};
 
 const CHUNK_VERSION: &str = "3.0";
 const CHUNKING_STRATEGY: &str = "legal_structure_adaptive_v3";
@@ -529,7 +529,10 @@ fn build_provision_header(provision: &Provision, chunk_type: &str, edition_year:
             "Oregon Revised Statutes. {} Edition.\nDefinition block.\nTerm: {}\nScope: {}\nSource citation: {}\nChapter: {}\n\nDefinition text:",
             edition_year,
             provision.display_citation,
-            provision.structural_context.clone().unwrap_or_else(|| "source provision".to_string()),
+            provision
+                .structural_context
+                .clone()
+                .unwrap_or_else(|| "source provision".to_string()),
             provision.citation,
             chapter
         ),
@@ -1055,9 +1058,11 @@ mod tests {
         let parts = split_text_by_legal_boundaries(text, 3, 0);
 
         assert!(parts.len() > 1);
-        assert!(parts
-            .iter()
-            .all(|p| p.split_reason == "whitespace_fallback"));
+        assert!(
+            parts
+                .iter()
+                .all(|p| p.split_reason == "whitespace_fallback")
+        );
     }
 
     #[test]

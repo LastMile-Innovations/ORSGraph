@@ -4,7 +4,7 @@ use crate::models::rules::{
     RuleApplicabilityResponse, RuleAuthoritySummary, RuleJurisdictionResponse,
     SupplementaryLocalRuleEditionResponse,
 };
-use neo4rs::{query, Row};
+use neo4rs::{Row, query};
 use regex::Regex;
 use std::sync::{Arc, LazyLock};
 

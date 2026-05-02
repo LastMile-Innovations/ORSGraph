@@ -2007,10 +2007,12 @@ mod tests {
 
         assert_eq!(report.source.chapters_expected, 0);
         assert_eq!(report.source.fetch_failures, 0);
-        assert!(!report
-            .blocking_errors
-            .iter()
-            .any(|error| error.contains("Expected 524 chapters")));
+        assert!(
+            !report
+                .blocking_errors
+                .iter()
+                .any(|error| error.contains("Expected 524 chapters"))
+        );
     }
 
     #[test]
@@ -2032,10 +2034,12 @@ mod tests {
         let report = validator.run().unwrap();
         let _ = fs::remove_dir_all(temp_dir);
 
-        assert!(!report
-            .blocking_errors
-            .iter()
-            .any(|error| error.contains("invalid chunk_version")));
+        assert!(
+            !report
+                .blocking_errors
+                .iter()
+                .any(|error| error.contains("invalid chunk_version"))
+        );
     }
 
     fn write_minimal_valid_graph() -> PathBuf {

@@ -11,7 +11,7 @@ use crate::text::{
     is_reserved_tail_heading, is_rule_line, normalize_for_hash, normalize_ws,
     strip_trailing_period,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use regex::Regex;
 use scraper::{Html, Selector};
 use std::collections::{HashMap, HashSet};
@@ -486,11 +486,7 @@ fn extract_style_value(style: &str, key: &str) -> Option<String> {
         let (name, value) = part.split_once(':')?;
         if name.trim().eq_ignore_ascii_case(key) {
             let value = normalize_ws(value);
-            if value.is_empty() {
-                None
-            } else {
-                Some(value)
-            }
+            if value.is_empty() { None } else { Some(value) }
         } else {
             None
         }
@@ -2042,9 +2038,11 @@ mod tests {
                     && c.chunk_type == "contextual_provision"
             })
             .expect("contextual chunk");
-        assert!(chunk
-            .text
-            .starts_with("Oregon Revised Statutes. 2024 Edition."));
+        assert!(
+            chunk
+                .text
+                .starts_with("Oregon Revised Statutes. 2024 Edition.")
+        );
     }
 
     #[test]
@@ -2253,10 +2251,12 @@ mod tests {
         assert_eq!(parsed.versions.len(), 1);
         let version = &parsed.versions[0];
         assert_eq!(version.text, "Statutory text.");
-        assert!(version
-            .original_text
-            .as_deref()
-            .is_some_and(|text| text.contains("2013 c.685")));
+        assert!(
+            version
+                .original_text
+                .as_deref()
+                .is_some_and(|text| text.contains("2013 c.685"))
+        );
         assert_eq!(version.paragraph_start_order, Some(3));
         assert_eq!(version.paragraph_end_order, Some(5));
 
@@ -2273,10 +2273,12 @@ mod tests {
         assert!(official_note.text.contains("continuation note text"));
 
         assert_eq!(parsed.amendments.len(), 2);
-        assert!(parsed
-            .amendments
-            .iter()
-            .any(|a| a.session_law_citation.as_deref() == Some("2013 c.685 sec. 46")));
+        assert!(
+            parsed
+                .amendments
+                .iter()
+                .any(|a| a.session_law_citation.as_deref() == Some("2013 c.685 sec. 46"))
+        );
 
         assert_eq!(parsed.parser_diagnostics.total_mso_normal, 6);
         assert_eq!(parsed.parser_diagnostics.section_starts_detected, 1);
@@ -2323,30 +2325,42 @@ mod tests {
             &parsed.source_document,
             parsed.edition_year,
         );
-        assert!(note_semantics
-            .temporal_effects
-            .iter()
-            .any(|e| e.effect_type == "operative"));
-        assert!(note_semantics
-            .temporal_effects
-            .iter()
-            .any(|e| e.effect_type == "repeal"));
-        assert!(note_semantics
-            .lineage_events
-            .iter()
-            .any(|e| e.lineage_type == "formerly"));
-        assert!(note_semantics
-            .lineage_events
-            .iter()
-            .any(|e| e.lineage_type == "renumbered_to"));
-        assert!(note_semantics
-            .session_laws
-            .iter()
-            .any(|law| law.session_law_id == "or:laws:2025:c:88:s:3"));
-        assert!(parsed
-            .amendments
-            .iter()
-            .any(|a| a.session_law_id.as_deref() == Some("or:laws:2013:c:685:s:46")));
+        assert!(
+            note_semantics
+                .temporal_effects
+                .iter()
+                .any(|e| e.effect_type == "operative")
+        );
+        assert!(
+            note_semantics
+                .temporal_effects
+                .iter()
+                .any(|e| e.effect_type == "repeal")
+        );
+        assert!(
+            note_semantics
+                .lineage_events
+                .iter()
+                .any(|e| e.lineage_type == "formerly")
+        );
+        assert!(
+            note_semantics
+                .lineage_events
+                .iter()
+                .any(|e| e.lineage_type == "renumbered_to")
+        );
+        assert!(
+            note_semantics
+                .session_laws
+                .iter()
+                .any(|law| law.session_law_id == "or:laws:2025:c:88:s:3")
+        );
+        assert!(
+            parsed
+                .amendments
+                .iter()
+                .any(|a| a.session_law_id.as_deref() == Some("or:laws:2013:c:685:s:46"))
+        );
     }
 
     #[test]
@@ -2367,11 +2381,13 @@ mod tests {
         .expect("parse synthetic chapter");
         let semantic = crate::semantic::derive_semantic_nodes(&parsed.provisions);
 
-        assert!(semantic
-            .definition_scopes
-            .iter()
-            .any(|scope| scope.scope_type == "range"
-                && scope.target_range_start.as_deref() == Some("or:ors:1.001")));
+        assert!(
+            semantic
+                .definition_scopes
+                .iter()
+                .any(|scope| scope.scope_type == "range"
+                    && scope.target_range_start.as_deref() == Some("or:ors:1.001"))
+        );
         let penalty = semantic.penalties.first().expect("penalty");
         assert_eq!(
             penalty.criminal_class.as_deref(),

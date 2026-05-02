@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::presigning::PresigningConfig;
-use aws_sdk_s3::{primitives::ByteStream, Client};
+use aws_sdk_s3::{Client, primitives::ByteStream};
 use aws_types::region::Region;
 use bytes::Bytes;
 use sha2::{Digest, Sha256};

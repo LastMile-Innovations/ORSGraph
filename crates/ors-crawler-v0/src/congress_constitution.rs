@@ -9,7 +9,7 @@ use crate::models::{
     Commentary, CorpusEdition, ExternalLegalCitation, Jurisdiction, LegalCorpus, LegalTextIdentity,
     LegalTextVersion, ParserDiagnostic, Provision, RetrievalChunk, SourceDocument, SourcePage,
 };
-use crate::source_qc::{qc_source_batch, QcReport};
+use crate::source_qc::{QcReport, qc_source_batch};
 use crate::source_registry::{SourceKind, SourceRegistryEntry};
 use anyhow::Result;
 use async_trait::async_trait;

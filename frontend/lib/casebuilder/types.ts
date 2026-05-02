@@ -551,6 +551,7 @@ export interface MatterIndexRunDocumentResult {
   message: string
   produced_chunks: number
   produced_facts: number
+  produced_timeline_suggestions: number
 }
 
 export interface MatterIndexRunResponse {
@@ -559,6 +560,7 @@ export interface MatterIndexRunResponse {
   processed: number
   skipped: number
   failed: number
+  produced_timeline_suggestions: number
   results: MatterIndexRunDocumentResult[]
   summary: MatterIndexSummary
 }
@@ -1053,8 +1055,68 @@ export interface TimelineEvent {
   party_ids?: string[]
   linked_fact_ids?: string[]
   linked_claim_ids?: string[]
+  source_span_ids?: string[]
+  text_chunk_ids?: string[]
+  suggestion_id?: string | null
+  agent_run_id?: string | null
   date_confidence?: number
   disputed?: boolean
+}
+
+export interface TimelineAgentRun {
+  agent_run_id: string
+  id: string
+  matter_id: string
+  subject_type: string
+  subject_id?: string | null
+  mode: string
+  provider_mode: string
+  status: string
+  message: string
+  produced_suggestion_ids: string[]
+  warnings: string[]
+  created_at: string
+}
+
+export interface TimelineSuggestion {
+  suggestion_id: string
+  id: string
+  matter_id: string
+  date: string
+  date_text: string
+  date_confidence: number
+  title: string
+  description?: string | null
+  kind: TimelineEvent["kind"] | string
+  source_type: "document_index" | "document" | "source_span" | "work_product_ast" | "matter_graph" | string
+  source_document_id?: string | null
+  source_span_ids: string[]
+  text_chunk_ids: string[]
+  linked_fact_ids: string[]
+  linked_claim_ids: string[]
+  work_product_id?: string | null
+  block_id?: string | null
+  agent_run_id?: string | null
+  index_run_id?: string | null
+  status: "suggested" | "approved" | "rejected" | "needs_attention" | string
+  warnings: string[]
+  approved_event_id?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface TimelineSuggestResponse {
+  enabled: boolean
+  mode: string
+  message: string
+  suggestions: TimelineSuggestion[]
+  agent_run?: TimelineAgentRun | null
+  warnings: string[]
+}
+
+export interface TimelineSuggestionApprovalResponse {
+  suggestion: TimelineSuggestion
+  event: TimelineEvent
 }
 
 // ===== Claims, Counterclaims, Defenses =====
@@ -2425,6 +2487,7 @@ export interface Matter extends MatterSummary {
   parties: MatterParty[]
   facts: ExtractedFact[]
   timeline: TimelineEvent[]
+  timeline_suggestions: TimelineSuggestion[]
   claims: Claim[] // includes counterclaims and defenses (kind discriminator)
   evidence: CaseEvidence[]
   defenses: CaseDefense[]

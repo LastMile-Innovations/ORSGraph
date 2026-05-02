@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -498,9 +498,11 @@ mod tests {
         registry.sources.push(entry);
         let report = validate_registry(&registry);
         assert!(!report.is_valid());
-        assert!(report
-            .errors
-            .iter()
-            .any(|error| error.contains("duplicate")));
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("duplicate"))
+        );
     }
 }

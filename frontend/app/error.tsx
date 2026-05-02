@@ -8,7 +8,7 @@ export default function Error({ error, reset }: { error: Error; reset: () => voi
       title="ORSGraph could not render this page"
       message={error.message}
       reset={reset}
-      homeHref="/"
+      homeHref="/dashboard"
       homeLabel="Home"
     />
   )

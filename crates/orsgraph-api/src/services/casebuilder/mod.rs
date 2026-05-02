@@ -2,7 +2,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::models::casebuilder::*;
 use crate::services::neo4j::Neo4jService;
 use crate::services::object_store::{
-    build_document_object_key, clean_etag, normalize_sha256, ObjectStore, PutOptions, StoredObject,
+    ObjectStore, PutOptions, StoredObject, build_document_object_key, clean_etag, normalize_sha256,
 };
 use bytes::Bytes;
 use flate2::read::DeflateDecoder;
@@ -38,6 +38,7 @@ mod repository;
 mod rule_engine;
 mod storage;
 mod support_linker;
+mod timeline;
 mod transcription;
 mod work_product_ast;
 mod work_products;
@@ -351,6 +352,18 @@ struct SentenceCandidate {
 }
 
 #[derive(Clone)]
+struct DateCandidate {
+    iso_date: String,
+    date_text: String,
+    confidence: f32,
+    byte_start: u64,
+    byte_end: u64,
+    char_start: u64,
+    char_end: u64,
+    warnings: Vec<String>,
+}
+
+#[derive(Clone)]
 struct ZipPackage {
     entries: Vec<ZipEntryRecord>,
     central_directory_offset: usize,
@@ -440,6 +453,16 @@ static SESSION_LAW_CITATION_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static EXHIBIT_LABEL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\b(?:PX|EXHIBIT)\s*[- ]?([A-Z]{1,3}|[0-9]{1,4})\b").unwrap());
+static ISO_DATE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b(20[0-9]{2})-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])\b").unwrap());
+static MONTH_DATE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan\.?|Feb\.?|Mar\.?|Apr\.?|Jun\.?|Jul\.?|Aug\.?|Sep\.?|Sept\.?|Oct\.?|Nov\.?|Dec\.?)\s+([0-9]{1,2})(?:st|nd|rd|th)?[,]?\s+(20[0-9]{2})\b",
+    )
+    .unwrap()
+});
+static NUMERIC_DATE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b(0?[1-9]|1[0-2])/([0-2]?[0-9]|3[01])/(20[0-9]{2})\b").unwrap());
 
 #[derive(Clone)]
 struct ParserOutcome {
@@ -513,6 +536,20 @@ fn timeline_spec() -> NodeSpec {
         label: "TimelineEvent",
         id_key: "event_id",
         edge: "HAS_EVENT",
+    }
+}
+fn timeline_suggestion_spec() -> NodeSpec {
+    NodeSpec {
+        label: "TimelineSuggestion",
+        id_key: "suggestion_id",
+        edge: "HAS_TIMELINE_SUGGESTION",
+    }
+}
+fn timeline_agent_run_spec() -> NodeSpec {
+    NodeSpec {
+        label: "TimelineAgentRun",
+        id_key: "agent_run_id",
+        edge: "HAS_TIMELINE_AGENT_RUN",
     }
 }
 fn evidence_spec() -> NodeSpec {
@@ -1852,6 +1889,64 @@ fn build_case_graph(matter: &MatterBundle) -> CaseGraphResponse {
         }
     }
 
+    for suggestion in &matter.timeline_suggestions {
+        if suggestion.status == "rejected" {
+            continue;
+        }
+        add_case_graph_node(
+            &mut nodes,
+            &mut seen_nodes,
+            CaseGraphNode {
+                id: suggestion.suggestion_id.clone(),
+                kind: "timeline_suggestion".to_string(),
+                label: suggestion.title.clone(),
+                subtitle: Some(suggestion.date.clone()),
+                status: Some(suggestion.status.clone()),
+                risk: (!suggestion.warnings.is_empty()).then(|| "needs_review".to_string()),
+                href: Some(format!("{base}/timeline#{}", suggestion.suggestion_id)),
+                metadata: graph_metadata([
+                    ("kind", suggestion.kind.clone()),
+                    ("source_type", suggestion.source_type.clone()),
+                    (
+                        "date_confidence",
+                        format!("{:.0}%", suggestion.date_confidence * 100.0),
+                    ),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            &mut edges,
+            &mut seen_edges,
+            &matter.summary.matter_id,
+            &suggestion.suggestion_id,
+            "has_timeline_suggestion",
+            "has suggestion",
+            Some(suggestion.status.as_str()),
+        );
+        if let Some(document_id) = &suggestion.source_document_id {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                document_id,
+                &suggestion.suggestion_id,
+                "proposes_timeline",
+                "proposes",
+                Some(suggestion.status.as_str()),
+            );
+        }
+        for fact_id in &suggestion.linked_fact_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                fact_id,
+                &suggestion.suggestion_id,
+                "proposes_timeline",
+                "proposes",
+                Some(suggestion.status.as_str()),
+            );
+        }
+    }
+
     for deadline in &matter.deadlines {
         add_case_graph_node(
             &mut nodes,
@@ -2761,12 +2856,78 @@ fn oregon_civil_motion_rule_pack() -> RulePack {
         effective_date: "2025-08-01".to_string(),
         rule_profile: default_rule_profile_summary(),
         rules: vec![
-            rule_definition("orcp-14-motion-writing-grounds-relief", "ORCP 14 A", "https://oregon.public.law/rules-of-civil-procedure/orcp-14-motions/", "blocking", "work_product", "rules", "Motion must state grounds and relief sought.", "ORCP 14 A requires written motions to state grounds with particularity and set forth requested relief.", "Complete the relief requested and argument blocks.", false),
-            rule_definition("orcp-14-motion-form", "ORCP 14 B", "https://oregon.public.law/rules-of-civil-procedure/orcp-14-motions/", "serious", "formatting", "formatting", "Motion form requires caption, signing, and other form review.", "ORCP 14 B applies pleading form rules, including signing requirements, to motions and other papers.", "Review caption, signature, and document form before export.", false),
-            rule_definition("orcp-17-motion-signature", "ORCP 17", "https://oregon.public.law/rules-of-civil-procedure/orcp-17-signing-of-pleadings-motions-and-other-papers-sanctions/", "serious", "signature", "rules", "Motion signature and certification require review.", "ORCP 17 governs signing and certification obligations for pleadings, motions, and other papers.", "Complete and review the signature/certification block.", false),
-            rule_definition("utcr-5-010-conferral", "UTCR 5.010", "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf", "warning", "work_product", "rules", "Motion may need conferral certificate.", "UTCR 5.010 describes conferral and certificate requirements for specified civil motions.", "Add a conferral certificate or mark why it is not required.", false),
-            rule_definition("utcr-5-020-authorities", "UTCR 5.020", "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf", "warning", "authority", "authority", "Motion authorities require review.", "UTCR 5.020 covers authorities in motions and related requirements.", "Link controlling authority in the legal-standard and argument blocks.", false),
-            rule_definition("utcr-2-010-document-form", "UTCR 2.010", "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf", "serious", "formatting", "formatting", "Motion document form requires review.", "UTCR 2.010 applies document form requirements to pleadings and motions.", "Use the Oregon court-paper formatting profile before export.", true),
+            rule_definition(
+                "orcp-14-motion-writing-grounds-relief",
+                "ORCP 14 A",
+                "https://oregon.public.law/rules-of-civil-procedure/orcp-14-motions/",
+                "blocking",
+                "work_product",
+                "rules",
+                "Motion must state grounds and relief sought.",
+                "ORCP 14 A requires written motions to state grounds with particularity and set forth requested relief.",
+                "Complete the relief requested and argument blocks.",
+                false,
+            ),
+            rule_definition(
+                "orcp-14-motion-form",
+                "ORCP 14 B",
+                "https://oregon.public.law/rules-of-civil-procedure/orcp-14-motions/",
+                "serious",
+                "formatting",
+                "formatting",
+                "Motion form requires caption, signing, and other form review.",
+                "ORCP 14 B applies pleading form rules, including signing requirements, to motions and other papers.",
+                "Review caption, signature, and document form before export.",
+                false,
+            ),
+            rule_definition(
+                "orcp-17-motion-signature",
+                "ORCP 17",
+                "https://oregon.public.law/rules-of-civil-procedure/orcp-17-signing-of-pleadings-motions-and-other-papers-sanctions/",
+                "serious",
+                "signature",
+                "rules",
+                "Motion signature and certification require review.",
+                "ORCP 17 governs signing and certification obligations for pleadings, motions, and other papers.",
+                "Complete and review the signature/certification block.",
+                false,
+            ),
+            rule_definition(
+                "utcr-5-010-conferral",
+                "UTCR 5.010",
+                "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf",
+                "warning",
+                "work_product",
+                "rules",
+                "Motion may need conferral certificate.",
+                "UTCR 5.010 describes conferral and certificate requirements for specified civil motions.",
+                "Add a conferral certificate or mark why it is not required.",
+                false,
+            ),
+            rule_definition(
+                "utcr-5-020-authorities",
+                "UTCR 5.020",
+                "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf",
+                "warning",
+                "authority",
+                "authority",
+                "Motion authorities require review.",
+                "UTCR 5.020 covers authorities in motions and related requirements.",
+                "Link controlling authority in the legal-standard and argument blocks.",
+                false,
+            ),
+            rule_definition(
+                "utcr-2-010-document-form",
+                "UTCR 2.010",
+                "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf",
+                "serious",
+                "formatting",
+                "formatting",
+                "Motion document form requires review.",
+                "UTCR 2.010 applies document form requirements to pleadings and motions.",
+                "Use the Oregon court-paper formatting profile before export.",
+                true,
+            ),
         ],
     }
 }
@@ -5032,11 +5193,7 @@ fn role_names_from_parties(parties: &[CaseParty], roles: &[&str]) -> Option<Vec<
         })
         .map(|party| party.name.clone())
         .collect::<Vec<_>>();
-    if names.is_empty() {
-        None
-    } else {
-        Some(names)
-    }
+    if names.is_empty() { None } else { Some(names) }
 }
 
 fn caption_names_before(text: &str, marker: &str) -> Option<Vec<String>> {
@@ -5064,11 +5221,7 @@ fn caption_names_before(text: &str, marker: &str) -> Option<Vec<String>> {
             names.push(cleaned.trim_matches(',').to_string());
         }
     }
-    if names.is_empty() {
-        None
-    } else {
-        Some(names)
-    }
+    if names.is_empty() { None } else { Some(names) }
 }
 
 fn clean_caption_line(value: &str) -> String {
@@ -6204,17 +6357,138 @@ fn oregon_civil_complaint_rule_pack() -> RulePack {
         effective_date: "2024-08-01".to_string(),
         rule_profile: default_rule_profile_summary(),
         rules: vec![
-            rule_definition("orcp-16-caption-court", "ORCP 16 A", "https://oregon.public.law/rules-of-civil-procedure/orcp-16-form-of-pleadings/", "blocking", "caption", "rules", "Caption must include court name.", "ORCP 16 describes caption requirements.", "Complete the court name.", false),
-            rule_definition("orcp-16-complaint-title-parties", "ORCP 16 A", "https://oregon.public.law/rules-of-civil-procedure/orcp-16-form-of-pleadings/", "blocking", "caption", "rules", "Complaint title must include all parties.", "ORCP 16 distinguishes complaint title requirements from later pleadings.", "Confirm all party names.", false),
-            rule_definition("orcp-16-numbered-paragraphs", "ORCP 16 C", "https://oregon.public.law/rules-of-civil-procedure/orcp-16-form-of-pleadings/", "blocking", "paragraph", "structure", "Paragraphs must be consecutively numbered.", "ORCP 16 calls for consecutively numbered paragraphs.", "Run renumbering.", true),
-            rule_definition("orcp-16-separate-counts", "ORCP 16 C", "https://oregon.public.law/rules-of-civil-procedure/orcp-16-form-of-pleadings/", "blocking", "count", "structure", "Separate claims must be separately stated.", "ORCP 16 requires separate claims or defenses to be separately stated.", "Create separate counts.", false),
-            rule_definition("orcp-18-plain-concise-ultimate-facts", "ORCP 18 A", "https://oregon.public.law/rules-of-civil-procedure/orcp-18-claims-for-relief/", "warning", "paragraph", "rules", "Claims should plead plain and concise ultimate facts.", "ORCP 18 calls for a plain and concise statement of ultimate facts.", "Tighten or split long factual allegations.", false),
-            rule_definition("orcp-18-demand-relief", "ORCP 18 B", "https://oregon.public.law/rules-of-civil-procedure/orcp-18-claims-for-relief/", "blocking", "relief", "relief", "Demand for relief is required.", "ORCP 18 requires a demand for relief and amount when money or damages are demanded.", "Add requested relief.", false),
-            rule_definition("orcp-17-signature-contact", "ORCP 17", "https://oregon.public.law/rules-of-civil-procedure/orcp-17-signing-of-pleadings-motions-and-other-papers-sanctions/", "serious", "signature", "rules", "Signature and contact block require review.", "Pleadings must be signed by a responsible person subject to Rule 17 obligations.", "Complete signature details.", false),
-            rule_definition("utcr-2-010-double-spacing", "UTCR 2.010(4)(a)", "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf", "serious", "formatting", "formatting", "Pleadings should be double-spaced.", "UTCR 2.010 includes spacing standards for pleadings.", "Enable double spacing.", true),
-            rule_definition("utcr-2-010-numbered-lines", "UTCR 2.010(4)(a)", "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf", "serious", "formatting", "formatting", "Pleadings should have numbered lines.", "UTCR 2.010 includes numbered-line standards for pleadings.", "Enable numbered lines.", true),
-            rule_definition("utcr-2-010-first-page-blank", "UTCR 2.010(4)(c)", "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf", "serious", "formatting", "formatting", "First page top blank area should be two inches.", "UTCR 2.010 includes a first-page blank area standard.", "Set first-page blank area to two inches.", true),
-            rule_definition("utcr-2-010-side-margins", "UTCR 2.010(4)(d)", "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf", "serious", "formatting", "formatting", "Side margins should be at least one inch.", "UTCR 2.010 includes side-margin standards.", "Set one-inch side margins.", true),
+            rule_definition(
+                "orcp-16-caption-court",
+                "ORCP 16 A",
+                "https://oregon.public.law/rules-of-civil-procedure/orcp-16-form-of-pleadings/",
+                "blocking",
+                "caption",
+                "rules",
+                "Caption must include court name.",
+                "ORCP 16 describes caption requirements.",
+                "Complete the court name.",
+                false,
+            ),
+            rule_definition(
+                "orcp-16-complaint-title-parties",
+                "ORCP 16 A",
+                "https://oregon.public.law/rules-of-civil-procedure/orcp-16-form-of-pleadings/",
+                "blocking",
+                "caption",
+                "rules",
+                "Complaint title must include all parties.",
+                "ORCP 16 distinguishes complaint title requirements from later pleadings.",
+                "Confirm all party names.",
+                false,
+            ),
+            rule_definition(
+                "orcp-16-numbered-paragraphs",
+                "ORCP 16 C",
+                "https://oregon.public.law/rules-of-civil-procedure/orcp-16-form-of-pleadings/",
+                "blocking",
+                "paragraph",
+                "structure",
+                "Paragraphs must be consecutively numbered.",
+                "ORCP 16 calls for consecutively numbered paragraphs.",
+                "Run renumbering.",
+                true,
+            ),
+            rule_definition(
+                "orcp-16-separate-counts",
+                "ORCP 16 C",
+                "https://oregon.public.law/rules-of-civil-procedure/orcp-16-form-of-pleadings/",
+                "blocking",
+                "count",
+                "structure",
+                "Separate claims must be separately stated.",
+                "ORCP 16 requires separate claims or defenses to be separately stated.",
+                "Create separate counts.",
+                false,
+            ),
+            rule_definition(
+                "orcp-18-plain-concise-ultimate-facts",
+                "ORCP 18 A",
+                "https://oregon.public.law/rules-of-civil-procedure/orcp-18-claims-for-relief/",
+                "warning",
+                "paragraph",
+                "rules",
+                "Claims should plead plain and concise ultimate facts.",
+                "ORCP 18 calls for a plain and concise statement of ultimate facts.",
+                "Tighten or split long factual allegations.",
+                false,
+            ),
+            rule_definition(
+                "orcp-18-demand-relief",
+                "ORCP 18 B",
+                "https://oregon.public.law/rules-of-civil-procedure/orcp-18-claims-for-relief/",
+                "blocking",
+                "relief",
+                "relief",
+                "Demand for relief is required.",
+                "ORCP 18 requires a demand for relief and amount when money or damages are demanded.",
+                "Add requested relief.",
+                false,
+            ),
+            rule_definition(
+                "orcp-17-signature-contact",
+                "ORCP 17",
+                "https://oregon.public.law/rules-of-civil-procedure/orcp-17-signing-of-pleadings-motions-and-other-papers-sanctions/",
+                "serious",
+                "signature",
+                "rules",
+                "Signature and contact block require review.",
+                "Pleadings must be signed by a responsible person subject to Rule 17 obligations.",
+                "Complete signature details.",
+                false,
+            ),
+            rule_definition(
+                "utcr-2-010-double-spacing",
+                "UTCR 2.010(4)(a)",
+                "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf",
+                "serious",
+                "formatting",
+                "formatting",
+                "Pleadings should be double-spaced.",
+                "UTCR 2.010 includes spacing standards for pleadings.",
+                "Enable double spacing.",
+                true,
+            ),
+            rule_definition(
+                "utcr-2-010-numbered-lines",
+                "UTCR 2.010(4)(a)",
+                "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf",
+                "serious",
+                "formatting",
+                "formatting",
+                "Pleadings should have numbered lines.",
+                "UTCR 2.010 includes numbered-line standards for pleadings.",
+                "Enable numbered lines.",
+                true,
+            ),
+            rule_definition(
+                "utcr-2-010-first-page-blank",
+                "UTCR 2.010(4)(c)",
+                "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf",
+                "serious",
+                "formatting",
+                "formatting",
+                "First page top blank area should be two inches.",
+                "UTCR 2.010 includes a first-page blank area standard.",
+                "Set first-page blank area to two inches.",
+                true,
+            ),
+            rule_definition(
+                "utcr-2-010-side-margins",
+                "UTCR 2.010(4)(d)",
+                "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf",
+                "serious",
+                "formatting",
+                "formatting",
+                "Side margins should be at least one inch.",
+                "UTCR 2.010 includes side-margin standards.",
+                "Set one-inch side margins.",
+                true,
+            ),
         ],
     }
 }
@@ -9681,11 +9955,7 @@ fn extract_docx_xml_text(raw: &str) -> Option<String> {
         cursor = tag_end;
     }
     let text = out.split_whitespace().collect::<Vec<_>>().join(" ");
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    if text.is_empty() { None } else { Some(text) }
 }
 
 fn is_docx_text_part(name: &str) -> bool {
@@ -10226,6 +10496,399 @@ fn propose_facts(
             }
         })
         .collect()
+}
+
+fn timeline_suggestions_from_facts(
+    matter_id: &str,
+    document_id: Option<&str>,
+    facts: &[CaseFact],
+    chunks: &[ExtractedTextChunk],
+    source_type: &str,
+    work_product_id: Option<&str>,
+    block_id: Option<&str>,
+    agent_run_id: Option<&str>,
+    index_run_id: Option<&str>,
+    limit: usize,
+) -> Vec<TimelineSuggestion> {
+    let mut suggestions = Vec::new();
+    let mut seen = HashSet::new();
+    for fact in facts {
+        if suggestions.len() >= limit {
+            break;
+        }
+        let Some(date) = date_candidates_in_text(&fact.statement).into_iter().next() else {
+            continue;
+        };
+        let source_document_id = document_id
+            .map(str::to_string)
+            .or_else(|| fact.source_document_ids.first().cloned());
+        let source_span_ids = fact
+            .source_spans
+            .iter()
+            .map(|span| span.source_span_id.clone())
+            .collect::<Vec<_>>();
+        let mut text_chunk_ids = fact
+            .source_spans
+            .iter()
+            .filter_map(|span| span.chunk_id.clone())
+            .collect::<Vec<_>>();
+        for chunk_id in text_chunk_ids_for_range(chunks, fact.source_spans.first()) {
+            push_unique(&mut text_chunk_ids, chunk_id);
+        }
+        let key = format!(
+            "{}:{}:{}",
+            date.iso_date,
+            source_document_id.clone().unwrap_or_default(),
+            normalize_for_match(&fact.statement)
+        );
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        let now = now_string();
+        let suggestion_id = timeline_suggestion_id(&format!("{matter_id}:{source_type}:{key}"));
+        suggestions.push(TimelineSuggestion {
+            id: suggestion_id.clone(),
+            suggestion_id,
+            matter_id: matter_id.to_string(),
+            date: date.iso_date,
+            date_text: date.date_text,
+            date_confidence: date.confidence,
+            title: timeline_title_for_text(&fact.statement),
+            description: Some(fact.statement.clone()),
+            kind: timeline_kind_for_text(&fact.statement),
+            source_type: source_type.to_string(),
+            source_document_id,
+            source_span_ids,
+            text_chunk_ids,
+            linked_fact_ids: vec![fact.fact_id.clone()],
+            linked_claim_ids: fact.supports_claim_ids.clone(),
+            work_product_id: work_product_id.map(str::to_string),
+            block_id: block_id.map(str::to_string),
+            agent_run_id: agent_run_id.map(str::to_string),
+            index_run_id: index_run_id.map(str::to_string),
+            status: "suggested".to_string(),
+            warnings: date.warnings,
+            approved_event_id: None,
+            created_at: now.clone(),
+            updated_at: now,
+        });
+    }
+    suggestions
+}
+
+fn timeline_suggestions_from_text(
+    matter_id: &str,
+    text: &str,
+    source_type: &str,
+    source_document_id: Option<&str>,
+    source_span_ids: Vec<String>,
+    text_chunk_ids: Vec<String>,
+    linked_fact_ids: Vec<String>,
+    linked_claim_ids: Vec<String>,
+    work_product_id: Option<&str>,
+    block_id: Option<&str>,
+    agent_run_id: Option<&str>,
+    index_run_id: Option<&str>,
+    limit: usize,
+) -> Vec<TimelineSuggestion> {
+    let mut suggestions = Vec::new();
+    let mut seen = HashSet::new();
+    for sentence in sentence_candidates_with_offsets(text) {
+        if suggestions.len() >= limit {
+            break;
+        }
+        let Some(date) = date_candidates_in_text(&sentence.text).into_iter().next() else {
+            continue;
+        };
+        let sentence_text = sentence.text.clone();
+        let key = format!(
+            "{}:{}:{}:{}",
+            date.iso_date,
+            source_document_id.unwrap_or_default(),
+            block_id.unwrap_or_default(),
+            normalize_for_match(&sentence_text)
+        );
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        let now = now_string();
+        let suggestion_id = timeline_suggestion_id(&format!("{matter_id}:{source_type}:{key}"));
+        suggestions.push(TimelineSuggestion {
+            id: suggestion_id.clone(),
+            suggestion_id,
+            matter_id: matter_id.to_string(),
+            date: date.iso_date,
+            date_text: date.date_text,
+            date_confidence: date.confidence,
+            title: timeline_title_for_text(&sentence_text),
+            description: Some(sentence_text.clone()),
+            kind: timeline_kind_for_text(&sentence_text),
+            source_type: source_type.to_string(),
+            source_document_id: source_document_id.map(str::to_string),
+            source_span_ids: source_span_ids.clone(),
+            text_chunk_ids: text_chunk_ids.clone(),
+            linked_fact_ids: linked_fact_ids.clone(),
+            linked_claim_ids: linked_claim_ids.clone(),
+            work_product_id: work_product_id.map(str::to_string),
+            block_id: block_id.map(str::to_string),
+            agent_run_id: agent_run_id.map(str::to_string),
+            index_run_id: index_run_id.map(str::to_string),
+            status: "suggested".to_string(),
+            warnings: date.warnings,
+            approved_event_id: None,
+            created_at: now.clone(),
+            updated_at: now,
+        });
+    }
+    suggestions
+}
+
+fn date_entity_mentions_for_chunk(
+    matter_id: &str,
+    document_id: &str,
+    chunk: &ExtractedTextChunk,
+) -> Vec<EntityMention> {
+    date_candidates_in_text(&chunk.text)
+        .into_iter()
+        .enumerate()
+        .map(|(index, date)| {
+            let entity_mention_id = format!(
+                "entity-mention:{}:date:{}",
+                sanitize_path_segment(&chunk.chunk_id),
+                index + 1
+            );
+            let byte_base = chunk.byte_start.unwrap_or_default();
+            let char_base = chunk.char_start.unwrap_or_default();
+            EntityMention {
+                id: entity_mention_id.clone(),
+                entity_mention_id,
+                matter_id: matter_id.to_string(),
+                document_id: document_id.to_string(),
+                text_chunk_id: Some(chunk.chunk_id.clone()),
+                source_span_id: chunk.source_span_id.clone(),
+                mention_text: date.date_text,
+                entity_type: "date".to_string(),
+                confidence: date.confidence,
+                byte_start: Some(byte_base + date.byte_start),
+                byte_end: Some(byte_base + date.byte_end),
+                char_start: Some(char_base + date.char_start),
+                char_end: Some(char_base + date.char_end),
+                review_status: "unreviewed".to_string(),
+            }
+        })
+        .collect()
+}
+
+fn text_chunk_ids_for_range(
+    chunks: &[ExtractedTextChunk],
+    span: Option<&SourceSpan>,
+) -> Vec<String> {
+    let Some(span) = span else {
+        return Vec::new();
+    };
+    if let Some(chunk_id) = &span.chunk_id {
+        return vec![chunk_id.clone()];
+    }
+    let Some(start) = span.char_start else {
+        return Vec::new();
+    };
+    let Some(end) = span.char_end else {
+        return Vec::new();
+    };
+    chunks
+        .iter()
+        .filter(|chunk| {
+            let chunk_start = chunk.char_start.unwrap_or_default();
+            let chunk_end = chunk.char_end.unwrap_or(chunk_start);
+            chunk_start < end && chunk_end > start
+        })
+        .map(|chunk| chunk.chunk_id.clone())
+        .collect()
+}
+
+fn date_candidates_in_text(text: &str) -> Vec<DateCandidate> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for capture in ISO_DATE_RE.captures_iter(text) {
+        let Some(matched) = capture.get(0) else {
+            continue;
+        };
+        let iso = matched.as_str().to_string();
+        if days_from_iso_date(&iso).is_none() || !seen.insert((iso.clone(), matched.start())) {
+            continue;
+        }
+        out.push(date_candidate(
+            text,
+            matched.start(),
+            matched.end(),
+            iso,
+            0.99,
+            Vec::new(),
+        ));
+    }
+    for capture in MONTH_DATE_RE.captures_iter(text) {
+        let Some(matched) = capture.get(0) else {
+            continue;
+        };
+        let Some(month) = capture
+            .get(1)
+            .and_then(|value| month_number(value.as_str()))
+        else {
+            continue;
+        };
+        let Some(day) = capture
+            .get(2)
+            .and_then(|value| value.as_str().parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Some(year) = capture
+            .get(3)
+            .and_then(|value| value.as_str().parse::<i32>().ok())
+        else {
+            continue;
+        };
+        let iso = format!("{year:04}-{month:02}-{day:02}");
+        if days_from_iso_date(&iso).is_none() || !seen.insert((iso.clone(), matched.start())) {
+            continue;
+        }
+        out.push(date_candidate(
+            text,
+            matched.start(),
+            matched.end(),
+            iso,
+            0.9,
+            Vec::new(),
+        ));
+    }
+    for capture in NUMERIC_DATE_RE.captures_iter(text) {
+        let Some(matched) = capture.get(0) else {
+            continue;
+        };
+        let Some(month) = capture
+            .get(1)
+            .and_then(|value| value.as_str().parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Some(day) = capture
+            .get(2)
+            .and_then(|value| value.as_str().parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Some(year) = capture
+            .get(3)
+            .and_then(|value| value.as_str().parse::<i32>().ok())
+        else {
+            continue;
+        };
+        let iso = format!("{year:04}-{month:02}-{day:02}");
+        if days_from_iso_date(&iso).is_none() || !seen.insert((iso.clone(), matched.start())) {
+            continue;
+        }
+        out.push(date_candidate(
+            text,
+            matched.start(),
+            matched.end(),
+            iso,
+            0.65,
+            vec!["numeric_date_format_needs_review".to_string()],
+        ));
+    }
+    out.sort_by_key(|date| date.byte_start);
+    out
+}
+
+fn date_candidate(
+    text: &str,
+    byte_start: usize,
+    byte_end: usize,
+    iso_date: String,
+    confidence: f32,
+    warnings: Vec<String>,
+) -> DateCandidate {
+    DateCandidate {
+        iso_date,
+        date_text: text
+            .get(byte_start..byte_end)
+            .unwrap_or_default()
+            .to_string(),
+        confidence,
+        byte_start: byte_start as u64,
+        byte_end: byte_end as u64,
+        char_start: text[..byte_start].chars().count() as u64,
+        char_end: text[..byte_end].chars().count() as u64,
+        warnings,
+    }
+}
+
+fn month_number(value: &str) -> Option<u32> {
+    match value.trim_end_matches('.').to_ascii_lowercase().as_str() {
+        "january" | "jan" => Some(1),
+        "february" | "feb" => Some(2),
+        "march" | "mar" => Some(3),
+        "april" | "apr" => Some(4),
+        "may" => Some(5),
+        "june" | "jun" => Some(6),
+        "july" | "jul" => Some(7),
+        "august" | "aug" => Some(8),
+        "september" | "sep" | "sept" => Some(9),
+        "october" | "oct" => Some(10),
+        "november" | "nov" => Some(11),
+        "december" | "dec" => Some(12),
+        _ => None,
+    }
+}
+
+fn timeline_suggestion_id(seed: &str) -> String {
+    format!("timeline-suggestion:{}", hex_prefix(seed.as_bytes(), 24))
+}
+
+fn timeline_event_id_from_suggestion(suggestion_id: &str) -> String {
+    format!("event:{}", hex_prefix(suggestion_id.as_bytes(), 24))
+}
+
+fn timeline_title_for_text(text: &str) -> String {
+    let mut value = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for date in date_candidates_in_text(&value) {
+        value = value.replace(&date.date_text, "").trim().to_string();
+    }
+    let value = value.trim_matches(|ch: char| matches!(ch, '.' | ',' | ';' | ':' | '-' | ' '));
+    if value.is_empty() {
+        "Timeline event".to_string()
+    } else {
+        text_excerpt(value, 96)
+    }
+}
+
+fn timeline_kind_for_text(text: &str) -> String {
+    let normalized = text.to_ascii_lowercase();
+    if normalized.contains("notice") {
+        "notice"
+    } else if normalized.contains("filed") || normalized.contains("filing") {
+        "filing"
+    } else if normalized.contains("served") || normalized.contains("service") {
+        "service"
+    } else if normalized.contains("paid")
+        || normalized.contains("payment")
+        || normalized.contains("rent")
+    {
+        "payment"
+    } else if normalized.contains("called")
+        || normalized.contains("emailed")
+        || normalized.contains("texted")
+        || normalized.contains("sent")
+    {
+        "communication"
+    } else if normalized.contains("hearing") || normalized.contains("court") {
+        "court"
+    } else if normalized.contains("deadline") || normalized.contains("due") {
+        "deadline"
+    } else {
+        "other"
+    }
+    .to_string()
 }
 
 fn sentence_candidates_with_offsets(text: &str) -> Vec<SentenceCandidate> {
@@ -10922,39 +11585,40 @@ mod tests {
     use super::markdown_adapter::markdown_to_work_product_ast;
     use super::rule_engine::work_product_finding;
     use super::{
+        ASSEMBLYAI_CAPTION_CHARS_PER_CAPTION, ASSEMBLYAI_KEYTERMS_MAX_WORDS_TOTAL,
+        ASSEMBLYAI_PROMPT_MAX_WORDS, ASSEMBLYAI_REDACTED_AUDIO_QUALITY,
+        ASSEMBLYAI_REMOVE_AUDIO_TAGS_ALL, ASSEMBLYAI_TRANSCRIPT_LIST_DEFAULT_LIMIT,
+        ASSEMBLYAI_WORD_SEARCH_MAX_TERMS, AssemblyAiParagraph, AssemblyAiParagraphsResponse,
+        AssemblyAiRedactedAudioResponse, AssemblyAiSentence, AssemblyAiSentencesResponse,
+        AssemblyAiSubtitleFormat, AssemblyAiTranscriptResponse, AssemblyAiUtterance,
+        AssemblyAiWord, AssemblyAiWordSearchResponse, CASE_INDEX_VERSION, CHUNKER_VERSION,
+        CITATION_RESOLVER_VERSION, PARSER_REGISTRY_VERSION, SourceContext,
         apply_work_product_support_removal, apply_work_product_support_update,
         apply_work_product_text_range_link, assemblyai_default_word_search_terms,
         assemblyai_effective_prompt, assemblyai_http_error, assemblyai_keyterms_word_count,
         assemblyai_prompt_preset_text, assemblyai_raw_words, assemblyai_speech_models,
         assemblyai_transcript_create_request, assemblyai_transcript_delete_response,
         assemblyai_transcript_error_message, assemblyai_transcript_list_query_pairs,
-        canonical_id_for_citation, chunk_text, citation_uses_for_text, default_formatting_profile,
-        docx_package_manifest, docx_with_replaced_document_xml, failed_ingestion_run,
-        generate_opaque_id, looks_like_complaint, normalize_assemblyai_prompt_preset,
-        normalize_assemblyai_remove_audio_tags, normalize_assemblyai_transcript_id,
-        normalize_assemblyai_transcript_list_query, normalize_compare_layers,
-        object_blob_id_for_hash, oregon_civil_complaint_rule_pack, parse_complaint_structure,
-        parse_document_bytes, propose_facts, prosemirror_doc_for_text, provider_subtitle_or_local,
-        rebuild_work_product_ast_from_projection, redact_transcript_text,
-        refresh_work_product_state, restore_work_product_scope,
+        canonical_id_for_citation, chunk_text, citation_uses_for_text, date_candidates_in_text,
+        default_formatting_profile, docx_package_manifest, docx_with_replaced_document_xml,
+        failed_ingestion_run, generate_opaque_id, looks_like_complaint,
+        normalize_assemblyai_prompt_preset, normalize_assemblyai_remove_audio_tags,
+        normalize_assemblyai_transcript_id, normalize_assemblyai_transcript_list_query,
+        normalize_compare_layers, object_blob_id_for_hash, oregon_civil_complaint_rule_pack,
+        parse_complaint_structure, parse_document_bytes, propose_facts, prosemirror_doc_for_text,
+        provider_subtitle_or_local, rebuild_work_product_ast_from_projection,
+        redact_transcript_text, refresh_work_product_state, restore_work_product_scope,
         safe_work_product_download_filename, sanitize_assemblyai_keyterms,
         sanitize_assemblyai_prompt, sanitize_assemblyai_word_search_terms, sanitize_filename,
         sanitized_external_error, sha256_hex, should_inline_payload,
         should_use_assemblyai_subtitles, slug, snapshot_entity_state_key, snapshot_full_state_key,
         snapshot_manifest_for_product, snapshot_manifest_hash_for_states, snapshot_manifest_key,
         summarize_version_snapshot_for_list, summarize_work_product_for_list,
+        timeline_suggestions_from_facts, timeline_suggestions_from_text,
         transcript_segments_from_provider, transcript_segments_to_srt, transcript_segments_to_vtt,
         validate_assemblyai_transcription_request, validate_ast_patch_concurrency,
         version_change_state_summary, work_product_block_graph_payload, work_product_export_key,
-        work_product_hashes, work_product_profile, AssemblyAiParagraph,
-        AssemblyAiParagraphsResponse, AssemblyAiRedactedAudioResponse, AssemblyAiSentence,
-        AssemblyAiSentencesResponse, AssemblyAiSubtitleFormat, AssemblyAiTranscriptResponse,
-        AssemblyAiUtterance, AssemblyAiWord, AssemblyAiWordSearchResponse, SourceContext,
-        ASSEMBLYAI_CAPTION_CHARS_PER_CAPTION, ASSEMBLYAI_KEYTERMS_MAX_WORDS_TOTAL,
-        ASSEMBLYAI_PROMPT_MAX_WORDS, ASSEMBLYAI_REDACTED_AUDIO_QUALITY,
-        ASSEMBLYAI_REMOVE_AUDIO_TAGS_ALL, ASSEMBLYAI_TRANSCRIPT_LIST_DEFAULT_LIMIT,
-        ASSEMBLYAI_WORD_SEARCH_MAX_TERMS, CASE_INDEX_VERSION, CHUNKER_VERSION,
-        CITATION_RESOLVER_VERSION, PARSER_REGISTRY_VERSION,
+        work_product_hashes, work_product_profile,
     };
     use crate::error::ApiError;
     use crate::models::casebuilder::{
@@ -11047,10 +11711,12 @@ mod tests {
         let validation = validate_work_product_document(&product);
 
         assert!(!validation.valid);
-        assert!(validation
-            .errors
-            .iter()
-            .any(|issue| issue.code == "duplicate_block_id"));
+        assert!(
+            validation
+                .errors
+                .iter()
+                .any(|issue| issue.code == "duplicate_block_id")
+        );
     }
 
     #[test]
@@ -11103,15 +11769,19 @@ mod tests {
         .expect("finding patch applies");
         refresh_work_product_state(&mut product);
 
-        assert!(product
-            .document_ast
-            .rule_findings
-            .iter()
-            .any(|finding| finding.finding_id == finding_id));
-        assert!(product
-            .findings
-            .iter()
-            .any(|finding| finding.finding_id == finding_id));
+        assert!(
+            product
+                .document_ast
+                .rule_findings
+                .iter()
+                .any(|finding| finding.finding_id == finding_id)
+        );
+        assert!(
+            product
+                .findings
+                .iter()
+                .any(|finding| finding.finding_id == finding_id)
+        );
     }
 
     #[test]
@@ -11173,11 +11843,13 @@ mod tests {
         assert!(product.anchors.is_empty());
         assert!(product.marks.is_empty());
         assert!(product.blocks[0].fact_ids.is_empty());
-        assert!(!product
-            .document_ast
-            .links
-            .iter()
-            .any(|link| link.target_id == "fact:rent"));
+        assert!(
+            !product
+                .document_ast
+                .links
+                .iter()
+                .any(|link| link.target_id == "fact:rent")
+        );
     }
 
     #[test]
@@ -11664,18 +12336,26 @@ mod tests {
 
         assert_eq!(product.document_ast.blocks.len(), 1);
         assert_eq!(product.document_ast.blocks[0].text, "Alpha\n\nBeta Gamma");
-        assert!(product.document_ast.blocks[0]
-            .links
-            .contains(&"link:second".to_string()));
-        assert!(product.document_ast.blocks[0]
-            .citations
-            .contains(&"citation:second".to_string()));
-        assert!(product.document_ast.blocks[0]
-            .exhibits
-            .contains(&"exhibit:second".to_string()));
-        assert!(product.document_ast.blocks[0]
-            .rule_finding_ids
-            .contains(&finding_id));
+        assert!(
+            product.document_ast.blocks[0]
+                .links
+                .contains(&"link:second".to_string())
+        );
+        assert!(
+            product.document_ast.blocks[0]
+                .citations
+                .contains(&"citation:second".to_string())
+        );
+        assert!(
+            product.document_ast.blocks[0]
+                .exhibits
+                .contains(&"exhibit:second".to_string())
+        );
+        assert!(
+            product.document_ast.blocks[0]
+                .rule_finding_ids
+                .contains(&finding_id)
+        );
 
         let shifted_link = product
             .document_ast
@@ -11691,12 +12371,14 @@ mod tests {
         assert_eq!(shifted_range.start_offset, 12);
         assert_eq!(shifted_range.end_offset, 17);
         assert_eq!(shifted_range.quote.as_deref(), Some("Gamma"));
-        assert!(product
-            .document_ast
-            .rule_findings
-            .iter()
-            .any(|finding| finding.finding_id == finding_id
-                && finding.target_id == product.document_ast.blocks[0].block_id));
+        assert!(
+            product
+                .document_ast
+                .rule_findings
+                .iter()
+                .any(|finding| finding.finding_id == finding_id
+                    && finding.target_id == product.document_ast.blocks[0].block_id)
+        );
         assert!(validate_work_product_document(&product).valid);
     }
 
@@ -12040,6 +12722,87 @@ mod tests {
     }
 
     #[test]
+    fn extracts_named_iso_and_numeric_dates_with_review_confidence() {
+        let dates = date_candidates_in_text(
+            "Tenant reported mold on April 1, 2026. Rent posted 2026-04-02. Numeric 4/3/2026 needs review.",
+        );
+
+        assert_eq!(dates[0].iso_date, "2026-04-01");
+        assert_eq!(dates[1].iso_date, "2026-04-02");
+        assert_eq!(dates[2].iso_date, "2026-04-03");
+        assert!(
+            dates[2]
+                .warnings
+                .contains(&"numeric_date_format_needs_review".to_string())
+        );
+    }
+
+    #[test]
+    fn timeline_suggestions_are_review_first_from_plain_text() {
+        let suggestions = timeline_suggestions_from_text(
+            "matter:test",
+            "Tenant reported mold on April 1, 2026. Repairs were not completed.",
+            "document",
+            Some("doc:test"),
+            vec!["source-span:test".to_string()],
+            vec!["chunk:test".to_string()],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+            None,
+            10,
+        );
+
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].status, "suggested");
+        assert_eq!(suggestions[0].date, "2026-04-01");
+        assert_eq!(
+            suggestions[0].source_document_id.as_deref(),
+            Some("doc:test")
+        );
+    }
+
+    #[test]
+    fn timeline_suggestions_link_indexed_facts_without_creating_events() {
+        let context = SourceContext {
+            document_version_id: Some("version:doc:1".to_string()),
+            object_blob_id: Some("blob:doc:1".to_string()),
+            ingestion_run_id: Some("ingestion:doc:1".to_string()),
+        };
+        let facts = propose_facts(
+            "matter:test",
+            "doc:test",
+            "Tenant reported mold on April 1, 2026. Repairs were not completed for two weeks.",
+            &context,
+        );
+        let suggestions = timeline_suggestions_from_facts(
+            "matter:test",
+            Some("doc:test"),
+            &facts,
+            &[],
+            "document_index",
+            None,
+            None,
+            Some("timeline-agent-run:test"),
+            Some("index-run:test"),
+            10,
+        );
+
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(
+            suggestions[0].linked_fact_ids,
+            vec![facts[0].fact_id.clone()]
+        );
+        assert_eq!(
+            suggestions[0].index_run_id.as_deref(),
+            Some("index-run:test")
+        );
+        assert!(suggestions[0].approved_event_id.is_none());
+    }
+
+    #[test]
     fn slug_has_stable_prefix_safe_shape() {
         assert_eq!(
             slug("Smith v. ABC Property Management"),
@@ -12150,10 +12913,12 @@ mod tests {
             before_hash,
             snapshot_manifest_hash_for_states(&states).expect("hash")
         );
-        assert!(states.iter().all(|state| state
-            .state_ref
-            .as_deref()
-            .is_some_and(|value| value.starts_with("blob:sha256:"))));
+        assert!(states.iter().all(|state| {
+            state
+                .state_ref
+                .as_deref()
+                .is_some_and(|value| value.starts_with("blob:sha256:"))
+        }));
     }
 
     #[test]
@@ -12170,9 +12935,10 @@ mod tests {
         let (hash, summary) = version_change_state_summary(Some(value)).expect("summary");
         let summary_text = serde_json::to_string(&summary).expect("json");
 
-        assert!(hash
-            .as_deref()
-            .is_some_and(|value| value.starts_with("sha256:")));
+        assert!(
+            hash.as_deref()
+                .is_some_and(|value| value.starts_with("sha256:"))
+        );
         assert!(summary_text.contains("\"state_storage\":\"version_snapshot\""));
         assert!(summary_text.contains("\"inline_payload\":false"));
         assert!(!summary_text.contains("Secret merits analysis"));
@@ -12400,9 +13166,11 @@ mod tests {
             restore_work_product_scope(&current, &snapshot, "block", &[target_id.clone()])
                 .expect("restore block");
 
-        assert!(warnings
-            .iter()
-            .any(|warning| warning.contains("Targeted restore")));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("Targeted restore"))
+        );
         assert_eq!(restored.document_ast.blocks[0].text, "Snapshot block one.");
         assert_eq!(
             restored.document_ast.blocks[1].text,
@@ -12427,14 +13195,18 @@ mod tests {
             restore_work_product_scope(&current, &snapshot, "export_state", &[])
                 .expect("restore export state");
 
-        assert!(restored
-            .artifacts
-            .iter()
-            .any(|artifact| artifact.artifact_id == "artifact:snapshot"));
-        assert!(restored
-            .artifacts
-            .iter()
-            .any(|artifact| artifact.artifact_id == "artifact:current"));
+        assert!(
+            restored
+                .artifacts
+                .iter()
+                .any(|artifact| artifact.artifact_id == "artifact:snapshot")
+        );
+        assert!(
+            restored
+                .artifacts
+                .iter()
+                .any(|artifact| artifact.artifact_id == "artifact:current")
+        );
     }
 
     #[test]
@@ -12537,10 +13309,12 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&payload).expect("json payload");
         assert_eq!(value["text_storage_status"], "graph_excerpt");
         assert_eq!(value["text_size_bytes"], 80);
-        assert!(value["text_hash"]
-            .as_str()
-            .expect("hash")
-            .starts_with("sha256:"));
+        assert!(
+            value["text_hash"]
+                .as_str()
+                .expect("hash")
+                .starts_with("sha256:")
+        );
     }
 
     #[test]
@@ -12564,7 +13338,9 @@ mod tests {
         );
         assert_eq!(
             facts[0].source_spans[0].quote.as_deref(),
-            Some("The tenant paid rent on March 1, 2024, and the landlord accepted the payment without objection.")
+            Some(
+                "The tenant paid rent on March 1, 2024, and the landlord accepted the payment without objection."
+            )
         );
     }
 
@@ -12632,10 +13408,11 @@ mod tests {
             &docx,
         );
         assert_eq!(docx.status, "processed");
-        assert!(docx
-            .text
-            .unwrap()
-            .contains("Complaint paragraph from DOCX."));
+        assert!(
+            docx.text
+                .unwrap()
+                .contains("Complaint paragraph from DOCX.")
+        );
 
         let pdf = parse_document_bytes(
             "embedded.pdf",
@@ -12739,14 +13516,18 @@ mod tests {
         );
         assert!(payload.get("prompt").is_none());
         assert!(payload.get("keyterms_prompt").is_none());
-        assert!(payload["redact_pii_policies"]
-            .as_array()
-            .unwrap()
-            .contains(&serde_json::json!("person_name")));
-        assert!(payload["redact_pii_policies"]
-            .as_array()
-            .unwrap()
-            .contains(&serde_json::json!("phone_number")));
+        assert!(
+            payload["redact_pii_policies"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("person_name"))
+        );
+        assert!(
+            payload["redact_pii_policies"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("phone_number"))
+        );
         assert_eq!(
             payload["webhook_auth_header_name"],
             "x-casebuilder-assemblyai-secret"
@@ -13549,11 +14330,13 @@ mod tests {
         assert_eq!(manifest.entry_count, 1);
         assert_eq!(manifest.text_part_count, 1);
         assert!(manifest.editable);
-        assert!(manifest
-            .text_preview
-            .as_deref()
-            .unwrap()
-            .contains("Simple editable paragraph."));
+        assert!(
+            manifest
+                .text_preview
+                .as_deref()
+                .unwrap()
+                .contains("Simple editable paragraph.")
+        );
     }
 
     #[test]

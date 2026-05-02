@@ -2,8 +2,9 @@ const cliBaseUrl = process.argv.slice(2).find((value) => value !== "--")
 const baseUrl = (process.env.SMOKE_BASE_URL || cliBaseUrl || "http://localhost:3000").replace(/\/$/, "")
 const seededMatterText = "Smith v. ABC Property"
 
-const routes = [
+const routeDefinitions = [
   { path: "/" },
+  { path: "/dashboard" },
   { path: "/search" },
   { path: "/search?q=90.300" },
   { path: "/search?q=chapter%2090%20habitability" },
@@ -63,6 +64,10 @@ const routes = [
   { path: "/matters/smith-abc/documents", redirectTo: "/casebuilder/matters/smith-abc/documents" },
 ]
 
+const routes = routeDefinitions.map((route) =>
+  route.path === "/" || route.path.startsWith("/matters") ? route : { ...route, requiresAuth: true },
+)
+
 const failures = []
 const routeHtml = new Map()
 
@@ -78,6 +83,7 @@ for (const route of routes) {
     const isOk = response.status >= 200 && response.status < 300
     const expectedRedirect = route.redirectTo ? new URL(route.redirectTo, baseUrl) : null
     const metaRefreshPath = extractMetaRefreshPath(html)
+    const isExpectedAuthRedirect = route.requiresAuth && isAuthRedirect(location, route.path)
     const isExpectedRedirect = Boolean(
       expectedRedirect &&
         ((response.status >= 300 &&
@@ -88,14 +94,14 @@ for (const route of routes) {
     )
     const hasNext404 = html.includes("This page could not be found")
     const hasAppNotFound = html.includes("No matter matches this route.")
-    const isMissingExpectedText = Boolean(route.expectText && !html.includes(route.expectText))
+    const isMissingExpectedText = Boolean(!route.requiresAuth && route.expectText && !html.includes(route.expectText))
 
     if (
-      (!isOk && !isExpectedRedirect) ||
-      (!expectedRedirect && location) ||
+      (!isOk && !isExpectedRedirect && !isExpectedAuthRedirect) ||
+      (!expectedRedirect && !route.requiresAuth && location) ||
       hasNext404 ||
       isMissingExpectedText ||
-      (!route.expectText && !isExpectedRedirect && hasAppNotFound)
+      (!route.expectText && !isExpectedRedirect && !isExpectedAuthRedirect && hasAppNotFound)
     ) {
       failures.push({
         route: route.path,
@@ -147,8 +153,9 @@ async function smokeHomeLinks() {
       const hasNext404 = body.includes("This page could not be found")
       const hasAppNotFound = body.includes("No matter matches this route.")
       const isOk = response.status >= 200 && response.status < 300
+      const isExpectedAuthRedirect = isAuthRedirect(location, href)
 
-      if (!isOk || location || hasNext404 || hasAppNotFound) {
+      if ((!isOk && !isExpectedAuthRedirect) || (location && !isExpectedAuthRedirect) || hasNext404 || hasAppNotFound) {
         failures.push({
           route: `home link ${href}`,
           status: response.status,
@@ -167,6 +174,19 @@ async function smokeHomeLinks() {
       })
     }
   }
+}
+
+function isAuthRedirect(location, originalPath) {
+  if (!location) return false
+  const redirectUrl = new URL(location, baseUrl)
+  if (redirectUrl.pathname !== "/api/auth/signin") return false
+
+  const callbackUrl = redirectUrl.searchParams.get("callbackUrl")
+  if (!callbackUrl) return true
+
+  const callbackPath = new URL(callbackUrl, baseUrl)
+  const originalUrl = new URL(originalPath, baseUrl)
+  return callbackPath.pathname === originalUrl.pathname
 }
 
 function extractMetaRefreshPath(html) {

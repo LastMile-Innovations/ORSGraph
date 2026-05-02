@@ -1,7 +1,7 @@
 use crate::config::ApiConfig;
 use crate::error::{ApiError, ApiResult};
-use axum::http::{header, HeaderMap, Method};
-use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+use axum::http::{HeaderMap, Method, header};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use percent_encoding::percent_decode_str;
 use serde::Deserialize;
 use serde_json::Value;
@@ -257,8 +257,20 @@ pub fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).and_then(|value| value.to_str().ok())
 }
 
-pub fn is_public_path(path: &str) -> bool {
-    path == "/" || path == "/api/v1/health"
+pub fn is_public_path(method: &Method, path: &str) -> bool {
+    path == "/"
+        || path == "/api/v1/health"
+        || (path == "/api/v1/auth/access-request" && *method == Method::POST)
+        || (path.starts_with("/api/v1/auth/invites/")
+            && !path.ends_with("/accept")
+            && *method == Method::GET)
+}
+
+pub fn is_auth_access_bootstrap_path(method: &Method, path: &str) -> bool {
+    (path == "/api/v1/auth/me" && *method == Method::GET)
+        || (path.starts_with("/api/v1/auth/invites/")
+            && path.ends_with("/accept")
+            && *method == Method::POST)
 }
 
 pub fn is_admin_operation(method: &Method, path: &str) -> bool {

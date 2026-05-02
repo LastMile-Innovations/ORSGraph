@@ -1,6 +1,6 @@
 use crate::artifact_store::RawArtifact;
 use crate::connectors::SourceItem;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

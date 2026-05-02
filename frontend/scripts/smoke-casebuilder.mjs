@@ -84,6 +84,9 @@ async function main() {
   assert(extraction.artifact_manifest?.normalized_text_version_id, "artifact manifest references normalized text")
   assert(extraction.index_artifacts?.some((artifact) => artifact.artifact_kind === "text.normalized.json"), "normalized text artifact stored")
   assert(extraction.text_chunks?.length > 0, "index text chunks returned")
+  assert(indexRun.produced_timeline_suggestions >= 1, "matter index run reports timeline suggestions")
+  assert(extraction.timeline_suggestions?.length > 0, "reviewable timeline suggestions returned")
+  assert(extraction.timeline_suggestions[0].status === "suggested", "timeline suggestion is review-first")
   const fact = extraction.proposed_facts[0]
 
   const approvedFact = await request(
@@ -92,16 +95,24 @@ async function main() {
   )
   assert(approvedFact.status === "supported", "fact approved")
 
-  await request(`/matters/${encodeURIComponent(matterId)}/timeline`, {
+  const timelineApproval = await request(
+    `/matters/${encodeURIComponent(matterId)}/timeline/suggestions/${encodeURIComponent(extraction.timeline_suggestions[0].suggestion_id)}/approve`,
+    { method: "POST" },
+  )
+  assert(timelineApproval.suggestion?.status === "approved", "timeline suggestion approved")
+  assert(timelineApproval.event?.date === "2026-04-01", "approved timeline event keeps extracted date")
+
+  const timelineSuggest = await request(`/matters/${encodeURIComponent(matterId)}/timeline/suggest`, {
     method: "POST",
-    body: JSON.stringify({
-      date: "2026-04-01",
-      title: "Tenant reported mold",
-      kind: "notice",
-      source_document_id: document.document_id,
-      linked_fact_ids: [approvedFact.fact_id || approvedFact.id],
-    }),
+    body: JSON.stringify({ document_ids: [document.document_id], limit: 5 }),
   })
+  assert(timelineSuggest.agent_run?.provider_mode === "template", "provider-free timeline agent run recorded")
+
+  const graph = await request(`/matters/${encodeURIComponent(matterId)}/graph`)
+  assert(
+    graph.nodes?.some((node) => node.kind === "event" && node.id === timelineApproval.event.event_id),
+    "approved timeline event appears in matter graph",
+  )
 
   const claim = await request(`/matters/${encodeURIComponent(matterId)}/claims`, {
     method: "POST",

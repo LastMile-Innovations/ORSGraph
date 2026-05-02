@@ -6,6 +6,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import {
   ArrowLeft,
+  CalendarClock,
   Captions,
   CheckCircle2,
   Download,
@@ -46,9 +47,10 @@ import {
   promoteDocumentWorkProduct,
   reviewTranscription,
   saveDocumentText,
+  suggestTimeline,
   syncTranscription,
 } from "@/lib/casebuilder/api"
-import { matterHref, matterWorkProductHref } from "@/lib/casebuilder/routes"
+import { matterHref, matterTimelineHref, matterWorkProductHref } from "@/lib/casebuilder/routes"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -206,6 +208,26 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
         setTextDraft(data.document.extracted_text ?? textDraft)
         setMessage(data.message)
         router.refresh()
+      },
+    )
+  }
+
+  async function onSuggestTimeline() {
+    await runAction(
+      "timeline suggestions",
+      () => suggestTimeline(matter.id, { document_ids: [document.document_id], limit: 50 }),
+      (data) => {
+        const first = data.suggestions[0]
+        const providerMode = data.agent_run?.provider_mode ?? data.mode
+        setMessage(`${data.suggestions.length} timeline suggestion${data.suggestions.length === 1 ? "" : "s"} ready for review (${providerMode}).`)
+        router.push(
+          matterTimelineHref(matter.id, {
+            suggestionId: first?.suggestion_id,
+            status: first ? "suggested" : undefined,
+            sourceType: first?.source_type,
+            agentRunId: first?.agent_run_id ?? data.agent_run?.agent_run_id,
+          }),
+        )
       },
     )
   }
@@ -470,6 +492,9 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
               </IconButton>
               <IconButton label="Extract text" onClick={onExtract} disabled={busy === "extract"}>
                 <Sparkles className="h-4 w-4" />
+              </IconButton>
+              <IconButton label="Suggest timeline" onClick={onSuggestTimeline} disabled={busy === "timeline suggestions"}>
+                <CalendarClock className="h-4 w-4" />
               </IconButton>
               {(isDocx || isMarkdown || canEdit) && (
                 <IconButton label="Save text" onClick={onSave} disabled={!canSave}>

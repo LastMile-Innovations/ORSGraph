@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   BookOpen,
+  CalendarClock,
   CheckCircle2,
   ChevronRight,
   Clock,
@@ -51,11 +52,13 @@ import {
   previewWorkProduct,
   runWorkProductAiCommand,
   runWorkProductQc,
+  suggestTimeline,
   validateWorkProductAst,
   workProductAstFromMarkdown,
   workProductAstToMarkdown,
 } from "@/lib/casebuilder/api"
 import {
+  matterTimelineHref,
   matterWorkProductHref,
   matterWorkProductsHref,
   type WorkProductWorkspaceSection,
@@ -339,6 +342,29 @@ export function WorkProductWorkbench({ matter, workProduct: initialWorkProduct, 
     })
   }
 
+  async function suggestWorkProductTimeline() {
+    await runAction(async () => {
+      const result = await suggestTimeline(matter.id, {
+        work_product_id: workProduct.id,
+        block_id: selectedBlock?.id,
+        limit: 50,
+      })
+      if (!result.data) return result.error || "Timeline suggestions could not be generated."
+      const first = result.data.suggestions[0]
+      const providerMode = result.data.agent_run?.provider_mode ?? result.data.mode
+      setMessage(`${result.data.suggestions.length} timeline suggestion${result.data.suggestions.length === 1 ? "" : "s"} ready for review (${providerMode}).`)
+      router.push(
+        matterTimelineHref(matter.id, {
+          suggestionId: first?.suggestion_id,
+          status: first ? "suggested" : undefined,
+          sourceType: first?.source_type,
+          agentRunId: first?.agent_run_id ?? result.data.agent_run?.agent_run_id,
+        }),
+      )
+      return null
+    })
+  }
+
   async function linkSelectedBlockSupport(input: {
     targetType: string
     targetId: string
@@ -467,6 +493,10 @@ export function WorkProductWorkbench({ matter, workProduct: initialWorkProduct, 
             <Button variant="outline" size="sm" className="gap-1.5 bg-transparent" disabled={pending} onClick={() => runTemplateCommand("summarize_support")}>
               <Sparkles className="h-3.5 w-3.5" />
               Assist
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent" disabled={pending} onClick={suggestWorkProductTimeline}>
+              <CalendarClock className="h-3.5 w-3.5" />
+              Timeline
             </Button>
             <Button size="sm" className="gap-1.5" disabled={pending} onClick={runQc}>
               <ShieldCheck className="h-3.5 w-3.5" />

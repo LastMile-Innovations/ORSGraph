@@ -4,6 +4,10 @@ import { getToken } from "next-auth/jwt"
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl
 
+  if (isPublicPath(pathname)) {
+    return NextResponse.next()
+  }
+
   if (pathname === "/matters") {
     return redirect(request, `/casebuilder${search}`)
   }
@@ -26,6 +30,10 @@ export async function proxy(request: NextRequest) {
   }
 
   return NextResponse.next()
+}
+
+function isPublicPath(pathname: string) {
+  return pathname === "/" || pathname.startsWith("/marketing/")
 }
 
 function redirect(request: NextRequest, pathname: string) {

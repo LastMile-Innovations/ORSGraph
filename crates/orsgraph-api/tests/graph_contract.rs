@@ -1,6 +1,7 @@
 use orsgraph_api::models::casebuilder::{
-    DocumentVersion, EntityMention, EvidenceSpan, ExtractionArtifactManifest, IndexRun,
-    IngestionRun, ObjectBlob, Page, SearchIndexRecord, SourceSpan, TextChunk,
+    CaseTimelineEvent, DocumentVersion, EntityMention, EvidenceSpan, ExtractionArtifactManifest,
+    IndexRun, IngestionRun, ObjectBlob, Page, SearchIndexRecord, SourceSpan, TextChunk,
+    TimelineAgentRun, TimelineSuggestion, TimelineSuggestionApprovalResponse,
 };
 
 fn casebuilder_service_sources() -> String {
@@ -14,10 +15,15 @@ fn casebuilder_service_sources() -> String {
         include_str!("../src/services/casebuilder/matters.rs"),
         include_str!("../src/services/casebuilder/repository.rs"),
         include_str!("../src/services/casebuilder/storage.rs"),
+        include_str!("../src/services/casebuilder/timeline.rs"),
         include_str!("../src/services/casebuilder/transcription.rs"),
         include_str!("../src/services/casebuilder/work_products.rs"),
     ]
     .join("\n")
+}
+
+fn normalize_route_params(routes: &str) -> String {
+    routes.replace('{', ":").replace('}', "")
 }
 
 #[test]
@@ -134,7 +140,7 @@ fn full_graph_contract_is_unfocused_and_unbounded_by_neighborhood_id() {
 
 #[test]
 fn statute_sidebar_routes_use_live_api_contracts_without_mock_fallbacks() {
-    let routes = include_str!("../src/routes/mod.rs");
+    let routes = normalize_route_params(include_str!("../src/routes/mod.rs"));
     let sidebar_routes = include_str!("../src/routes/sidebar.rs");
     let service = include_str!("../src/services/neo4j.rs");
     let frontend_api = include_str!("../../../frontend/lib/api.ts");
@@ -173,8 +179,11 @@ fn statute_sidebar_routes_use_live_api_contracts_without_mock_fallbacks() {
     );
     assert!(frontend_api.contains("fetchApi<StatuteIndexApiResponse>(`/statutes?${params}`)"));
     assert!(frontend_api.contains("fetchApi<SidebarData>(\"/sidebar\")"));
-    assert!(frontend_api
-        .contains("fetchApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)"));
+    assert!(
+        frontend_api.contains(
+            "fetchApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)"
+        )
+    );
     assert!(frontend_api.contains("apiFailureState(\"/statutes\""));
     assert!(frontend_api.contains("apiFailureState(\"/sidebar\", null"));
     assert!(statute_page.contains("state.source === \"empty\""));
@@ -226,7 +235,7 @@ fn graph_similarity_and_citation_contracts_are_supported() {
 
 #[test]
 fn casebuilder_routes_cover_v0_contracts() {
-    let routes = include_str!("../src/routes/casebuilder.rs");
+    let routes = normalize_route_params(include_str!("../src/routes/casebuilder.rs"));
 
     for expected in [
         "/matters",
@@ -257,6 +266,10 @@ fn casebuilder_routes_cover_v0_contracts() {
         "/matters/:matter_id/documents/:document_id/import-complaint",
         "/casebuilder/webhooks/assemblyai",
         "/matters/:matter_id/facts/:fact_id/approve",
+        "/matters/:matter_id/timeline/suggestions",
+        "/matters/:matter_id/timeline/suggest",
+        "/matters/:matter_id/timeline/suggestions/:suggestion_id",
+        "/matters/:matter_id/timeline/suggestions/:suggestion_id/approve",
         "/matters/:matter_id/claims/:claim_id/map-elements",
         "/matters/:matter_id/evidence/:evidence_id/link-fact",
         "/matters/:matter_id/work-products",
@@ -357,6 +370,9 @@ fn casebuilder_constraints_cover_core_graph_nodes() {
         "casebuilder_draft_id",
         "casebuilder_draft_paragraph_id",
         "casebuilder_deadline_instance_id",
+        "casebuilder_timeline_event_id",
+        "casebuilder_timeline_suggestion_id",
+        "casebuilder_timeline_agent_run_id",
         "casebuilder_task_id",
         "casebuilder_fact_check_finding_id",
         "casebuilder_citation_check_finding_id",
@@ -379,6 +395,9 @@ fn casebuilder_constraints_cover_core_graph_nodes() {
         "casebuilder_entity_mention_document",
         "casebuilder_search_index_record_document",
         "casebuilder_extraction_artifact_manifest_document",
+        "casebuilder_timeline_suggestion_matter",
+        "casebuilder_timeline_suggestion_document",
+        "casebuilder_timeline_agent_run_matter",
         "casebuilder_document_annotation_id",
         "casebuilder_document_annotation_document",
         "casebuilder_transcription_job_id",
@@ -1022,10 +1041,22 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "struct AuthorityGap",
         "struct Contradiction",
         "struct WorkProductSentence",
+        "struct TimelineAgentRun",
+        "struct TimelineSuggestion",
+        "struct TimelineSuggestRequest",
+        "struct TimelineSuggestResponse",
+        "struct PatchTimelineSuggestionRequest",
+        "struct TimelineSuggestionApprovalResponse",
         "struct ExportPackage",
         "struct AuditEvent",
         "struct MatterIndexSummary",
         "struct MatterIndexRunResponse",
+        "produced_timeline_suggestions",
+        "timeline_suggestions",
+        "source_span_ids",
+        "text_chunk_ids",
+        "linked_fact_ids",
+        "agent_run_id",
         "index_artifacts",
         "artifact_manifest",
         "original_relative_path",
@@ -1065,10 +1096,20 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "interface AuthorityGap",
         "interface Contradiction",
         "interface WorkProductSentence",
+        "interface TimelineAgentRun",
+        "interface TimelineSuggestion",
+        "interface TimelineSuggestResponse",
+        "interface TimelineSuggestionApprovalResponse",
         "interface ExportPackage",
         "interface AuditEvent",
         "interface MatterIndexSummary",
         "interface MatterIndexRunResponse",
+        "produced_timeline_suggestions",
+        "timeline_suggestions",
+        "source_span_ids",
+        "text_chunk_ids",
+        "linked_fact_ids",
+        "agent_run_id",
         "original_relative_path",
         "upload_batch_id",
         "parser_version",
@@ -1101,6 +1142,13 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "normalizeAuditEvent",
         "normalizeMatterIndexSummary",
         "normalizeMatterIndexRunResponse",
+        "normalizeTimelineAgentRun",
+        "normalizeTimelineSuggestion",
+        "normalizeTimelineSuggestResponse",
+        "normalizeTimelineSuggestionApprovalResponse",
+        "suggestTimeline",
+        "approveTimelineSuggestion",
+        "patchTimelineSuggestion",
         "source_spans",
         "ingestion_run",
         "index_run",
@@ -1152,6 +1200,13 @@ fn casebuilder_indexing_data_model_and_storage_are_object_backed() {
         "merge_entity_mention",
         "merge_search_index_record",
         "merge_extraction_artifact_manifest",
+        "merge_timeline_agent_run",
+        "merge_timeline_suggestion",
+        "materialize_timeline_event_edges",
+        "timeline_suggestions_from_facts",
+        "date_entity_mentions_for_chunk",
+        "HAS_TIMELINE_SUGGESTION",
+        "PRODUCES_TIMELINE_SUGGESTION",
         "completed_ingestion_run_with_objects",
         "document_version_object_key",
         "hex_prefix(document_id.as_bytes(), 24)",
@@ -1429,6 +1484,71 @@ fn casebuilder_provenance_dtos_serialize_with_matter_safe_ids() {
         ],
         created_at: "1".to_string(),
     };
+    let agent_run = TimelineAgentRun {
+        agent_run_id: "timeline-agent-run:doc_opaque:abc".to_string(),
+        id: "timeline-agent-run:doc_opaque:abc".to_string(),
+        matter_id: "matter:test".to_string(),
+        subject_type: "document".to_string(),
+        subject_id: Some("doc:opaque".to_string()),
+        mode: "deterministic".to_string(),
+        provider_mode: "template".to_string(),
+        status: "completed".to_string(),
+        message: "provider-free deterministic suggestions only".to_string(),
+        produced_suggestion_ids: vec!["timeline-suggestion:doc_opaque:abc".to_string()],
+        warnings: vec!["review required".to_string()],
+        created_at: "1".to_string(),
+    };
+    let suggestion = TimelineSuggestion {
+        suggestion_id: "timeline-suggestion:doc_opaque:abc".to_string(),
+        id: "timeline-suggestion:doc_opaque:abc".to_string(),
+        matter_id: "matter:test".to_string(),
+        date: "2026-04-01".to_string(),
+        date_text: "April 1, 2026".to_string(),
+        date_confidence: 0.95,
+        title: "Notice delivered".to_string(),
+        description: Some("On April 1, 2026, notice was delivered.".to_string()),
+        kind: "filing".to_string(),
+        source_type: "document".to_string(),
+        source_document_id: Some("doc:opaque".to_string()),
+        source_span_ids: vec![span.source_span_id.clone()],
+        text_chunk_ids: vec![text_chunk.text_chunk_id.clone()],
+        linked_fact_ids: vec!["fact:doc_opaque:abc".to_string()],
+        linked_claim_ids: vec!["claim:test".to_string()],
+        work_product_id: None,
+        block_id: None,
+        agent_run_id: Some(agent_run.agent_run_id.clone()),
+        index_run_id: Some(index_run.index_run_id.clone()),
+        status: "suggested".to_string(),
+        warnings: vec!["review required".to_string()],
+        approved_event_id: Some("event:timeline-suggestion:doc_opaque:abc".to_string()),
+        created_at: "1".to_string(),
+        updated_at: "2".to_string(),
+    };
+    let event = CaseTimelineEvent {
+        event_id: "event:timeline-suggestion:doc_opaque:abc".to_string(),
+        id: "event:timeline-suggestion:doc_opaque:abc".to_string(),
+        matter_id: "matter:test".to_string(),
+        date: suggestion.date.clone(),
+        title: suggestion.title.clone(),
+        description: suggestion.description.clone(),
+        kind: suggestion.kind.clone(),
+        category: "event".to_string(),
+        status: "approved".to_string(),
+        source_document_id: suggestion.source_document_id.clone(),
+        party_ids: Vec::new(),
+        linked_fact_ids: suggestion.linked_fact_ids.clone(),
+        linked_claim_ids: suggestion.linked_claim_ids.clone(),
+        source_span_ids: suggestion.source_span_ids.clone(),
+        text_chunk_ids: suggestion.text_chunk_ids.clone(),
+        suggestion_id: Some(suggestion.suggestion_id.clone()),
+        agent_run_id: suggestion.agent_run_id.clone(),
+        date_confidence: suggestion.date_confidence,
+        disputed: false,
+    };
+    let approval = TimelineSuggestionApprovalResponse {
+        suggestion: suggestion.clone(),
+        event: event.clone(),
+    };
 
     let payload = serde_json::json!({
         "blob": blob,
@@ -1442,9 +1562,17 @@ fn casebuilder_provenance_dtos_serialize_with_matter_safe_ids() {
         "entity_mention": entity_mention,
         "search_record": search_record,
         "manifest": manifest,
+        "timeline_agent_run": agent_run,
+        "timeline_suggestion": suggestion,
+        "timeline_event": event,
+        "timeline_approval": approval,
     });
     let text = serde_json::to_string(&payload).expect("provenance DTOs serialize");
     assert!(text.contains("\"matter_id\":\"matter:test\""));
+    assert!(text.contains("\"suggestion_id\":\"timeline-suggestion:doc_opaque:abc\""));
+    assert!(text.contains("\"source_span_ids\""));
+    assert!(text.contains("\"text_chunk_ids\""));
+    assert!(text.contains("\"approved_event_id\""));
     assert!(!text.contains("Tenant Notice"));
     assert!(!text.contains("../"));
 }

@@ -253,12 +253,14 @@ export function MatterSidebarSheet({ matter, counts }: Pick<MatterSidebarProps, 
 
 function resolveMatterCounts(matter: MatterSidebarMatter, counts: NonNullable<MatterSidebarProps["counts"]>) {
   const claims = matter.claims?.filter((claim) => claim.kind !== "defense") ?? []
+  const pendingTimelineSuggestions =
+    matter.timeline_suggestions?.filter((suggestion) => suggestion.status === "suggested" || suggestion.status === "needs_attention").length ?? 0
 
   return {
     documents: counts.documents ?? matter.documents?.length ?? matter.document_count,
     parties: counts.parties ?? matter.parties?.length ?? 0,
     facts: counts.facts ?? matter.facts?.length ?? matter.fact_count,
-    events: counts.events ?? matter.timeline?.length ?? 0,
+    events: counts.events ?? (matter.timeline?.length ?? 0) + pendingTimelineSuggestions,
     evidence: counts.evidence ?? matter.evidence?.length ?? matter.evidence_count,
     claims: counts.claims ?? (claims.length || matter.claim_count),
     defenses: counts.defenses ?? matter.defenses?.length ?? 0,

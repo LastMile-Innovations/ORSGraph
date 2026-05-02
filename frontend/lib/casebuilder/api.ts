@@ -68,7 +68,11 @@ import type {
   SearchIndexRecord,
   SourceSpan,
   TextChunk,
+  TimelineAgentRun,
   TimelineEvent,
+  TimelineSuggestResponse,
+  TimelineSuggestion,
+  TimelineSuggestionApprovalResponse,
   TranscriptionJob,
   TranscriptionJobResponse,
   TranscriptReviewChange,
@@ -217,6 +221,7 @@ export interface ExtractDocumentResponse {
   entity_mentions: EntityMention[]
   search_index_records: SearchIndexRecord[]
   source_spans: SourceSpan[]
+  timeline_suggestions: TimelineSuggestion[]
 }
 
 export interface RunMatterIndexInput {
@@ -320,6 +325,35 @@ export interface CreateTimelineEventInput {
   party_ids?: string[]
   linked_fact_ids?: string[]
   linked_claim_ids?: string[]
+  source_span_ids?: string[]
+  text_chunk_ids?: string[]
+  suggestion_id?: string | null
+  agent_run_id?: string | null
+}
+
+export interface TimelineSuggestInput {
+  document_ids?: string[]
+  source_span_ids?: string[]
+  work_product_id?: string
+  block_id?: string
+  limit?: number
+  mode?: string
+}
+
+export interface PatchTimelineSuggestionInput {
+  date?: string
+  date_text?: string
+  date_confidence?: number
+  title?: string
+  description?: string | null
+  kind?: string
+  source_document_id?: string | null
+  source_span_ids?: string[]
+  text_chunk_ids?: string[]
+  linked_fact_ids?: string[]
+  linked_claim_ids?: string[]
+  status?: string
+  warnings?: string[]
 }
 
 export interface CreateClaimInput {
@@ -950,6 +984,7 @@ export function extractDocument(
           entity_mentions: array(response.entity_mentions, response.entityMentions).map(normalizeEntityMention),
           search_index_records: array(response.search_index_records, response.searchIndexRecords).map(normalizeSearchIndexRecord),
           source_spans: array(response.source_spans).map(normalizeSourceSpan),
+          timeline_suggestions: array(response.timeline_suggestions, response.timelineSuggestions).map(normalizeTimelineSuggestion),
         }
       },
     },
@@ -1130,6 +1165,52 @@ export function createTimelineEvent(
     body: JSON.stringify(input),
     normalize: normalizeTimelineEvent,
   })
+}
+
+export async function listTimelineSuggestions(matterId: string): Promise<TimelineSuggestion[]> {
+  const live = await fetchCaseBuilder<unknown[]>(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/timeline/suggestions`,
+  )
+  return array(live).map(normalizeTimelineSuggestion)
+}
+
+export function suggestTimeline(
+  matterId: string,
+  input: TimelineSuggestInput,
+): Promise<ActionState<TimelineSuggestResponse>> {
+  return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/timeline/suggest`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    normalize: normalizeTimelineSuggestResponse,
+  })
+}
+
+export function patchTimelineSuggestion(
+  matterId: string,
+  suggestionId: string,
+  input: PatchTimelineSuggestionInput,
+): Promise<ActionState<TimelineSuggestion>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/timeline/suggestions/${encodeURIComponent(suggestionId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+      normalize: normalizeTimelineSuggestion,
+    },
+  )
+}
+
+export function approveTimelineSuggestion(
+  matterId: string,
+  suggestionId: string,
+): Promise<ActionState<TimelineSuggestionApprovalResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/timeline/suggestions/${encodeURIComponent(suggestionId)}/approve`,
+    {
+      method: "POST",
+      normalize: normalizeTimelineSuggestionApprovalResponse,
+    },
+  )
 }
 
 export function createClaim(matterId: string, input: CreateClaimInput): Promise<ActionState<Claim>> {
@@ -2298,6 +2379,7 @@ function normalizeMatter(input: unknown): Matter {
     parties: array(raw.parties).map(normalizeParty),
     facts,
     timeline: array(raw.timeline).map(normalizeTimelineEvent),
+    timeline_suggestions: array(raw.timeline_suggestions, raw.timelineSuggestions).map(normalizeTimelineSuggestion),
     claims: array(raw.claims).map(normalizeClaim),
     evidence: array(raw.evidence).map(normalizeEvidence),
     defenses: array(raw.defenses),
@@ -3186,6 +3268,7 @@ function normalizeMatterIndexRunResponse(input: any): MatterIndexRunResponse {
     processed: number(input.processed),
     skipped: number(input.skipped),
     failed: number(input.failed),
+    produced_timeline_suggestions: number(input.produced_timeline_suggestions, input.producedTimelineSuggestions),
     results: array(input.results).map((result: any): MatterIndexRunDocumentResult => ({
       document_id: string(result.document_id, result.documentId),
       status: string(result.status, "skipped"),
@@ -3193,6 +3276,7 @@ function normalizeMatterIndexRunResponse(input: any): MatterIndexRunResponse {
       message: string(result.message),
       produced_chunks: number(result.produced_chunks, result.producedChunks),
       produced_facts: number(result.produced_facts, result.producedFacts),
+      produced_timeline_suggestions: number(result.produced_timeline_suggestions, result.producedTimelineSuggestions),
     })),
     summary: normalizeMatterIndexSummary(input.summary ?? {}),
   }
@@ -3408,6 +3492,82 @@ function normalizeTimelineEvent(input: any): TimelineEvent {
     title: string(input.title, input.description, "Untitled event"),
     kind: string(input.kind, "other") as TimelineEvent["kind"],
     category: string(input.category, input.kind, "other"),
+    sourceDocumentId: input.sourceDocumentId ?? input.source_document_id ?? null,
+    source_document_id: input.source_document_id ?? input.sourceDocumentId ?? null,
+    source_span_ids: array(input.source_span_ids, input.sourceSpanIds),
+    text_chunk_ids: array(input.text_chunk_ids, input.textChunkIds),
+    linked_fact_ids: array(input.linked_fact_ids, input.linkedFactIds),
+    linked_claim_ids: array(input.linked_claim_ids, input.linkedClaimIds),
+    suggestion_id: input.suggestion_id ?? input.suggestionId ?? null,
+    agent_run_id: input.agent_run_id ?? input.agentRunId ?? null,
+    date_confidence: number(input.date_confidence, input.dateConfidence, 1),
+    disputed: Boolean(input.disputed),
+  }
+}
+
+function normalizeTimelineAgentRun(input: any): TimelineAgentRun {
+  return {
+    ...input,
+    agent_run_id: string(input.agent_run_id, input.agentRunId, input.id),
+    id: string(input.id, input.agent_run_id, input.agentRunId),
+    matter_id: string(input.matter_id, input.matterId),
+    subject_type: string(input.subject_type, input.subjectType, "matter"),
+    subject_id: input.subject_id ?? input.subjectId ?? null,
+    mode: string(input.mode, "template"),
+    provider_mode: string(input.provider_mode, input.providerMode, "template"),
+    status: string(input.status, "recorded"),
+    message: string(input.message),
+    produced_suggestion_ids: array(input.produced_suggestion_ids, input.producedSuggestionIds),
+    warnings: array(input.warnings),
+    created_at: string(input.created_at, input.createdAt),
+  }
+}
+
+function normalizeTimelineSuggestion(input: any): TimelineSuggestion {
+  return {
+    ...input,
+    suggestion_id: string(input.suggestion_id, input.suggestionId, input.id),
+    id: string(input.id, input.suggestion_id, input.suggestionId),
+    matter_id: string(input.matter_id, input.matterId),
+    date: string(input.date),
+    date_text: string(input.date_text, input.dateText, input.date),
+    date_confidence: number(input.date_confidence, input.dateConfidence, 0),
+    title: string(input.title, input.description, "Timeline suggestion"),
+    description: input.description ?? null,
+    kind: string(input.kind, "other"),
+    source_type: string(input.source_type, input.sourceType, "matter_graph"),
+    source_document_id: input.source_document_id ?? input.sourceDocumentId ?? null,
+    source_span_ids: array(input.source_span_ids, input.sourceSpanIds),
+    text_chunk_ids: array(input.text_chunk_ids, input.textChunkIds),
+    linked_fact_ids: array(input.linked_fact_ids, input.linkedFactIds),
+    linked_claim_ids: array(input.linked_claim_ids, input.linkedClaimIds),
+    work_product_id: input.work_product_id ?? input.workProductId ?? null,
+    block_id: input.block_id ?? input.blockId ?? null,
+    agent_run_id: input.agent_run_id ?? input.agentRunId ?? null,
+    index_run_id: input.index_run_id ?? input.indexRunId ?? null,
+    status: string(input.status, "suggested"),
+    warnings: array(input.warnings),
+    approved_event_id: input.approved_event_id ?? input.approvedEventId ?? null,
+    created_at: string(input.created_at, input.createdAt),
+    updated_at: string(input.updated_at, input.updatedAt),
+  }
+}
+
+function normalizeTimelineSuggestResponse(input: any): TimelineSuggestResponse {
+  return {
+    enabled: Boolean(input.enabled),
+    mode: string(input.mode, "template"),
+    message: string(input.message),
+    suggestions: array(input.suggestions).map(normalizeTimelineSuggestion),
+    agent_run: input.agent_run || input.agentRun ? normalizeTimelineAgentRun(input.agent_run ?? input.agentRun) : null,
+    warnings: array(input.warnings),
+  }
+}
+
+function normalizeTimelineSuggestionApprovalResponse(input: any): TimelineSuggestionApprovalResponse {
+  return {
+    suggestion: normalizeTimelineSuggestion(input.suggestion),
+    event: normalizeTimelineEvent(input.event),
   }
 }
 

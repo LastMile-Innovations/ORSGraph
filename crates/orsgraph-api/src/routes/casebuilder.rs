@@ -142,6 +142,22 @@ pub fn routes() -> Router<AppState> {
             get(list_timeline).post(create_timeline_event),
         )
         .route(
+            "/matters/{matter_id}/timeline/suggestions",
+            get(list_timeline_suggestions),
+        )
+        .route(
+            "/matters/{matter_id}/timeline/suggest",
+            post(suggest_timeline),
+        )
+        .route(
+            "/matters/{matter_id}/timeline/suggestions/{suggestion_id}",
+            patch(patch_timeline_suggestion),
+        )
+        .route(
+            "/matters/{matter_id}/timeline/suggestions/{suggestion_id}/approve",
+            post(approve_timeline_suggestion),
+        )
+        .route(
             "/matters/{matter_id}/claims",
             get(list_claims).post(create_claim),
         )
@@ -1039,6 +1055,56 @@ async fn create_timeline_event(
         state
             .casebuilder_service
             .create_timeline_event(&matter_id, request)
+            .await?,
+    ))
+}
+
+async fn list_timeline_suggestions(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+) -> ApiResult<Json<Vec<TimelineSuggestion>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .list_timeline_suggestions(&matter_id)
+            .await?,
+    ))
+}
+
+async fn suggest_timeline(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+    Json(request): Json<TimelineSuggestRequest>,
+) -> ApiResult<Json<TimelineSuggestResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .suggest_timeline(&matter_id, request)
+            .await?,
+    ))
+}
+
+async fn patch_timeline_suggestion(
+    State(state): State<AppState>,
+    Path((matter_id, suggestion_id)): Path<(String, String)>,
+    Json(request): Json<PatchTimelineSuggestionRequest>,
+) -> ApiResult<Json<TimelineSuggestion>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_timeline_suggestion(&matter_id, &suggestion_id, request)
+            .await?,
+    ))
+}
+
+async fn approve_timeline_suggestion(
+    State(state): State<AppState>,
+    Path((matter_id, suggestion_id)): Path<(String, String)>,
+) -> ApiResult<Json<TimelineSuggestionApprovalResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .approve_timeline_suggestion(&matter_id, &suggestion_id)
             .await?,
     ))
 }

@@ -1,7 +1,7 @@
 use crate::embeddings::EMBEDDING_TARGETS;
 use crate::models::QcStatus;
 use anyhow::Result;
-use neo4rs::{query, ConfigBuilder, Graph};
+use neo4rs::{ConfigBuilder, Graph, query};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -424,8 +424,7 @@ impl QcNeo4jValidator {
             report.provision_has_chunk_rel_count = row.get::<i64>("count")? as usize;
         }
 
-        let q =
-            "MATCH (:LegalTextVersion)-[r:HAS_STATUTE_CHUNK]->(:RetrievalChunk) RETURN count(r) AS count";
+        let q = "MATCH (:LegalTextVersion)-[r:HAS_STATUTE_CHUNK]->(:RetrievalChunk) RETURN count(r) AS count";
         let mut res = self.graph.execute(query(q)).await?;
         if let Some(row) = res.next().await? {
             report.version_has_statute_chunk_rel_count = row.get::<i64>("count")? as usize;
@@ -1194,14 +1193,22 @@ impl QcNeo4jValidator {
         // Summary logging
         info!(
             "Topology: {} identities, {} versions, {} provisions, {} chunks, {} citations, {} headings, {} source_docs",
-            report.identity_count, report.version_count, report.provision_count,
-            total_chunks, report.citation_count, report.heading_count, report.source_doc_count
+            report.identity_count,
+            report.version_count,
+            report.provision_count,
+            total_chunks,
+            report.citation_count,
+            report.heading_count,
+            report.source_doc_count
         );
         info!(
             "Relationships: {} HAS_VERSION, {} CONTAINS, {} MENTIONS_CITATION, {} RESOLVES_TO, {} CITES, {} DERIVED_FROM",
-            report.has_version_rel_count, report.contains_rel_count,
-            report.mentions_citation_rel_count, report.resolves_to_rel_count,
-            report.cites_rel_count, report.derived_from_rel_count
+            report.has_version_rel_count,
+            report.contains_rel_count,
+            report.mentions_citation_rel_count,
+            report.resolves_to_rel_count,
+            report.cites_rel_count,
+            report.derived_from_rel_count
         );
         if report.orphan_chunks > 0 {
             warn!(

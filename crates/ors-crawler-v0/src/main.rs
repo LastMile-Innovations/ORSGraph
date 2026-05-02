@@ -4,13 +4,13 @@ use ors_crawler_v0::{
     source_registry, utcr_pdf_parser, voyage,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use clap::Parser;
 use cli::{ChunkFilePolicy, Cli, Command};
-use court_rules_registry_parser::{parse_court_rules_registry_text, CourtRulesRegistryParseConfig};
+use court_rules_registry_parser::{CourtRulesRegistryParseConfig, parse_court_rules_registry_text};
 use io_jsonl::{read_jsonl_batches, write_jsonl, write_jsonl_atomic, write_one_json};
-use local_rule_pdf_parser::{parse_local_rule_pdf, LocalRulePdfParseConfig};
+use local_rule_pdf_parser::{LocalRulePdfParseConfig, parse_local_rule_pdf};
 use models::{
     Amendment, ChapterFrontMatter, ChapterHeading, ChapterTocEntry, CitationMention, CitesEdge,
     Commentary, CorpusEdition, Court, CourtRuleChapter, CourtRulesRegistrySnapshot,
@@ -28,7 +28,7 @@ use models::{
 use neo4rs::query;
 use ors_dom_parser::parse_ors_chapter_html;
 use qc::validate_outputs;
-use qc_full::{print_console_summary, QcFullValidator};
+use qc_full::{QcFullValidator, print_console_summary};
 use reqwest::{Client, StatusCode};
 use resolver::{build_global_symbol_table, resolve_all_citations};
 use scraper::{Html, Selector};
@@ -39,8 +39,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::{info, warn};
-use utcr_pdf_parser::{parse_utcr_pdf, UtcrParseConfig};
-use voyage::{estimate_tokens, model_config, VoyageClient};
+use utcr_pdf_parser::{UtcrParseConfig, parse_utcr_pdf};
+use voyage::{VoyageClient, estimate_tokens, model_config};
 
 mod cli;
 
@@ -705,7 +705,10 @@ async fn main() -> Result<()> {
             // Version check for Cypher 25 SEARCH support
             let (_, _, version) = loader.health_check().await?;
             if !neo4j_loader::Neo4jLoader::supports_search_clause(&version) {
-                warn!("Neo4j version {} may not support Cypher 25 SEARCH clause. Vector search might fail.", version);
+                warn!(
+                    "Neo4j version {} may not support Cypher 25 SEARCH clause. Vector search might fail.",
+                    version
+                );
             }
 
             let seed_batch_config = neo4j_loader::SeedBatchConfig::new(
@@ -853,7 +856,9 @@ async fn main() -> Result<()> {
             yes,
         } => {
             if !yes {
-                return Err(anyhow!("Destructive operation: you MUST specify --yes to clear the database. Use with caution."));
+                return Err(anyhow!(
+                    "Destructive operation: you MUST specify --yes to clear the database. Use with caution."
+                ));
             }
             let pass = match neo4j_password {
                 Some(password) => password,
@@ -1354,8 +1359,10 @@ async fn run_seed(
         || embedding_dimension != profile.output_dimension
         || embedding_dtype != profile.output_dtype
     {
-        warn!("Embedding profile '{}' differs from manual flags (model={}, dim={}, dtype={}). Profile will be used.",
-              profile.name, embedding_model, embedding_dimension, embedding_dtype);
+        warn!(
+            "Embedding profile '{}' differs from manual flags (model={}, dim={}, dtype={}). Profile will be used.",
+            profile.name, embedding_model, embedding_dimension, embedding_dtype
+        );
     }
 
     // Use profile values
@@ -2791,13 +2798,13 @@ async fn run_crawl(
                     resolve_all_citations(&table, &mut citations, edition_year);
 
                 info!(
-                "[resolver] {} citations: {} resolved_section, {} resolved_section_and_provision, {} resolved_chapter, {} resolved_range",
-                resolution_stats.total,
-                resolution_stats.resolved_section,
-                resolution_stats.resolved_section_and_provision,
-                resolution_stats.resolved_chapter,
-                resolution_stats.resolved_range
-            );
+                    "[resolver] {} citations: {} resolved_section, {} resolved_section_and_provision, {} resolved_chapter, {} resolved_range",
+                    resolution_stats.total,
+                    resolution_stats.resolved_section,
+                    resolution_stats.resolved_section_and_provision,
+                    resolution_stats.resolved_chapter,
+                    resolution_stats.resolved_range
+                );
 
                 if resolution_stats.resolved_section_unresolved_subpath > 0 {
                     info!(
@@ -3490,7 +3497,7 @@ fn calculate_embedding_input_hash(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_chunk_files, ChunkFilePolicy};
+    use super::{ChunkFilePolicy, find_chunk_files};
     use std::fs;
 
     #[test]

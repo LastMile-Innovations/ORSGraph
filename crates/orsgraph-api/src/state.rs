@@ -2,6 +2,7 @@ use crate::auth::AuthVerifier;
 use crate::config::ApiConfig;
 use crate::services::admin::AdminService;
 use crate::services::analytics::AnalyticsService;
+use crate::services::auth_access::AuthAccessService;
 use crate::services::casebuilder::{
     AssemblyAiProviderConfig, CaseBuilderService, CaseBuilderServiceConfig,
 };
@@ -31,6 +32,7 @@ pub struct AppState {
     pub stats_service: Arc<StatsService>,
     pub health_service: Arc<HealthService>,
     pub admin_service: Arc<AdminService>,
+    pub auth_access_service: Arc<AuthAccessService>,
     pub analytics_service: Arc<AnalyticsService>,
     pub home_service: Arc<HomeService>,
     pub casebuilder_service: Arc<CaseBuilderService>,
@@ -108,7 +110,8 @@ impl AppState {
         let auth_verifier = AuthVerifier::from_config(&config)?.map(Arc::new);
         let config = Arc::new(config);
         let admin_service = Arc::new(AdminService::new(config.clone()).await?);
-        let analytics_service = Arc::new(AnalyticsService::new(neo4j_service.clone()));
+        let auth_access_service = Arc::new(AuthAccessService::new(neo4j_service.clone()));
+        let analytics_service = Arc::new(AnalyticsService::new());
         let home_service = Arc::new(HomeService::new(
             stats_service.clone(),
             health_service.clone(),
@@ -140,6 +143,10 @@ impl AppState {
             tracing::error!("Failed to ensure CaseBuilder indexes: {}", e);
         }
 
+        if let Err(e) = auth_access_service.ensure_indexes().await {
+            tracing::error!("Failed to ensure auth/access indexes: {}", e);
+        }
+
         Ok(Self {
             neo4j,
             neo4j_service,
@@ -155,6 +162,7 @@ impl AppState {
             casebuilder_service,
             rule_applicability_resolver,
             admin_service,
+            auth_access_service,
             auth_verifier,
             config,
         })

@@ -1,4 +1,5 @@
 import type { NextAuthOptions } from "next-auth"
+import { orsBackendApiBaseUrl } from "./ors-api-url"
 
 type ZitadelProfile = {
   sub: string
@@ -7,6 +8,14 @@ type ZitadelProfile = {
   preferred_username?: string
   picture?: string
   [key: string]: unknown
+}
+
+type AccessStatus = "active" | "pending" | "blocked" | "unknown"
+
+type AuthMeResponse = {
+  access_status?: string
+  roles?: string[]
+  is_admin?: boolean
 }
 
 const issuer = process.env.ZITADEL_ISSUER?.replace(/\/$/, "")
@@ -24,6 +33,10 @@ if (process.env.ZITADEL_PROJECT_ID) {
 }
 
 export const authOptions: NextAuthOptions = {
+  pages: {
+    signIn: "/auth/signin",
+    error: "/auth/error",
+  },
   session: {
     strategy: "jwt",
   },
@@ -53,21 +66,32 @@ export const authOptions: NextAuthOptions = {
     },
   ],
   callbacks: {
-    async jwt({ token, account, profile }) {
+    async jwt({ token, account, profile, trigger }) {
       if (account) {
         token.accessToken = account.access_token
         token.idToken = account.id_token
+        token.accessCheckedAt = 0
       }
       if (profile) {
         const zitadelProfile = profile as ZitadelProfile
         token.sub = zitadelProfile.sub || token.sub
         token.roles = rolesFromProfile(zitadelProfile)
       }
+      if (shouldRefreshAccess(token.accessCheckedAt, trigger) && typeof token.accessToken === "string") {
+        const access = await fetchAccessState(token.accessToken)
+        token.accessStatus = access.accessStatus
+        token.accessCheckedAt = Date.now()
+        token.isAdmin = access.isAdmin
+        token.roles = access.roles.length > 0 ? access.roles : token.roles
+      }
       return token
     },
     async session({ session, token }) {
       session.accessToken = typeof token.accessToken === "string" ? token.accessToken : undefined
       session.idToken = typeof token.idToken === "string" ? token.idToken : undefined
+      session.accessStatus = normalizeAccessStatus(token.accessStatus)
+      session.accessCheckedAt = typeof token.accessCheckedAt === "number" ? token.accessCheckedAt : undefined
+      session.isAdmin = Boolean(token.isAdmin)
       session.roles = Array.isArray(token.roles) ? token.roles.filter((role): role is string => typeof role === "string") : []
       if (session.user) {
         session.user.id = token.sub || ""
@@ -75,6 +99,42 @@ export const authOptions: NextAuthOptions = {
       return session
     },
   },
+}
+
+function shouldRefreshAccess(checkedAt: unknown, trigger?: string) {
+  if (trigger === "update") return true
+  if (typeof checkedAt !== "number" || checkedAt <= 0) return true
+  return Date.now() - checkedAt > 5 * 60 * 1000
+}
+
+async function fetchAccessState(accessToken: string): Promise<{
+  accessStatus: AccessStatus
+  roles: string[]
+  isAdmin: boolean
+}> {
+  try {
+    const response = await fetch(`${orsBackendApiBaseUrl()}/auth/me`, {
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    })
+    if (!response.ok) {
+      return { accessStatus: response.status === 403 ? "pending" : "unknown", roles: [], isAdmin: false }
+    }
+    const body = (await response.json()) as AuthMeResponse
+    return {
+      accessStatus: normalizeAccessStatus(body.access_status),
+      roles: Array.isArray(body.roles) ? body.roles.filter((role): role is string => typeof role === "string") : [],
+      isAdmin: Boolean(body.is_admin),
+    }
+  } catch {
+    return { accessStatus: "unknown", roles: [], isAdmin: false }
+  }
+}
+
+function normalizeAccessStatus(value: unknown): AccessStatus {
+  return value === "active" || value === "pending" || value === "blocked" ? value : "unknown"
 }
 
 function rolesFromProfile(profile: ZitadelProfile) {

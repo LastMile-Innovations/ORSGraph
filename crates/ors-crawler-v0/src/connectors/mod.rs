@@ -3,9 +3,9 @@ use crate::graph_batch::GraphBatch;
 use crate::hash::{sha256_hex, stable_id};
 use crate::models::{ParserDiagnostic, SourceDocument, SourcePage};
 use crate::ors_dom_parser::parse_ors_chapter_html;
-use crate::source_qc::{qc_source_batch, QcReport};
+use crate::source_qc::{QcReport, qc_source_batch};
 use crate::source_registry::{SourceKind, SourceRegistryEntry};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -338,7 +338,7 @@ fn chapter_pad(chapter: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_ors_chapters, DEFAULT_ORS_CHAPTER_COUNT};
+    use super::{DEFAULT_ORS_CHAPTER_COUNT, default_ors_chapters};
 
     #[test]
     fn default_ors_discovery_uses_full_corpus_when_unbounded() {
