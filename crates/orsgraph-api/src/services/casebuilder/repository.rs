@@ -1004,4 +1004,444 @@ impl CaseBuilderService {
             .await?;
         Ok(span)
     }
+
+    pub(super) async fn merge_index_run(
+        &self,
+        matter_id: &str,
+        run: &IndexRun,
+    ) -> ApiResult<IndexRun> {
+        let run = self
+            .merge_node(matter_id, index_run_spec(), &run.index_run_id, run)
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (d:CaseDocument {document_id: $document_id})
+                     MATCH (r:IndexRun {index_run_id: $index_run_id})
+                     SET r.document_id = $document_id,
+                         r.status = $status,
+                         r.stage = $stage,
+                         r.stale = $stale
+                     MERGE (d)-[:HAS_INDEX_RUN]->(r)
+                     WITH d, r
+                     OPTIONAL MATCH (v:DocumentVersion {document_version_id: $document_version_id})
+                     OPTIONAL MATCH (b:ObjectBlob {object_blob_id: $object_blob_id})
+                     OPTIONAL MATCH (i:IngestionRun {ingestion_run_id: $ingestion_run_id})
+                     FOREACH (_ IN CASE WHEN v IS NULL THEN [] ELSE [1] END |
+                       MERGE (r)-[:INDEXED]->(v)
+                     )
+                     FOREACH (_ IN CASE WHEN b IS NULL THEN [] ELSE [1] END |
+                       MERGE (r)-[:DERIVED_FROM]->(b)
+                     )
+                     FOREACH (_ IN CASE WHEN i IS NULL THEN [] ELSE [1] END |
+                       MERGE (i)-[:SPAWNED_INDEX_RUN]->(r)
+                     )",
+                )
+                .param("document_id", run.document_id.clone())
+                .param("index_run_id", run.index_run_id.clone())
+                .param(
+                    "document_version_id",
+                    run.document_version_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "object_blob_id",
+                    run.object_blob_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "ingestion_run_id",
+                    run.ingestion_run_id.clone().unwrap_or_default(),
+                )
+                .param("status", run.status.clone())
+                .param("stage", run.stage.clone())
+                .param("stale", run.stale),
+            )
+            .await?;
+        Ok(run)
+    }
+
+    pub(super) async fn merge_page(&self, matter_id: &str, page: &Page) -> ApiResult<Page> {
+        let page = self
+            .merge_node(matter_id, page_spec(), &page.page_id, page)
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (d:CaseDocument {document_id: $document_id})
+                     MATCH (p:Page {page_id: $page_id})
+                     SET p.document_id = $document_id,
+                         p.page_number = $page_number,
+                         p.status = $status
+                     MERGE (d)-[:HAS_PAGE]->(p)
+                     WITH d, p
+                     OPTIONAL MATCH (v:DocumentVersion {document_version_id: $document_version_id})
+                     OPTIONAL MATCH (b:ObjectBlob {object_blob_id: $object_blob_id})
+                     OPTIONAL MATCH (i:IngestionRun {ingestion_run_id: $ingestion_run_id})
+                     OPTIONAL MATCH (r:IndexRun {index_run_id: $index_run_id})
+                     FOREACH (_ IN CASE WHEN v IS NULL THEN [] ELSE [1] END |
+                       MERGE (p)-[:PART_OF_VERSION]->(v)
+                     )
+                     FOREACH (_ IN CASE WHEN b IS NULL THEN [] ELSE [1] END |
+                       MERGE (p)-[:DERIVED_FROM]->(b)
+                     )
+                     FOREACH (_ IN CASE WHEN i IS NULL THEN [] ELSE [1] END |
+                       MERGE (i)-[:PRODUCED]->(p)
+                     )
+                     FOREACH (_ IN CASE WHEN r IS NULL THEN [] ELSE [1] END |
+                       MERGE (r)-[:PRODUCED]->(p)
+                     )",
+                )
+                .param("document_id", page.document_id.clone())
+                .param("page_id", page.page_id.clone())
+                .param(
+                    "document_version_id",
+                    page.document_version_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "object_blob_id",
+                    page.object_blob_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "ingestion_run_id",
+                    page.ingestion_run_id.clone().unwrap_or_default(),
+                )
+                .param("index_run_id", page.index_run_id.clone().unwrap_or_default())
+                .param("page_number", page.page_number as i64)
+                .param("status", page.status.clone()),
+            )
+            .await?;
+        Ok(page)
+    }
+
+    pub(super) async fn merge_text_chunk(
+        &self,
+        matter_id: &str,
+        chunk: &TextChunk,
+    ) -> ApiResult<TextChunk> {
+        let chunk = self
+            .merge_node(matter_id, text_chunk_spec(), &chunk.text_chunk_id, chunk)
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (d:CaseDocument {document_id: $document_id})
+                     MATCH (c:TextChunk {text_chunk_id: $text_chunk_id})
+                     SET c.document_id = $document_id,
+                         c.ordinal = $ordinal,
+                         c.status = $status,
+                         c.text_hash = $text_hash,
+                         c.text_excerpt = $text_excerpt
+                     MERGE (d)-[:HAS_TEXT_CHUNK]->(c)
+                     WITH d, c
+                     OPTIONAL MATCH (p:Page {page_id: $page_id})
+                     OPTIONAL MATCH (s:SourceSpan {source_span_id: $source_span_id})
+                     OPTIONAL MATCH (v:DocumentVersion {document_version_id: $document_version_id})
+                     OPTIONAL MATCH (b:ObjectBlob {object_blob_id: $object_blob_id})
+                     OPTIONAL MATCH (i:IngestionRun {ingestion_run_id: $ingestion_run_id})
+                     OPTIONAL MATCH (r:IndexRun {index_run_id: $index_run_id})
+                     FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END |
+                       MERGE (p)-[:HAS_CHUNK]->(c)
+                     )
+                     FOREACH (_ IN CASE WHEN s IS NULL THEN [] ELSE [1] END |
+                       MERGE (s)-[:QUOTES]->(c)
+                     )
+                     FOREACH (_ IN CASE WHEN v IS NULL THEN [] ELSE [1] END |
+                       MERGE (c)-[:PART_OF_VERSION]->(v)
+                     )
+                     FOREACH (_ IN CASE WHEN b IS NULL THEN [] ELSE [1] END |
+                       MERGE (c)-[:DERIVED_FROM]->(b)
+                     )
+                     FOREACH (_ IN CASE WHEN i IS NULL THEN [] ELSE [1] END |
+                       MERGE (i)-[:PRODUCED]->(c)
+                     )
+                     FOREACH (_ IN CASE WHEN r IS NULL THEN [] ELSE [1] END |
+                       MERGE (r)-[:PRODUCED]->(c)
+                     )",
+                )
+                .param("document_id", chunk.document_id.clone())
+                .param("text_chunk_id", chunk.text_chunk_id.clone())
+                .param("page_id", chunk.page_id.clone().unwrap_or_default())
+                .param(
+                    "source_span_id",
+                    chunk.source_span_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "document_version_id",
+                    chunk.document_version_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "object_blob_id",
+                    chunk.object_blob_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "ingestion_run_id",
+                    chunk.ingestion_run_id.clone().unwrap_or_default(),
+                )
+                .param("index_run_id", chunk.index_run_id.clone().unwrap_or_default())
+                .param("ordinal", chunk.ordinal as i64)
+                .param("status", chunk.status.clone())
+                .param("text_hash", chunk.text_hash.clone())
+                .param("text_excerpt", chunk.text_excerpt.clone()),
+            )
+            .await?;
+        Ok(chunk)
+    }
+
+    pub(super) async fn merge_evidence_span(
+        &self,
+        matter_id: &str,
+        span: &EvidenceSpan,
+    ) -> ApiResult<EvidenceSpan> {
+        let span = self
+            .merge_node(matter_id, evidence_span_spec(), &span.evidence_span_id, span)
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (d:CaseDocument {document_id: $document_id})
+                     MATCH (e:EvidenceSpan {evidence_span_id: $evidence_span_id})
+                     SET e.document_id = $document_id,
+                         e.review_status = $review_status,
+                         e.quote_hash = $quote_hash
+                     MERGE (d)-[:HAS_EVIDENCE_SPAN]->(e)
+                     WITH d, e
+                     OPTIONAL MATCH (c:TextChunk {text_chunk_id: $text_chunk_id})
+                     OPTIONAL MATCH (s:SourceSpan {source_span_id: $source_span_id})
+                     OPTIONAL MATCH (i:IngestionRun {ingestion_run_id: $ingestion_run_id})
+                     OPTIONAL MATCH (r:IndexRun {index_run_id: $index_run_id})
+                     FOREACH (_ IN CASE WHEN c IS NULL THEN [] ELSE [1] END |
+                       MERGE (c)-[:HAS_EVIDENCE_SPAN]->(e)
+                     )
+                     FOREACH (_ IN CASE WHEN s IS NULL THEN [] ELSE [1] END |
+                       MERGE (e)-[:FROM_SOURCE_SPAN]->(s)
+                     )
+                     FOREACH (_ IN CASE WHEN i IS NULL THEN [] ELSE [1] END |
+                       MERGE (i)-[:PRODUCED]->(e)
+                     )
+                     FOREACH (_ IN CASE WHEN r IS NULL THEN [] ELSE [1] END |
+                       MERGE (r)-[:PRODUCED]->(e)
+                     )",
+                )
+                .param("document_id", span.document_id.clone())
+                .param("evidence_span_id", span.evidence_span_id.clone())
+                .param(
+                    "text_chunk_id",
+                    span.text_chunk_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "source_span_id",
+                    span.source_span_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "ingestion_run_id",
+                    span.ingestion_run_id.clone().unwrap_or_default(),
+                )
+                .param("index_run_id", span.index_run_id.clone().unwrap_or_default())
+                .param("review_status", span.review_status.clone())
+                .param("quote_hash", span.quote_hash.clone()),
+            )
+            .await?;
+        Ok(span)
+    }
+
+    pub(super) async fn merge_entity_mention(
+        &self,
+        matter_id: &str,
+        mention: &EntityMention,
+    ) -> ApiResult<EntityMention> {
+        let mention = self
+            .merge_node(
+                matter_id,
+                entity_mention_spec(),
+                &mention.entity_mention_id,
+                mention,
+            )
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (d:CaseDocument {document_id: $document_id})
+                     MATCH (e:EntityMention {entity_mention_id: $entity_mention_id})
+                     SET e.document_id = $document_id,
+                         e.entity_type = $entity_type,
+                         e.review_status = $review_status
+                     MERGE (d)-[:HAS_ENTITY_MENTION]->(e)
+                     WITH d, e
+                     OPTIONAL MATCH (c:TextChunk {text_chunk_id: $text_chunk_id})
+                     OPTIONAL MATCH (s:SourceSpan {source_span_id: $source_span_id})
+                     FOREACH (_ IN CASE WHEN c IS NULL THEN [] ELSE [1] END |
+                       MERGE (c)-[:MENTIONS]->(e)
+                     )
+                     FOREACH (_ IN CASE WHEN s IS NULL THEN [] ELSE [1] END |
+                       MERGE (e)-[:FROM_SOURCE_SPAN]->(s)
+                     )",
+                )
+                .param("document_id", mention.document_id.clone())
+                .param("entity_mention_id", mention.entity_mention_id.clone())
+                .param(
+                    "text_chunk_id",
+                    mention.text_chunk_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "source_span_id",
+                    mention.source_span_id.clone().unwrap_or_default(),
+                )
+                .param("entity_type", mention.entity_type.clone())
+                .param("review_status", mention.review_status.clone()),
+            )
+            .await?;
+        Ok(mention)
+    }
+
+    pub(super) async fn merge_search_index_record(
+        &self,
+        matter_id: &str,
+        record: &SearchIndexRecord,
+    ) -> ApiResult<SearchIndexRecord> {
+        let record = self
+            .merge_node(
+                matter_id,
+                search_index_record_spec(),
+                &record.search_index_record_id,
+                record,
+            )
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (d:CaseDocument {document_id: $document_id})
+                     MATCH (r:SearchIndexRecord {search_index_record_id: $search_index_record_id})
+                     SET r.document_id = $document_id,
+                         r.status = $status,
+                         r.stale = $stale,
+                         r.index_name = $index_name,
+                         r.index_type = $index_type,
+                         r.index_version = $index_version
+                     MERGE (d)-[:HAS_SEARCH_INDEX_RECORD]->(r)
+                     WITH d, r
+                     OPTIONAL MATCH (c:TextChunk {text_chunk_id: $text_chunk_id})
+                     OPTIONAL MATCH (v:DocumentVersion {document_version_id: $document_version_id})
+                     OPTIONAL MATCH (i:IndexRun {index_run_id: $index_run_id})
+                     FOREACH (_ IN CASE WHEN c IS NULL THEN [] ELSE [1] END |
+                       MERGE (c)-[:INDEXED_AS]->(r)
+                     )
+                     FOREACH (_ IN CASE WHEN v IS NULL THEN [] ELSE [1] END |
+                       MERGE (r)-[:PART_OF_VERSION]->(v)
+                     )
+                     FOREACH (_ IN CASE WHEN i IS NULL THEN [] ELSE [1] END |
+                       MERGE (i)-[:PRODUCED]->(r)
+                     )",
+                )
+                .param("document_id", record.document_id.clone())
+                .param(
+                    "search_index_record_id",
+                    record.search_index_record_id.clone(),
+                )
+                .param(
+                    "text_chunk_id",
+                    record.text_chunk_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "document_version_id",
+                    record.document_version_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "index_run_id",
+                    record.index_run_id.clone().unwrap_or_default(),
+                )
+                .param("status", record.status.clone())
+                .param("stale", record.stale)
+                .param("index_name", record.index_name.clone())
+                .param("index_type", record.index_type.clone())
+                .param("index_version", record.index_version.clone()),
+            )
+            .await?;
+        Ok(record)
+    }
+
+    pub(super) async fn merge_extraction_artifact_manifest(
+        &self,
+        matter_id: &str,
+        manifest: &ExtractionArtifactManifest,
+    ) -> ApiResult<ExtractionArtifactManifest> {
+        let manifest = self
+            .merge_node(
+                matter_id,
+                extraction_artifact_manifest_spec(),
+                &manifest.manifest_id,
+                manifest,
+            )
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (d:CaseDocument {document_id: $document_id})
+                     MATCH (m:ExtractionArtifactManifest {manifest_id: $manifest_id})
+                     SET m.document_id = $document_id,
+                         m.text_sha256 = $text_sha256,
+                         m.manifest_sha256 = $manifest_sha256
+                     MERGE (d)-[:HAS_EXTRACTION_MANIFEST]->(m)
+                     WITH d, m
+                     OPTIONAL MATCH (v:DocumentVersion {document_version_id: $document_version_id})
+                     OPTIONAL MATCH (i:IngestionRun {ingestion_run_id: $ingestion_run_id})
+                     OPTIONAL MATCH (r:IndexRun {index_run_id: $index_run_id})
+                     OPTIONAL MATCH (n:DocumentVersion {document_version_id: $normalized_text_version_id})
+                     OPTIONAL MATCH (p:DocumentVersion {document_version_id: $pages_version_id})
+                     OPTIONAL MATCH (mv:DocumentVersion {document_version_id: $manifest_version_id})
+                     FOREACH (_ IN CASE WHEN v IS NULL THEN [] ELSE [1] END |
+                       MERGE (m)-[:PART_OF_VERSION]->(v)
+                     )
+                     FOREACH (_ IN CASE WHEN i IS NULL THEN [] ELSE [1] END |
+                       MERGE (i)-[:PRODUCED]->(m)
+                     )
+                     FOREACH (_ IN CASE WHEN r IS NULL THEN [] ELSE [1] END |
+                       MERGE (r)-[:PRODUCED]->(m)
+                     )
+                     FOREACH (_ IN CASE WHEN n IS NULL THEN [] ELSE [1] END |
+                       MERGE (m)-[:REFERENCES_ARTIFACT]->(n)
+                     )
+                     FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END |
+                       MERGE (m)-[:REFERENCES_ARTIFACT]->(p)
+                     )
+                     FOREACH (_ IN CASE WHEN mv IS NULL THEN [] ELSE [1] END |
+                       MERGE (m)-[:STORED_AS]->(mv)
+                     )",
+                )
+                .param("document_id", manifest.document_id.clone())
+                .param("manifest_id", manifest.manifest_id.clone())
+                .param(
+                    "document_version_id",
+                    manifest.document_version_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "ingestion_run_id",
+                    manifest.ingestion_run_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "index_run_id",
+                    manifest.index_run_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "normalized_text_version_id",
+                    manifest
+                        .normalized_text_version_id
+                        .clone()
+                        .unwrap_or_default(),
+                )
+                .param(
+                    "pages_version_id",
+                    manifest.pages_version_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "manifest_version_id",
+                    manifest.manifest_version_id.clone().unwrap_or_default(),
+                )
+                .param("text_sha256", manifest.text_sha256.clone())
+                .param(
+                    "manifest_sha256",
+                    manifest.manifest_sha256.clone().unwrap_or_default(),
+                ),
+            )
+            .await?;
+        Ok(manifest)
+    }
 }

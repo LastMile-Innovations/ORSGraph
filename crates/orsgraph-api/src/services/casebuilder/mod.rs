@@ -303,6 +303,8 @@ pub struct BinaryUploadRequest {
     pub document_type: Option<String>,
     pub folder: Option<String>,
     pub confidentiality: Option<String>,
+    pub relative_path: Option<String>,
+    pub upload_batch_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -588,6 +590,55 @@ fn source_span_spec() -> NodeSpec {
         label: "SourceSpan",
         id_key: "source_span_id",
         edge: "HAS_SOURCE_SPAN",
+    }
+}
+fn index_run_spec() -> NodeSpec {
+    NodeSpec {
+        label: "IndexRun",
+        id_key: "index_run_id",
+        edge: "HAS_INDEX_RUN",
+    }
+}
+fn page_spec() -> NodeSpec {
+    NodeSpec {
+        label: "Page",
+        id_key: "page_id",
+        edge: "HAS_PAGE",
+    }
+}
+fn text_chunk_spec() -> NodeSpec {
+    NodeSpec {
+        label: "TextChunk",
+        id_key: "text_chunk_id",
+        edge: "HAS_TEXT_CHUNK",
+    }
+}
+fn evidence_span_spec() -> NodeSpec {
+    NodeSpec {
+        label: "EvidenceSpan",
+        id_key: "evidence_span_id",
+        edge: "HAS_EVIDENCE_SPAN",
+    }
+}
+fn entity_mention_spec() -> NodeSpec {
+    NodeSpec {
+        label: "EntityMention",
+        id_key: "entity_mention_id",
+        edge: "HAS_ENTITY_MENTION",
+    }
+}
+fn search_index_record_spec() -> NodeSpec {
+    NodeSpec {
+        label: "SearchIndexRecord",
+        id_key: "search_index_record_id",
+        edge: "HAS_SEARCH_INDEX_RECORD",
+    }
+}
+fn extraction_artifact_manifest_spec() -> NodeSpec {
+    NodeSpec {
+        label: "ExtractionArtifactManifest",
+        id_key: "manifest_id",
+        edge: "HAS_EXTRACTION_MANIFEST",
     }
 }
 fn document_annotation_spec() -> NodeSpec {
@@ -7576,6 +7627,81 @@ fn source_span_id(document_id: &str, kind: &str, index: u64) -> String {
     )
 }
 
+fn index_run_id(document_id: &str, document_version_id: Option<&str>, text_sha256: &str) -> String {
+    format!(
+        "index-run:{}:{}",
+        sanitize_path_segment(document_id),
+        hex_prefix(
+            format!(
+                "{}:{}",
+                document_version_id.unwrap_or("unversioned"),
+                text_sha256
+            )
+            .as_bytes(),
+            20,
+        )
+    )
+}
+
+fn page_id(document_id: &str, page_number: u64) -> String {
+    format!(
+        "page:{}:{}",
+        sanitize_path_segment(document_id),
+        page_number
+    )
+}
+
+fn evidence_span_id_for_chunk(document_id: &str, chunk_id: &str) -> String {
+    format!(
+        "evidence-span:{}:{}",
+        sanitize_path_segment(document_id),
+        hex_prefix(chunk_id.as_bytes(), 20)
+    )
+}
+
+fn search_index_record_id(document_id: &str, text_chunk_id: &str, index_version: &str) -> String {
+    format!(
+        "search-index:{}:{}",
+        sanitize_path_segment(document_id),
+        hex_prefix(format!("{text_chunk_id}:{index_version}").as_bytes(), 20)
+    )
+}
+
+fn extraction_manifest_id(
+    document_id: &str,
+    document_version_id: Option<&str>,
+    text_sha256: &str,
+) -> String {
+    format!(
+        "extraction-manifest:{}:{}",
+        sanitize_path_segment(document_id),
+        hex_prefix(
+            format!(
+                "{}:{}",
+                document_version_id.unwrap_or("unversioned"),
+                text_sha256
+            )
+            .as_bytes(),
+            20,
+        )
+    )
+}
+
+fn text_excerpt(value: &str, limit: usize) -> String {
+    let cleaned = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.chars().count() <= limit {
+        cleaned
+    } else {
+        let mut excerpt = cleaned.chars().take(limit).collect::<String>();
+        excerpt.push_str("...");
+        excerpt
+    }
+}
+
+fn approximate_token_count(value: &str) -> u64 {
+    value.split_whitespace().count().max(1) as u64
+}
+
 fn source_spans_for_chunks(
     matter_id: &str,
     document_id: &str,
@@ -9038,6 +9164,18 @@ fn completed_ingestion_run(
     next.error_message = None;
     next.retryable = false;
     next.produced_node_ids = produced_node_ids;
+    next
+}
+
+fn completed_ingestion_run_with_objects(
+    run: &IngestionRun,
+    status: &str,
+    stage: &str,
+    produced_node_ids: Vec<String>,
+    produced_object_keys: Vec<String>,
+) -> IngestionRun {
+    let mut next = completed_ingestion_run(run, status, stage, produced_node_ids);
+    next.produced_object_keys = produced_object_keys;
     next
 }
 
@@ -13485,6 +13623,8 @@ mod tests {
             content_etag: None,
             upload_expires_at: None,
             deleted_at: None,
+            original_relative_path: None,
+            upload_batch_id: None,
             object_blob_id: None,
             current_version_id: None,
             ingestion_run_ids: Vec::new(),

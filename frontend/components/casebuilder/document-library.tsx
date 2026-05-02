@@ -2,23 +2,32 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertTriangle,
+  BarChart3,
   CheckCircle2,
   FileText,
   Filter,
   Folder,
+  FolderUp,
   Grid2x2,
   List,
+  RefreshCcw,
   Search,
   Sparkles,
   Upload,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { CaseDocument, DocumentType, MatterSummary } from "@/lib/casebuilder/types"
-import { extractDocument, importDocumentComplaint, uploadBinaryFile } from "@/lib/casebuilder/api"
+import type { CaseDocument, DocumentType, MatterIndexSummary, MatterSummary } from "@/lib/casebuilder/types"
+import { getMatterIndexSummary, importDocumentComplaint, runMatterIndex, uploadBinaryFile } from "@/lib/casebuilder/api"
 import { matterComplaintHref, matterDocumentHref } from "@/lib/casebuilder/routes"
+import {
+  createUploadBatchId,
+  dataTransferToUploadCandidates,
+  filesToUploadCandidates,
+  type UploadCandidate,
+} from "@/lib/casebuilder/upload-folders"
 import { ProcessingBadge } from "./badges"
 
 const FOLDERS = [
@@ -64,16 +73,35 @@ interface Props {
   documents: CaseDocument[]
 }
 
+type UploadQueueStatus = "queued" | "uploading" | "indexing" | "indexed" | "stored" | "failed"
+
+interface UploadQueueRow {
+  id: string
+  candidate: UploadCandidate
+  status: UploadQueueStatus
+  message: string
+  documentId?: string
+}
+
 export function DocumentLibrary({ matter, documents }: Props) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
   const [folder, setFolder] = useState<string>("All")
   const [query, setQuery] = useState("")
   const [view, setView] = useState<"grid" | "list">("grid")
+  const [processingFilter, setProcessingFilter] = useState<string>("All")
+  const [storageFilter, setStorageFilter] = useState<string>("All")
+  const [batchFilter, setBatchFilter] = useState<string>("All")
+  const [duplicateOnly, setDuplicateOnly] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadMessage, setUploadMessage] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [importedComplaints, setImportedComplaints] = useState<Array<{ title: string; href: string }>>([])
+  const [uploadRows, setUploadRows] = useState<UploadQueueRow[]>([])
+  const [indexSummary, setIndexSummary] = useState<MatterIndexSummary | null>(null)
+  const [indexMessage, setIndexMessage] = useState<string | null>(null)
+  const [indexBusy, setIndexBusy] = useState(false)
 
   const folderCounts = useMemo(() => {
     const map: Record<string, number> = { All: documents.length }
@@ -92,56 +120,142 @@ export function DocumentLibrary({ matter, documents }: Props) {
     return Array.from(byHash.values()).filter((count) => count > 1).length
   }, [documents])
 
+  const duplicateHashes = useMemo(() => {
+    const byHash = new Map<string, number>()
+    for (const document of documents) {
+      if (!document.file_hash) continue
+      byHash.set(document.file_hash, (byHash.get(document.file_hash) ?? 0) + 1)
+    }
+    return new Set(Array.from(byHash).filter(([, count]) => count > 1).map(([hash]) => hash))
+  }, [documents])
+
+  const folderNames = useMemo(() => {
+    return Array.from(new Set([...FOLDERS, ...documents.map((document) => document.folder)])).filter(Boolean)
+  }, [documents])
+
+  const processingOptions = useMemo(() => {
+    return Array.from(new Set(documents.map((document) => document.processing_status))).sort()
+  }, [documents])
+
+  const storageOptions = useMemo(() => {
+    return Array.from(new Set(documents.map((document) => document.storage_status ?? "stored"))).sort()
+  }, [documents])
+
+  const batchOptions = useMemo(() => {
+    return Array.from(new Set(documents.map((document) => document.upload_batch_id).filter(Boolean) as string[])).sort()
+  }, [documents])
+
+  useEffect(() => {
+    void refreshIndexSummary()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matter.matter_id, documents.length])
+
   const filtered = useMemo(() => {
     return documents.filter((d) => {
       if (folder === "Media queue") {
         if (!isMediaDocument(d)) return false
       } else if (folder !== "All" && d.folder !== folder) return false
+      if (processingFilter !== "All" && d.processing_status !== processingFilter) return false
+      if (storageFilter !== "All" && (d.storage_status ?? "stored") !== storageFilter) return false
+      if (batchFilter !== "All" && (d.upload_batch_id ?? "No batch") !== batchFilter) return false
+      if (duplicateOnly && (!d.file_hash || !duplicateHashes.has(d.file_hash))) return false
       if (query.trim()) {
         const q = query.toLowerCase()
-        const hay = `${d.filename} ${d.summary} ${d.parties_mentioned.join(" ")} ${d.entities_mentioned.join(" ")}`.toLowerCase()
+        const hay = `${d.filename} ${d.original_relative_path ?? ""} ${d.summary} ${d.parties_mentioned.join(" ")} ${d.entities_mentioned.join(" ")}`.toLowerCase()
         if (!hay.includes(q)) return false
       }
       return true
     })
-  }, [documents, folder, query])
+  }, [batchFilter, documents, duplicateHashes, duplicateOnly, folder, processingFilter, query, storageFilter])
+
+  async function refreshIndexSummary() {
+    const result = await getMatterIndexSummary(matter.matter_id)
+    if (result.data) setIndexSummary(result.data)
+  }
+
+  async function indexDocuments(documentIds?: string[]) {
+    setIndexBusy(true)
+    setIndexMessage(null)
+    const result = await runMatterIndex(matter.matter_id, {
+      document_ids: documentIds && documentIds.length > 0 ? documentIds : undefined,
+    })
+    setIndexBusy(false)
+    if (!result.data) {
+      setIndexMessage(result.error || "Index run failed.")
+      return null
+    }
+    setIndexSummary(result.data.summary)
+    setIndexMessage(
+      `${result.data.processed} indexed${result.data.skipped ? `, ${result.data.skipped} skipped` : ""}${result.data.failed ? `, ${result.data.failed} failed` : ""}.`,
+    )
+    return result.data
+  }
 
   async function uploadFiles(files: FileList | File[]) {
-    const selected = Array.from(files)
-    if (selected.length === 0) return
+    await uploadCandidates(filesToUploadCandidates(files))
+  }
+
+  async function uploadCandidates(candidates: UploadCandidate[]) {
+    if (candidates.length === 0) return
 
     setUploading(true)
     setUploadMessage(null)
     setUploadError(null)
+    setIndexMessage(null)
 
     let stored = 0
-    let extracted = 0
     let binaryStored = 0
     let imported = 0
     const importedLinks: Array<{ title: string; href: string }> = []
     const failures: string[] = []
+    const uploadedDocumentIds: string[] = []
+    const uploadBatchId = createUploadBatchId(candidates.some((item) => item.relativePath.includes("/")) ? "folder" : "batch")
+    setUploadRows(
+      candidates.map((candidate, index) => ({
+        id: `${uploadBatchId}:${index}`,
+        candidate,
+        status: "queued",
+        message: candidate.relativePath,
+      })),
+    )
 
-    for (const file of selected) {
+    for (const [index, candidate] of candidates.entries()) {
+      const file = candidate.file
+      const rowId = `${uploadBatchId}:${index}`
       try {
-        const textLike = isTextLikeFile(file)
         const mimeType = file.type || guessMimeType(file.name)
         const documentType = guessDocumentType(file.name, mimeType)
+        setUploadRows((rows) =>
+          rows.map((row) => (row.id === rowId ? { ...row, status: "uploading", message: "Uploading" } : row)),
+        )
         const result = await uploadBinaryFile(matter.matter_id, file, {
           document_type: documentType,
-          folder: "Uploads",
+          folder: candidate.folder,
           confidentiality: "private",
+          relative_path: candidate.relativePath,
+          upload_batch_id: uploadBatchId,
         })
 
         if (!result.data) {
           failures.push(`${file.name}: ${result.error || "upload failed"}`)
+          setUploadRows((rows) =>
+            rows.map((row) =>
+              row.id === rowId ? { ...row, status: "failed", message: result.error || "Upload failed" } : row,
+            ),
+          )
           continue
         }
 
         stored += 1
-        if (textLike) {
-          const extraction = await extractDocument(matter.matter_id, result.data.document_id)
-          if (extraction.data?.status === "processed") extracted += 1
-        } else if (result.data.storage_status === "stored") {
+        uploadedDocumentIds.push(result.data.document_id)
+        setUploadRows((rows) =>
+          rows.map((row) =>
+            row.id === rowId
+              ? { ...row, status: "indexing", documentId: result.data?.document_id, message: "Queued for indexing" }
+              : row,
+          ),
+        )
+        if (result.data.storage_status === "stored") {
           binaryStored += 1
         }
         if (shouldImportAsComplaint(file.name, documentType)) {
@@ -150,24 +264,47 @@ export function DocumentLibrary({ matter, documents }: Props) {
             mode: "structured_import",
           })
           const complaint = importedComplaint.data?.imported[0]?.complaint
-	          if (complaint) {
-	            imported += 1
-	            importedLinks.push({
-	              title: complaint.title || file.name,
-	              href: matterComplaintHref(matter.matter_id, "editor", {
-	                type: "complaint",
-	                id: complaint.complaint_id,
-	              }),
-	            })
-	          } else if (importedComplaint.data?.skipped[0]) {
-	            failures.push(`${file.name}: ${importedComplaint.data.skipped[0].message}`)
-	          } else if (importedComplaint.error) {
-	            failures.push(`${file.name}: ${importedComplaint.error}`)
-	          }
-	        }
+          if (complaint) {
+            imported += 1
+            importedLinks.push({
+              title: complaint.title || file.name,
+              href: matterComplaintHref(matter.matter_id, "editor", {
+                type: "complaint",
+                id: complaint.complaint_id,
+              }),
+            })
+          } else if (importedComplaint.data?.skipped[0]) {
+            failures.push(`${file.name}: ${importedComplaint.data.skipped[0].message}`)
+          } else if (importedComplaint.error) {
+            failures.push(`${file.name}: ${importedComplaint.error}`)
+          }
+        }
       } catch (error) {
         failures.push(`${file.name}: ${error instanceof Error ? error.message : String(error)}`)
+        setUploadRows((rows) =>
+          rows.map((row) =>
+            row.id === rowId
+              ? { ...row, status: "failed", message: error instanceof Error ? error.message : String(error) }
+              : row,
+          ),
+        )
       }
+    }
+
+    const indexRun = uploadedDocumentIds.length ? await indexDocuments(uploadedDocumentIds) : null
+    if (indexRun) {
+      const byDocument = new Map(indexRun.results.map((result) => [result.document_id, result]))
+      setUploadRows((rows) =>
+        rows.map((row) => {
+          const result = row.documentId ? byDocument.get(row.documentId) : null
+          if (!result) return row.status === "failed" ? row : { ...row, status: "stored", message: "Stored privately" }
+          return {
+            ...row,
+            status: result.status === "indexed" ? "indexed" : result.status === "failed" ? "failed" : "stored",
+            message: result.message,
+          }
+        }),
+      )
     }
 
     setUploading(false)
@@ -176,9 +313,13 @@ export function DocumentLibrary({ matter, documents }: Props) {
       setUploadError(failures.join(" | "))
     }
     setUploadMessage(
-      `${stored} uploaded${extracted ? `, ${extracted} extracted` : ""}${binaryStored ? `, ${binaryStored} stored privately` : ""}${imported ? `, ${imported} opened as structured complaint` : ""}.`,
+      `${stored} uploaded${indexRun?.processed ? `, ${indexRun.processed} indexed` : ""}${binaryStored ? `, ${binaryStored} stored privately` : ""}${imported ? `, ${imported} opened as structured complaint` : ""}.`,
     )
     router.refresh()
+  }
+
+  async function retryUpload(row: UploadQueueRow) {
+    await uploadCandidates([row.candidate])
   }
 
   return (
@@ -206,14 +347,36 @@ export function DocumentLibrary({ matter, documents }: Props) {
               event.currentTarget.value = ""
             }}
           />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Upload className="h-3.5 w-3.5" />
-            {uploading ? "uploading" : "upload files"}
-          </button>
+          <input
+            ref={folderInputRef}
+            type="file"
+            multiple
+            hidden
+            // Browser folder selection is still exposed through vendor-prefixed attributes.
+            {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+            onChange={(event) => {
+              if (event.target.files) void uploadFiles(event.target.files)
+              event.currentTarget.value = ""
+            }}
+          />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => folderInputRef.current?.click()}
+              disabled={uploading}
+              className="flex items-center gap-1.5 rounded border border-border bg-background px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <FolderUp className="h-3.5 w-3.5" />
+              folder
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              {uploading ? "uploading" : "upload files"}
+            </button>
+          </div>
         </div>
         {(uploadMessage || uploadError) && (
           <div
@@ -242,6 +405,64 @@ export function DocumentLibrary({ matter, documents }: Props) {
             )}
           </div>
         )}
+        <div className="mt-3 grid gap-2 lg:grid-cols-[1.3fr_1fr]">
+          <div className="rounded border border-border bg-background p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                <BarChart3 className="h-3.5 w-3.5" />
+                index console
+              </div>
+              <button
+                type="button"
+                onClick={() => void indexDocuments()}
+                disabled={indexBusy || (indexSummary?.extractable_pending_documents ?? 0) === 0}
+                className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RefreshCcw className={cn("h-3 w-3", indexBusy && "animate-spin")} />
+                reindex pending
+              </button>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center md:grid-cols-6">
+              <IndexTile label="indexed" value={indexSummary?.indexed_documents ?? documents.filter((d) => d.facts_extracted > 0 || (d.source_spans?.length ?? 0) > 0).length} />
+              <IndexTile label="pending" value={indexSummary?.pending_documents ?? documents.filter((d) => d.processing_status === "queued").length} />
+              <IndexTile label="extractable" value={indexSummary?.extractable_pending_documents ?? 0} />
+              <IndexTile label="failed" value={indexSummary?.failed_documents ?? documents.filter((d) => d.processing_status === "failed").length} tone="bad" />
+              <IndexTile label="ocr" value={indexSummary?.ocr_required_documents ?? documents.filter((d) => d.processing_status === "ocr_required").length} tone="warn" />
+              <IndexTile label="duplicates" value={indexSummary?.duplicate_groups.length ?? duplicateGroups} tone={duplicateGroups ? "warn" : undefined} />
+            </div>
+            {(indexMessage || indexSummary?.recent_ingestion_runs[0]) && (
+              <div className="mt-2 truncate font-mono text-[10px] text-muted-foreground">
+                {indexMessage ??
+                  `last run ${indexSummary?.recent_ingestion_runs[0]?.stage ?? "stored"} · ${indexSummary?.recent_ingestion_runs[0]?.status ?? "queued"}`}
+              </div>
+            )}
+          </div>
+          {uploadRows.length > 0 && (
+            <div className="rounded border border-border bg-background p-3">
+              <div className="mb-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                upload batch
+              </div>
+              <div className="max-h-28 space-y-1 overflow-y-auto pr-1">
+                {uploadRows.map((row) => (
+                  <div key={row.id} className="flex items-center gap-2 rounded border border-border px-2 py-1 text-[11px]">
+                    <span className={cn("h-2 w-2 rounded-full", uploadStatusClass(row.status))} />
+                    <span className="min-w-0 flex-1 truncate font-mono">{row.candidate.relativePath}</span>
+                    <span className="shrink-0 text-muted-foreground">{row.status}</span>
+                    {row.status === "failed" && (
+                      <button
+                        type="button"
+                        onClick={() => void retryUpload(row)}
+                        className="shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] uppercase text-muted-foreground hover:bg-muted"
+                      >
+                        retry
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Toolbar */}
@@ -251,10 +472,56 @@ export function DocumentLibrary({ matter, documents }: Props) {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search filenames, summaries, parties, entities…"
+            placeholder="Search filenames, folder paths, summaries, parties, entities…"
             className="flex-1 bg-transparent py-1.5 text-xs focus:outline-none"
           />
         </div>
+        <select
+          value={processingFilter}
+          onChange={(event) => setProcessingFilter(event.target.value)}
+          className="h-8 rounded border border-border bg-background px-2 font-mono text-[11px] uppercase tracking-wider text-muted-foreground"
+        >
+          <option value="All">all status</option>
+          {processingOptions.map((status) => (
+            <option key={status} value={status}>
+              {status}
+            </option>
+          ))}
+        </select>
+        <select
+          value={storageFilter}
+          onChange={(event) => setStorageFilter(event.target.value)}
+          className="h-8 rounded border border-border bg-background px-2 font-mono text-[11px] uppercase tracking-wider text-muted-foreground"
+        >
+          <option value="All">all storage</option>
+          {storageOptions.map((status) => (
+            <option key={status} value={status}>
+              {status}
+            </option>
+          ))}
+        </select>
+        <select
+          value={batchFilter}
+          onChange={(event) => setBatchFilter(event.target.value)}
+          className="h-8 rounded border border-border bg-background px-2 font-mono text-[11px] uppercase tracking-wider text-muted-foreground"
+        >
+          <option value="All">all batches</option>
+          {batchOptions.map((batch) => (
+            <option key={batch} value={batch}>
+              {batch}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => setDuplicateOnly((value) => !value)}
+          className={cn(
+            "h-8 rounded border px-2 font-mono text-[11px] uppercase tracking-wider",
+            duplicateOnly ? "border-warning bg-warning/10 text-warning" : "border-border text-muted-foreground hover:bg-muted",
+          )}
+        >
+          duplicates
+        </button>
         <div className="flex items-center gap-1">
           <button
             onClick={() => setView("grid")}
@@ -294,11 +561,11 @@ export function DocumentLibrary({ matter, documents }: Props) {
               active={folder === "Media queue"}
               onClick={() => setFolder("Media queue")}
             />
-            {FOLDERS.map((f) => (
+            {folderNames.map((f) => (
               <FolderItem
                 key={f}
                 name={f}
-                count={folderCounts[f]}
+                count={folderCounts[f] ?? 0}
                 active={folder === f}
                 onClick={() => setFolder(f)}
               />
@@ -341,7 +608,7 @@ export function DocumentLibrary({ matter, documents }: Props) {
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => {
             event.preventDefault()
-            void uploadFiles(event.dataTransfer.files)
+            void dataTransferToUploadCandidates(event.dataTransfer).then(uploadCandidates)
           }}
         >
           {filtered.length === 0 ? (
@@ -404,6 +671,29 @@ function KV({ label, value, cls }: { label: string; value: number; cls: string }
   )
 }
 
+function IndexTile({ label, value, tone }: { label: string; value: number; tone?: "warn" | "bad" }) {
+  return (
+    <div className="rounded border border-border bg-card px-2 py-1">
+      <div className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div
+        className={cn(
+          "font-mono text-sm font-semibold tabular-nums",
+          tone === "warn" ? "text-warning" : tone === "bad" ? "text-destructive" : "text-foreground",
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function uploadStatusClass(status: UploadQueueStatus) {
+  if (status === "indexed") return "bg-success"
+  if (status === "failed") return "bg-destructive"
+  if (status === "uploading" || status === "indexing") return "bg-primary"
+  return "bg-muted-foreground"
+}
+
 function DocCard({ doc, matter }: { doc: CaseDocument; matter: MatterSummary }) {
   return (
     <Link
@@ -416,6 +706,9 @@ function DocCard({ doc, matter }: { doc: CaseDocument; matter: MatterSummary }) 
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate font-mono text-[11px] text-foreground">{doc.filename}</div>
+          {doc.original_relative_path && doc.original_relative_path !== doc.filename && (
+            <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">{doc.original_relative_path}</div>
+          )}
           <div className="mt-0.5 flex items-center gap-2 font-mono text-[10px] tabular-nums uppercase tracking-wider text-muted-foreground">
             <span>{TYPE_LABEL[doc.document_type]}</span>
             <span>·</span>
@@ -503,7 +796,12 @@ function DocList({ docs, matter }: { docs: CaseDocument[]; matter: MatterSummary
                   className="flex items-center gap-2 font-mono text-foreground hover:text-primary"
                 >
                   <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                  {d.filename}
+                  <span className="min-w-0">
+                    <span className="block truncate">{d.filename}</span>
+                    {d.original_relative_path && d.original_relative_path !== d.filename && (
+                      <span className="block truncate text-[10px] text-muted-foreground">{d.original_relative_path}</span>
+                    )}
+                  </span>
                   {d.is_exhibit && d.exhibit_label && (
                     <span className="rounded bg-accent/15 px-1 font-mono text-[10px] uppercase text-accent">
                       {d.exhibit_label}
@@ -567,10 +865,6 @@ function StoragePill({ status }: { status?: CaseDocument["storage_status"] }) {
       {value === "metadata_only" ? "metadata" : value}
     </span>
   )
-}
-
-function isTextLikeFile(file: File) {
-  return file.type.startsWith("text/") || /\.(txt|md|csv|html?|json|log)$/i.test(file.name)
 }
 
 function guessMimeType(filename: string) {

@@ -2,12 +2,13 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useState } from "react"
-import { AlertCircle, ArrowRight, Briefcase, FileText, GavelIcon, Loader2, Sparkles, Upload } from "lucide-react"
+import { useRef, useState } from "react"
+import { AlertCircle, ArrowRight, Briefcase, FileText, FolderUp, GavelIcon, Loader2, Sparkles, Upload } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { MatterType } from "@/lib/casebuilder/types"
-import { createMatter, uploadBinaryFile, uploadTextFile } from "@/lib/casebuilder/api"
+import { createMatter, runMatterIndex, uploadBinaryFile, uploadTextFile } from "@/lib/casebuilder/api"
 import { matterHref } from "@/lib/casebuilder/routes"
+import { createUploadBatchId, filesToUploadCandidates, type UploadCandidate } from "@/lib/casebuilder/upload-folders"
 
 type Intent = "fight" | "build" | "blank"
 
@@ -48,18 +49,19 @@ const TYPES: { id: MatterType; label: string }[] = [
 
 export function NewMatterClient({ initialIntent }: { initialIntent: Intent }) {
   const router = useRouter()
+  const folderInputRef = useRef<HTMLInputElement>(null)
   const [intent, setIntent] = useState<Intent>(initialIntent)
   const [name, setName] = useState("")
   const [type, setType] = useState<MatterType>("civil")
   const [court, setCourt] = useState("")
   const [story, setStory] = useState("")
-  const [files, setFiles] = useState<File[]>([])
+  const [files, setFiles] = useState<UploadCandidate[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   function onSelectFiles(list: FileList | null) {
     if (!list) return
-    setFiles([...files, ...Array.from(list)])
+    setFiles([...files, ...filesToUploadCandidates(list)])
   }
 
   async function onCreateMatter() {
@@ -88,6 +90,8 @@ export function NewMatterClient({ initialIntent }: { initialIntent: Intent }) {
 
     const matterId = result.data.id || result.data.matter_id
     const uploads = []
+    const uploadBatchId = createUploadBatchId(files.some((item) => item.relativePath.includes("/")) ? "folder" : "batch")
+    const uploadedDocumentIds: string[] = []
 
     if (story.trim()) {
       uploads.push(
@@ -97,22 +101,35 @@ export function NewMatterClient({ initialIntent }: { initialIntent: Intent }) {
           document_type: "evidence",
           folder: "Intake",
           confidentiality: "private",
+          relative_path: "Intake/case-narrative.txt",
+          upload_batch_id: uploadBatchId,
           text: story.trim(),
         }),
       )
     }
 
-    for (const file of files) {
+    for (const candidate of files) {
+      const file = candidate.file
       uploads.push(
         uploadBinaryFile(matterId, file, {
           document_type: file.name.match(/\.csv$/i) ? "spreadsheet" : "evidence",
-          folder: "Uploads",
+          folder: candidate.folder,
           confidentiality: "private",
+          relative_path: candidate.relativePath,
+          upload_batch_id: uploadBatchId,
         }),
       )
     }
 
-    await Promise.allSettled(uploads)
+    const uploadResults = await Promise.allSettled(uploads)
+    for (const upload of uploadResults) {
+      if (upload.status === "fulfilled" && upload.value.data?.document_id) {
+        uploadedDocumentIds.push(upload.value.data.document_id)
+      }
+    }
+    if (uploadedDocumentIds.length > 0) {
+      await runMatterIndex(matterId, { document_ids: uploadedDocumentIds })
+    }
     router.push(matterHref(matterId))
   }
 
@@ -217,20 +234,41 @@ export function NewMatterClient({ initialIntent }: { initialIntent: Intent }) {
                 onChange={(e) => onSelectFiles(e.target.files)}
               />
             </label>
+            <input
+              ref={folderInputRef}
+              type="file"
+              multiple
+              hidden
+              {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+              onChange={(event) => {
+                onSelectFiles(event.target.files)
+                event.currentTarget.value = ""
+              }}
+            />
+            <div className="mt-2 flex justify-center">
+              <button
+                type="button"
+                onClick={() => folderInputRef.current?.click()}
+                className="inline-flex items-center gap-1.5 rounded border border-border px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <FolderUp className="h-3.5 w-3.5" />
+                upload folder
+              </button>
+            </div>
 
             {files.length > 0 && (
               <div className="mt-3 space-y-1">
-                {files.map((f, i) => (
+                {files.map((candidate, i) => (
                   <div
                     key={i}
                     className="flex items-center justify-between rounded border border-border bg-background px-3 py-2 font-mono text-xs"
                   >
                     <div className="flex items-center gap-2">
                       <FileText className="h-3.5 w-3.5 text-primary" />
-                      <span>{f.name}</span>
+                      <span>{candidate.relativePath}</span>
                     </div>
                     <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
-                      {(f.size / 1024).toFixed(1)} KB
+                      {(candidate.file.size / 1024).toFixed(1)} KB
                     </span>
                   </div>
                 ))}

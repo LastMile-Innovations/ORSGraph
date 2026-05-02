@@ -4,13 +4,13 @@ use crate::models::search::{SearchMode, SearchQuery};
 use crate::services::casebuilder::BinaryUploadRequest;
 use crate::state::AppState;
 use axum::{
-    Json, Router,
     body::Bytes,
     extract::DefaultBodyLimit,
     extract::{Path, Query, State},
-    http::{HeaderMap, HeaderValue, header},
+    http::{header, HeaderMap, HeaderValue},
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
+    Json, Router,
 };
 use serde::Deserialize;
 
@@ -35,6 +35,8 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/matters/:matter_id/graph", get(get_matter_graph))
         .route("/matters/:matter_id/audit", get(list_matter_audit_events))
+        .route("/matters/:matter_id/index", get(get_matter_index))
+        .route("/matters/:matter_id/index/run", post(run_matter_index))
         .route("/matters/:matter_id/qc/run", post(run_matter_qc))
         .route("/matters/:matter_id/issues/spot", post(spot_issues))
         .route(
@@ -619,6 +621,31 @@ async fn list_documents(
 ) -> ApiResult<Json<Vec<CaseDocument>>> {
     Ok(Json(
         state.casebuilder_service.list_documents(&matter_id).await?,
+    ))
+}
+
+async fn get_matter_index(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+) -> ApiResult<Json<MatterIndexSummary>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .get_matter_index_summary(&matter_id)
+            .await?,
+    ))
+}
+
+async fn run_matter_index(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+    Json(request): Json<RunMatterIndexRequest>,
+) -> ApiResult<Json<MatterIndexRunResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .run_matter_index(&matter_id, request)
+            .await?,
     ))
 }
 
@@ -2344,6 +2371,8 @@ fn parse_binary_upload(headers: &HeaderMap, body: Bytes) -> ApiResult<BinaryUplo
     let mut document_type = None;
     let mut folder = None;
     let mut confidentiality = None;
+    let mut relative_path = None;
+    let mut upload_batch_id = None;
 
     loop {
         cursor += marker.len();
@@ -2368,6 +2397,8 @@ fn parse_binary_upload(headers: &HeaderMap, body: Bytes) -> ApiResult<BinaryUplo
             &mut document_type,
             &mut folder,
             &mut confidentiality,
+            &mut relative_path,
+            &mut upload_batch_id,
         )?;
         cursor = next_boundary;
     }
@@ -2384,6 +2415,8 @@ fn parse_binary_upload(headers: &HeaderMap, body: Bytes) -> ApiResult<BinaryUplo
         document_type,
         folder,
         confidentiality,
+        relative_path,
+        upload_batch_id,
     })
 }
 
@@ -2395,6 +2428,8 @@ fn parse_multipart_part(
     document_type: &mut Option<String>,
     folder: &mut Option<String>,
     confidentiality: &mut Option<String>,
+    relative_path: &mut Option<String>,
+    upload_batch_id: &mut Option<String>,
 ) -> ApiResult<()> {
     let (header_end, delimiter_len) = find_bytes(part, b"\r\n\r\n", 0)
         .map(|index| (index, 4))
@@ -2431,6 +2466,8 @@ fn parse_multipart_part(
         Some("document_type") => *document_type = multipart_text(body),
         Some("folder") => *folder = multipart_text(body),
         Some("confidentiality") => *confidentiality = multipart_text(body),
+        Some("relative_path") => *relative_path = multipart_text(body),
+        Some("upload_batch_id") => *upload_batch_id = multipart_text(body),
         _ => {}
     }
     Ok(())

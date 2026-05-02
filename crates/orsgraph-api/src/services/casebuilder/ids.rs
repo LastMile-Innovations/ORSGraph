@@ -125,6 +125,64 @@ pub(super) fn sanitize_path_segment(value: &str) -> String {
         .collect()
 }
 
+pub(super) fn normalize_upload_relative_path(value: Option<String>) -> ApiResult<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let normalized = value.replace('\\', "/");
+    let trimmed = normalized.trim_matches('/');
+    if trimmed.trim().is_empty() {
+        return Ok(None);
+    }
+    if normalized.starts_with('/')
+        || normalized.starts_with('\\')
+        || normalized.contains('\0')
+        || normalized.chars().any(|ch| ch.is_control())
+    {
+        return Err(ApiError::BadRequest(
+            "Upload relative_path must be a safe relative path".to_string(),
+        ));
+    }
+    let mut segments = Vec::new();
+    for segment in trimmed.split('/') {
+        let segment = segment.trim();
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return Err(ApiError::BadRequest(
+                "Upload relative_path cannot contain empty, current, or parent segments"
+                    .to_string(),
+            ));
+        }
+        if segment.contains(':') {
+            return Err(ApiError::BadRequest(
+                "Upload relative_path cannot contain drive or URL separators".to_string(),
+            ));
+        }
+        segments.push(segment);
+    }
+    Ok(Some(segments.join("/")))
+}
+
+pub(super) fn normalize_upload_batch_id(value: Option<String>) -> ApiResult<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.len() > 96
+        || trimmed
+            .chars()
+            .any(|ch| !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | ':' | '.')))
+    {
+        return Err(ApiError::BadRequest(
+            "upload_batch_id must use only letters, numbers, dash, underscore, colon, or dot"
+                .to_string(),
+        ));
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
 #[cfg(test)]
 pub(super) fn sanitize_filename(value: &str) -> String {
     let candidate = Path::new(value)

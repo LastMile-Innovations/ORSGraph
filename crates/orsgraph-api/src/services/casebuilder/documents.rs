@@ -10,6 +10,12 @@ impl CaseBuilderService {
         let now = now_string();
         let document_id = generate_opaque_id("doc");
         let title = title_from_filename(&request.filename);
+        let relative_path = normalize_upload_relative_path(request.relative_path)?;
+        let upload_batch_id = normalize_upload_batch_id(request.upload_batch_id)?;
+        let folder = request
+            .folder
+            .or_else(|| folder_from_relative_path(relative_path.as_deref()))
+            .unwrap_or_else(|| "Uploads".to_string());
         let bytes = request
             .text
             .as_ref()
@@ -70,7 +76,7 @@ impl CaseBuilderService {
             citations_found: 0,
             contradictions_flagged: 0,
             linked_claim_ids: Vec::new(),
-            folder: request.folder.unwrap_or_else(|| "Uploads".to_string()),
+            folder,
             storage_path: stored_object
                 .as_ref()
                 .and_then(|object| object.local_path.clone()),
@@ -86,6 +92,8 @@ impl CaseBuilderService {
                 .and_then(|object| object.etag.clone()),
             upload_expires_at: None,
             deleted_at: None,
+            original_relative_path: relative_path,
+            upload_batch_id,
             object_blob_id: None,
             current_version_id: None,
             ingestion_run_ids: Vec::new(),
@@ -121,6 +129,12 @@ impl CaseBuilderService {
 
         let now = now_string();
         let document_id = generate_opaque_id("doc");
+        let relative_path = normalize_upload_relative_path(request.relative_path)?;
+        let upload_batch_id = normalize_upload_batch_id(request.upload_batch_id)?;
+        let folder = request
+            .folder
+            .or_else(|| folder_from_relative_path(relative_path.as_deref()))
+            .unwrap_or_else(|| "Uploads".to_string());
         let object_key = build_document_object_key(&document_id, &request.filename);
         let hash = sha256_hex(&request.bytes);
         let stored_object = self
@@ -166,7 +180,7 @@ impl CaseBuilderService {
             citations_found: 0,
             contradictions_flagged: 0,
             linked_claim_ids: Vec::new(),
-            folder: request.folder.unwrap_or_else(|| "Uploads".to_string()),
+            folder,
             storage_path: stored_object.local_path.clone(),
             storage_provider: self.object_store.provider().to_string(),
             storage_status: "stored".to_string(),
@@ -178,6 +192,8 @@ impl CaseBuilderService {
             content_etag: stored_object.etag.clone(),
             upload_expires_at: None,
             deleted_at: None,
+            original_relative_path: relative_path,
+            upload_batch_id,
             object_blob_id: None,
             current_version_id: None,
             ingestion_run_ids: Vec::new(),
@@ -220,6 +236,12 @@ impl CaseBuilderService {
         let now = now_string();
         let document_id = generate_opaque_id("doc");
         let upload_id = upload_id_for_document(&document_id);
+        let relative_path = normalize_upload_relative_path(request.relative_path)?;
+        let upload_batch_id = normalize_upload_batch_id(request.upload_batch_id)?;
+        let folder = request
+            .folder
+            .or_else(|| folder_from_relative_path(relative_path.as_deref()))
+            .unwrap_or_else(|| "Uploads".to_string());
         let object_key = build_document_object_key(&document_id, &request.filename);
         let expires_at = timestamp_after(self.upload_ttl_seconds);
         let presigned = self
@@ -259,7 +281,7 @@ impl CaseBuilderService {
             citations_found: 0,
             contradictions_flagged: 0,
             linked_claim_ids: Vec::new(),
-            folder: request.folder.unwrap_or_else(|| "Uploads".to_string()),
+            folder,
             storage_path: None,
             storage_provider: self.object_store.provider().to_string(),
             storage_status: "pending".to_string(),
@@ -268,6 +290,8 @@ impl CaseBuilderService {
             content_etag: None,
             upload_expires_at: Some(expires_at.clone()),
             deleted_at: None,
+            original_relative_path: relative_path,
+            upload_batch_id,
             object_blob_id: None,
             current_version_id: None,
             ingestion_run_ids: Vec::new(),
@@ -398,6 +422,125 @@ impl CaseBuilderService {
 
     pub async fn list_documents(&self, matter_id: &str) -> ApiResult<Vec<CaseDocument>> {
         self.list_nodes(matter_id, document_spec()).await
+    }
+
+    pub async fn get_matter_index_summary(&self, matter_id: &str) -> ApiResult<MatterIndexSummary> {
+        self.require_matter(matter_id).await?;
+        let documents = self.list_documents(matter_id).await?;
+        let runs = self
+            .list_nodes::<IngestionRun>(matter_id, ingestion_run_spec())
+            .await?;
+        Ok(build_matter_index_summary(matter_id, &documents, &runs))
+    }
+
+    pub async fn run_matter_index(
+        &self,
+        matter_id: &str,
+        request: RunMatterIndexRequest,
+    ) -> ApiResult<MatterIndexRunResponse> {
+        self.require_matter(matter_id).await?;
+        let documents = self.list_documents(matter_id).await?;
+        let requested_ids = request
+            .document_ids
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|id| !id.trim().is_empty())
+            .collect::<Vec<_>>();
+        let limit = request.limit.unwrap_or(250).clamp(1, 1_000) as usize;
+
+        let mut targets = Vec::new();
+        if requested_ids.is_empty() {
+            targets = documents
+                .iter()
+                .filter(|document| {
+                    document_can_attempt_index(document) && document_needs_index(document)
+                })
+                .take(limit)
+                .map(|document| document.document_id.clone())
+                .collect();
+        } else {
+            let known = documents
+                .iter()
+                .map(|document| document.document_id.as_str())
+                .collect::<HashSet<_>>();
+            for document_id in requested_ids.into_iter().take(limit) {
+                if !known.contains(document_id.as_str()) {
+                    return Err(ApiError::NotFound(format!(
+                        "Document {document_id} was not found in this matter"
+                    )));
+                }
+                targets.push(document_id);
+            }
+        }
+
+        let requested = targets.len() as u64;
+        let mut processed = 0_u64;
+        let mut skipped = 0_u64;
+        let mut failed = 0_u64;
+        let mut results = Vec::with_capacity(targets.len());
+
+        for document_id in targets {
+            let document = self.get_document(matter_id, &document_id).await?;
+            if !document_can_attempt_index(&document) {
+                skipped += 1;
+                results.push(MatterIndexRunDocumentResult {
+                    document_id,
+                    status: "skipped".to_string(),
+                    extraction_status: Some(document.processing_status.clone()),
+                    message: index_skip_message(&document),
+                    produced_chunks: 0,
+                    produced_facts: document.facts_extracted,
+                });
+                continue;
+            }
+
+            match self.extract_document(matter_id, &document_id).await {
+                Ok(extraction) if extraction.status == "processed" => {
+                    processed += 1;
+                    results.push(MatterIndexRunDocumentResult {
+                        document_id,
+                        status: "indexed".to_string(),
+                        extraction_status: Some(extraction.status),
+                        message: extraction.message,
+                        produced_chunks: extraction.chunks.len() as u64,
+                        produced_facts: extraction.proposed_facts.len() as u64,
+                    });
+                }
+                Ok(extraction) => {
+                    skipped += 1;
+                    results.push(MatterIndexRunDocumentResult {
+                        document_id,
+                        status: "skipped".to_string(),
+                        extraction_status: Some(extraction.status),
+                        message: extraction.message,
+                        produced_chunks: extraction.chunks.len() as u64,
+                        produced_facts: extraction.proposed_facts.len() as u64,
+                    });
+                }
+                Err(error) => {
+                    failed += 1;
+                    results.push(MatterIndexRunDocumentResult {
+                        document_id,
+                        status: "failed".to_string(),
+                        extraction_status: None,
+                        message: error.to_string(),
+                        produced_chunks: 0,
+                        produced_facts: 0,
+                    });
+                }
+            }
+        }
+
+        let summary = self.get_matter_index_summary(matter_id).await?;
+        Ok(MatterIndexRunResponse {
+            matter_id: matter_id.to_string(),
+            requested,
+            processed,
+            skipped,
+            failed,
+            results,
+            summary,
+        })
     }
 
     pub async fn get_document(
@@ -731,6 +874,23 @@ impl CaseBuilderService {
             if let Some(run) = &ingestion_run {
                 self.merge_ingestion_run(matter_id, run).await?;
             }
+            let index_run = provenance.as_ref().map(|provenance| {
+                failed_index_run(
+                    matter_id,
+                    &document,
+                    provenance,
+                    "extract_text",
+                    error_code,
+                    &document.summary,
+                    matches!(
+                        extraction_status.as_str(),
+                        "ocr_required" | "transcription_deferred"
+                    ),
+                )
+            });
+            if let Some(run) = &index_run {
+                self.merge_index_run(matter_id, run).await?;
+            }
             let document = self
                 .merge_node(matter_id, document_spec(), document_id, &document)
                 .await?;
@@ -743,24 +903,66 @@ impl CaseBuilderService {
                 chunks: Vec::new(),
                 proposed_facts: Vec::new(),
                 ingestion_run,
+                index_run,
                 document_version: provenance.map(|provenance| provenance.document_version),
+                index_artifacts: Vec::new(),
+                artifact_manifest: None,
+                pages: Vec::new(),
+                text_chunks: Vec::new(),
+                evidence_spans: Vec::new(),
+                entity_mentions: Vec::new(),
+                search_index_records: Vec::new(),
                 source_spans: Vec::new(),
             });
         }
 
         let source_context = source_context_from_provenance(provenance.as_ref());
+        let text_sha256 = sha256_hex(text.as_bytes());
+        let index_run_id_value = index_run_id(
+            document_id,
+            source_context.document_version_id.as_deref(),
+            &text_sha256,
+        );
         let mut chunks = chunk_text(document_id, &text);
         for chunk in &mut chunks {
             chunk.document_version_id = source_context.document_version_id.clone();
             chunk.object_blob_id = source_context.object_blob_id.clone();
             chunk.source_span_id = Some(source_span_id(document_id, "chunk", chunk.page));
         }
+        let (
+            pages,
+            text_chunks,
+            evidence_spans,
+            entity_mentions,
+            search_index_records,
+        ) = build_extraction_index_records(
+            matter_id,
+            document_id,
+            &chunks,
+            &source_context,
+            &index_run_id_value,
+        );
         let mut source_spans =
             source_spans_for_chunks(matter_id, document_id, &chunks, &source_context);
         let proposed_facts = propose_facts(matter_id, document_id, &text, &source_context);
         for fact in &proposed_facts {
             source_spans.extend(fact.source_spans.clone());
         }
+        let (index_artifacts, artifact_manifest) = self
+            .store_extraction_index_artifacts(
+                matter_id,
+                &document,
+                &text,
+                &text_sha256,
+                &source_context,
+                &index_run_id_value,
+                &pages,
+                &text_chunks,
+                &evidence_spans,
+                &entity_mentions,
+                &search_index_records,
+            )
+            .await?;
         document.extracted_text = Some(text.clone());
         document.processing_status = "processed".to_string();
         document.summary = summarize_text(&text);
@@ -829,12 +1031,61 @@ impl CaseBuilderService {
             self.materialize_fact_edges(&fact).await?;
             stored_facts.push(fact);
         }
+        let mut produced_ids = produced_node_ids(&chunks, &source_spans, &stored_facts);
+        extend_index_node_ids(
+            &mut produced_ids,
+            &pages,
+            &text_chunks,
+            &evidence_spans,
+            &entity_mentions,
+            &search_index_records,
+            Some(&artifact_manifest),
+            &index_artifacts,
+        );
+        let mut produced_object_keys = provenance
+            .as_ref()
+            .map(|provenance| provenance.ingestion_run.produced_object_keys.clone())
+            .unwrap_or_default();
+        for artifact in &index_artifacts {
+            push_unique(&mut produced_object_keys, artifact.storage_key.clone());
+        }
+        let index_run = provenance.as_ref().map(|provenance| {
+            completed_index_run(
+                matter_id,
+                document_id,
+                provenance,
+                &index_run_id_value,
+                produced_ids.clone(),
+                produced_object_keys.clone(),
+            )
+        });
+        if let Some(run) = &index_run {
+            self.merge_index_run(matter_id, run).await?;
+        }
+        self.merge_extraction_artifact_manifest(matter_id, &artifact_manifest)
+            .await?;
+        for page in &pages {
+            self.merge_page(matter_id, page).await?;
+        }
+        for chunk in &text_chunks {
+            self.merge_text_chunk(matter_id, chunk).await?;
+        }
+        for span in &evidence_spans {
+            self.merge_evidence_span(matter_id, span).await?;
+        }
+        for mention in &entity_mentions {
+            self.merge_entity_mention(matter_id, mention).await?;
+        }
+        for record in &search_index_records {
+            self.merge_search_index_record(matter_id, record).await?;
+        }
         let ingestion_run = provenance.as_ref().map(|provenance| {
-            completed_ingestion_run(
+            completed_ingestion_run_with_objects(
                 &provenance.ingestion_run,
                 "review_ready",
                 "review_ready",
-                produced_node_ids(&chunks, &source_spans, &stored_facts),
+                produced_ids,
+                produced_object_keys,
             )
         });
         if let Some(run) = &ingestion_run {
@@ -850,9 +1101,159 @@ impl CaseBuilderService {
             chunks,
             proposed_facts: stored_facts,
             ingestion_run,
+            index_run,
             document_version: provenance.map(|provenance| provenance.document_version),
+            index_artifacts,
+            artifact_manifest: Some(artifact_manifest),
+            pages,
+            text_chunks,
+            evidence_spans,
+            entity_mentions,
+            search_index_records,
             source_spans,
         })
+    }
+
+    async fn store_extraction_index_artifacts(
+        &self,
+        matter_id: &str,
+        document: &CaseDocument,
+        text: &str,
+        text_sha256: &str,
+        source_context: &SourceContext,
+        index_run_id: &str,
+        pages: &[Page],
+        text_chunks: &[TextChunk],
+        evidence_spans: &[EvidenceSpan],
+        entity_mentions: &[EntityMention],
+        search_index_records: &[SearchIndexRecord],
+    ) -> ApiResult<(Vec<DocumentVersion>, ExtractionArtifactManifest)> {
+        let normalized_payload = serde_json::json!({
+            "schema_version": "casebuilder.text.normalized.v1",
+            "matter_id": matter_id,
+            "document_id": document.document_id.clone(),
+            "document_version_id": source_context.document_version_id.clone(),
+            "object_blob_id": source_context.object_blob_id.clone(),
+            "ingestion_run_id": source_context.ingestion_run_id.clone(),
+            "index_run_id": index_run_id,
+            "text_sha256": text_sha256,
+            "text": text,
+        });
+        let normalized_bytes = serde_json::to_vec(&normalized_payload)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let normalized_artifact = self
+            .store_document_artifact_version_for_creator(
+                matter_id,
+                document,
+                Bytes::from(normalized_bytes),
+                Some("application/json".to_string()),
+                "normalized_text",
+                "text.normalized.json",
+                "json",
+                false,
+                "casebuilder_indexer",
+            )
+            .await?;
+
+        let pages_payload = serde_json::json!({
+            "schema_version": "casebuilder.pages.v1",
+            "matter_id": matter_id,
+            "document_id": document.document_id.clone(),
+            "document_version_id": source_context.document_version_id.clone(),
+            "object_blob_id": source_context.object_blob_id.clone(),
+            "ingestion_run_id": source_context.ingestion_run_id.clone(),
+            "index_run_id": index_run_id,
+            "pages": pages,
+            "text_chunks": text_chunks,
+            "evidence_spans": evidence_spans,
+            "entity_mentions": entity_mentions,
+            "search_index_records": search_index_records,
+        });
+        let pages_bytes = serde_json::to_vec(&pages_payload)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let pages_artifact = self
+            .store_document_artifact_version_for_creator(
+                matter_id,
+                document,
+                Bytes::from(pages_bytes),
+                Some("application/json".to_string()),
+                "index_pages",
+                "pages.json",
+                "json",
+                false,
+                "casebuilder_indexer",
+            )
+            .await?;
+
+        let manifest_id = extraction_manifest_id(
+            &document.document_id,
+            source_context.document_version_id.as_deref(),
+            text_sha256,
+        );
+        let mut produced_object_keys =
+            vec![normalized_artifact.storage_key.clone(), pages_artifact.storage_key.clone()];
+        let mut manifest = ExtractionArtifactManifest {
+            manifest_id: manifest_id.clone(),
+            id: manifest_id,
+            matter_id: matter_id.to_string(),
+            document_id: document.document_id.clone(),
+            document_version_id: source_context.document_version_id.clone(),
+            object_blob_id: source_context.object_blob_id.clone(),
+            ingestion_run_id: source_context.ingestion_run_id.clone(),
+            index_run_id: Some(index_run_id.to_string()),
+            normalized_text_version_id: Some(normalized_artifact.document_version_id.clone()),
+            pages_version_id: Some(pages_artifact.document_version_id.clone()),
+            manifest_version_id: None,
+            text_sha256: text_sha256.to_string(),
+            pages_sha256: pages_artifact.sha256.clone(),
+            manifest_sha256: None,
+            page_ids: pages.iter().map(|page| page.page_id.clone()).collect(),
+            text_chunk_ids: text_chunks
+                .iter()
+                .map(|chunk| chunk.text_chunk_id.clone())
+                .collect(),
+            evidence_span_ids: evidence_spans
+                .iter()
+                .map(|span| span.evidence_span_id.clone())
+                .collect(),
+            entity_mention_ids: entity_mentions
+                .iter()
+                .map(|mention| mention.entity_mention_id.clone())
+                .collect(),
+            search_index_record_ids: search_index_records
+                .iter()
+                .map(|record| record.search_index_record_id.clone())
+                .collect(),
+            produced_object_keys: produced_object_keys.clone(),
+            created_at: now_string(),
+        };
+        let manifest_bytes = serde_json::to_vec(&manifest)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let manifest_artifact = self
+            .store_document_artifact_version_for_creator(
+                matter_id,
+                document,
+                Bytes::from(manifest_bytes),
+                Some("application/json".to_string()),
+                "index_manifest",
+                "manifest.json",
+                "json",
+                false,
+                "casebuilder_indexer",
+            )
+            .await?;
+        push_unique(
+            &mut produced_object_keys,
+            manifest_artifact.storage_key.clone(),
+        );
+        manifest.manifest_version_id = Some(manifest_artifact.document_version_id.clone());
+        manifest.manifest_sha256 = manifest_artifact.sha256.clone();
+        manifest.produced_object_keys = produced_object_keys;
+
+        Ok((
+            vec![normalized_artifact, pages_artifact, manifest_artifact],
+            manifest,
+        ))
     }
 
     pub async fn create_download_url(
@@ -923,6 +1324,32 @@ impl CaseBuilderService {
         extension: &str,
         current: bool,
     ) -> ApiResult<DocumentVersion> {
+        self.store_document_artifact_version_for_creator(
+            matter_id,
+            document,
+            bytes,
+            mime_type,
+            role,
+            artifact_kind,
+            extension,
+            current,
+            "casebuilder_transcription",
+        )
+        .await
+    }
+
+    pub(super) async fn store_document_artifact_version_for_creator(
+        &self,
+        matter_id: &str,
+        document: &CaseDocument,
+        bytes: Bytes,
+        mime_type: Option<String>,
+        role: &str,
+        artifact_kind: &str,
+        extension: &str,
+        current: bool,
+        created_by: &str,
+    ) -> ApiResult<DocumentVersion> {
         self.ensure_upload_size(bytes.len() as u64)?;
         let now = now_string();
         let sha256 = sha256_hex(&bytes);
@@ -982,7 +1409,7 @@ impl CaseBuilderService {
             role: role.to_string(),
             artifact_kind: artifact_kind.to_string(),
             source_version_id: document.current_version_id.clone(),
-            created_by: "casebuilder_transcription".to_string(),
+            created_by: created_by.to_string(),
             current,
             created_at: now,
             storage_provider: self.object_store.provider().to_string(),
@@ -996,5 +1423,612 @@ impl CaseBuilderService {
             mime_type,
         };
         self.merge_document_version(matter_id, &version).await
+    }
+}
+
+fn folder_from_relative_path(relative_path: Option<&str>) -> Option<String> {
+    relative_path
+        .and_then(|path| path.split('/').next())
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_string)
+}
+
+fn build_extraction_index_records(
+    matter_id: &str,
+    document_id: &str,
+    chunks: &[ExtractedTextChunk],
+    source_context: &SourceContext,
+    index_run_id: &str,
+) -> (
+    Vec<Page>,
+    Vec<TextChunk>,
+    Vec<EvidenceSpan>,
+    Vec<EntityMention>,
+    Vec<SearchIndexRecord>,
+) {
+    let mut pages = Vec::with_capacity(chunks.len());
+    let mut text_chunks = Vec::with_capacity(chunks.len());
+    let mut evidence_spans = Vec::with_capacity(chunks.len());
+    let entity_mentions = Vec::new();
+    let mut search_index_records = Vec::with_capacity(chunks.len());
+    let now = now_string();
+
+    for (index, chunk) in chunks.iter().enumerate() {
+        let page_id = page_id(document_id, chunk.page);
+        let text_hash = sha256_hex(chunk.text.as_bytes());
+        pages.push(Page {
+            page_id: page_id.clone(),
+            id: page_id.clone(),
+            matter_id: matter_id.to_string(),
+            document_id: document_id.to_string(),
+            document_version_id: source_context.document_version_id.clone(),
+            object_blob_id: source_context.object_blob_id.clone(),
+            ingestion_run_id: source_context.ingestion_run_id.clone(),
+            index_run_id: Some(index_run_id.to_string()),
+            page_number: chunk.page,
+            unit_type: "logical_text_page".to_string(),
+            title: Some(format!("Page {}", chunk.page)),
+            text_hash: Some(text_hash.clone()),
+            byte_start: chunk.byte_start,
+            byte_end: chunk.byte_end,
+            char_start: chunk.char_start,
+            char_end: chunk.char_end,
+            status: "indexed".to_string(),
+        });
+
+        text_chunks.push(TextChunk {
+            text_chunk_id: chunk.chunk_id.clone(),
+            id: chunk.chunk_id.clone(),
+            matter_id: matter_id.to_string(),
+            document_id: document_id.to_string(),
+            document_version_id: source_context.document_version_id.clone(),
+            object_blob_id: source_context.object_blob_id.clone(),
+            page_id: Some(page_id),
+            source_span_id: chunk.source_span_id.clone(),
+            ingestion_run_id: source_context.ingestion_run_id.clone(),
+            index_run_id: Some(index_run_id.to_string()),
+            ordinal: (index + 1) as u64,
+            page: chunk.page,
+            text_hash: text_hash.clone(),
+            text_excerpt: text_excerpt(&chunk.text, 500),
+            token_count: approximate_token_count(&chunk.text),
+            byte_start: chunk.byte_start,
+            byte_end: chunk.byte_end,
+            char_start: chunk.char_start,
+            char_end: chunk.char_end,
+            status: "indexed".to_string(),
+        });
+
+        let evidence_span_id = evidence_span_id_for_chunk(document_id, &chunk.chunk_id);
+        evidence_spans.push(EvidenceSpan {
+            evidence_span_id: evidence_span_id.clone(),
+            id: evidence_span_id,
+            matter_id: matter_id.to_string(),
+            document_id: document_id.to_string(),
+            document_version_id: source_context.document_version_id.clone(),
+            object_blob_id: source_context.object_blob_id.clone(),
+            text_chunk_id: Some(chunk.chunk_id.clone()),
+            source_span_id: chunk.source_span_id.clone(),
+            ingestion_run_id: source_context.ingestion_run_id.clone(),
+            index_run_id: Some(index_run_id.to_string()),
+            quote_hash: text_hash,
+            quote_excerpt: text_excerpt(&chunk.text, 500),
+            byte_start: chunk.byte_start,
+            byte_end: chunk.byte_end,
+            char_start: chunk.char_start,
+            char_end: chunk.char_end,
+            review_status: "unreviewed".to_string(),
+        });
+
+        let search_record_id =
+            search_index_record_id(document_id, &chunk.chunk_id, CASE_INDEX_VERSION);
+        search_index_records.push(SearchIndexRecord {
+            search_index_record_id: search_record_id.clone(),
+            id: search_record_id,
+            matter_id: matter_id.to_string(),
+            document_id: document_id.to_string(),
+            document_version_id: source_context.document_version_id.clone(),
+            text_chunk_id: Some(chunk.chunk_id.clone()),
+            index_run_id: Some(index_run_id.to_string()),
+            index_name: "casebuilder_document_text".to_string(),
+            index_type: "fulltext".to_string(),
+            index_version: CASE_INDEX_VERSION.to_string(),
+            status: "indexed".to_string(),
+            stale: false,
+            created_at: now.clone(),
+            indexed_at: Some(now.clone()),
+        });
+    }
+
+    (
+        pages,
+        text_chunks,
+        evidence_spans,
+        entity_mentions,
+        search_index_records,
+    )
+}
+
+fn completed_index_run(
+    matter_id: &str,
+    document_id: &str,
+    provenance: &DocumentProvenance,
+    index_run_id: &str,
+    produced_node_ids: Vec<String>,
+    produced_object_keys: Vec<String>,
+) -> IndexRun {
+    IndexRun {
+        index_run_id: index_run_id.to_string(),
+        id: index_run_id.to_string(),
+        matter_id: matter_id.to_string(),
+        document_id: document_id.to_string(),
+        document_version_id: Some(provenance.document_version.document_version_id.clone()),
+        object_blob_id: Some(provenance.object_blob.object_blob_id.clone()),
+        ingestion_run_id: Some(provenance.ingestion_run.ingestion_run_id.clone()),
+        status: "review_ready".to_string(),
+        stage: "graph_persisted".to_string(),
+        mode: "deterministic".to_string(),
+        started_at: provenance.ingestion_run.started_at.clone(),
+        completed_at: Some(now_string()),
+        error_code: None,
+        error_message: None,
+        retryable: false,
+        parser_id: provenance.ingestion_run.parser_id.clone(),
+        parser_version: provenance.ingestion_run.parser_version.clone(),
+        chunker_version: provenance.ingestion_run.chunker_version.clone(),
+        citation_resolver_version: provenance.ingestion_run.citation_resolver_version.clone(),
+        index_version: provenance.ingestion_run.index_version.clone(),
+        produced_node_ids,
+        produced_object_keys,
+        stale: false,
+    }
+}
+
+fn failed_index_run(
+    matter_id: &str,
+    document: &CaseDocument,
+    provenance: &DocumentProvenance,
+    stage: &str,
+    error_code: &str,
+    error_message: &str,
+    retryable: bool,
+) -> IndexRun {
+    let seed = provenance
+        .ingestion_run
+        .input_sha256
+        .as_deref()
+        .unwrap_or(error_code);
+    let index_run_id = index_run_id(
+        &document.document_id,
+        Some(&provenance.document_version.document_version_id),
+        seed,
+    );
+    IndexRun {
+        index_run_id: index_run_id.clone(),
+        id: index_run_id,
+        matter_id: matter_id.to_string(),
+        document_id: document.document_id.clone(),
+        document_version_id: Some(provenance.document_version.document_version_id.clone()),
+        object_blob_id: Some(provenance.object_blob.object_blob_id.clone()),
+        ingestion_run_id: Some(provenance.ingestion_run.ingestion_run_id.clone()),
+        status: "failed".to_string(),
+        stage: stage.to_string(),
+        mode: "deterministic".to_string(),
+        started_at: provenance.ingestion_run.started_at.clone(),
+        completed_at: Some(now_string()),
+        error_code: Some(error_code.to_string()),
+        error_message: Some(error_message.to_string()),
+        retryable,
+        parser_id: provenance.ingestion_run.parser_id.clone(),
+        parser_version: provenance.ingestion_run.parser_version.clone(),
+        chunker_version: provenance.ingestion_run.chunker_version.clone(),
+        citation_resolver_version: provenance.ingestion_run.citation_resolver_version.clone(),
+        index_version: provenance.ingestion_run.index_version.clone(),
+        produced_node_ids: Vec::new(),
+        produced_object_keys: provenance.ingestion_run.produced_object_keys.clone(),
+        stale: false,
+    }
+}
+
+fn extend_index_node_ids(
+    ids: &mut Vec<String>,
+    pages: &[Page],
+    text_chunks: &[TextChunk],
+    evidence_spans: &[EvidenceSpan],
+    entity_mentions: &[EntityMention],
+    search_index_records: &[SearchIndexRecord],
+    manifest: Option<&ExtractionArtifactManifest>,
+    artifacts: &[DocumentVersion],
+) {
+    for page in pages {
+        push_unique(ids, page.page_id.clone());
+    }
+    for chunk in text_chunks {
+        push_unique(ids, chunk.text_chunk_id.clone());
+    }
+    for span in evidence_spans {
+        push_unique(ids, span.evidence_span_id.clone());
+    }
+    for mention in entity_mentions {
+        push_unique(ids, mention.entity_mention_id.clone());
+    }
+    for record in search_index_records {
+        push_unique(ids, record.search_index_record_id.clone());
+    }
+    if let Some(manifest) = manifest {
+        push_unique(ids, manifest.manifest_id.clone());
+    }
+    for artifact in artifacts {
+        push_unique(ids, artifact.document_version_id.clone());
+        push_unique(ids, artifact.object_blob_id.clone());
+    }
+}
+
+fn document_is_indexed(document: &CaseDocument) -> bool {
+    document.facts_extracted > 0
+        || document
+            .source_spans
+            .iter()
+            .any(|span| span.extraction_method != "manual_entry")
+}
+
+fn document_needs_index(document: &CaseDocument) -> bool {
+    !document_is_indexed(document)
+        && matches!(
+            document.processing_status.as_str(),
+            "queued" | "processed" | "processing" | "failed"
+        )
+}
+
+fn document_can_attempt_index(document: &CaseDocument) -> bool {
+    document.storage_status == "stored"
+        && !matches!(
+            document.processing_status.as_str(),
+            "ocr_required" | "transcription_deferred" | "unsupported"
+        )
+}
+
+fn index_skip_message(document: &CaseDocument) -> String {
+    match document.processing_status.as_str() {
+        "ocr_required" => "OCR is required before this document can be indexed.".to_string(),
+        "transcription_deferred" => {
+            "Transcription is required before this media file can be indexed.".to_string()
+        }
+        "unsupported" => {
+            "This file type is not supported by the deterministic indexer.".to_string()
+        }
+        _ if document.storage_status != "stored" => {
+            "The source object is not stored yet, so indexing cannot start.".to_string()
+        }
+        _ => "Document does not need indexing.".to_string(),
+    }
+}
+
+fn build_matter_index_summary(
+    matter_id: &str,
+    documents: &[CaseDocument],
+    runs: &[IngestionRun],
+) -> MatterIndexSummary {
+    let mut processing_counts = BTreeMap::<String, u64>::new();
+    let mut storage_counts = BTreeMap::<String, u64>::new();
+    let mut folders = BTreeMap::<String, MatterIndexFolderSummary>::new();
+    let mut batches = BTreeMap::<String, MatterIndexUploadBatchSummary>::new();
+    let mut by_hash = BTreeMap::<String, Vec<&CaseDocument>>::new();
+    let mut extractable_pending_document_ids = Vec::new();
+
+    let mut indexed_documents = 0_u64;
+    let mut pending_documents = 0_u64;
+    let mut failed_documents = 0_u64;
+    let mut ocr_required_documents = 0_u64;
+    let mut transcription_deferred_documents = 0_u64;
+    let mut unsupported_documents = 0_u64;
+
+    for document in documents {
+        *processing_counts
+            .entry(document.processing_status.clone())
+            .or_default() += 1;
+        *storage_counts
+            .entry(document.storage_status.clone())
+            .or_default() += 1;
+
+        if document_is_indexed(document) {
+            indexed_documents += 1;
+        }
+        if document_needs_index(document) {
+            pending_documents += 1;
+        }
+        if document.processing_status == "failed" {
+            failed_documents += 1;
+        }
+        if document.processing_status == "ocr_required" {
+            ocr_required_documents += 1;
+        }
+        if document.processing_status == "transcription_deferred" {
+            transcription_deferred_documents += 1;
+        }
+        if document.processing_status == "unsupported" {
+            unsupported_documents += 1;
+        }
+        if document_can_attempt_index(document) && document_needs_index(document) {
+            extractable_pending_document_ids.push(document.document_id.clone());
+        }
+
+        let folder =
+            folders
+                .entry(document.folder.clone())
+                .or_insert_with(|| MatterIndexFolderSummary {
+                    folder: document.folder.clone(),
+                    count: 0,
+                    indexed: 0,
+                    pending: 0,
+                    failed: 0,
+                });
+        folder.count += 1;
+        if document_is_indexed(document) {
+            folder.indexed += 1;
+        }
+        if document_needs_index(document) {
+            folder.pending += 1;
+        }
+        if document.processing_status == "failed" {
+            folder.failed += 1;
+        }
+
+        if let Some(batch_id) = document.upload_batch_id.as_deref() {
+            let batch = batches.entry(batch_id.to_string()).or_insert_with(|| {
+                MatterIndexUploadBatchSummary {
+                    upload_batch_id: batch_id.to_string(),
+                    count: 0,
+                    indexed: 0,
+                    pending: 0,
+                    failed: 0,
+                }
+            });
+            batch.count += 1;
+            if document_is_indexed(document) {
+                batch.indexed += 1;
+            }
+            if document_needs_index(document) {
+                batch.pending += 1;
+            }
+            if document.processing_status == "failed" {
+                batch.failed += 1;
+            }
+        }
+
+        if let Some(hash) = document.file_hash.as_deref() {
+            by_hash.entry(hash.to_string()).or_default().push(document);
+        }
+    }
+
+    let duplicate_groups = by_hash
+        .into_iter()
+        .filter_map(|(file_hash, group)| {
+            (group.len() > 1).then(|| MatterIndexDuplicateGroup {
+                file_hash,
+                count: group.len() as u64,
+                document_ids: group
+                    .iter()
+                    .map(|document| document.document_id.clone())
+                    .collect(),
+                filenames: group
+                    .iter()
+                    .map(|document| document.filename.clone())
+                    .collect(),
+            })
+        })
+        .collect();
+
+    let mut recent_ingestion_runs = runs.to_vec();
+    recent_ingestion_runs.sort_by(|left, right| right.started_at.cmp(&left.started_at));
+    recent_ingestion_runs.truncate(20);
+
+    MatterIndexSummary {
+        matter_id: matter_id.to_string(),
+        total_documents: documents.len() as u64,
+        indexed_documents,
+        pending_documents,
+        extractable_pending_documents: extractable_pending_document_ids.len() as u64,
+        failed_documents,
+        ocr_required_documents,
+        transcription_deferred_documents,
+        unsupported_documents,
+        processing_status_counts: processing_counts
+            .into_iter()
+            .map(|(status, count)| MatterIndexStatusCount { status, count })
+            .collect(),
+        storage_status_counts: storage_counts
+            .into_iter()
+            .map(|(status, count)| MatterIndexStatusCount { status, count })
+            .collect(),
+        duplicate_groups,
+        folders: folders.into_values().collect(),
+        upload_batches: batches.into_values().collect(),
+        recent_ingestion_runs,
+        extractable_pending_document_ids,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upload_relative_paths_are_relative_and_private() {
+        assert_eq!(
+            normalize_upload_relative_path(Some("Evidence/Receipts/rent.txt".to_string()))
+                .unwrap()
+                .as_deref(),
+            Some("Evidence/Receipts/rent.txt")
+        );
+        assert!(normalize_upload_relative_path(Some("../secret.txt".to_string())).is_err());
+        assert!(normalize_upload_relative_path(Some("/tmp/secret.txt".to_string())).is_err());
+        assert!(normalize_upload_relative_path(Some("C:/secret.txt".to_string())).is_err());
+    }
+
+    #[test]
+    fn matter_index_summary_counts_batches_duplicates_and_extractable_docs() {
+        let docs = vec![
+            test_document(
+                "doc:1",
+                "rent.txt",
+                "processed",
+                2,
+                Some("sha256:one"),
+                Some("batch:1"),
+            ),
+            test_document(
+                "doc:2",
+                "notice.txt",
+                "processed",
+                0,
+                Some("sha256:dup"),
+                Some("batch:1"),
+            ),
+            test_document(
+                "doc:3",
+                "notice-copy.txt",
+                "queued",
+                0,
+                Some("sha256:dup"),
+                Some("batch:1"),
+            ),
+            test_document(
+                "doc:4",
+                "scan.png",
+                "ocr_required",
+                0,
+                Some("sha256:image"),
+                None,
+            ),
+        ];
+
+        let summary = build_matter_index_summary("matter:test", &docs, &[]);
+
+        assert_eq!(summary.total_documents, 4);
+        assert_eq!(summary.indexed_documents, 1);
+        assert_eq!(summary.pending_documents, 2);
+        assert_eq!(summary.extractable_pending_documents, 2);
+        assert_eq!(summary.ocr_required_documents, 1);
+        assert_eq!(summary.duplicate_groups.len(), 1);
+        assert_eq!(summary.upload_batches[0].upload_batch_id, "batch:1");
+        assert_eq!(
+            summary.extractable_pending_document_ids,
+            vec!["doc:2".to_string(), "doc:3".to_string()]
+        );
+    }
+
+    #[test]
+    fn extraction_index_records_keep_hashes_offsets_and_search_refs() {
+        let context = SourceContext {
+            document_version_id: Some("version:doc_1:original".to_string()),
+            object_blob_id: Some("blob:sha256:abc".to_string()),
+            ingestion_run_id: Some("ingestion:doc_1:primary".to_string()),
+        };
+        let chunks = vec![ExtractedTextChunk {
+            chunk_id: "chunk:doc_1:1".to_string(),
+            document_id: "doc:1".to_string(),
+            page: 1,
+            text: "Tenant paid April rent.".to_string(),
+            document_version_id: context.document_version_id.clone(),
+            object_blob_id: context.object_blob_id.clone(),
+            source_span_id: Some("span:doc_1:chunk:1".to_string()),
+            byte_start: Some(4),
+            byte_end: Some(27),
+            char_start: Some(4),
+            char_end: Some(27),
+        }];
+
+        let (pages, text_chunks, evidence_spans, entity_mentions, search_records) =
+            build_extraction_index_records(
+                "matter:test",
+                "doc:1",
+                &chunks,
+                &context,
+                "index-run:doc_1:abc",
+            );
+
+        assert_eq!(pages[0].page_id, "page:doc_1:1");
+        assert_eq!(text_chunks[0].text_chunk_id, "chunk:doc_1:1");
+        assert!(text_chunks[0].text_hash.starts_with("sha256:"));
+        assert_eq!(text_chunks[0].byte_start, Some(4));
+        assert_eq!(evidence_spans[0].text_chunk_id.as_deref(), Some("chunk:doc_1:1"));
+        assert_eq!(search_records[0].index_name, "casebuilder_document_text");
+        assert_eq!(search_records[0].index_run_id.as_deref(), Some("index-run:doc_1:abc"));
+        assert!(entity_mentions.is_empty());
+    }
+
+    #[test]
+    fn document_index_artifact_keys_are_opaque() {
+        let document_id = "doc:Evidence/Client Uploads/Tenant Notice.pdf";
+        let version_id = artifact_version_id(document_id, "text.normalized.json", "sha256:abc123");
+        let key = document_version_object_key(
+            "matter:Blue Ox v Tenant",
+            document_id,
+            &version_id,
+            "sha256:abc123",
+            "json",
+        );
+
+        assert!(key.starts_with("casebuilder/matters/"));
+        assert!(key.ends_with(".json"));
+        assert!(!key.contains("Tenant Notice"));
+        assert!(!key.contains("Client Uploads"));
+        assert!(!key.contains("Blue Ox"));
+    }
+
+    fn test_document(
+        document_id: &str,
+        filename: &str,
+        processing_status: &str,
+        facts: u64,
+        hash: Option<&str>,
+        upload_batch_id: Option<&str>,
+    ) -> CaseDocument {
+        CaseDocument {
+            document_id: document_id.to_string(),
+            id: document_id.to_string(),
+            matter_id: "matter:test".to_string(),
+            filename: filename.to_string(),
+            title: filename.to_string(),
+            document_type: "evidence".to_string(),
+            mime_type: Some("text/plain".to_string()),
+            pages: 1,
+            bytes: 10,
+            file_hash: hash.map(str::to_string),
+            uploaded_at: "1".to_string(),
+            source: "user_upload".to_string(),
+            confidentiality: "private".to_string(),
+            processing_status: processing_status.to_string(),
+            is_exhibit: false,
+            exhibit_label: None,
+            summary: String::new(),
+            date_observed: None,
+            parties_mentioned: Vec::new(),
+            entities_mentioned: Vec::new(),
+            facts_extracted: facts,
+            citations_found: 0,
+            contradictions_flagged: 0,
+            linked_claim_ids: Vec::new(),
+            folder: folder_from_relative_path(Some("Evidence/Receipts/rent.txt")).unwrap(),
+            storage_path: None,
+            storage_provider: "local".to_string(),
+            storage_status: "stored".to_string(),
+            storage_bucket: None,
+            storage_key: Some(format!(
+                "casebuilder/matters/m/documents/{document_id}/original.bin"
+            )),
+            content_etag: None,
+            upload_expires_at: None,
+            deleted_at: None,
+            original_relative_path: Some(format!("Evidence/{filename}")),
+            upload_batch_id: upload_batch_id.map(str::to_string),
+            object_blob_id: None,
+            current_version_id: None,
+            ingestion_run_ids: Vec::new(),
+            source_spans: Vec::new(),
+            extracted_text: None,
+        }
     }
 }

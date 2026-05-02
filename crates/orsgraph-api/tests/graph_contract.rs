@@ -1,4 +1,7 @@
-use orsgraph_api::models::casebuilder::{DocumentVersion, IngestionRun, ObjectBlob, SourceSpan};
+use orsgraph_api::models::casebuilder::{
+    DocumentVersion, EntityMention, EvidenceSpan, ExtractionArtifactManifest, IndexRun,
+    IngestionRun, ObjectBlob, Page, SearchIndexRecord, SourceSpan, TextChunk,
+};
 
 fn casebuilder_service_sources() -> String {
     [
@@ -170,11 +173,8 @@ fn statute_sidebar_routes_use_live_api_contracts_without_mock_fallbacks() {
     );
     assert!(frontend_api.contains("fetchApi<StatuteIndexApiResponse>(`/statutes?${params}`)"));
     assert!(frontend_api.contains("fetchApi<SidebarData>(\"/sidebar\")"));
-    assert!(
-        frontend_api.contains(
-            "fetchApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)"
-        )
-    );
+    assert!(frontend_api
+        .contains("fetchApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)"));
     assert!(frontend_api.contains("apiFailureState(\"/statutes\""));
     assert!(frontend_api.contains("apiFailureState(\"/sidebar\", null"));
     assert!(statute_page.contains("state.source === \"empty\""));
@@ -233,6 +233,8 @@ fn casebuilder_routes_cover_v0_contracts() {
         "/matters/:matter_id",
         "/matters/:matter_id/graph",
         "/matters/:matter_id/audit",
+        "/matters/:matter_id/index",
+        "/matters/:matter_id/index/run",
         "/matters/:matter_id/qc/run",
         "/matters/:matter_id/issues/spot",
         "/matters/:matter_id/files",
@@ -362,6 +364,21 @@ fn casebuilder_constraints_cover_core_graph_nodes() {
         "casebuilder_document_version_id",
         "casebuilder_ingestion_run_id",
         "casebuilder_source_span_id",
+        "casebuilder_index_run_id",
+        "casebuilder_page_id",
+        "casebuilder_text_chunk_id",
+        "casebuilder_evidence_span_id",
+        "casebuilder_entity_mention_id",
+        "casebuilder_search_index_record_id",
+        "casebuilder_extraction_artifact_manifest_id",
+        "casebuilder_index_run_matter",
+        "casebuilder_page_document",
+        "casebuilder_text_chunk_document",
+        "casebuilder_text_chunk_status",
+        "casebuilder_evidence_span_document",
+        "casebuilder_entity_mention_document",
+        "casebuilder_search_index_record_document",
+        "casebuilder_extraction_artifact_manifest_document",
         "casebuilder_document_annotation_id",
         "casebuilder_document_annotation_document",
         "casebuilder_transcription_job_id",
@@ -404,6 +421,7 @@ fn casebuilder_constraints_cover_core_graph_nodes() {
         "casebuilder_ai_edit_audit_id",
         "casebuilder_milestone_id",
         "casebuilder_complaint_fulltext",
+        "casebuilder_text_chunk_fulltext",
         "casebuilder_work_product_fulltext",
     ] {
         assert!(
@@ -984,6 +1002,13 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "struct DocumentVersion",
         "struct IngestionRun",
         "struct SourceSpan",
+        "struct IndexRun",
+        "struct Page",
+        "struct TextChunk",
+        "struct EvidenceSpan",
+        "struct EntityMention",
+        "struct SearchIndexRecord",
+        "struct ExtractionArtifactManifest",
         "struct TranscriptionJob",
         "struct TranscriptSegment",
         "struct TranscriptSpeaker",
@@ -999,6 +1024,12 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "struct WorkProductSentence",
         "struct ExportPackage",
         "struct AuditEvent",
+        "struct MatterIndexSummary",
+        "struct MatterIndexRunResponse",
+        "index_artifacts",
+        "artifact_manifest",
+        "original_relative_path",
+        "upload_batch_id",
         "parser_version",
         "citation_resolver_version",
         "index_version",
@@ -1014,6 +1045,13 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "interface DocumentVersion",
         "interface IngestionRun",
         "interface SourceSpan",
+        "interface IndexRun",
+        "interface Page",
+        "interface TextChunk",
+        "interface EvidenceSpan",
+        "interface EntityMention",
+        "interface SearchIndexRecord",
+        "interface ExtractionArtifactManifest",
         "interface TranscriptionJob",
         "interface TranscriptSegment",
         "interface TranscriptSpeaker",
@@ -1029,6 +1067,10 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "interface WorkProductSentence",
         "interface ExportPackage",
         "interface AuditEvent",
+        "interface MatterIndexSummary",
+        "interface MatterIndexRunResponse",
+        "original_relative_path",
+        "upload_batch_id",
         "parser_version",
         "citation_resolver_version",
         "index_version",
@@ -1043,6 +1085,13 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "normalizeDocumentVersion",
         "normalizeIngestionRun",
         "normalizeSourceSpan",
+        "normalizeIndexRun",
+        "normalizeIndexPage",
+        "normalizeTextChunk",
+        "normalizeEvidenceSpan",
+        "normalizeEntityMention",
+        "normalizeSearchIndexRecord",
+        "normalizeExtractionArtifactManifest",
         "normalizeTranscriptionJobResponse",
         "normalizeTranscriptSegment",
         "normalizeCaseGraphResponse",
@@ -1050,13 +1099,103 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "normalizeQcRun",
         "normalizeExportPackage",
         "normalizeAuditEvent",
+        "normalizeMatterIndexSummary",
+        "normalizeMatterIndexRunResponse",
         "source_spans",
         "ingestion_run",
+        "index_run",
         "document_version",
     ] {
         assert!(
             frontend_api.contains(expected),
             "missing frontend provenance normalizer/reference {expected}"
+        );
+    }
+}
+
+#[test]
+fn casebuilder_indexing_data_model_and_storage_are_object_backed() {
+    let backend_models = include_str!("../src/models/casebuilder.rs");
+    let backend_service = casebuilder_service_sources();
+    let frontend_types = include_str!("../../../frontend/lib/casebuilder/types.ts");
+    let frontend_api = include_str!("../../../frontend/lib/casebuilder/api.ts");
+
+    for expected in [
+        "struct IndexRun",
+        "struct Page",
+        "struct TextChunk",
+        "struct EvidenceSpan",
+        "struct EntityMention",
+        "struct SearchIndexRecord",
+        "struct ExtractionArtifactManifest",
+        "normalized_text_version_id",
+        "pages_version_id",
+        "manifest_version_id",
+        "produced_object_keys",
+    ] {
+        assert!(
+            backend_models.contains(expected),
+            "missing backend indexing model {expected}"
+        );
+    }
+
+    for expected in [
+        "store_extraction_index_artifacts",
+        "text.normalized.json",
+        "pages.json",
+        "manifest.json",
+        "casebuilder_indexer",
+        "merge_index_run",
+        "merge_page",
+        "merge_text_chunk",
+        "merge_evidence_span",
+        "merge_entity_mention",
+        "merge_search_index_record",
+        "merge_extraction_artifact_manifest",
+        "completed_ingestion_run_with_objects",
+        "document_version_object_key",
+        "hex_prefix(document_id.as_bytes(), 24)",
+        "HAS_INDEX_RUN",
+        "HAS_TEXT_CHUNK",
+        "HAS_EXTRACTION_MANIFEST",
+        "INDEXED_AS",
+    ] {
+        assert!(
+            backend_service.contains(expected),
+            "missing object-backed indexing behavior {expected}"
+        );
+    }
+
+    for expected in [
+        "interface IndexRun",
+        "interface Page",
+        "interface TextChunk",
+        "interface EvidenceSpan",
+        "interface EntityMention",
+        "interface SearchIndexRecord",
+        "interface ExtractionArtifactManifest",
+    ] {
+        assert!(
+            frontend_types.contains(expected),
+            "missing frontend indexing type {expected}"
+        );
+    }
+
+    for expected in [
+        "normalizeIndexRun",
+        "normalizeIndexPage",
+        "normalizeTextChunk",
+        "normalizeEvidenceSpan",
+        "normalizeEntityMention",
+        "normalizeSearchIndexRecord",
+        "normalizeExtractionArtifactManifest",
+        "index_artifacts",
+        "artifact_manifest",
+        "search_index_records",
+    ] {
+        assert!(
+            frontend_api.contains(expected),
+            "missing frontend indexing normalizer/reference {expected}"
         );
     }
 }
@@ -1143,12 +1282,166 @@ fn casebuilder_provenance_dtos_serialize_with_matter_safe_ids() {
         review_status: "unreviewed".to_string(),
         unavailable_reason: None,
     };
+    let index_run = IndexRun {
+        index_run_id: "index-run:doc_opaque:abc".to_string(),
+        id: "index-run:doc_opaque:abc".to_string(),
+        matter_id: "matter:test".to_string(),
+        document_id: "doc:opaque".to_string(),
+        document_version_id: Some(version.document_version_id.clone()),
+        object_blob_id: Some(blob.object_blob_id.clone()),
+        ingestion_run_id: Some(run.ingestion_run_id.clone()),
+        status: "review_ready".to_string(),
+        stage: "graph_persisted".to_string(),
+        mode: "deterministic".to_string(),
+        started_at: "1".to_string(),
+        completed_at: Some("2".to_string()),
+        error_code: None,
+        error_message: None,
+        retryable: false,
+        parser_id: Some("casebuilder-parser-registry".to_string()),
+        parser_version: Some("casebuilder-parser-registry-v1".to_string()),
+        chunker_version: Some("casebuilder-line-chunker-v1".to_string()),
+        citation_resolver_version: Some("casebuilder-citation-resolver-v1".to_string()),
+        index_version: Some("casebuilder-case-graph-index-v1".to_string()),
+        produced_node_ids: vec![
+            "page:doc_opaque:1".to_string(),
+            "chunk:doc_opaque:1".to_string(),
+        ],
+        produced_object_keys: vec![
+            "casebuilder/matters/m/documents/d/versions/v/hash.json".to_string(),
+        ],
+        stale: false,
+    };
+    let page = Page {
+        page_id: "page:doc_opaque:1".to_string(),
+        id: "page:doc_opaque:1".to_string(),
+        matter_id: "matter:test".to_string(),
+        document_id: "doc:opaque".to_string(),
+        document_version_id: Some(version.document_version_id.clone()),
+        object_blob_id: Some(blob.object_blob_id.clone()),
+        ingestion_run_id: Some(run.ingestion_run_id.clone()),
+        index_run_id: Some(index_run.index_run_id.clone()),
+        page_number: 1,
+        unit_type: "logical_text_page".to_string(),
+        title: Some("Page 1".to_string()),
+        text_hash: Some("sha256:text".to_string()),
+        byte_start: Some(0),
+        byte_end: Some(10),
+        char_start: Some(0),
+        char_end: Some(10),
+        status: "indexed".to_string(),
+    };
+    let text_chunk = TextChunk {
+        text_chunk_id: "chunk:doc_opaque:1".to_string(),
+        id: "chunk:doc_opaque:1".to_string(),
+        matter_id: "matter:test".to_string(),
+        document_id: "doc:opaque".to_string(),
+        document_version_id: Some(version.document_version_id.clone()),
+        object_blob_id: Some(blob.object_blob_id.clone()),
+        page_id: Some(page.page_id.clone()),
+        source_span_id: Some(span.source_span_id.clone()),
+        ingestion_run_id: Some(run.ingestion_run_id.clone()),
+        index_run_id: Some(index_run.index_run_id.clone()),
+        ordinal: 1,
+        page: 1,
+        text_hash: "sha256:text".to_string(),
+        text_excerpt: "short text".to_string(),
+        token_count: 2,
+        byte_start: Some(0),
+        byte_end: Some(10),
+        char_start: Some(0),
+        char_end: Some(10),
+        status: "indexed".to_string(),
+    };
+    let evidence_span = EvidenceSpan {
+        evidence_span_id: "evidence-span:doc_opaque:1".to_string(),
+        id: "evidence-span:doc_opaque:1".to_string(),
+        matter_id: "matter:test".to_string(),
+        document_id: "doc:opaque".to_string(),
+        document_version_id: Some(version.document_version_id.clone()),
+        object_blob_id: Some(blob.object_blob_id.clone()),
+        text_chunk_id: Some(text_chunk.text_chunk_id.clone()),
+        source_span_id: Some(span.source_span_id.clone()),
+        ingestion_run_id: Some(run.ingestion_run_id.clone()),
+        index_run_id: Some(index_run.index_run_id.clone()),
+        quote_hash: "sha256:text".to_string(),
+        quote_excerpt: "short text".to_string(),
+        byte_start: Some(0),
+        byte_end: Some(10),
+        char_start: Some(0),
+        char_end: Some(10),
+        review_status: "unreviewed".to_string(),
+    };
+    let entity_mention = EntityMention {
+        entity_mention_id: "entity-mention:doc_opaque:1".to_string(),
+        id: "entity-mention:doc_opaque:1".to_string(),
+        matter_id: "matter:test".to_string(),
+        document_id: "doc:opaque".to_string(),
+        text_chunk_id: Some(text_chunk.text_chunk_id.clone()),
+        source_span_id: Some(span.source_span_id.clone()),
+        mention_text: "Acme".to_string(),
+        entity_type: "organization".to_string(),
+        confidence: 0.5,
+        byte_start: None,
+        byte_end: None,
+        char_start: None,
+        char_end: None,
+        review_status: "unreviewed".to_string(),
+    };
+    let search_record = SearchIndexRecord {
+        search_index_record_id: "search-index:doc_opaque:1".to_string(),
+        id: "search-index:doc_opaque:1".to_string(),
+        matter_id: "matter:test".to_string(),
+        document_id: "doc:opaque".to_string(),
+        document_version_id: Some(version.document_version_id.clone()),
+        text_chunk_id: Some(text_chunk.text_chunk_id.clone()),
+        index_run_id: Some(index_run.index_run_id.clone()),
+        index_name: "casebuilder_document_text".to_string(),
+        index_type: "fulltext".to_string(),
+        index_version: "casebuilder-case-graph-index-v1".to_string(),
+        status: "indexed".to_string(),
+        stale: false,
+        created_at: "1".to_string(),
+        indexed_at: Some("2".to_string()),
+    };
+    let manifest = ExtractionArtifactManifest {
+        manifest_id: "extraction-manifest:doc_opaque:abc".to_string(),
+        id: "extraction-manifest:doc_opaque:abc".to_string(),
+        matter_id: "matter:test".to_string(),
+        document_id: "doc:opaque".to_string(),
+        document_version_id: Some(version.document_version_id.clone()),
+        object_blob_id: Some(blob.object_blob_id.clone()),
+        ingestion_run_id: Some(run.ingestion_run_id.clone()),
+        index_run_id: Some(index_run.index_run_id.clone()),
+        normalized_text_version_id: Some("version:doc_opaque:text.normalized".to_string()),
+        pages_version_id: Some("version:doc_opaque:pages".to_string()),
+        manifest_version_id: Some("version:doc_opaque:manifest".to_string()),
+        text_sha256: "sha256:text".to_string(),
+        pages_sha256: Some("sha256:pages".to_string()),
+        manifest_sha256: Some("sha256:manifest".to_string()),
+        page_ids: vec![page.page_id.clone()],
+        text_chunk_ids: vec![text_chunk.text_chunk_id.clone()],
+        evidence_span_ids: vec![evidence_span.evidence_span_id.clone()],
+        entity_mention_ids: vec![entity_mention.entity_mention_id.clone()],
+        search_index_record_ids: vec![search_record.search_index_record_id.clone()],
+        produced_object_keys: vec![
+            "casebuilder/matters/m/documents/d/versions/v/hash.json".to_string(),
+        ],
+        created_at: "1".to_string(),
+    };
 
     let payload = serde_json::json!({
         "blob": blob,
         "version": version,
         "run": run,
         "span": span,
+        "index_run": index_run,
+        "page": page,
+        "text_chunk": text_chunk,
+        "evidence_span": evidence_span,
+        "entity_mention": entity_mention,
+        "search_record": search_record,
+        "manifest": manifest,
     });
     let text = serde_json::to_string(&payload).expect("provenance DTOs serialize");
     assert!(text.contains("\"matter_id\":\"matter:test\""));

@@ -50,14 +50,24 @@ import type {
   Draft,
   DraftParagraph,
   DraftSection,
+  EntityMention,
+  EvidenceSpan,
+  ExtractionArtifactManifest,
   ExtractedFact,
   IngestionRun,
+  IndexRun,
   IssueSpotResponse,
   Matter,
+  MatterIndexRunDocumentResult,
+  MatterIndexRunResponse,
+  MatterIndexSummary,
   MatterParty,
   MatterSummary,
+  Page,
   QcRun,
+  SearchIndexRecord,
   SourceSpan,
+  TextChunk,
   TimelineEvent,
   TranscriptionJob,
   TranscriptionJobResponse,
@@ -133,6 +143,8 @@ export interface UploadTextFileInput {
   document_type?: string
   folder?: string
   confidentiality?: string
+  relative_path?: string
+  upload_batch_id?: string
 }
 
 export interface CreateFileUploadInput {
@@ -142,6 +154,8 @@ export interface CreateFileUploadInput {
   document_type?: string
   folder?: string
   confidentiality?: string
+  relative_path?: string
+  upload_batch_id?: string
   sha256?: string
 }
 
@@ -193,8 +207,21 @@ export interface ExtractDocumentResponse {
   }>
   proposed_facts: ExtractedFact[]
   ingestion_run?: IngestionRun | null
+  index_run?: IndexRun | null
   document_version?: DocumentVersion | null
+  index_artifacts: DocumentVersion[]
+  artifact_manifest?: ExtractionArtifactManifest | null
+  pages: Page[]
+  text_chunks: TextChunk[]
+  evidence_spans: EvidenceSpan[]
+  entity_mentions: EntityMention[]
+  search_index_records: SearchIndexRecord[]
   source_spans: SourceSpan[]
+}
+
+export interface RunMatterIndexInput {
+  document_ids?: string[]
+  limit?: number
 }
 
 export interface SaveDocumentTextInput {
@@ -730,6 +757,8 @@ export async function uploadBinaryFile(
     if (input.document_type) form.append("document_type", input.document_type)
     if (input.folder) form.append("folder", input.folder)
     if (input.confidentiality) form.append("confidentiality", input.confidentiality)
+    if (input.relative_path) form.append("relative_path", input.relative_path)
+    if (input.upload_batch_id) form.append("upload_batch_id", input.upload_batch_id)
     return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/files/binary`, {
       method: "POST",
       body: form,
@@ -757,6 +786,23 @@ export function createDocumentDownloadUrl(
       },
     },
   )
+}
+
+export function getMatterIndexSummary(matterId: string): Promise<ActionState<MatterIndexSummary>> {
+  return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/index`, {
+    normalize: normalizeMatterIndexSummary,
+  })
+}
+
+export function runMatterIndex(
+  matterId: string,
+  input: RunMatterIndexInput = {},
+): Promise<ActionState<MatterIndexRunResponse>> {
+  return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/index/run`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    normalize: normalizeMatterIndexRunResponse,
+  })
 }
 
 export async function getDocumentWorkspace(
@@ -894,7 +940,15 @@ export function extractDocument(
           chunks: array(response.chunks).map(normalizeExtractionChunk),
           proposed_facts: array(response.proposed_facts).map(normalizeFact),
           ingestion_run: response.ingestion_run ? normalizeIngestionRun(response.ingestion_run) : null,
+          index_run: response.index_run ? normalizeIndexRun(response.index_run) : null,
           document_version: response.document_version ? normalizeDocumentVersion(response.document_version) : null,
+          index_artifacts: array(response.index_artifacts, response.indexArtifacts).map(normalizeDocumentVersion),
+          artifact_manifest: response.artifact_manifest || response.artifactManifest ? normalizeExtractionArtifactManifest(response.artifact_manifest ?? response.artifactManifest) : null,
+          pages: array(response.pages).map(normalizeIndexPage),
+          text_chunks: array(response.text_chunks, response.textChunks).map(normalizeTextChunk),
+          evidence_spans: array(response.evidence_spans, response.evidenceSpans).map(normalizeEvidenceSpan),
+          entity_mentions: array(response.entity_mentions, response.entityMentions).map(normalizeEntityMention),
+          search_index_records: array(response.search_index_records, response.searchIndexRecords).map(normalizeSearchIndexRecord),
           source_spans: array(response.source_spans).map(normalizeSourceSpan),
         }
       },
@@ -2671,6 +2725,8 @@ function normalizeDocument(input: any): CaseDocument {
     content_etag: input.content_etag ?? input.contentEtag ?? null,
     upload_expires_at: input.upload_expires_at ?? input.uploadExpiresAt ?? null,
     deleted_at: input.deleted_at ?? input.deletedAt ?? null,
+    original_relative_path: input.original_relative_path ?? input.originalRelativePath ?? null,
+    upload_batch_id: input.upload_batch_id ?? input.uploadBatchId ?? null,
     object_blob_id: input.object_blob_id ?? input.objectBlobId ?? null,
     current_version_id: input.current_version_id ?? input.currentVersionId ?? null,
     ingestion_run_ids: array(input.ingestion_run_ids, input.ingestionRunIds),
@@ -2907,6 +2963,237 @@ function normalizeIngestionRun(input: any): IngestionRun {
     chunker_version: input.chunker_version ?? input.chunkerVersion ?? null,
     citation_resolver_version: input.citation_resolver_version ?? input.citationResolverVersion ?? null,
     index_version: input.index_version ?? input.indexVersion ?? null,
+  }
+}
+
+function normalizeIndexRun(input: any): IndexRun {
+  return {
+    ...input,
+    id: string(input.id, input.index_run_id),
+    index_run_id: string(input.index_run_id, input.id),
+    matter_id: string(input.matter_id),
+    document_id: string(input.document_id),
+    document_version_id: input.document_version_id ?? input.documentVersionId ?? null,
+    object_blob_id: input.object_blob_id ?? input.objectBlobId ?? null,
+    ingestion_run_id: input.ingestion_run_id ?? input.ingestionRunId ?? null,
+    status: string(input.status, "queued"),
+    stage: string(input.stage, "queued"),
+    mode: string(input.mode, "deterministic"),
+    started_at: string(input.started_at, input.startedAt),
+    completed_at: input.completed_at ?? input.completedAt ?? null,
+    error_code: input.error_code ?? input.errorCode ?? null,
+    error_message: input.error_message ?? input.errorMessage ?? null,
+    retryable: Boolean(input.retryable),
+    parser_id: input.parser_id ?? input.parserId ?? null,
+    parser_version: input.parser_version ?? input.parserVersion ?? null,
+    chunker_version: input.chunker_version ?? input.chunkerVersion ?? null,
+    citation_resolver_version: input.citation_resolver_version ?? input.citationResolverVersion ?? null,
+    index_version: input.index_version ?? input.indexVersion ?? null,
+    produced_node_ids: array(input.produced_node_ids, input.producedNodeIds),
+    produced_object_keys: array(input.produced_object_keys, input.producedObjectKeys),
+    stale: Boolean(input.stale),
+  }
+}
+
+function normalizeIndexPage(input: any): Page {
+  return {
+    ...input,
+    id: string(input.id, input.page_id),
+    page_id: string(input.page_id, input.id),
+    matter_id: string(input.matter_id),
+    document_id: string(input.document_id),
+    document_version_id: input.document_version_id ?? input.documentVersionId ?? null,
+    object_blob_id: input.object_blob_id ?? input.objectBlobId ?? null,
+    ingestion_run_id: input.ingestion_run_id ?? input.ingestionRunId ?? null,
+    index_run_id: input.index_run_id ?? input.indexRunId ?? null,
+    page_number: number(input.page_number, input.pageNumber, input.page),
+    unit_type: string(input.unit_type, input.unitType, "logical_text_page"),
+    title: input.title ?? null,
+    text_hash: input.text_hash ?? input.textHash ?? null,
+    byte_start: nullableNumber(input.byte_start, input.byteStart),
+    byte_end: nullableNumber(input.byte_end, input.byteEnd),
+    char_start: nullableNumber(input.char_start, input.charStart),
+    char_end: nullableNumber(input.char_end, input.charEnd),
+    status: string(input.status, "indexed"),
+  }
+}
+
+function normalizeTextChunk(input: any): TextChunk {
+  return {
+    ...input,
+    id: string(input.id, input.text_chunk_id),
+    text_chunk_id: string(input.text_chunk_id, input.id, input.chunk_id),
+    matter_id: string(input.matter_id),
+    document_id: string(input.document_id),
+    document_version_id: input.document_version_id ?? input.documentVersionId ?? null,
+    object_blob_id: input.object_blob_id ?? input.objectBlobId ?? null,
+    page_id: input.page_id ?? input.pageId ?? null,
+    source_span_id: input.source_span_id ?? input.sourceSpanId ?? null,
+    ingestion_run_id: input.ingestion_run_id ?? input.ingestionRunId ?? null,
+    index_run_id: input.index_run_id ?? input.indexRunId ?? null,
+    ordinal: number(input.ordinal),
+    page: number(input.page),
+    text_hash: string(input.text_hash, input.textHash),
+    text_excerpt: string(input.text_excerpt, input.textExcerpt, input.text),
+    token_count: number(input.token_count, input.tokenCount),
+    byte_start: nullableNumber(input.byte_start, input.byteStart),
+    byte_end: nullableNumber(input.byte_end, input.byteEnd),
+    char_start: nullableNumber(input.char_start, input.charStart),
+    char_end: nullableNumber(input.char_end, input.charEnd),
+    status: string(input.status, "indexed"),
+  }
+}
+
+function normalizeEvidenceSpan(input: any): EvidenceSpan {
+  return {
+    ...input,
+    id: string(input.id, input.evidence_span_id),
+    evidence_span_id: string(input.evidence_span_id, input.id),
+    matter_id: string(input.matter_id),
+    document_id: string(input.document_id),
+    document_version_id: input.document_version_id ?? input.documentVersionId ?? null,
+    object_blob_id: input.object_blob_id ?? input.objectBlobId ?? null,
+    text_chunk_id: input.text_chunk_id ?? input.textChunkId ?? null,
+    source_span_id: input.source_span_id ?? input.sourceSpanId ?? null,
+    ingestion_run_id: input.ingestion_run_id ?? input.ingestionRunId ?? null,
+    index_run_id: input.index_run_id ?? input.indexRunId ?? null,
+    quote_hash: string(input.quote_hash, input.quoteHash),
+    quote_excerpt: string(input.quote_excerpt, input.quoteExcerpt, input.quote),
+    byte_start: nullableNumber(input.byte_start, input.byteStart),
+    byte_end: nullableNumber(input.byte_end, input.byteEnd),
+    char_start: nullableNumber(input.char_start, input.charStart),
+    char_end: nullableNumber(input.char_end, input.charEnd),
+    review_status: string(input.review_status, input.reviewStatus, "unreviewed"),
+  }
+}
+
+function normalizeEntityMention(input: any): EntityMention {
+  return {
+    ...input,
+    id: string(input.id, input.entity_mention_id),
+    entity_mention_id: string(input.entity_mention_id, input.id),
+    matter_id: string(input.matter_id),
+    document_id: string(input.document_id),
+    text_chunk_id: input.text_chunk_id ?? input.textChunkId ?? null,
+    source_span_id: input.source_span_id ?? input.sourceSpanId ?? null,
+    mention_text: string(input.mention_text, input.mentionText),
+    entity_type: string(input.entity_type, input.entityType, "unknown"),
+    confidence: number(input.confidence),
+    byte_start: nullableNumber(input.byte_start, input.byteStart),
+    byte_end: nullableNumber(input.byte_end, input.byteEnd),
+    char_start: nullableNumber(input.char_start, input.charStart),
+    char_end: nullableNumber(input.char_end, input.charEnd),
+    review_status: string(input.review_status, input.reviewStatus, "unreviewed"),
+  }
+}
+
+function normalizeSearchIndexRecord(input: any): SearchIndexRecord {
+  return {
+    ...input,
+    id: string(input.id, input.search_index_record_id),
+    search_index_record_id: string(input.search_index_record_id, input.id),
+    matter_id: string(input.matter_id),
+    document_id: string(input.document_id),
+    document_version_id: input.document_version_id ?? input.documentVersionId ?? null,
+    text_chunk_id: input.text_chunk_id ?? input.textChunkId ?? null,
+    index_run_id: input.index_run_id ?? input.indexRunId ?? null,
+    index_name: string(input.index_name, input.indexName, "casebuilder_document_text"),
+    index_type: string(input.index_type, input.indexType, "fulltext"),
+    index_version: string(input.index_version, input.indexVersion),
+    status: string(input.status, "indexed"),
+    stale: Boolean(input.stale),
+    created_at: string(input.created_at, input.createdAt),
+    indexed_at: input.indexed_at ?? input.indexedAt ?? null,
+  }
+}
+
+function normalizeExtractionArtifactManifest(input: any): ExtractionArtifactManifest {
+  return {
+    ...input,
+    id: string(input.id, input.manifest_id),
+    manifest_id: string(input.manifest_id, input.id),
+    matter_id: string(input.matter_id),
+    document_id: string(input.document_id),
+    document_version_id: input.document_version_id ?? input.documentVersionId ?? null,
+    object_blob_id: input.object_blob_id ?? input.objectBlobId ?? null,
+    ingestion_run_id: input.ingestion_run_id ?? input.ingestionRunId ?? null,
+    index_run_id: input.index_run_id ?? input.indexRunId ?? null,
+    normalized_text_version_id: input.normalized_text_version_id ?? input.normalizedTextVersionId ?? null,
+    pages_version_id: input.pages_version_id ?? input.pagesVersionId ?? null,
+    manifest_version_id: input.manifest_version_id ?? input.manifestVersionId ?? null,
+    text_sha256: string(input.text_sha256, input.textSha256),
+    pages_sha256: input.pages_sha256 ?? input.pagesSha256 ?? null,
+    manifest_sha256: input.manifest_sha256 ?? input.manifestSha256 ?? null,
+    page_ids: array(input.page_ids, input.pageIds),
+    text_chunk_ids: array(input.text_chunk_ids, input.textChunkIds),
+    evidence_span_ids: array(input.evidence_span_ids, input.evidenceSpanIds),
+    entity_mention_ids: array(input.entity_mention_ids, input.entityMentionIds),
+    search_index_record_ids: array(input.search_index_record_ids, input.searchIndexRecordIds),
+    produced_object_keys: array(input.produced_object_keys, input.producedObjectKeys),
+    created_at: string(input.created_at, input.createdAt),
+  }
+}
+
+function normalizeMatterIndexSummary(input: any): MatterIndexSummary {
+  return {
+    matter_id: string(input.matter_id, input.matterId),
+    total_documents: number(input.total_documents, input.totalDocuments),
+    indexed_documents: number(input.indexed_documents, input.indexedDocuments),
+    pending_documents: number(input.pending_documents, input.pendingDocuments),
+    extractable_pending_documents: number(input.extractable_pending_documents, input.extractablePendingDocuments),
+    failed_documents: number(input.failed_documents, input.failedDocuments),
+    ocr_required_documents: number(input.ocr_required_documents, input.ocrRequiredDocuments),
+    transcription_deferred_documents: number(input.transcription_deferred_documents, input.transcriptionDeferredDocuments),
+    unsupported_documents: number(input.unsupported_documents, input.unsupportedDocuments),
+    processing_status_counts: array(input.processing_status_counts, input.processingStatusCounts).map((item: any) => ({
+      status: string(item.status),
+      count: number(item.count),
+    })),
+    storage_status_counts: array(input.storage_status_counts, input.storageStatusCounts).map((item: any) => ({
+      status: string(item.status),
+      count: number(item.count),
+    })),
+    duplicate_groups: array(input.duplicate_groups, input.duplicateGroups).map((group: any) => ({
+      file_hash: string(group.file_hash, group.fileHash),
+      count: number(group.count),
+      document_ids: array(group.document_ids, group.documentIds),
+      filenames: array(group.filenames),
+    })),
+    folders: array(input.folders).map((folder: any) => ({
+      folder: string(folder.folder, "Uploads"),
+      count: number(folder.count),
+      indexed: number(folder.indexed),
+      pending: number(folder.pending),
+      failed: number(folder.failed),
+    })),
+    upload_batches: array(input.upload_batches, input.uploadBatches).map((batch: any) => ({
+      upload_batch_id: string(batch.upload_batch_id, batch.uploadBatchId),
+      count: number(batch.count),
+      indexed: number(batch.indexed),
+      pending: number(batch.pending),
+      failed: number(batch.failed),
+    })),
+    recent_ingestion_runs: array(input.recent_ingestion_runs, input.recentIngestionRuns).map(normalizeIngestionRun),
+    extractable_pending_document_ids: array(input.extractable_pending_document_ids, input.extractablePendingDocumentIds),
+  }
+}
+
+function normalizeMatterIndexRunResponse(input: any): MatterIndexRunResponse {
+  return {
+    matter_id: string(input.matter_id, input.matterId),
+    requested: number(input.requested),
+    processed: number(input.processed),
+    skipped: number(input.skipped),
+    failed: number(input.failed),
+    results: array(input.results).map((result: any): MatterIndexRunDocumentResult => ({
+      document_id: string(result.document_id, result.documentId),
+      status: string(result.status, "skipped"),
+      extraction_status: result.extraction_status ?? result.extractionStatus ?? null,
+      message: string(result.message),
+      produced_chunks: number(result.produced_chunks, result.producedChunks),
+      produced_facts: number(result.produced_facts, result.producedFacts),
+    })),
+    summary: normalizeMatterIndexSummary(input.summary ?? {}),
   }
 }
 

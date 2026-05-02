@@ -55,6 +55,8 @@ async function main() {
   form.append("document_type", "evidence")
   form.append("folder", "Smoke")
   form.append("confidentiality", "private")
+  form.append("relative_path", "Smoke/Narratives/smoke-narrative.txt")
+  form.append("upload_batch_id", `smoke:${Date.now()}`)
 
   const document = await request(`/matters/${encodeURIComponent(matterId)}/files/binary`, {
     method: "POST",
@@ -62,13 +64,26 @@ async function main() {
   })
   assert(document.document_id, "binary upload returned document")
   assert(document.storage_status === "stored", "document stored")
+  assert(document.original_relative_path === "Smoke/Narratives/smoke-narrative.txt", "document preserved private relative path")
+
+  const indexRun = await request(`/matters/${encodeURIComponent(matterId)}/index/run`, {
+    method: "POST",
+    body: JSON.stringify({ document_ids: [document.document_id] }),
+  })
+  assert(indexRun.processed === 1, "matter index run processed uploaded document")
+  assert(indexRun.summary.indexed_documents >= 1, "matter index summary tracks indexed documents")
 
   const extraction = await request(
     `/matters/${encodeURIComponent(matterId)}/documents/${encodeURIComponent(document.document_id)}/extract`,
     { method: "POST" },
   )
-  assert(extraction.status === "processed", "document extracted")
+  assert(extraction.status === "processed", "document extraction remains readable after indexing")
   assert(extraction.proposed_facts?.length > 0, "proposed facts returned")
+  assert(extraction.source_spans?.length > 0, "source spans returned")
+  assert(extraction.index_run?.status === "review_ready", "index run provenance returned")
+  assert(extraction.artifact_manifest?.normalized_text_version_id, "artifact manifest references normalized text")
+  assert(extraction.index_artifacts?.some((artifact) => artifact.artifact_kind === "text.normalized.json"), "normalized text artifact stored")
+  assert(extraction.text_chunks?.length > 0, "index text chunks returned")
   const fact = extraction.proposed_facts[0]
 
   const approvedFact = await request(

@@ -346,6 +346,219 @@ export interface IngestionRun {
   index_version?: string | null
 }
 
+export interface IndexRun {
+  index_run_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  document_version_id?: string | null
+  object_blob_id?: string | null
+  ingestion_run_id?: string | null
+  status: "review_ready" | "failed" | "queued" | string
+  stage: string
+  mode: "deterministic" | "template" | "live" | "disabled" | string
+  started_at: string
+  completed_at?: string | null
+  error_code?: string | null
+  error_message?: string | null
+  retryable: boolean
+  parser_id?: string | null
+  parser_version?: string | null
+  chunker_version?: string | null
+  citation_resolver_version?: string | null
+  index_version?: string | null
+  produced_node_ids: string[]
+  produced_object_keys: string[]
+  stale: boolean
+}
+
+export interface Page {
+  page_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  document_version_id?: string | null
+  object_blob_id?: string | null
+  ingestion_run_id?: string | null
+  index_run_id?: string | null
+  page_number: number
+  unit_type: string
+  title?: string | null
+  text_hash?: string | null
+  byte_start?: number | null
+  byte_end?: number | null
+  char_start?: number | null
+  char_end?: number | null
+  status: string
+}
+
+export interface TextChunk {
+  text_chunk_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  document_version_id?: string | null
+  object_blob_id?: string | null
+  page_id?: string | null
+  source_span_id?: string | null
+  ingestion_run_id?: string | null
+  index_run_id?: string | null
+  ordinal: number
+  page: number
+  text_hash: string
+  text_excerpt: string
+  token_count: number
+  byte_start?: number | null
+  byte_end?: number | null
+  char_start?: number | null
+  char_end?: number | null
+  status: string
+}
+
+export interface EvidenceSpan {
+  evidence_span_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  document_version_id?: string | null
+  object_blob_id?: string | null
+  text_chunk_id?: string | null
+  source_span_id?: string | null
+  ingestion_run_id?: string | null
+  index_run_id?: string | null
+  quote_hash: string
+  quote_excerpt: string
+  byte_start?: number | null
+  byte_end?: number | null
+  char_start?: number | null
+  char_end?: number | null
+  review_status: "unreviewed" | "approved" | "rejected" | string
+}
+
+export interface EntityMention {
+  entity_mention_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  text_chunk_id?: string | null
+  source_span_id?: string | null
+  mention_text: string
+  entity_type: string
+  confidence: number
+  byte_start?: number | null
+  byte_end?: number | null
+  char_start?: number | null
+  char_end?: number | null
+  review_status: "unreviewed" | "approved" | "rejected" | string
+}
+
+export interface SearchIndexRecord {
+  search_index_record_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  document_version_id?: string | null
+  text_chunk_id?: string | null
+  index_run_id?: string | null
+  index_name: string
+  index_type: string
+  index_version: string
+  status: string
+  stale: boolean
+  created_at: string
+  indexed_at?: string | null
+}
+
+export interface ExtractionArtifactManifest {
+  manifest_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  document_version_id?: string | null
+  object_blob_id?: string | null
+  ingestion_run_id?: string | null
+  index_run_id?: string | null
+  normalized_text_version_id?: string | null
+  pages_version_id?: string | null
+  manifest_version_id?: string | null
+  text_sha256: string
+  pages_sha256?: string | null
+  manifest_sha256?: string | null
+  page_ids: string[]
+  text_chunk_ids: string[]
+  evidence_span_ids: string[]
+  entity_mention_ids: string[]
+  search_index_record_ids: string[]
+  produced_object_keys: string[]
+  created_at: string
+}
+
+export interface MatterIndexStatusCount {
+  status: string
+  count: number
+}
+
+export interface MatterIndexFolderSummary {
+  folder: string
+  count: number
+  indexed: number
+  pending: number
+  failed: number
+}
+
+export interface MatterIndexDuplicateGroup {
+  file_hash: string
+  count: number
+  document_ids: string[]
+  filenames: string[]
+}
+
+export interface MatterIndexUploadBatchSummary {
+  upload_batch_id: string
+  count: number
+  indexed: number
+  pending: number
+  failed: number
+}
+
+export interface MatterIndexSummary {
+  matter_id: string
+  total_documents: number
+  indexed_documents: number
+  pending_documents: number
+  extractable_pending_documents: number
+  failed_documents: number
+  ocr_required_documents: number
+  transcription_deferred_documents: number
+  unsupported_documents: number
+  processing_status_counts: MatterIndexStatusCount[]
+  storage_status_counts: MatterIndexStatusCount[]
+  duplicate_groups: MatterIndexDuplicateGroup[]
+  folders: MatterIndexFolderSummary[]
+  upload_batches: MatterIndexUploadBatchSummary[]
+  recent_ingestion_runs: IngestionRun[]
+  extractable_pending_document_ids: string[]
+}
+
+export interface MatterIndexRunDocumentResult {
+  document_id: string
+  status: "indexed" | "skipped" | "failed" | string
+  extraction_status?: string | null
+  message: string
+  produced_chunks: number
+  produced_facts: number
+}
+
+export interface MatterIndexRunResponse {
+  matter_id: string
+  requested: number
+  processed: number
+  skipped: number
+  failed: number
+  results: MatterIndexRunDocumentResult[]
+  summary: MatterIndexSummary
+}
+
 export interface ComplaintImportProvenance {
   document_id: string
   document_version_id?: string | null
@@ -753,6 +966,8 @@ export interface MatterDocument {
   content_etag?: string | null
   upload_expires_at?: string | null
   deleted_at?: string | null
+  original_relative_path?: string | null
+  upload_batch_id?: string | null
   object_blob_id?: string | null
   current_version_id?: string | null
   ingestion_run_ids?: string[]

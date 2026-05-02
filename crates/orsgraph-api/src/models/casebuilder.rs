@@ -317,6 +317,10 @@ pub struct CaseDocument {
     #[serde(default)]
     pub deleted_at: Option<String>,
     #[serde(default)]
+    pub original_relative_path: Option<String>,
+    #[serde(default)]
+    pub upload_batch_id: Option<String>,
+    #[serde(default)]
     pub object_blob_id: Option<String>,
     #[serde(default)]
     pub current_version_id: Option<String>,
@@ -421,6 +425,160 @@ pub struct SourceSpan {
     pub confidence: f32,
     pub review_status: String,
     pub unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct IndexRun {
+    pub index_run_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub document_version_id: Option<String>,
+    pub object_blob_id: Option<String>,
+    pub ingestion_run_id: Option<String>,
+    pub status: String,
+    pub stage: String,
+    pub mode: String,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub retryable: bool,
+    pub parser_id: Option<String>,
+    pub parser_version: Option<String>,
+    pub chunker_version: Option<String>,
+    pub citation_resolver_version: Option<String>,
+    pub index_version: Option<String>,
+    pub produced_node_ids: Vec<String>,
+    pub produced_object_keys: Vec<String>,
+    pub stale: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Page {
+    pub page_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub document_version_id: Option<String>,
+    pub object_blob_id: Option<String>,
+    pub ingestion_run_id: Option<String>,
+    pub index_run_id: Option<String>,
+    pub page_number: u64,
+    pub unit_type: String,
+    pub title: Option<String>,
+    pub text_hash: Option<String>,
+    pub byte_start: Option<u64>,
+    pub byte_end: Option<u64>,
+    pub char_start: Option<u64>,
+    pub char_end: Option<u64>,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TextChunk {
+    pub text_chunk_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub document_version_id: Option<String>,
+    pub object_blob_id: Option<String>,
+    pub page_id: Option<String>,
+    pub source_span_id: Option<String>,
+    pub ingestion_run_id: Option<String>,
+    pub index_run_id: Option<String>,
+    pub ordinal: u64,
+    pub page: u64,
+    pub text_hash: String,
+    pub text_excerpt: String,
+    pub token_count: u64,
+    pub byte_start: Option<u64>,
+    pub byte_end: Option<u64>,
+    pub char_start: Option<u64>,
+    pub char_end: Option<u64>,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EvidenceSpan {
+    pub evidence_span_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub document_version_id: Option<String>,
+    pub object_blob_id: Option<String>,
+    pub text_chunk_id: Option<String>,
+    pub source_span_id: Option<String>,
+    pub ingestion_run_id: Option<String>,
+    pub index_run_id: Option<String>,
+    pub quote_hash: String,
+    pub quote_excerpt: String,
+    pub byte_start: Option<u64>,
+    pub byte_end: Option<u64>,
+    pub char_start: Option<u64>,
+    pub char_end: Option<u64>,
+    pub review_status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EntityMention {
+    pub entity_mention_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub text_chunk_id: Option<String>,
+    pub source_span_id: Option<String>,
+    pub mention_text: String,
+    pub entity_type: String,
+    pub confidence: f32,
+    pub byte_start: Option<u64>,
+    pub byte_end: Option<u64>,
+    pub char_start: Option<u64>,
+    pub char_end: Option<u64>,
+    pub review_status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SearchIndexRecord {
+    pub search_index_record_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub document_version_id: Option<String>,
+    pub text_chunk_id: Option<String>,
+    pub index_run_id: Option<String>,
+    pub index_name: String,
+    pub index_type: String,
+    pub index_version: String,
+    pub status: String,
+    pub stale: bool,
+    pub created_at: String,
+    pub indexed_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExtractionArtifactManifest {
+    pub manifest_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub document_version_id: Option<String>,
+    pub object_blob_id: Option<String>,
+    pub ingestion_run_id: Option<String>,
+    pub index_run_id: Option<String>,
+    pub normalized_text_version_id: Option<String>,
+    pub pages_version_id: Option<String>,
+    pub manifest_version_id: Option<String>,
+    pub text_sha256: String,
+    pub pages_sha256: Option<String>,
+    pub manifest_sha256: Option<String>,
+    pub page_ids: Vec<String>,
+    pub text_chunk_ids: Vec<String>,
+    pub evidence_span_ids: Vec<String>,
+    pub entity_mention_ids: Vec<String>,
+    pub search_index_record_ids: Vec<String>,
+    pub produced_object_keys: Vec<String>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -811,6 +969,8 @@ pub struct UploadFileRequest {
     pub document_type: Option<String>,
     pub folder: Option<String>,
     pub confidentiality: Option<String>,
+    pub relative_path: Option<String>,
+    pub upload_batch_id: Option<String>,
     pub text: Option<String>,
 }
 
@@ -822,6 +982,8 @@ pub struct CreateFileUploadRequest {
     pub document_type: Option<String>,
     pub folder: Option<String>,
     pub confidentiality: Option<String>,
+    pub relative_path: Option<String>,
+    pub upload_batch_id: Option<String>,
     pub sha256: Option<String>,
 }
 
@@ -871,8 +1033,95 @@ pub struct DocumentExtractionResponse {
     pub chunks: Vec<ExtractedTextChunk>,
     pub proposed_facts: Vec<CaseFact>,
     pub ingestion_run: Option<IngestionRun>,
+    pub index_run: Option<IndexRun>,
     pub document_version: Option<DocumentVersion>,
+    pub index_artifacts: Vec<DocumentVersion>,
+    pub artifact_manifest: Option<ExtractionArtifactManifest>,
+    pub pages: Vec<Page>,
+    pub text_chunks: Vec<TextChunk>,
+    pub evidence_spans: Vec<EvidenceSpan>,
+    pub entity_mentions: Vec<EntityMention>,
+    pub search_index_records: Vec<SearchIndexRecord>,
     pub source_spans: Vec<SourceSpan>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MatterIndexStatusCount {
+    pub status: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MatterIndexFolderSummary {
+    pub folder: String,
+    pub count: u64,
+    pub indexed: u64,
+    pub pending: u64,
+    pub failed: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MatterIndexDuplicateGroup {
+    pub file_hash: String,
+    pub count: u64,
+    pub document_ids: Vec<String>,
+    pub filenames: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MatterIndexUploadBatchSummary {
+    pub upload_batch_id: String,
+    pub count: u64,
+    pub indexed: u64,
+    pub pending: u64,
+    pub failed: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MatterIndexSummary {
+    pub matter_id: String,
+    pub total_documents: u64,
+    pub indexed_documents: u64,
+    pub pending_documents: u64,
+    pub extractable_pending_documents: u64,
+    pub failed_documents: u64,
+    pub ocr_required_documents: u64,
+    pub transcription_deferred_documents: u64,
+    pub unsupported_documents: u64,
+    pub processing_status_counts: Vec<MatterIndexStatusCount>,
+    pub storage_status_counts: Vec<MatterIndexStatusCount>,
+    pub duplicate_groups: Vec<MatterIndexDuplicateGroup>,
+    pub folders: Vec<MatterIndexFolderSummary>,
+    pub upload_batches: Vec<MatterIndexUploadBatchSummary>,
+    pub recent_ingestion_runs: Vec<IngestionRun>,
+    pub extractable_pending_document_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RunMatterIndexRequest {
+    pub document_ids: Option<Vec<String>>,
+    pub limit: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MatterIndexRunDocumentResult {
+    pub document_id: String,
+    pub status: String,
+    pub extraction_status: Option<String>,
+    pub message: String,
+    pub produced_chunks: u64,
+    pub produced_facts: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MatterIndexRunResponse {
+    pub matter_id: String,
+    pub requested: u64,
+    pub processed: u64,
+    pub skipped: u64,
+    pub failed: u64,
+    pub results: Vec<MatterIndexRunDocumentResult>,
+    pub summary: MatterIndexSummary,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
