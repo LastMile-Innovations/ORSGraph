@@ -23,7 +23,7 @@ import {
   askAnswer as mockAskAnswer,
 } from './mock-data';
 import { getSourceById as getDemoSourceById, sourceIndex as demoSourceIndex } from "./mock-sources";
-import { orsApiBaseUrl } from "./ors-api-url";
+import { orsApiBaseUrl, orsAuthorityApiBaseUrl } from "./ors-api-url";
 import type { GraphFullParams, GraphNeighborhoodParams, GraphViewerResponse } from '@/components/graph/types';
 import {
   classifyApiFailureSource,
@@ -35,6 +35,7 @@ import {
 } from "./data-state";
 
 const API_BASE_URL = orsApiBaseUrl();
+const AUTHORITY_API_BASE_URL = orsAuthorityApiBaseUrl();
 const API_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_ORS_API_TIMEOUT_MS || 5000);
 const reportedFallbacks = new Set<string>();
 
@@ -72,13 +73,15 @@ export interface SearchParams {
   needs_review?: boolean
   primary_law?: boolean
   official_commentary?: boolean
+  rerank?: boolean
 }
 
 async function fetchApi<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  baseUrl: string = API_BASE_URL,
 ): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
+  const url = `${baseUrl}${endpoint}`;
   const controller = new AbortController();
   let timedOut = false;
   const timeout = setTimeout(() => {
@@ -96,7 +99,7 @@ async function fetchApi<T>(
 
   try {
     const response = await fetch(url, {
-      cache: 'no-store',
+      cache: options.cache ?? 'no-store',
       ...options,
       signal: controller.signal,
       headers: {
@@ -120,6 +123,21 @@ async function fetchApi<T>(
     clearTimeout(timeout);
     parentSignal?.removeEventListener("abort", abortFromParent);
   }
+}
+
+function fetchAuthorityApi<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  return fetchApi<T>(
+    endpoint,
+    {
+      ...options,
+      cache: options.cache ?? "force-cache",
+      headers: {
+        "x-ors-authority-cache": "1",
+        ...options.headers,
+      },
+    },
+    AUTHORITY_API_BASE_URL,
+  )
 }
 
 function isAbortError(error: unknown) {
@@ -172,7 +190,7 @@ export async function getHomePageData(): Promise<HomePageData> {
 
 export async function getHomePageState(): Promise<DataState<HomePageData>> {
   try {
-    return { source: "live", data: await fetchApi<HomePageData>('/home') };
+    return { source: "live", data: await fetchAuthorityApi<HomePageData>('/home') };
   } catch (error) {
     const source = classifyFallbackSource(error);
     return fallbackState(
@@ -219,7 +237,7 @@ export async function getGraphInsights(): Promise<GraphInsightCard[]> {
 
 export async function getGraphInsightsState(): Promise<DataState<GraphInsightCard[]>> {
   try {
-    return { source: "live", data: await fetchApi<GraphInsightCard[]>('/analytics/home') };
+    return { source: "live", data: await fetchAuthorityApi<GraphInsightCard[]>('/analytics/home') };
   } catch (error) {
     return fallbackState("/analytics/home", mockGraphInsights, error);
   }
@@ -231,7 +249,7 @@ export async function getFeaturedStatutes(): Promise<FeaturedStatute[]> {
 
 export async function getFeaturedStatutesState(): Promise<DataState<FeaturedStatute[]>> {
   try {
-    return { source: "live", data: await fetchApi<FeaturedStatute[]>('/featured-statutes') };
+    return { source: "live", data: await fetchAuthorityApi<FeaturedStatute[]>('/featured-statutes') };
   } catch (error) {
     return fallbackState("/featured-statutes", mockFeaturedStatutes, error);
   }
@@ -239,12 +257,12 @@ export async function getFeaturedStatutesState(): Promise<DataState<FeaturedStat
 
 export async function openSearch(query: string): Promise<DirectOpenResponse> {
   const params = new URLSearchParams({ q: query });
-  return fetchApi<DirectOpenResponse>(`/search/open?${params}`);
+  return fetchAuthorityApi<DirectOpenResponse>(`/search/open?${params}`);
 }
 
 // Stats
 export async function getStats() {
-  return fetchApi<{
+  return fetchAuthorityApi<{
     nodes: number;
     relationships: number;
     chapters: number;
@@ -375,7 +393,7 @@ export async function getStatuteIndexState(paramsInput: StatuteIndexParams = {})
     if (paramsInput.chapter) params.set("chapter", paramsInput.chapter)
     if (paramsInput.status && paramsInput.status !== "all") params.set("status", paramsInput.status)
 
-    const response = await fetchApi<StatuteIndexApiResponse>(`/statutes?${params}`)
+    const response = await fetchAuthorityApi<StatuteIndexApiResponse>(`/statutes?${params}`)
     return {
       source: "live",
       data: {
@@ -400,7 +418,7 @@ export async function getSourcesState(paramsInput: SourceIndexParams = {}): Prom
     if (paramsInput.status && paramsInput.status !== "all") params.set("status", paramsInput.status)
     if (paramsInput.edition_year) params.set("edition_year", String(paramsInput.edition_year))
 
-    const response = await fetchApi<SourceIndexResult>(`/sources?${params}`)
+    const response = await fetchAuthorityApi<SourceIndexResult>(`/sources?${params}`)
     return { source: response.items.length > 0 ? "live" : "empty", data: response }
   } catch (error) {
     if (DEMO_MODE) {
@@ -426,7 +444,7 @@ export async function getSourcesState(paramsInput: SourceIndexParams = {}): Prom
 
 export async function getSourceDetailState(sourceId: string): Promise<DataState<SourceDetailResult | null>> {
   try {
-    return { source: "live", data: await fetchApi<SourceDetailResult>(`/sources/${encodeURIComponent(sourceId)}`) }
+    return { source: "live", data: await fetchAuthorityApi<SourceDetailResult>(`/sources/${encodeURIComponent(sourceId)}`) }
   } catch (error) {
     if (DEMO_MODE) {
       const source = getDemoSourceById(sourceId)
@@ -549,13 +567,14 @@ export async function searchWithParams(paramsInput: SearchParams): Promise<Searc
     'needs_review',
     'primary_law',
     'official_commentary',
+    'rerank',
   ] as const
 
   for (const key of optionalBooleanParams) {
     if (paramsInput[key] !== undefined) params.set(key, String(paramsInput[key]))
   }
 
-  return fetchApi<SearchResponse>(`/search?${params}`);
+  return fetchAuthorityApi<SearchResponse>(`/search?${params}`);
 }
 
 export const getSearchResults = search;
@@ -575,17 +594,17 @@ export async function searchSuggest(
   signal?: AbortSignal,
 ): Promise<SuggestResult[]> {
   const params = new URLSearchParams({ q: query, limit: limit.toString() });
-  return fetchApi<SuggestResult[]>(`/search/suggest?${params}`, { signal });
+  return fetchAuthorityApi<SuggestResult[]>(`/search/suggest?${params}`, { signal, cache: "no-store" });
 }
 
 export async function directOpen(query: string): Promise<DirectOpenResponse> {
   const params = new URLSearchParams({ q: query });
-  return fetchApi<DirectOpenResponse>(`/search/open?${params}`);
+  return fetchAuthorityApi<DirectOpenResponse>(`/search/open?${params}`);
 }
 
 // Statute
 export async function getStatute(citation: string) {
-  return fetchApi<any>(`/statutes/${encodeURIComponent(citation)}`);
+  return fetchAuthorityApi<any>(`/statutes/${encodeURIComponent(citation)}`);
 }
 
 export async function getStatutePageData(citationOrCanonicalId: string): Promise<StatutePageResponse | null> {
@@ -594,7 +613,7 @@ export async function getStatutePageData(citationOrCanonicalId: string): Promise
 
 export async function getStatutePageDataState(citationOrCanonicalId: string): Promise<DataState<StatutePageResponse | null>> {
   try {
-    const page = await fetchApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)
+    const page = await fetchAuthorityApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)
     return { source: "live", data: mapStatuteCompactPage(page) }
   } catch (error) {
     return apiFailureState(
@@ -607,7 +626,7 @@ export async function getStatutePageDataState(citationOrCanonicalId: string): Pr
 }
 
 export async function getProvisions(citation: string) {
-  return fetchApi<{
+  return fetchAuthorityApi<{
     citation: string;
     provisions: Array<{
       provision_id: string;
@@ -621,7 +640,7 @@ export async function getProvisions(citation: string) {
 }
 
 export async function getCitations(citation: string) {
-  return fetchApi<{
+  return fetchAuthorityApi<{
     citation: string;
     outbound: Array<{
       target_canonical_id: string | null;
@@ -648,7 +667,7 @@ export async function getCitations(citation: string) {
 }
 
 export async function getSemantics(citation: string) {
-  return fetchApi<{
+  return fetchAuthorityApi<{
     citation: string;
     obligations: Array<{ text: string; source_provision: string }>;
     exceptions: Array<{ text: string; source_provision: string }>;
@@ -669,7 +688,7 @@ export async function getSemantics(citation: string) {
 }
 
 export async function getHistory(citation: string) {
-  return fetchApi<{
+  return fetchAuthorityApi<{
     citation: string;
     source_notes: string[];
     amendments: Array<{
@@ -692,7 +711,7 @@ export async function getHistory(citation: string) {
 }
 
 export async function getChunks(citation: string) {
-  return fetchApi<{
+  return fetchAuthorityApi<{
     citation: string;
     chunks: Array<{
       chunk_id: string;
@@ -729,7 +748,7 @@ export async function getGraphNeighborhood(input: GraphNeighborhoodParams): Prom
   if (input.includeSimilarity !== undefined) params.set('includeSimilarity', String(input.includeSimilarity));
   if (input.similarityThreshold !== undefined) params.set('similarityThreshold', String(input.similarityThreshold));
 
-  return fetchApi<GraphViewerResponse>(`/graph/neighborhood?${params}`);
+  return fetchAuthorityApi<GraphViewerResponse>(`/graph/neighborhood?${params}`);
 }
 
 export async function getFullGraph(input: GraphFullParams = {}): Promise<GraphViewerResponse> {
@@ -742,7 +761,7 @@ export async function getFullGraph(input: GraphFullParams = {}): Promise<GraphVi
   if (input.similarityThreshold !== undefined) params.set('similarityThreshold', String(input.similarityThreshold));
 
   const query = params.toString();
-  return fetchApi<GraphViewerResponse>(`/graph/full${query ? `?${query}` : ''}`);
+  return fetchAuthorityApi<GraphViewerResponse>(`/graph/full${query ? `?${query}` : ''}`);
 }
 
 export interface GraphPathResponse {
@@ -761,7 +780,7 @@ export async function getGraphPath(input: { from: string; to: string; mode?: str
     mode: input.mode ?? "legal",
     limit: String(input.limit ?? 3),
   })
-  return fetchApi<GraphPathResponse>(`/graph/path?${params}`)
+  return fetchAuthorityApi<GraphPathResponse>(`/graph/path?${params}`)
 }
 
 // QC
@@ -826,7 +845,7 @@ export async function getProvisionInspectorData(provisionId: string): Promise<Pr
 
 export async function getProvisionInspectorDataState(provisionId: string): Promise<DataState<ProvisionInspectorData | null>> {
   try {
-    const response = await fetchApi<any>(`/provisions/${encodeURIComponent(provisionId)}`)
+    const response = await fetchAuthorityApi<any>(`/provisions/${encodeURIComponent(provisionId)}`)
     return { source: "live", data: mapProvisionInspector(response) }
   } catch (error) {
     const fallback = getProvisionById(provisionId)

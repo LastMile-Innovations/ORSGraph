@@ -3,9 +3,10 @@ use crate::error::{ApiError, ApiResult};
 use crate::models::admin::{
     AdminCrawlerSummary, AdminGraphSummary, AdminHealthSummary, AdminIndexingSummary, AdminJob,
     AdminJobDetail, AdminJobEvent, AdminJobKind, AdminJobParams, AdminJobStatus, AdminLogResponse,
-    AdminOverview, AdminPathSummary, AdminSourceArtifact, AdminSourceDetail, AdminSourceGraphFile,
-    AdminSourceLocalStatus, AdminSourceRegistryEntry, AdminSourceRegistryResponse,
-    AdminSourceRegistryTotals, AdminSourceSummary, AdminStartJobRequest,
+    AdminOverview, AdminPathSummary, AdminPerformanceSummary, AdminSourceArtifact,
+    AdminSourceDetail, AdminSourceGraphFile, AdminSourceLocalStatus, AdminSourceRegistryEntry,
+    AdminSourceRegistryResponse, AdminSourceRegistryTotals, AdminSourceSummary,
+    AdminStartJobRequest,
 };
 use crate::services::health::HealthService;
 use serde::{Deserialize, Serialize};
@@ -118,6 +119,12 @@ impl AdminService {
         }
         let data_dir = PathBuf::from(&self.inner.config.admin_data_dir);
         let graph_dir = data_dir.join("graph");
+        let graph = summarize_graph_fast(&graph_dir).await;
+        let corpus_release_manifest_path =
+            PathBuf::from(&self.inner.config.corpus_release_manifest_path);
+        let corpus_release_id = read_corpus_release_id(&corpus_release_manifest_path)
+            .await
+            .unwrap_or_else(|| "release:unversioned".to_string());
 
         Ok(AdminOverview {
             enabled: self.enabled(),
@@ -132,13 +139,32 @@ impl AdminService {
             },
             crawler,
             sources: summarize_sources(&data_dir).await,
-            graph: summarize_graph_fast(&graph_dir).await,
+            graph: graph.clone(),
             indexing: AdminIndexingSummary {
                 vector_enabled: self.inner.config.vector_enabled,
                 vector_search_enabled: self.inner.config.vector_search_enabled,
                 vector_index: self.inner.config.vector_index.clone(),
                 vector_dimension: self.inner.config.vector_dimension,
                 embedding_model: self.inner.config.embedding_model.clone(),
+            },
+            performance: AdminPerformanceSummary {
+                corpus_release_id,
+                corpus_release_manifest_path: corpus_release_manifest_path.display().to_string(),
+                authority_cache_ttl_seconds: self.inner.config.authority_cache_ttl_seconds,
+                authority_cache_max_capacity: self.inner.config.authority_cache_max_capacity,
+                query_embedding_cache_ttl_seconds: self
+                    .inner
+                    .config
+                    .query_embedding_cache_ttl_seconds,
+                query_embedding_cache_max_capacity: self
+                    .inner
+                    .config
+                    .query_embedding_cache_max_capacity,
+                rerank_policy: self.inner.config.rerank_policy.clone(),
+                edge_authority_base_url: self.inner.config.authority_edge_base_url.clone(),
+                estimated_graph_storage_gb: bytes_to_gb(graph.bytes),
+                estimated_r2_storage_gb: bytes_to_gb(graph.bytes),
+                model_spend_policy: "delta_only_by_embedding_input_hash_and_release".to_string(),
             },
             health: AdminHealthSummary {
                 api: "connected".to_string(),
@@ -1750,6 +1776,22 @@ async fn read_json_value(path: &Path) -> Option<serde_json::Value> {
     serde_json::from_slice(&bytes).ok()
 }
 
+async fn read_corpus_release_id(path: &Path) -> Option<String> {
+    read_json_value(path)
+        .await
+        .and_then(|value| {
+            value
+                .get("release_id")
+                .and_then(|id| id.as_str())
+                .map(str::to_string)
+        })
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn bytes_to_gb(bytes: u64) -> f64 {
+    ((bytes as f64 / 1_073_741_824.0) * 1000.0).round() / 1000.0
+}
+
 async fn summarize_graph(path: &Path) -> AdminGraphSummary {
     summarize_graph_inner(path, true).await
 }
@@ -1888,6 +1930,12 @@ mod tests {
             assemblyai_webhook_secret: None,
             assemblyai_timeout_ms: 30_000,
             assemblyai_max_media_bytes: 500 * 1024 * 1024,
+            casebuilder_timeline_agent_provider: "disabled".to_string(),
+            casebuilder_timeline_agent_model: None,
+            openai_api_key: None,
+            casebuilder_timeline_agent_timeout_ms: 12_000,
+            casebuilder_timeline_agent_max_input_chars: 30_000,
+            casebuilder_timeline_agent_harness_version: "timeline-harness-v1".to_string(),
             log_level: "info".to_string(),
             voyage_api_key: None,
             rerank_enabled: false,
@@ -1905,6 +1953,13 @@ mod tests {
             vector_top_k: 100,
             vector_min_score: 0.55,
             vector_profile: "legal_chunk_primary_v1".to_string(),
+            corpus_release_manifest_path: "data/graph/corpus_release.json".to_string(),
+            authority_cache_ttl_seconds: 86_400,
+            authority_cache_max_capacity: 20_000,
+            query_embedding_cache_ttl_seconds: 604_800,
+            query_embedding_cache_max_capacity: 50_000,
+            rerank_policy: "low_confidence".to_string(),
+            authority_edge_base_url: None,
             admin_enabled: true,
             admin_allow_kill: false,
             admin_jobs_dir: jobs_dir.to_string(),

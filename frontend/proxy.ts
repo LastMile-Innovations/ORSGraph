@@ -23,7 +23,16 @@ export async function proxy(request: NextRequest) {
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
   if (!token) {
     const url = request.nextUrl.clone()
-    url.pathname = "/api/auth/signin"
+    url.pathname = "/auth/signin"
+    url.search = ""
+    url.searchParams.set("callbackUrl", publicCallbackUrl(request))
+    return NextResponse.redirect(url)
+  }
+
+  const accessStatus = typeof token.accessStatus === "string" ? token.accessStatus : "unknown"
+  if (accessStatus !== "active" && !pathname.startsWith("/auth/pending")) {
+    const url = request.nextUrl.clone()
+    url.pathname = "/auth/pending"
     url.search = ""
     url.searchParams.set("callbackUrl", publicCallbackUrl(request))
     return NextResponse.redirect(url)
@@ -33,7 +42,14 @@ export async function proxy(request: NextRequest) {
 }
 
 function isPublicPath(pathname: string) {
-  return pathname === "/" || pathname.startsWith("/marketing/")
+  return (
+    pathname === "/" ||
+    pathname.startsWith("/marketing/") ||
+    pathname.startsWith("/auth/signin") ||
+    pathname.startsWith("/auth/request-access") ||
+    pathname.startsWith("/auth/error") ||
+    pathname.startsWith("/auth/invite")
+  )
 }
 
 function redirect(request: NextRequest, pathname: string) {

@@ -16,6 +16,7 @@ fn casebuilder_service_sources() -> String {
         include_str!("../src/services/casebuilder/repository.rs"),
         include_str!("../src/services/casebuilder/storage.rs"),
         include_str!("../src/services/casebuilder/timeline.rs"),
+        include_str!("../src/services/casebuilder/timeline_agent.rs"),
         include_str!("../src/services/casebuilder/transcription.rs"),
         include_str!("../src/services/casebuilder/work_products.rs"),
     ]
@@ -116,6 +117,44 @@ fn graph_routes_and_frontend_are_wired_end_to_end() {
 }
 
 #[test]
+fn invite_only_auth_routes_and_frontend_are_wired() {
+    let routes = normalize_route_params(include_str!("../src/routes/auth_access.rs"));
+    let middleware = include_str!("../src/middleware.rs");
+    let auth_service = include_str!("../src/services/auth_access.rs");
+    let frontend_auth = include_str!("../../../frontend/lib/auth.ts");
+    let proxy = include_str!("../../../frontend/proxy.ts");
+    let signin = include_str!("../../../frontend/app/auth/signin/signin-client.tsx");
+    let request_access =
+        include_str!("../../../frontend/app/auth/request-access/request-access-client.tsx");
+    let invite = include_str!("../../../frontend/app/auth/invite/[token]/invite-client.tsx");
+    let onboarding = include_str!("../../../frontend/app/onboarding/onboarding-client.tsx");
+    let admin = include_str!("../../../frontend/components/orsg/admin/admin-auth-client.tsx");
+
+    for expected in [
+        "/auth/access-request",
+        "/auth/invites/:token",
+        "/auth/invites/:token/accept",
+        "/auth/me",
+        "/admin/auth/access-requests",
+        "/admin/auth/invites",
+    ] {
+        assert!(routes.contains(expected), "missing auth route {expected}");
+    }
+
+    assert!(middleware.contains("require_active_user"));
+    assert!(auth_service.contains("hash_invite_token"));
+    assert!(auth_service.contains("BetaInvite"));
+    assert!(frontend_auth.contains("accessStatus"));
+    assert!(proxy.contains("/auth/signin"));
+    assert!(proxy.contains("/auth/pending"));
+    assert!(signin.contains("Request access"));
+    assert!(request_access.contains("deadline_urgency"));
+    assert!(invite.contains("acceptInvite"));
+    assert!(onboarding.contains("newMatterHref"));
+    assert!(admin.contains("Create and copy invite"));
+}
+
+#[test]
 fn full_graph_contract_is_unfocused_and_unbounded_by_neighborhood_id() {
     let graph_models = include_str!("../src/models/api.rs");
     let service = include_str!("../src/services/neo4j.rs");
@@ -177,13 +216,13 @@ fn statute_sidebar_routes_use_live_api_contracts_without_mock_fallbacks() {
         service.contains("RETURN size(matched) AS total, matched[$offset..$end] AS items"),
         "statute index API should return an empty live result set instead of 404 for no matches"
     );
-    assert!(frontend_api.contains("fetchApi<StatuteIndexApiResponse>(`/statutes?${params}`)"));
-    assert!(frontend_api.contains("fetchApi<SidebarData>(\"/sidebar\")"));
     assert!(
-        frontend_api.contains(
-            "fetchApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)"
-        )
+        frontend_api.contains("fetchAuthorityApi<StatuteIndexApiResponse>(`/statutes?${params}`)")
     );
+    assert!(frontend_api.contains("fetchApi<SidebarData>(\"/sidebar\")"));
+    assert!(frontend_api.contains(
+        "fetchAuthorityApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)"
+    ));
     assert!(frontend_api.contains("apiFailureState(\"/statutes\""));
     assert!(frontend_api.contains("apiFailureState(\"/sidebar\", null"));
     assert!(statute_page.contains("state.source === \"empty\""));
@@ -267,6 +306,8 @@ fn casebuilder_routes_cover_v0_contracts() {
         "/casebuilder/webhooks/assemblyai",
         "/matters/:matter_id/facts/:fact_id/approve",
         "/matters/:matter_id/timeline/suggestions",
+        "/matters/:matter_id/timeline/agent-runs",
+        "/matters/:matter_id/timeline/agent-runs/:agent_run_id",
         "/matters/:matter_id/timeline/suggest",
         "/matters/:matter_id/timeline/suggestions/:suggestion_id",
         "/matters/:matter_id/timeline/suggestions/:suggestion_id/approve",
@@ -1053,10 +1094,22 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "struct MatterIndexRunResponse",
         "produced_timeline_suggestions",
         "timeline_suggestions",
+        "timeline_agent_runs",
         "source_span_ids",
         "text_chunk_ids",
         "linked_fact_ids",
         "agent_run_id",
+        "agent_type",
+        "scope_type",
+        "scope_ids",
+        "input_hash",
+        "pipeline_version",
+        "extractor_version",
+        "prompt_template_id",
+        "provider_enriched_count",
+        "provider_rejected_count",
+        "dedupe_key",
+        "agent_explanation",
         "index_artifacts",
         "artifact_manifest",
         "original_relative_path",
@@ -1106,10 +1159,22 @@ fn casebuilder_provenance_dtos_exist_in_backend_and_frontend() {
         "interface MatterIndexRunResponse",
         "produced_timeline_suggestions",
         "timeline_suggestions",
+        "timeline_agent_runs",
         "source_span_ids",
         "text_chunk_ids",
         "linked_fact_ids",
         "agent_run_id",
+        "agent_type",
+        "scope_type",
+        "scope_ids",
+        "input_hash",
+        "pipeline_version",
+        "extractor_version",
+        "prompt_template_id",
+        "provider_enriched_count",
+        "provider_rejected_count",
+        "dedupe_key",
+        "agent_explanation",
         "original_relative_path",
         "upload_batch_id",
         "parser_version",
@@ -1202,6 +1267,10 @@ fn casebuilder_indexing_data_model_and_storage_are_object_backed() {
         "merge_extraction_artifact_manifest",
         "merge_timeline_agent_run",
         "merge_timeline_suggestion",
+        "execute_timeline_agent_for_indexed_document",
+        "execute_timeline_agent_for_request",
+        "TimelineEnrichmentProvider",
+        "OpenAiTimelineProvider",
         "materialize_timeline_event_edges",
         "timeline_suggestions_from_facts",
         "date_entity_mentions_for_chunk",
@@ -1497,6 +1566,7 @@ fn casebuilder_provenance_dtos_serialize_with_matter_safe_ids() {
         produced_suggestion_ids: vec!["timeline-suggestion:doc_opaque:abc".to_string()],
         warnings: vec!["review required".to_string()],
         created_at: "1".to_string(),
+        ..Default::default()
     };
     let suggestion = TimelineSuggestion {
         suggestion_id: "timeline-suggestion:doc_opaque:abc".to_string(),
@@ -1523,6 +1593,7 @@ fn casebuilder_provenance_dtos_serialize_with_matter_safe_ids() {
         approved_event_id: Some("event:timeline-suggestion:doc_opaque:abc".to_string()),
         created_at: "1".to_string(),
         updated_at: "2".to_string(),
+        ..Default::default()
     };
     let event = CaseTimelineEvent {
         event_id: "event:timeline-suggestion:doc_opaque:abc".to_string(),

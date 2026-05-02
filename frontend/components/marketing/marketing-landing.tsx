@@ -17,6 +17,7 @@ import {
   Sparkles,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { trackConversionEvent } from "@/lib/conversion-events"
 
 const proofPoints = [
   { value: "Source-first", label: "Authority, exhibit, and filing records stay traceable." },
@@ -57,11 +58,17 @@ export function MarketingLanding() {
 
   function enterApp() {
     if (isSignedIn) {
-      router.push("/dashboard")
+      router.push("/onboarding")
       return
     }
 
-    void signIn("zitadel", { callbackUrl: "/dashboard" })
+    trackConversionEvent("landing_cta_click", { action: "request_access" })
+    router.push("/auth/request-access")
+  }
+
+  function signInFromLanding() {
+    trackConversionEvent("sign_in_started", { source: "landing" })
+    void signIn("zitadel", { callbackUrl: "/onboarding" })
   }
 
   return (
@@ -102,8 +109,18 @@ export function MarketingLanding() {
                 onClick={enterApp}
                 className="h-9 rounded-md bg-[#f0b35a] px-4 text-[#11140f] hover:bg-[#f4c978]"
               >
-                {isSignedIn ? "Enter Dashboard" : "Sign In"}
+                {isSignedIn ? "Enter Dashboard" : "Request Access"}
               </Button>
+              {!isSignedIn && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={signInFromLanding}
+                  className="hidden h-9 rounded-md border-[#d9ead6]/25 bg-[#10130f]/35 px-4 text-[#f7f0df] hover:bg-[#10130f]/60 sm:inline-flex"
+                >
+                  I Have An Invite
+                </Button>
+              )}
             </div>
           </header>
         </div>
@@ -129,16 +146,17 @@ export function MarketingLanding() {
                 onClick={enterApp}
                 className="min-h-11 w-full rounded-md bg-[#f0b35a] px-5 text-[#11140f] hover:bg-[#f4c978] sm:w-auto"
               >
-                {isSignedIn ? "Open Dashboard" : "Sign In To The App"}
+                {isSignedIn ? "Create First Matter" : "Request Beta Access"}
                 <ArrowRight className="h-4 w-4" />
               </Button>
-              <a
-                href="#platform"
+              <button
+                type="button"
+                onClick={isSignedIn ? () => router.push("/dashboard") : signInFromLanding}
                 className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-[#d9ead6]/25 bg-[#10130f]/50 px-5 text-sm font-medium text-[#f7f0df] outline-none backdrop-blur transition hover:border-[#79d5c8]/70 hover:bg-[#10130f]/75 focus-visible:ring-2 focus-visible:ring-[#79d5c8]/70 sm:w-auto"
               >
-                See The System
+                {isSignedIn ? "Open Dashboard" : "I Have An Invite"}
                 <GitBranch className="h-4 w-4" />
-              </a>
+              </button>
             </div>
           </div>
         </div>
@@ -221,7 +239,7 @@ export function MarketingLanding() {
             <div>
               <div className="font-mono text-xs uppercase tracking-normal text-[#79d5c8]">Ready</div>
               <p className="mt-2 max-w-2xl text-base leading-7 text-[#e8eadc]">
-                Enter the protected dashboard and continue into research, graph exploration, or CaseBuilder from there.
+                Request beta access, accept an invite, then create your first protected CaseBuilder matter.
               </p>
             </div>
             <Button
@@ -229,7 +247,7 @@ export function MarketingLanding() {
               onClick={enterApp}
               className="min-h-10 rounded-md bg-[#f0b35a] px-5 text-[#11140f] hover:bg-[#f4c978]"
             >
-              {isSignedIn ? "Go To Dashboard" : "Sign In"}
+              {isSignedIn ? "Create First Matter" : "Request Access"}
               <ArrowRight className="h-4 w-4" />
             </Button>
           </div>

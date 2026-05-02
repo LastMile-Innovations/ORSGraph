@@ -1,5 +1,7 @@
 use crate::artifact_store::{ArtifactMetadata, ArtifactStore, RawArtifact};
 use crate::connectors::{ConnectorOptions, DataConnector, SourceItem, connector_for};
+use crate::corpus_release::{CorpusReleaseEmbedding, write_corpus_release_manifest};
+use crate::embedding_profiles::LEGAL_CHUNK_PRIMARY;
 use crate::fetcher::{
     CacheValidators, FetchOutcome, FetchPolicy, FetchResult, client,
     fetch_item_with_cache_validation,
@@ -397,8 +399,8 @@ pub fn combine_graph(
 
     let mut total_rows = 0usize;
     let mut by_file = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
-    for source_id in selected_ids {
-        let graph_dir = sources_dir.join(&source_id).join("graph");
+    for source_id in &selected_ids {
+        let graph_dir = sources_dir.join(source_id.as_str()).join("graph");
         if !graph_dir.exists() {
             continue;
         }
@@ -433,6 +435,12 @@ pub fn combine_graph(
         }
         writer.flush()?;
     }
+    write_corpus_release_manifest(
+        &out,
+        &sources_dir,
+        &selected_ids,
+        CorpusReleaseEmbedding::from_profile(&LEGAL_CHUNK_PRIMARY),
+    )?;
     Ok(total_rows)
 }
 

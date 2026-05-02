@@ -19,6 +19,12 @@ static US_CONST_CITATION_RE: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
+static OR_CONST_CITATION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)\b(?:(?:Or\.?\s+Const\.?|Oregon\s+Constitution)\s+(?:Art(?:icle)?\.?\s+)?|Article\s+)(?:[IVXLCDM]+(?:-[A-Z]+(?:\([0-9]+\))?)?|\d+)(?:\s*\((?:Amended|Original)\))?(?:\s*,?\s*(?:§+|section)\s*[0-9]+[A-Za-z]?)?(?:\([A-Za-z0-9]+\))*",
+    )
+    .unwrap()
+});
 static CONAN_CITATION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\b(?:Amdt\d+|Art[IVXLCDM]+|Art\d+)[A-Za-z0-9.]+\b").unwrap());
 static NAMED_AMENDMENT_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -76,6 +82,14 @@ pub(crate) fn canonical_id_for_citation(citation: &str) -> Option<String> {
             sanitize_path_segment(&rule.to_ascii_lowercase())
         ));
     }
+    if upper.starts_with("OR. CONST")
+        || upper.starts_with("OR CONST")
+        || upper.starts_with("OREGON CONSTITUTION")
+        || upper.starts_with("ARTICLE ")
+        || upper.starts_with("ART. ")
+    {
+        return canonical_oregon_constitution_id(&normalized);
+    }
     if upper.starts_with("U.S. CONST") || upper.starts_with("US CONST") {
         return canonical_us_constitution_id(&normalized);
     }
@@ -119,6 +133,7 @@ pub(crate) fn work_product_citations_for_text(
         .find_iter(text)
         .chain(ORCP_CITATION_RE.find_iter(text))
         .chain(UTCR_CITATION_RE.find_iter(text))
+        .chain(OR_CONST_CITATION_RE.find_iter(text))
         .chain(US_CONST_CITATION_RE.find_iter(text))
         .chain(CONAN_CITATION_RE.find_iter(text))
         .chain(NAMED_AMENDMENT_RE.find_iter(text))
@@ -205,6 +220,70 @@ fn canonical_us_constitution_id(citation: &str) -> Option<String> {
     Some(id)
 }
 
+fn canonical_oregon_constitution_id(citation: &str) -> Option<String> {
+    let article_re = Regex::new(
+        r"(?i)\b(?:(?:Or\.?\s+Const\.?|Oregon\s+Constitution)\s+(?:Art(?:icle)?\.?\s+)?|Article\s+)([IVXLCDM]+(?:-[A-Z]+(?:\([0-9]+\))?)?|\d+)(?:\s*\((Amended|Original)\))?(?:\s*,?\s*(?:§+|section)\s*([0-9]+[A-Za-z]?))?((?:\([A-Za-z0-9]+\))*)",
+    )
+    .unwrap();
+    let captures = article_re.captures(citation)?;
+    let article = captures.get(1)?.as_str();
+    let variant = captures.get(2).map(|value| value.as_str());
+    let section = captures.get(3).map(|value| value.as_str());
+    let subsections = captures
+        .get(4)
+        .map(|value| value.as_str())
+        .unwrap_or_default();
+    let label = article
+        .parse::<u32>()
+        .ok()
+        .map(to_roman)
+        .unwrap_or_else(|| article.to_ascii_uppercase());
+    let mut id = format!(
+        "or:constitution:article-{}",
+        clean_oregon_constitution_article_token(&label)
+    );
+    if let Some(variant) = variant {
+        id.push('-');
+        id.push_str(&clean_oregon_constitution_article_token(
+            &variant.to_ascii_lowercase(),
+        ));
+    }
+    if let Some(section) = section {
+        id.push_str(&format!(
+            ":section-{}",
+            sanitize_path_segment(&section.to_ascii_lowercase())
+        ));
+    }
+    for subsection in Regex::new(r"\(([A-Za-z0-9]+)\)")
+        .unwrap()
+        .captures_iter(subsections)
+        .filter_map(|captures| {
+            captures
+                .get(1)
+                .map(|value| value.as_str().to_ascii_lowercase())
+        })
+    {
+        id.push(':');
+        id.push_str(&sanitize_path_segment(&subsection));
+    }
+    Some(id)
+}
+
+fn clean_oregon_constitution_article_token(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.trim().to_ascii_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else if matches!(ch, '-' | '_' | ' ' | '(' | ')' | '.') {
+            out.push('-');
+        }
+    }
+    while out.contains("--") {
+        out = out.replace("--", "-");
+    }
+    out.trim_matches('-').to_string()
+}
+
 fn normalize_conan_serial(value: &str) -> String {
     value
         .split('.')
@@ -254,6 +333,32 @@ fn roman_to_u32(value: &str) -> Option<u32> {
         }
     }
     (total > 0).then_some(total as u32)
+}
+
+fn to_roman(mut value: u32) -> String {
+    let pairs = [
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ];
+    let mut out = String::new();
+    for (number, roman) in pairs {
+        while value >= number {
+            out.push_str(roman);
+            value -= number;
+        }
+    }
+    out
 }
 
 fn ordinal_amendment_number(value: &str) -> Option<u32> {

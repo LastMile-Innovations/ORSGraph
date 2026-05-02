@@ -39,12 +39,14 @@ mod rule_engine;
 mod storage;
 mod support_linker;
 mod timeline;
+mod timeline_agent;
 mod transcription;
 mod work_product_ast;
 mod work_products;
 
 use ids::*;
 use parsing::*;
+pub use timeline_agent::TimelineAgentProviderConfig;
 use work_product_ast::{
     canonical_work_product_type, humanize_product_type, normalize_work_product_type_lossy,
     prosemirror_doc_for_text,
@@ -66,6 +68,7 @@ pub struct CaseBuilderService {
     max_upload_bytes: u64,
     ast_storage_policy: AstStoragePolicy,
     assemblyai: AssemblyAiProviderConfig,
+    timeline_agent: TimelineAgentProviderConfig,
     http_client: reqwest::Client,
 }
 
@@ -319,6 +322,7 @@ pub struct CaseBuilderServiceConfig {
     pub ast_snapshot_inline_bytes: u64,
     pub ast_block_inline_bytes: u64,
     pub assemblyai: AssemblyAiProviderConfig,
+    pub timeline_agent: TimelineAgentProviderConfig,
 }
 
 #[derive(Clone, Copy)]
@@ -429,6 +433,7 @@ const CASE_INDEX_VERSION: &str = "casebuilder-case-graph-index-v1";
 const ORS_2025_SOURCE_URL: &str = "https://www.oregonlegislature.gov/bills_laws/pages/ors.aspx";
 const ORCP_2025_SOURCE_URL: &str = "https://www.oregonlegislature.gov/bills_laws/Pages/ORCP.aspx";
 const UTCR_CURRENT_SOURCE_URL: &str = "https://www.courts.oregon.gov/rules/UTCR/2025_UTCR.pdf";
+const OR_CONST_SOURCE_URL: &str = "https://www.oregonlegislature.gov/bills_laws/ors/orcons.html";
 
 static PLEADING_PARAGRAPH_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)^\s*(?:\*\*)?(?:¶\s*)?([0-9]+[A-Za-z]?)\.\s*(?:\*\*)?\s*(.+?)\s*$"#).unwrap()
@@ -445,6 +450,12 @@ static ORCP_CITATION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\bORCP\s+[0-9]+[A-Z]?(?:\s*[A-Z])?(?:\([^)]+\))*").unwrap());
 static UTCR_CITATION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\bUTCR\s+[0-9]+(?:\.[0-9]+)?(?:\([^)]+\))*").unwrap());
+static OR_CONST_CITATION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)\b(?:(?:Or\.?\s+Const\.?|Oregon\s+Constitution)\s+(?:Art(?:icle)?\.?\s+)?|Article\s+)(?:[IVXLCDM]+(?:-[A-Z]+(?:\([0-9]+\))?)?|\d+)(?:\s*\((?:Amended|Original)\))?(?:\s*,?\s*(?:§+|section)\s*[0-9]+[A-Za-z]?)?(?:\([A-Za-z0-9]+\))*",
+    )
+    .unwrap()
+});
 static SESSION_LAW_CITATION_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)\b(?:Or(?:egon)?\.?\s+Laws?|Oregon Laws)\s+([0-9]{4}),?\s+ch(?:apter)?\.?\s*([0-9]+)(?:,?\s*(?:§|sec(?:tion)?\.?)\s*([0-9A-Za-z.-]+))?",
@@ -505,6 +516,7 @@ impl CaseBuilderService {
                 block_inline_bytes: config.ast_block_inline_bytes,
             },
             assemblyai: config.assemblyai,
+            timeline_agent: config.timeline_agent,
             http_client: reqwest::Client::new(),
         }
     }
@@ -1889,6 +1901,56 @@ fn build_case_graph(matter: &MatterBundle) -> CaseGraphResponse {
         }
     }
 
+    for run in &matter.timeline_agent_runs {
+        add_case_graph_node(
+            &mut nodes,
+            &mut seen_nodes,
+            CaseGraphNode {
+                id: run.agent_run_id.clone(),
+                kind: "timeline_agent_run".to_string(),
+                label: "Timeline agent run".to_string(),
+                subtitle: Some(run.provider_mode.clone()),
+                status: Some(run.status.clone()),
+                risk: (!run.warnings.is_empty()).then(|| "needs_review".to_string()),
+                href: Some(format!(
+                    "{base}/timeline?agentRun={}#{}",
+                    run.agent_run_id, run.agent_run_id
+                )),
+                metadata: graph_metadata([
+                    ("agent_type", run.agent_type.clone()),
+                    ("scope_type", run.scope_type.clone()),
+                    ("provider", run.provider.clone()),
+                    ("provider_mode", run.provider_mode.clone()),
+                    ("model", run.model.clone().unwrap_or_default()),
+                    (
+                        "stored_suggestion_count",
+                        run.stored_suggestion_count.to_string(),
+                    ),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            &mut edges,
+            &mut seen_edges,
+            &matter.summary.matter_id,
+            &run.agent_run_id,
+            "has_timeline_agent_run",
+            "has agent run",
+            Some(run.status.as_str()),
+        );
+        for suggestion_id in &run.produced_suggestion_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                &run.agent_run_id,
+                suggestion_id,
+                "produces_timeline_suggestion",
+                "produces",
+                Some(run.status.as_str()),
+            );
+        }
+    }
+
     for suggestion in &matter.timeline_suggestions {
         if suggestion.status == "rejected" {
             continue;
@@ -1907,6 +1969,14 @@ fn build_case_graph(matter: &MatterBundle) -> CaseGraphResponse {
                 metadata: graph_metadata([
                     ("kind", suggestion.kind.clone()),
                     ("source_type", suggestion.source_type.clone()),
+                    (
+                        "agent_run_id",
+                        suggestion.agent_run_id.clone().unwrap_or_default(),
+                    ),
+                    (
+                        "cluster_id",
+                        suggestion.cluster_id.clone().unwrap_or_default(),
+                    ),
                     (
                         "date_confidence",
                         format!("{:.0}%", suggestion.date_confidence * 100.0),
@@ -5261,7 +5331,8 @@ fn looks_like_complaint(filename: &str, text: &str) -> bool {
         upper.contains("DEFENDANT"),
         ORS_CITATION_RE.is_match(text)
             || ORCP_CITATION_RE.is_match(text)
-            || UTCR_CITATION_RE.is_match(text),
+            || UTCR_CITATION_RE.is_match(text)
+            || OR_CONST_CITATION_RE.is_match(text),
         numbered >= 3,
     ];
     signals.iter().filter(|signal| **signal).count() >= 3
@@ -5356,6 +5427,7 @@ fn citation_uses_for_text(
         .find_iter(text)
         .chain(ORCP_CITATION_RE.find_iter(text))
         .chain(UTCR_CITATION_RE.find_iter(text))
+        .chain(OR_CONST_CITATION_RE.find_iter(text))
         .chain(SESSION_LAW_CITATION_RE.find_iter(text))
         .map(|m| m.as_str().trim().trim_end_matches('.').to_string())
     {
@@ -5407,6 +5479,14 @@ fn canonical_id_for_citation(citation: &str) -> Option<String> {
 
 fn is_external_authority_citation(citation: &str) -> bool {
     let upper = citation.to_ascii_uppercase();
+    if upper.starts_with("OR. CONST")
+        || upper.starts_with("OR CONST")
+        || upper.starts_with("OREGON CONSTITUTION")
+        || upper.starts_with("ARTICLE ")
+        || upper.starts_with("ART. ")
+    {
+        return false;
+    }
     upper.starts_with("ORCP")
         || upper.starts_with("OR LAWS")
         || upper.starts_with("OR. LAWS")
@@ -5422,6 +5502,13 @@ fn authority_type_for_citation(citation: &str) -> &'static str {
         "orcp"
     } else if upper.starts_with("UTCR") {
         "utcr"
+    } else if upper.starts_with("OR. CONST")
+        || upper.starts_with("OR CONST")
+        || upper.starts_with("OREGON CONSTITUTION")
+        || upper.starts_with("ARTICLE ")
+        || upper.starts_with("ART. ")
+    {
+        "or_constitution"
     } else if is_external_authority_citation(citation) {
         "session_law"
     } else {
@@ -5434,6 +5521,7 @@ fn authority_source_url_for_citation(citation: &str) -> &'static str {
         "ors" => ORS_2025_SOURCE_URL,
         "orcp" => ORCP_2025_SOURCE_URL,
         "utcr" => UTCR_CURRENT_SOURCE_URL,
+        "or_constitution" => OR_CONST_SOURCE_URL,
         "session_law" => ORS_2025_SOURCE_URL,
         _ => ORS_2025_SOURCE_URL,
     }
@@ -5444,6 +5532,7 @@ fn authority_edition_for_citation(citation: &str) -> &'static str {
         "ors" => "2025 ORS",
         "orcp" => "2025 ORCP",
         "utcr" => "Current UTCR",
+        "or_constitution" => "Oregon Constitution source-backed",
         "session_law" => "Oregon session law source-backed",
         _ => "Source-backed authority",
     }
@@ -5454,6 +5543,7 @@ fn authority_currentness_for_citation(citation: &str) -> String {
         "ors" => "2025_ors_needs_review",
         "orcp" => "2025_orcp_needs_review",
         "utcr" => "current_utcr_needs_review",
+        "or_constitution" => "oregon_constitution_source_backed",
         "session_law" => "source_backed_needs_review",
         _ => "source_backed_needs_review",
     }
@@ -10566,6 +10656,11 @@ fn timeline_suggestions_from_facts(
             block_id: block_id.map(str::to_string),
             agent_run_id: agent_run_id.map(str::to_string),
             index_run_id: index_run_id.map(str::to_string),
+            dedupe_key: Some(key),
+            cluster_id: None,
+            duplicate_of_suggestion_id: None,
+            agent_explanation: None,
+            agent_confidence: None,
             status: "suggested".to_string(),
             warnings: date.warnings,
             approved_event_id: None,
@@ -10633,6 +10728,11 @@ fn timeline_suggestions_from_text(
             block_id: block_id.map(str::to_string),
             agent_run_id: agent_run_id.map(str::to_string),
             index_run_id: index_run_id.map(str::to_string),
+            dedupe_key: Some(key),
+            cluster_id: None,
+            duplicate_of_suggestion_id: None,
+            agent_explanation: None,
+            agent_confidence: None,
             status: "suggested".to_string(),
             warnings: date.warnings,
             approved_event_id: None,
@@ -14578,6 +14678,14 @@ mod tests {
         assert_eq!(
             canonical_id_for_citation("UTCR 2.010(4)"),
             Some("or:utcr:2.010".to_string())
+        );
+        assert_eq!(
+            canonical_id_for_citation("Or. Const. Art. I, § 8"),
+            Some("or:constitution:article-i:section-8".to_string())
+        );
+        assert_eq!(
+            canonical_id_for_citation("Article XI-F(1), section 1"),
+            Some("or:constitution:article-xi-f-1:section-1".to_string())
         );
         assert_eq!(
             canonical_id_for_citation("Or Laws 2023, ch 13, § 4"),

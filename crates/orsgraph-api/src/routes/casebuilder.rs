@@ -146,6 +146,14 @@ pub fn routes() -> Router<AppState> {
             get(list_timeline_suggestions),
         )
         .route(
+            "/matters/{matter_id}/timeline/agent-runs",
+            get(list_timeline_agent_runs),
+        )
+        .route(
+            "/matters/{matter_id}/timeline/agent-runs/{agent_run_id}",
+            get(get_timeline_agent_run),
+        )
+        .route(
             "/matters/{matter_id}/timeline/suggest",
             post(suggest_timeline),
         )
@@ -1071,6 +1079,30 @@ async fn list_timeline_suggestions(
     ))
 }
 
+async fn list_timeline_agent_runs(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+) -> ApiResult<Json<Vec<TimelineAgentRun>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .list_timeline_agent_runs(&matter_id)
+            .await?,
+    ))
+}
+
+async fn get_timeline_agent_run(
+    State(state): State<AppState>,
+    Path((matter_id, agent_run_id)): Path<(String, String)>,
+) -> ApiResult<Json<TimelineAgentRun>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .get_timeline_agent_run(&matter_id, &agent_run_id)
+            .await?,
+    ))
+}
+
 async fn suggest_timeline(
     State(state): State<AppState>,
     Path(matter_id): Path<String>,
@@ -1404,6 +1436,7 @@ async fn ask_matter(
                 needs_review: None,
                 primary_law: None,
                 official_commentary: None,
+                rerank: None,
             })
             .await?;
         authority_count = search.results.len();
@@ -2330,6 +2363,7 @@ async fn authority_search(
             needs_review: None,
             primary_law: None,
             official_commentary: None,
+            rerank: None,
         })
         .await?;
 

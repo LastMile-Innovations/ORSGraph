@@ -83,7 +83,7 @@ pub const EMBEDDING_TARGETS: &[EmbeddingTargetSpec] = &[
         phase: EmbeddingPhase::Chunks,
         smoke_limit: 25,
         where_clause: "n.embedding_policy IN ['embed_primary', 'embed_special'] AND n.text IS NOT NULL AND n.text <> ''",
-        input_expr: "CASE coalesce(n.authority_family, 'ORS') WHEN 'UTCR' THEN 'Oregon Uniform Trial Court Rules. ' WHEN 'SLR' THEN 'Oregon Supplementary Local Court Rules. ' ELSE 'Oregon Revised Statutes. ' END + toString(coalesce(n.edition_year, $edition_year)) + ' Edition.\\nChunk type: ' + coalesce(n.chunk_type, '') + '\\nCitation: ' + coalesce(n.citation, '') + '\\nBreadcrumb: ' + coalesce(n.breadcrumb, '') + '\\nSource kind: ' + coalesce(n.source_kind, '') + '\\n\\n' + coalesce(n.text, '')",
+        input_expr: "CASE coalesce(n.authority_family, 'ORS') WHEN 'ORCONST' THEN 'Oregon Constitution. ' WHEN 'UTCR' THEN 'Oregon Uniform Trial Court Rules. ' WHEN 'SLR' THEN 'Oregon Supplementary Local Court Rules. ' ELSE 'Oregon Revised Statutes. ' END + toString(coalesce(n.edition_year, $edition_year)) + ' Edition.\\nChunk type: ' + coalesce(n.chunk_type, '') + '\\nCitation: ' + coalesce(n.citation, '') + '\\nBreadcrumb: ' + coalesce(n.breadcrumb, '') + '\\nSource kind: ' + coalesce(n.source_kind, '') + '\\n\\n' + coalesce(n.text, '')",
     },
     EmbeddingTargetSpec {
         label: "Provision",
@@ -92,7 +92,7 @@ pub const EMBEDDING_TARGETS: &[EmbeddingTargetSpec] = &[
         phase: EmbeddingPhase::Authority,
         smoke_limit: 25,
         where_clause: "n.text IS NOT NULL AND n.text <> ''",
-        input_expr: "CASE coalesce(n.authority_family, 'ORS') WHEN 'UTCR' THEN 'Oregon Uniform Trial Court Rules. ' WHEN 'SLR' THEN 'Oregon Supplementary Local Court Rules. ' ELSE 'Oregon Revised Statutes. ' END + toString($edition_year) + ' Edition.\\nCitation: ' + coalesce(n.display_citation, n.citation, '') + '\\nParent authority: ' + coalesce(n.citation, '') + '\\nProvision type: ' + coalesce(n.provision_type, '') + '\\nStatus: active\\n\\nProvision text:\\n' + coalesce(n.text, '')",
+        input_expr: "CASE coalesce(n.authority_family, 'ORS') WHEN 'ORCONST' THEN 'Oregon Constitution. ' WHEN 'UTCR' THEN 'Oregon Uniform Trial Court Rules. ' WHEN 'SLR' THEN 'Oregon Supplementary Local Court Rules. ' ELSE 'Oregon Revised Statutes. ' END + toString($edition_year) + ' Edition.\\nCitation: ' + coalesce(n.display_citation, n.citation, '') + '\\nParent authority: ' + coalesce(n.citation, '') + '\\nProvision type: ' + coalesce(n.provision_type, '') + '\\nStatus: active\\n\\nProvision text:\\n' + coalesce(n.text, '')",
     },
     EmbeddingTargetSpec {
         label: "LegalTextVersion",
@@ -101,7 +101,7 @@ pub const EMBEDDING_TARGETS: &[EmbeddingTargetSpec] = &[
         phase: EmbeddingPhase::Authority,
         smoke_limit: 25,
         where_clause: "n.text IS NOT NULL AND n.text <> ''",
-        input_expr: "CASE coalesce(n.authority_family, 'ORS') WHEN 'UTCR' THEN 'Oregon Uniform Trial Court Rules. ' WHEN 'SLR' THEN 'Oregon Supplementary Local Court Rules. ' ELSE 'Oregon Revised Statutes. ' END + toString(coalesce(n.edition_year, $edition_year)) + ' Edition.\\nCitation: ' + coalesce(n.citation, '') + '\\nTitle: ' + coalesce(n.title, '') + '\\nStatus: ' + coalesce(n.status, '') + '\\nChapter: ' + coalesce(n.chapter, '') + '\\n\\nAuthority text:\\n' + coalesce(n.text, '')",
+        input_expr: "CASE coalesce(n.authority_family, 'ORS') WHEN 'ORCONST' THEN 'Oregon Constitution. ' WHEN 'UTCR' THEN 'Oregon Uniform Trial Court Rules. ' WHEN 'SLR' THEN 'Oregon Supplementary Local Court Rules. ' ELSE 'Oregon Revised Statutes. ' END + toString(coalesce(n.edition_year, $edition_year)) + ' Edition.\\nCitation: ' + coalesce(n.citation, '') + '\\nTitle: ' + coalesce(n.title, '') + '\\nStatus: ' + coalesce(n.status, '') + '\\nChapter: ' + coalesce(n.chapter, '') + '\\n\\nAuthority text:\\n' + coalesce(n.text, '')",
     },
     EmbeddingTargetSpec {
         label: "LegalSemanticNode",

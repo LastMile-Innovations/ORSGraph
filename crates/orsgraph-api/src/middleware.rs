@@ -1,6 +1,6 @@
 use crate::auth::{
-    AuthContext, bearer_token, header_value, is_admin_operation, is_public_path,
-    is_auth_access_bootstrap_path, matter_id_from_path,
+    AuthContext, bearer_token, header_value, is_admin_operation, is_auth_access_bootstrap_path,
+    is_public_path, matter_id_from_path,
 };
 use crate::error::ApiError;
 use crate::state::AppState;

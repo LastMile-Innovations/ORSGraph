@@ -164,6 +164,7 @@ impl Neo4jService {
                             n.chapter as chapter, n.status as status,
                             CASE
                               WHEN coalesce(n.authority_family, 'ORS') = 'USCONST' THEN 'constitution'
+                              WHEN coalesce(n.authority_family, 'ORS') = 'ORCONST' THEN 'constitution'
                               WHEN coalesce(n.authority_family, 'ORS') = 'CONAN' THEN 'official_commentary'
                               WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule'
                               ELSE 'statute'
@@ -206,6 +207,7 @@ impl Neo4jService {
                             n.chapter as chapter, n.status as status,
                             CASE
                               WHEN coalesce(n.authority_family, 'ORS') = 'USCONST' THEN 'constitution_provision'
+                              WHEN coalesce(n.authority_family, 'ORS') = 'ORCONST' THEN 'constitution_provision'
                               WHEN coalesce(n.authority_family, 'ORS') = 'CONAN' THEN 'official_commentary'
                               WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule_provision'
                               ELSE 'provision'
@@ -306,7 +308,12 @@ impl Neo4jService {
 		                     AND ($authority_family = '' OR coalesce(n.authority_family, 'ORS') = $authority_family)
 		                   RETURN n.canonical_id as id, n.citation as citation, n.title as title,
 		                          n.chapter as chapter, n.status as status,
-		                          CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule' ELSE 'statute' END as kind,
+		                          CASE
+		                            WHEN coalesce(n.authority_family, 'ORS') = 'USCONST' THEN 'constitution'
+		                            WHEN coalesce(n.authority_family, 'ORS') = 'ORCONST' THEN 'constitution'
+		                            WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule'
+		                            ELSE 'statute'
+		                          END as kind,
 		                          n.title as text,
 		                          n.authority_family as authority_family,
 		                          n.authority_type as authority_type,
@@ -337,7 +344,12 @@ impl Neo4jService {
 		                     AND ($authority_family = '' OR coalesce(n.authority_family, 'ORS') = $authority_family)
 		                   RETURN n.provision_id as id, n.display_citation as citation, null as title,
 		                          n.chapter as chapter, n.status as status,
-		                          CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule_provision' ELSE 'provision' END as kind,
+		                          CASE
+		                            WHEN coalesce(n.authority_family, 'ORS') = 'USCONST' THEN 'constitution_provision'
+		                            WHEN coalesce(n.authority_family, 'ORS') = 'ORCONST' THEN 'constitution_provision'
+		                            WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule_provision'
+		                            ELSE 'provision'
+		                          END as kind,
 		                          n.text as text,
 		                          n.authority_family as authority_family,
 		                          n.authority_type as authority_type,
@@ -415,7 +427,12 @@ impl Neo4jService {
                          AND n.citation <= $upper_end
                        RETURN n.canonical_id as id, n.citation as citation, n.title as title,
                               n.chapter as chapter, n.status as status,
-                              CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule' ELSE 'statute' END as kind,
+                              CASE
+                                WHEN coalesce(n.authority_family, 'ORS') = 'USCONST' THEN 'constitution'
+                                WHEN coalesce(n.authority_family, 'ORS') = 'ORCONST' THEN 'constitution'
+                                WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule'
+                                ELSE 'statute'
+                              END as kind,
                               coalesce(n.text, n.title) as text,
                               n.authority_family as authority_family,
                               n.authority_type as authority_type,
@@ -428,7 +445,12 @@ impl Neo4jService {
                          AND n.display_citation <= $upper_end
                        RETURN n.provision_id as id, n.display_citation as citation, null as title,
                               n.chapter as chapter, n.status as status,
-                              CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule_provision' ELSE 'provision' END as kind,
+                              CASE
+                                WHEN coalesce(n.authority_family, 'ORS') = 'USCONST' THEN 'constitution_provision'
+                                WHEN coalesce(n.authority_family, 'ORS') = 'ORCONST' THEN 'constitution_provision'
+                                WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule_provision'
+                                ELSE 'provision'
+                              END as kind,
                               n.text as text,
                               n.authority_family as authority_family,
                               n.authority_type as authority_type,
@@ -497,6 +519,8 @@ impl Neo4jService {
                  END";
         let inferred_authority =
             "CASE WHEN coalesce(node.authority_family, '') <> '' THEN node.authority_family
+                  WHEN toUpper(coalesce(node.source_provision_id, node.citation, node.canonical_id, '')) STARTS WITH 'OR. CONST' THEN 'ORCONST'
+                  WHEN coalesce(node.source_provision_id, node.citation, node.canonical_id, '') STARTS WITH 'or:constitution' THEN 'ORCONST'
                   WHEN coalesce(node.source_provision_id, node.citation, '') STARTS WITH 'UTCR ' THEN 'UTCR'
                   ELSE 'ORS'
              END";
@@ -745,8 +769,12 @@ impl Neo4jService {
                coalesce(source.provision_id, identity.canonical_id, node.chunk_id) as id,
                CASE
                  WHEN source:Provision AND authority_family = 'UTCR' THEN 'court_rule_provision'
+                 WHEN source:Provision AND authority_family = 'ORCONST' THEN 'constitution_provision'
+                 WHEN source:Provision AND authority_family = 'USCONST' THEN 'constitution_provision'
                  WHEN source:Provision THEN 'provision'
                  WHEN source:LegalTextVersion AND authority_family = 'UTCR' THEN 'court_rule'
+                 WHEN source:LegalTextVersion AND authority_family = 'ORCONST' THEN 'constitution'
+                 WHEN source:LegalTextVersion AND authority_family = 'USCONST' THEN 'constitution'
                  WHEN source:LegalTextVersion THEN 'statute'
                  ELSE 'chunk'
                END as kind,
@@ -1115,12 +1143,21 @@ impl Neo4jService {
                     .as_deref()
                     .map(legal_hierarchy::authority_level_for_family)
             });
-        let source_role = row.get::<String>("source_role").ok().or_else(|| {
-            authority_family
-                .as_deref()
-                .map(legal_hierarchy::source_role_for_family)
-                .map(ToString::to_string)
-        });
+        let source_role = row
+            .get::<String>("source_role")
+            .ok()
+            .or_else(|| {
+                authority_type
+                    .as_deref()
+                    .filter(|value| *value == "official_commentary")
+                    .map(|_| "official_commentary".to_string())
+            })
+            .or_else(|| {
+                authority_family
+                    .as_deref()
+                    .map(legal_hierarchy::source_role_for_family)
+                    .map(ToString::to_string)
+            });
         let corpus_id = row
             .get::<String>("corpus_id")
             .ok()
@@ -1149,6 +1186,14 @@ impl Neo4jService {
                 format!("/statutes/{}", citation.as_deref().unwrap_or(&id))
             }
             (Some("USCONST"), "constitution_provision" | "provision") => format!(
+                "/statutes/{}?provision={}",
+                citation.as_deref().unwrap_or(&id),
+                id
+            ),
+            (Some("ORCONST"), "constitution" | "statute" | "legaltextidentity") => {
+                format!("/statutes/{}", citation.as_deref().unwrap_or(&id))
+            }
+            (Some("ORCONST"), "constitution_provision" | "provision") => format!(
                 "/statutes/{}?provision={}",
                 citation.as_deref().unwrap_or(&id),
                 id
@@ -3111,9 +3156,13 @@ impl Neo4jService {
 
     pub async fn suggest(&self, q: &str, limit: u32) -> ApiResult<Vec<SuggestResult>> {
         let q = q.trim();
+        let explicit_or_const_re =
+            regex::Regex::new(r"(?i)^(?:Or\.?\s+Const\.?|Oregon\s+Constitution)\s+").unwrap();
         let explicit_utcr_re = regex::Regex::new(r"(?i)^UTCR\s+\d{1,3}(?:\.\d*)?").unwrap();
         let bare_citation_re = regex::Regex::new(r"^\d{1,3}[A-Za-z]?\.\d*").unwrap();
-        let normalized_q = if explicit_utcr_re.is_match(q) {
+        let normalized_q = if explicit_or_const_re.is_match(q) {
+            q.to_string()
+        } else if explicit_utcr_re.is_match(q) {
             q.to_ascii_uppercase()
         } else if bare_citation_re.is_match(q) {
             format!("ORS {q}")
@@ -3127,9 +3176,15 @@ impl Neo4jService {
 	                     WHERE toUpper(n.display_citation) STARTS WITH toUpper($normalized_q)
 	                        OR toUpper(n.display_citation) STARTS WITH toUpper($q)
 	                     RETURN n.display_citation as label,
-	                            CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule_provision' ELSE 'provision' END as kind,
-	                            CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR'
-	                              THEN '/rules/utcr/' + coalesce(n.canonical_id, n.display_citation) + '?provision=' + n.provision_id
+	                            CASE
+	                              WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule_provision'
+	                              WHEN coalesce(n.authority_family, 'ORS') = 'ORCONST' THEN 'constitution_provision'
+	                              WHEN coalesce(n.authority_family, 'ORS') = 'USCONST' THEN 'constitution_provision'
+	                              ELSE 'provision'
+	                            END as kind,
+	                            CASE
+	                              WHEN coalesce(n.authority_family, 'ORS') = 'UTCR'
+	                                THEN '/rules/utcr/' + coalesce(n.canonical_id, n.display_citation) + '?provision=' + n.provision_id
 	                              ELSE '/statutes/' + coalesce(n.canonical_id, n.display_citation) + '?provision=' + n.provision_id
 	                            END as href,
 	                            n.display_citation as citation,
@@ -3142,9 +3197,15 @@ impl Neo4jService {
 	                        OR toUpper(n.citation) STARTS WITH toUpper($q)
 	                        OR toUpper(n.title) CONTAINS toUpper($q)
 	                     RETURN n.citation as label,
-	                            CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule' ELSE 'statute' END as kind,
-	                            CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR'
-	                              THEN '/rules/utcr/' + n.canonical_id
+	                            CASE
+	                              WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule'
+	                              WHEN coalesce(n.authority_family, 'ORS') = 'ORCONST' THEN 'constitution'
+	                              WHEN coalesce(n.authority_family, 'ORS') = 'USCONST' THEN 'constitution'
+	                              ELSE 'statute'
+	                            END as kind,
+	                            CASE
+	                              WHEN coalesce(n.authority_family, 'ORS') = 'UTCR'
+	                                THEN '/rules/utcr/' + n.canonical_id
 	                              ELSE '/statutes/' + n.canonical_id
 	                            END as href,
                             n.citation as citation,
@@ -3210,7 +3271,12 @@ impl Neo4jService {
 
 fn infer_authority_family_from_citation(citation: &str) -> Option<String> {
     let upper = citation.trim().to_ascii_uppercase();
-    if upper.starts_with("U.S. CONST")
+    if upper.starts_with("OR. CONST")
+        || upper.starts_with("OR CONST")
+        || upper.starts_with("OREGON CONST")
+    {
+        Some("ORCONST".to_string())
+    } else if upper.starts_with("U.S. CONST")
         || upper.starts_with("US CONST")
         || upper.starts_with("UNITED STATES CONST")
         || upper.contains(" AMENDMENT")
@@ -3230,6 +3296,7 @@ fn infer_authority_family_from_citation(citation: &str) -> Option<String> {
 fn authority_type_for_family(authority_family: Option<&str>) -> Option<&'static str> {
     match authority_family {
         Some("USCONST") => Some("constitution"),
+        Some("ORCONST") => Some("constitution"),
         Some("CONAN") => Some("official_commentary"),
         Some("UTCR") => Some("court_rule"),
         Some("ORS") => Some("statute"),
@@ -3240,6 +3307,7 @@ fn authority_type_for_family(authority_family: Option<&str>) -> Option<&'static 
 fn corpus_id_for_family(authority_family: Option<&str>) -> Option<&'static str> {
     match authority_family {
         Some("USCONST") => Some("us:constitution"),
+        Some("ORCONST") => Some("or:constitution"),
         Some("CONAN") => Some("us:conan"),
         Some("UTCR") => Some("or:utcr"),
         Some("ORS") => Some("or:ors"),

@@ -13,6 +13,8 @@ This manifest lists required Railway variables by service without secret values.
 - `ZITADEL_CLIENT_ID`: sealed Zitadel OIDC application client id.
 - `ZITADEL_CLIENT_SECRET`: sealed Zitadel OIDC application client secret.
 - `ORS_API_BASE_URL`: server-only API base URL used by the same-origin `/api/ors/*` proxy, for example `https://orsgraph-api-production.up.railway.app/api/v1`.
+- `ORS_AUTHORITY_HOTSET_BASE_URL`: optional R2/custom-domain JSON hotset base used by `/api/authority/*` before API fallback.
+- `ORS_AUTHORITY_ROUTE_CACHE_SECONDS`, `ORS_AUTHORITY_ROUTE_SWR_SECONDS`: optional same-origin authority route cache controls.
 - Do not set backend-only flags here, including `ORS_ADMIN_ENABLED`, `ORS_AUTH_ENABLED`, or `ORS_API_KEY` unless a server-only Route Handler explicitly needs service bypass behavior.
 - Do not expose secrets through `NEXT_PUBLIC_*`.
 - `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_ORS_API_BASE_URL` are deprecated for app calls; use the same-origin `/api/ors/*` proxy.
@@ -33,6 +35,11 @@ This manifest lists required Railway variables by service without secret values.
 - `ORS_ADMIN_ALLOW_KILL`: backend-only dangerous-operation flag; keep false unless intentionally running admin jobs.
 - `VOYAGE_API_KEY`: sealed key, required only when rerank/vector features are enabled.
 - `ORS_RERANK_ENABLED`, `ORS_VECTOR_SEARCH_ENABLED`, `ORS_EMBEDDING_MODEL`, `ORS_VECTOR_INDEX`: optional retrieval tuning flags.
+- `ORS_CORPUS_RELEASE_MANIFEST_PATH`: release manifest path; default `data/graph/corpus_release.json`.
+- `ORS_AUTHORITY_CACHE_TTL_SECONDS`, `ORS_AUTHORITY_CACHE_MAX_CAPACITY`: API-side authority response cache controls.
+- `ORS_QUERY_EMBEDDING_CACHE_TTL_SECONDS`, `ORS_QUERY_EMBEDDING_CACHE_MAX_CAPACITY`: query embedding cache controls.
+- `ORS_RERANK_POLICY`: `explicit`, `low_confidence`, or `always`; use `explicit` or `low_confidence` to keep runtime model calls off the default path.
+- `ORS_AUTHORITY_EDGE_BASE_URL`: optional public edge/R2 authority base URL surfaced in admin cost/cache reporting.
 - `ORS_STORAGE_BACKEND`: `local` or `r2`.
 - `ORS_R2_ACCOUNT_ID`, `ORS_R2_BUCKET`, `ORS_R2_ACCESS_KEY_ID`, `ORS_R2_SECRET_ACCESS_KEY`, `ORS_R2_ENDPOINT`: sealed R2 settings, required only when `ORS_STORAGE_BACKEND=r2`.
 - `ORS_ASSEMBLYAI_ENABLED`, `ASSEMBLYAI_API_KEY`, `ORS_ASSEMBLYAI_WEBHOOK_URL`, `ORS_ASSEMBLYAI_WEBHOOK_SECRET`: optional transcription settings.

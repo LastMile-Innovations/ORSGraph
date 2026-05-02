@@ -1,6 +1,8 @@
 use axum::{Router, http::Method, routing::get};
 use orsgraph_api::{config::ApiConfig, middleware, routes, state::AppState};
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -34,6 +36,8 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(|| async { "ORSGraph API v0.1.0" }))
         .nest("/api/v1", routes::create_routes())
+        .layer(CompressionLayer::new())
+        .layer(TraceLayer::new_for_http())
         .layer(cors)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

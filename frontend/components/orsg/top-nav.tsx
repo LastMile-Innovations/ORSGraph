@@ -297,7 +297,12 @@ export function TopNav() {
 
       <div className="flex shrink-0 items-center gap-1.5">
         <RuntimeStatusMenu status={status} />
-        <AccountMenu status={session.status} user={session.data?.user} roles={session.data?.roles ?? []} />
+        <AccountMenu
+          status={session.status}
+          accessStatus={session.data?.accessStatus}
+          user={session.data?.user}
+          roles={session.data?.roles ?? []}
+        />
         <ThemeToggle />
       </div>
     </header>
@@ -308,8 +313,10 @@ function AccountMenu({
   status,
   user,
   roles,
+  accessStatus,
 }: {
   status: "authenticated" | "loading" | "unauthenticated"
+  accessStatus?: string
   user?: { name?: string | null; email?: string | null; image?: string | null }
   roles: string[]
 }) {
@@ -337,13 +344,24 @@ function AccountMenu({
           </>
         )}
         <DropdownMenuSeparator />
+        {status === "authenticated" && accessStatus && accessStatus !== "active" && (
+          <>
+            <DropdownMenuItem asChild>
+              <Link href="/auth/pending">
+                <ShieldCheck className="h-4 w-4" />
+                Access {accessStatus}
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
         {status === "authenticated" ? (
           <DropdownMenuItem className="cursor-pointer" onClick={() => signOut({ callbackUrl: "/" })}>
             <LogOut className="h-4 w-4" />
             Sign out
           </DropdownMenuItem>
         ) : (
-          <DropdownMenuItem className="cursor-pointer" onClick={() => signIn("zitadel", { callbackUrl: "/dashboard" })}>
+          <DropdownMenuItem className="cursor-pointer" onClick={() => signIn("zitadel", { callbackUrl: "/onboarding" })}>
             <LogIn className="h-4 w-4" />
             Sign in
           </DropdownMenuItem>

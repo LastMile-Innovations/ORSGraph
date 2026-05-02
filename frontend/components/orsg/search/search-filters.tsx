@@ -52,6 +52,7 @@ export const SEMANTIC_FILTERS = [
 export const AUTHORITY_FAMILIES = [
   { id: "all", label: "Any authority" },
   { id: "USCONST", label: "U.S. Constitution" },
+  { id: "ORCONST", label: "Oregon Constitution" },
   { id: "CONAN", label: "CONAN" },
   { id: "ORS", label: "ORS" },
   { id: "UTCR", label: "UTCR" },

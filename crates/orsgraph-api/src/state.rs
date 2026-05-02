@@ -5,7 +5,9 @@ use crate::services::analytics::AnalyticsService;
 use crate::services::auth_access::AuthAccessService;
 use crate::services::casebuilder::{
     AssemblyAiProviderConfig, CaseBuilderService, CaseBuilderServiceConfig,
+    TimelineAgentProviderConfig,
 };
+use crate::services::corpus_release::CorpusReleaseService;
 use crate::services::embedding::EmbeddingService;
 use crate::services::graph_expand::GraphExpandService;
 use crate::services::health::HealthService;
@@ -25,6 +27,7 @@ pub struct AppState {
     pub neo4j: Arc<Graph>,
     pub neo4j_service: Arc<Neo4jService>,
     pub search_service: Arc<SearchService>,
+    pub corpus_release_service: Arc<CorpusReleaseService>,
     pub embedding_service: Option<Arc<EmbeddingService>>,
     pub vector_search_service: Option<Arc<VectorSearchService>>,
     pub graph_expand_service: Arc<GraphExpandService>,
@@ -53,6 +56,7 @@ impl AppState {
         );
 
         let neo4j_service = Arc::new(Neo4jService::new(neo4j.clone()));
+        let corpus_release_service = Arc::new(CorpusReleaseService::from_config(&config));
 
         // Ensure indexes exist
         if let Err(e) = neo4j_service.ensure_indexes().await {
@@ -80,6 +84,8 @@ impl AppState {
                 config.embedding_model.clone(),
                 config.vector_dimension,
                 config.rerank_timeout_ms,
+                config.query_embedding_cache_ttl_seconds,
+                config.query_embedding_cache_max_capacity,
             )))
         } else {
             None
@@ -103,6 +109,10 @@ impl AppState {
             vector_search_service.clone(),
             graph_expand_service.clone(),
             rerank_service.clone(),
+            corpus_release_service.clone(),
+            config.authority_cache_ttl_seconds,
+            config.authority_cache_max_capacity,
+            config.rerank_policy.clone(),
         ));
 
         let stats_service = Arc::new(StatsService::new(neo4j_service.clone()));
@@ -137,6 +147,14 @@ impl AppState {
                 timeout_ms: config.assemblyai_timeout_ms,
                 max_media_bytes: config.assemblyai_max_media_bytes,
             },
+            timeline_agent: TimelineAgentProviderConfig {
+                provider: config.casebuilder_timeline_agent_provider.clone(),
+                model: config.casebuilder_timeline_agent_model.clone(),
+                openai_api_key: config.openai_api_key.clone(),
+                timeout_ms: config.casebuilder_timeline_agent_timeout_ms,
+                max_input_chars: config.casebuilder_timeline_agent_max_input_chars,
+                harness_version: config.casebuilder_timeline_agent_harness_version.clone(),
+            },
         }));
 
         if let Err(e) = casebuilder_service.ensure_indexes().await {
@@ -151,6 +169,7 @@ impl AppState {
             neo4j,
             neo4j_service,
             search_service,
+            corpus_release_service,
             embedding_service,
             vector_search_service,
             graph_expand_service,

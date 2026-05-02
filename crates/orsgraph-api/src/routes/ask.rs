@@ -33,6 +33,7 @@ pub async fn ask(
             needs_review: None,
             primary_law: None,
             official_commentary: None,
+            rerank: None,
         })
         .await?;
 

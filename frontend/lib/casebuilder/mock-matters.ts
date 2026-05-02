@@ -2166,6 +2166,7 @@ function buildMatter(summary: MatterSummary): Matter {
     facts,
     timeline,
     timeline_suggestions: [],
+    timeline_agent_runs: [],
     claims,
     evidence,
     defenses,

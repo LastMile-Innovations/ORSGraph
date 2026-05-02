@@ -50,6 +50,8 @@ pub struct MatterBundle {
     pub timeline: Vec<CaseTimelineEvent>,
     #[serde(default)]
     pub timeline_suggestions: Vec<TimelineSuggestion>,
+    #[serde(default)]
+    pub timeline_agent_runs: Vec<TimelineAgentRun>,
     pub claims: Vec<CaseClaim>,
     pub evidence: Vec<CaseEvidence>,
     pub defenses: Vec<CaseDefense>,
@@ -1314,23 +1316,63 @@ pub struct CreateTimelineEventRequest {
     pub agent_run_id: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct TimelineAgentRun {
     pub agent_run_id: String,
     pub id: String,
     pub matter_id: String,
     pub subject_type: String,
     pub subject_id: Option<String>,
+    #[serde(default)]
+    pub agent_type: String,
+    #[serde(default)]
+    pub scope_type: String,
+    #[serde(default)]
+    pub scope_ids: Vec<String>,
+    #[serde(default)]
+    pub input_hash: Option<String>,
+    #[serde(default)]
+    pub pipeline_version: String,
+    #[serde(default)]
+    pub extractor_version: String,
+    #[serde(default)]
+    pub prompt_template_id: Option<String>,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub model: Option<String>,
     pub mode: String,
     pub provider_mode: String,
     pub status: String,
     pub message: String,
     pub produced_suggestion_ids: Vec<String>,
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub started_at: Option<String>,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub error_code: Option<String>,
+    #[serde(default)]
+    pub error_message: Option<String>,
+    #[serde(default)]
+    pub deterministic_candidate_count: u64,
+    #[serde(default)]
+    pub provider_enriched_count: u64,
+    #[serde(default)]
+    pub provider_rejected_count: u64,
+    #[serde(default)]
+    pub duplicate_candidate_count: u64,
+    #[serde(default)]
+    pub stored_suggestion_count: u64,
+    #[serde(default)]
+    pub preserved_review_count: u64,
     pub created_at: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct TimelineSuggestion {
     pub suggestion_id: String,
     pub id: String,
@@ -1351,6 +1393,16 @@ pub struct TimelineSuggestion {
     pub block_id: Option<String>,
     pub agent_run_id: Option<String>,
     pub index_run_id: Option<String>,
+    #[serde(default)]
+    pub dedupe_key: Option<String>,
+    #[serde(default)]
+    pub cluster_id: Option<String>,
+    #[serde(default)]
+    pub duplicate_of_suggestion_id: Option<String>,
+    #[serde(default)]
+    pub agent_explanation: Option<String>,
+    #[serde(default)]
+    pub agent_confidence: Option<f32>,
     pub status: String,
     pub warnings: Vec<String>,
     pub approved_event_id: Option<String>,

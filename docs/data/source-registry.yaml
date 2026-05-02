@@ -223,15 +223,28 @@
         "LegalTextIdentity",
         "LegalTextVersion",
         "Provision",
-        "CitationMention"
+        "SourceNote",
+        "StatusEvent",
+        "TemporalEffect",
+        "LineageEvent",
+        "Amendment",
+        "SessionLaw",
+        "Commentary",
+        "ExternalLegalCitation",
+        "CitationMention",
+        "RetrievalChunk"
       ],
       "graph_edges_created": [
         "HAS_EDITION",
         "CONTAINS",
         "DERIVED_FROM",
+        "HAS_SOURCE_NOTE",
+        "HAS_STATUS_EVENT",
+        "HAS_TEMPORAL_EFFECT",
+        "HAS_COMMENTARY",
         "CITES"
       ],
-      "connector_status": "planned",
+      "connector_status": "implemented",
       "priority": "P1",
       "risks": [
         "Amendment history may require additional election/session sources."

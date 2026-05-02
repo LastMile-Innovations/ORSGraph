@@ -4,6 +4,9 @@ const seededMatterText = "Smith v. ABC Property"
 
 const routeDefinitions = [
   { path: "/" },
+  { path: "/auth/signin" },
+  { path: "/auth/request-access" },
+  { path: "/auth/error" },
   { path: "/dashboard" },
   { path: "/search" },
   { path: "/search?q=90.300" },
@@ -179,7 +182,7 @@ async function smokeHomeLinks() {
 function isAuthRedirect(location, originalPath) {
   if (!location) return false
   const redirectUrl = new URL(location, baseUrl)
-  if (redirectUrl.pathname !== "/api/auth/signin") return false
+  if (!["/auth/signin", "/api/auth/signin"].includes(redirectUrl.pathname)) return false
 
   const callbackUrl = redirectUrl.searchParams.get("callbackUrl")
   if (!callbackUrl) return true

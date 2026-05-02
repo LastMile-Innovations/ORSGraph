@@ -1616,6 +1616,7 @@ fn build_amendments_from_history(
                 affected_canonical_id: Some(canonical_id.to_string()),
                 affected_version_id: Some(version_id.to_string()),
                 source_note_id: None,
+                ..Default::default()
             })
         })
         .collect()

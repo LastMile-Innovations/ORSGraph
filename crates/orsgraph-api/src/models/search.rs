@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SearchQuery {
     pub q: String,
     pub r#type: Option<String>,
@@ -23,6 +23,7 @@ pub struct SearchQuery {
     pub needs_review: Option<bool>,
     pub primary_law: Option<bool>,
     pub official_commentary: Option<bool>,
+    pub rerank: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -176,6 +177,14 @@ pub fn normalized_authority_filter(value: Option<&str>) -> Option<String> {
             "ors" | "or:ors" | "statute" | "statutes" => Some("ORS".to_string()),
             "usconst" | "us_const" | "us:constitution" | "constitution" | "u.s. constitution"
             | "us constitution" => Some("USCONST".to_string()),
+            "orconst"
+            | "or_const"
+            | "or:constitution"
+            | "oregon constitution"
+            | "oregon const"
+            | "state constitution"
+            | "or. const."
+            | "or const" => Some("ORCONST".to_string()),
             "conan"
             | "constitution_annotated"
             | "constitution annotated"
@@ -203,7 +212,7 @@ impl Default for SearchMode {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct SearchResponse {
     pub query: String,
     pub mode: SearchMode,
@@ -217,6 +226,9 @@ pub struct SearchResponse {
     pub retrieval: RetrievalInfo,
     pub embeddings: Option<EmbeddingsInfo>,
     pub rerank: Option<RerankInfo>,
+    pub cache_status: String,
+    pub corpus_release_id: String,
+    pub model_calls: ModelCallInfo,
 }
 
 #[derive(Debug, Serialize, Clone, Default)]
@@ -273,7 +285,7 @@ pub struct QueryExpansionTerm {
     pub score: f32,
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize, Clone, Default)]
 pub struct RetrievalInfo {
     pub exact_candidates: usize,
     pub fulltext_candidates: usize,
@@ -284,7 +296,7 @@ pub struct RetrievalInfo {
     pub reranked_candidates: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct EmbeddingsInfo {
     pub enabled: bool,
     pub model: Option<String>,
@@ -292,7 +304,7 @@ pub struct EmbeddingsInfo {
     pub dimension: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct RerankInfo {
     pub enabled: bool,
     pub model: Option<String>,
@@ -367,7 +379,14 @@ pub struct GraphInfo {
     pub cited_by_count: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone, Default)]
+pub struct ModelCallInfo {
+    pub query_embedding: bool,
+    pub rerank: bool,
+    pub rerank_total_tokens: Option<usize>,
+}
+
+#[derive(Debug, Serialize, Clone)]
 pub struct SearchFacets {
     pub kinds: std::collections::HashMap<String, usize>,
     pub chapters: std::collections::HashMap<String, usize>,
@@ -377,13 +396,13 @@ pub struct SearchFacets {
     pub qc_warnings: std::collections::HashMap<String, usize>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct SourceBackedFacet {
     pub r#true: usize,
     pub r#false: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct SuggestResult {
     pub label: String,
     pub kind: String,
@@ -394,7 +413,7 @@ pub struct SuggestResult {
     pub score: f32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct DirectOpenResponse {
     pub matched: bool,
     pub match_type: DirectMatchType,
@@ -403,6 +422,8 @@ pub struct DirectOpenResponse {
     pub canonical_id: String,
     pub href: String,
     pub parent: Option<DirectOpenParent>,
+    pub cache_status: String,
+    pub corpus_release_id: String,
 }
 
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -414,7 +435,7 @@ pub enum DirectMatchType {
     None,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct DirectOpenParent {
     pub citation: String,
     pub canonical_id: String,

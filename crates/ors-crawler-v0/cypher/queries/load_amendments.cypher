@@ -2,7 +2,10 @@ UNWIND $rows AS row
 MERGE (a:Amendment {amendment_id: row.amendment_id})
 SET a += row { .amendment_type, .session_law_citation, .effective_date, .text,
                .raw_text, .source_document_id, .confidence, .canonical_id, .version_id,
-               .session_law_id, .affected_canonical_id, .affected_version_id, .source_note_id }
+               .session_law_id, .affected_canonical_id, .affected_version_id, .source_note_id,
+               .proposal_method, .proposal_id, .measure_number, .resolution_chamber,
+               .resolution_number, .filed_date, .proposed_year, .adopted_date,
+               .election_date, .resolution_status }
 SET a.id = row.amendment_id,
     a.graph_kind = 'amendment',
     a.schema_version = '1.0.0',

@@ -363,6 +363,15 @@ export interface SearchResponse {
   retrieval?: RetrievalInfo
   embeddings?: EmbeddingsInfo
   rerank?: RerankInfo
+  cache_status?: string
+  corpus_release_id?: string
+  model_calls?: ModelCallInfo
+}
+
+export interface ModelCallInfo {
+  query_embedding: boolean
+  rerank: boolean
+  rerank_total_tokens?: number | null
 }
 
 export interface SearchFacets {
@@ -399,6 +408,8 @@ export interface DirectOpenResponse {
     canonical_id: string
     href: string
   } | null
+  cache_status?: string
+  corpus_release_id?: string
 }
 
 export interface AskAnswer {

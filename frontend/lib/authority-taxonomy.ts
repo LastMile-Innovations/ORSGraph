@@ -1,5 +1,6 @@
 export const AUTHORITY_LEVELS = {
   USCONST: 100,
+  ORCONST: 91,
   FederalStatute: 92,
   StateConstitution: 91,
   StateStatute: 90,
@@ -38,6 +39,7 @@ export function authorityBadges(authority: AuthorityLike) {
 
   if (authority.primary_law || role === "primary_law") badges.push("Primary Law")
   if (family === "USCONST") badges.push("Federal Constitution")
+  if (family === "ORCONST") badges.push("Oregon Constitution")
   if (authority.official_commentary || role === "official_commentary") badges.push("Official Analysis")
   if ((authority.controlling_weight ?? 0) >= 3.5) badges.push("Controlling")
   if (role === "official_commentary" || family === "CONAN") badges.push("Interprets")
@@ -49,6 +51,10 @@ export function authorityBadges(authority: AuthorityLike) {
 export function authorityReason(authority: AuthorityLike) {
   const family = authority.authority_family?.toUpperCase()
   if (family === "USCONST") return "controlling constitutional text"
+  if (authority.source_role === "official_commentary" || authority.official_commentary) {
+    return "official annotation, not controlling by itself"
+  }
+  if (family === "ORCONST") return "controlling Oregon constitutional text"
   if (family === "CONAN") return "official interpretation, not controlling by itself"
   if (authority.source_role === "primary_law" || authority.primary_law) return "primary legal authority"
   if (authority.source_role === "case_law") return "case-law authority"

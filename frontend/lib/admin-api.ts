@@ -122,6 +122,19 @@ export interface AdminOverview {
     vector_dimension: number
     embedding_model: string
   }
+  performance?: {
+    corpus_release_id: string
+    corpus_release_manifest_path: string
+    authority_cache_ttl_seconds: number
+    authority_cache_max_capacity: number
+    query_embedding_cache_ttl_seconds: number
+    query_embedding_cache_max_capacity: number
+    rerank_policy: string
+    edge_authority_base_url?: string | null
+    estimated_graph_storage_gb: number
+    estimated_r2_storage_gb: number
+    model_spend_policy: string
+  }
   health: {
     api: string
     neo4j: string

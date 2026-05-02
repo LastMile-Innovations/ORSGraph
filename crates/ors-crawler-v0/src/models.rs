@@ -719,6 +719,26 @@ pub struct Amendment {
     pub affected_version_id: Option<String>,
     #[serde(default)]
     pub source_note_id: Option<String>,
+    #[serde(default)]
+    pub proposal_method: Option<String>,
+    #[serde(default)]
+    pub proposal_id: Option<String>,
+    #[serde(default)]
+    pub measure_number: Option<String>,
+    #[serde(default)]
+    pub resolution_chamber: Option<String>,
+    #[serde(default)]
+    pub resolution_number: Option<String>,
+    #[serde(default)]
+    pub filed_date: Option<String>,
+    #[serde(default)]
+    pub proposed_year: Option<i32>,
+    #[serde(default)]
+    pub adopted_date: Option<String>,
+    #[serde(default)]
+    pub election_date: Option<String>,
+    #[serde(default)]
+    pub resolution_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

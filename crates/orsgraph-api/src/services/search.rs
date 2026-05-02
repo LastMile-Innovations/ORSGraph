@@ -1,18 +1,25 @@
 use crate::error::ApiResult;
 use crate::models::search::*;
+use crate::services::corpus_release::CorpusReleaseService;
 use crate::services::graph_expand::GraphExpandService;
+use crate::services::legal_concepts;
 use crate::services::legal_hierarchy;
 use crate::services::neo4j::Neo4jService;
 use crate::services::rerank::RerankService;
 use crate::services::vector_search::VectorSearchService;
+use moka::future::Cache;
 use regex::Regex;
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{collections::HashMap, sync::Arc, time::Duration, time::Instant};
 
 pub struct SearchService {
     neo4j: Arc<Neo4jService>,
     vector: Option<Arc<VectorSearchService>>,
     graph_expand: Arc<GraphExpandService>,
     rerank: Option<Arc<RerankService>>,
+    corpus_release: Arc<CorpusReleaseService>,
+    response_cache: Cache<String, SearchResponse>,
+    direct_open_cache: Cache<String, DirectOpenResponse>,
+    rerank_policy: String,
 }
 
 #[derive(Debug, Clone)]
@@ -30,12 +37,28 @@ impl SearchService {
         vector: Option<Arc<VectorSearchService>>,
         graph_expand: Arc<GraphExpandService>,
         rerank: Option<Arc<RerankService>>,
+        corpus_release: Arc<CorpusReleaseService>,
+        cache_ttl_seconds: u64,
+        cache_max_capacity: u64,
+        rerank_policy: String,
     ) -> Self {
+        let response_cache = Cache::builder()
+            .max_capacity(cache_max_capacity.max(1))
+            .time_to_live(Duration::from_secs(cache_ttl_seconds.max(1)))
+            .build();
+        let direct_open_cache = Cache::builder()
+            .max_capacity(cache_max_capacity.max(1).min(10_000))
+            .time_to_live(Duration::from_secs(cache_ttl_seconds.max(1)))
+            .build();
         Self {
             neo4j,
             vector,
             graph_expand,
             rerank,
+            corpus_release,
+            response_cache,
+            direct_open_cache,
+            rerank_policy,
         }
     }
 
@@ -53,6 +76,13 @@ impl SearchService {
     }
 
     pub async fn search(&self, query: SearchQuery) -> ApiResult<SearchResponse> {
+        let cache_key = self.search_cache_key(&query);
+        if let Some(mut cached) = self.response_cache.get(&cache_key).await {
+            cached.cache_status = "hit".to_string();
+            cached.model_calls = ModelCallInfo::default();
+            return Ok(cached);
+        }
+
         let started_at = Instant::now();
         let raw_query = query.q.clone();
         let mut plan =
@@ -96,7 +126,7 @@ impl SearchService {
 
         if plan.analysis.normalized_query.is_empty() {
             plan.analysis.timings.total_ms = started_at.elapsed().as_millis() as u64;
-            return Ok(SearchResponse {
+            let response = SearchResponse {
                 query: raw_query,
                 mode,
                 total: 0,
@@ -109,22 +139,32 @@ impl SearchService {
                 retrieval,
                 embeddings: Some(self.embeddings_info()),
                 rerank: Some(self.default_rerank_info()),
-            });
+                cache_status: "miss".to_string(),
+                corpus_release_id: self.corpus_release.release_id().to_string(),
+                model_calls: ModelCallInfo::default(),
+            };
+            self.response_cache
+                .insert(cache_key, response.clone())
+                .await;
+            return Ok(response);
         }
 
         let should_expand_terms = should_expand_query_terms(plan.intent);
         if should_expand_terms && !plan.retrieval_query.is_empty() && mode != SearchMode::Citation {
+            let mut concept_terms = legal_concepts::expand_concepts(&plan.retrieval_query, 8);
+            plan.analysis.expansion_terms.append(&mut concept_terms);
             match self
                 .neo4j
                 .expand_query_terms(&plan.retrieval_query, &filters, 8)
                 .await
             {
                 Ok(expansion_terms) => {
-                    plan.analysis.expansion_count = expansion_terms.len();
-                    plan.analysis.expansion_terms = expansion_terms;
+                    plan.analysis.expansion_terms.extend(expansion_terms);
+                    plan.analysis.expansion_count = plan.analysis.expansion_terms.len();
                 }
                 Err(e) => warnings.push(format!("Graph term expansion failed: {}", e)),
             }
+            plan.analysis.expansion_count = plan.analysis.expansion_terms.len();
         }
 
         let fulltext_query = fulltext_query_for_intent(&plan.retrieval_query, plan.intent);
@@ -143,6 +183,7 @@ impl SearchService {
             && !plan.retrieval_query.is_empty();
         let should_run_vector = matches!(mode, SearchMode::Semantic | SearchMode::Hybrid)
             && !plan.retrieval_query.is_empty();
+        let query_embedding_requested = should_run_vector && self.vector.is_some();
 
         let retrieval_started = Instant::now();
 
@@ -378,7 +419,10 @@ impl SearchService {
 
         if let Some(reranker) = &self.rerank {
             let candidate_count = candidates.len().min(reranker.candidates_limit());
-            if candidate_count > 0 && mode != SearchMode::Citation {
+            if candidate_count > 0
+                && mode != SearchMode::Citation
+                && self.should_run_rerank(&query, mode, &candidates, plan.intent)
+            {
                 let rerank_slice = candidate_count;
                 let rerank_started = Instant::now();
                 match reranker
@@ -454,7 +498,13 @@ impl SearchService {
 
         plan.analysis.timings.total_ms = started_at.elapsed().as_millis() as u64;
 
-        Ok(SearchResponse {
+        let model_calls = ModelCallInfo {
+            query_embedding: query_embedding_requested,
+            rerank: rerank_applied,
+            rerank_total_tokens: rerank_info.as_ref().and_then(|info| info.total_tokens),
+        };
+
+        let response = SearchResponse {
             query: raw_query,
             mode,
             total,
@@ -467,7 +517,14 @@ impl SearchService {
             retrieval,
             embeddings: Some(self.embeddings_info()),
             rerank: rerank_info,
-        })
+            cache_status: "miss".to_string(),
+            corpus_release_id: self.corpus_release.release_id().to_string(),
+            model_calls,
+        };
+        self.response_cache
+            .insert(cache_key, response.clone())
+            .await;
+        Ok(response)
     }
 
     fn embeddings_info(&self) -> EmbeddingsInfo {
@@ -476,6 +533,56 @@ impl SearchService {
             model: self.vector.as_ref().map(|v| v.model().to_string()),
             profile: self.vector.as_ref().map(|v| v.profile().to_string()),
             dimension: self.vector.as_ref().map(|v| v.dimension()),
+        }
+    }
+
+    fn search_cache_key(&self, query: &SearchQuery) -> String {
+        let raw = serde_json::to_string(query).unwrap_or_else(|_| query.q.clone());
+        self.corpus_release.cache_key("search:v1", raw.as_bytes())
+    }
+
+    fn direct_open_cache_key(&self, q: &str, authority_family: Option<&str>) -> String {
+        let raw = format!(
+            "{}\n{}",
+            q.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_ascii_lowercase(),
+            authority_family
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_uppercase()
+        );
+        self.corpus_release
+            .cache_key("search_open:v1", raw.as_bytes())
+    }
+
+    fn should_run_rerank(
+        &self,
+        query: &SearchQuery,
+        mode: SearchMode,
+        candidates: &[SearchResult],
+        intent: SearchIntent,
+    ) -> bool {
+        if query.rerank == Some(true) {
+            return true;
+        }
+        if query.rerank == Some(false) {
+            return false;
+        }
+        match self.rerank_policy.as_str() {
+            "always" => true,
+            "explicit" => false,
+            _ => {
+                if matches!(mode, SearchMode::Citation) {
+                    return false;
+                }
+                if matches!(intent, SearchIntent::Citation | SearchIntent::Chapter) {
+                    return false;
+                }
+                let top_score = candidates.first().map(|result| result.score).unwrap_or(0.0);
+                candidates.len() >= 24 || top_score < 4.0
+            }
         }
     }
 
@@ -834,6 +941,18 @@ impl SearchService {
                         | "utcrprovision"
                 ),
                 "provision" => matches!(kind.as_str(), "court_rule_provision" | "utcrprovision"),
+                "constitution" => {
+                    let family = candidate.authority_family.as_deref().unwrap_or_default();
+                    candidate
+                        .authority_tier
+                        .as_deref()
+                        .is_some_and(|tier| tier.eq_ignore_ascii_case("constitution"))
+                        || matches!(
+                            family.to_ascii_uppercase().as_str(),
+                            "USCONST" | "ORCONST" | "STATECONSTITUTION"
+                        )
+                        || matches!(kind.as_str(), "constitution" | "constitution_provision")
+                }
                 "semantic" => matches!(
                     kind.as_str(),
                     "legalsemanticnode"
@@ -934,6 +1053,12 @@ impl SearchService {
         q: &str,
         authority_family: Option<&str>,
     ) -> ApiResult<DirectOpenResponse> {
+        let cache_key = self.direct_open_cache_key(q, authority_family);
+        if let Some(mut cached) = self.direct_open_cache.get(&cache_key).await {
+            cached.cache_status = "hit".to_string();
+            return Ok(cached);
+        }
+
         let plan = analyze_search_query_with_authority(q, authority_family);
         let normalized = plan.analysis.normalized_query.clone();
         let authority_family = plan
@@ -949,35 +1074,31 @@ impl SearchService {
             .map(|citation| citation.normalized.as_str())
             .unwrap_or(normalized.as_str());
 
-        if let Some(result) = self
+        let response = if let Some(result) = self
             .neo4j
             .search_exact_provision(citation, authority_family)
             .await?
         {
-            return Ok(direct_response_from_result(
+            direct_response_from_result(
                 true,
                 DirectMatchType::ExactProvision,
                 normalized,
                 result,
                 None,
-            ));
-        }
-
-        if let Some(result) = self
+            )
+        } else if let Some(result) = self
             .neo4j
             .search_exact_statute(citation, authority_family)
             .await?
         {
-            return Ok(direct_response_from_result(
+            direct_response_from_result(
                 true,
                 DirectMatchType::ExactStatute,
                 normalized,
                 result,
                 None,
-            ));
-        }
-
-        if let Some(parent_citation) = plan
+            )
+        } else if let Some(parent_citation) = plan
             .analysis
             .citations
             .first()
@@ -996,25 +1117,47 @@ impl SearchService {
                     canonical_id: result.id.clone(),
                     href: result.href.clone(),
                 };
-                return Ok(direct_response_from_result(
+                direct_response_from_result(
                     true,
                     DirectMatchType::ParentStatute,
                     normalized,
                     result,
                     Some(parent),
-                ));
+                )
+            } else {
+                DirectOpenResponse {
+                    matched: false,
+                    match_type: DirectMatchType::None,
+                    normalized_query: normalized,
+                    citation: q.to_string(),
+                    canonical_id: String::new(),
+                    href: String::new(),
+                    parent: None,
+                    cache_status: "miss".to_string(),
+                    corpus_release_id: self.corpus_release.release_id().to_string(),
+                }
             }
-        }
+        } else {
+            DirectOpenResponse {
+                matched: false,
+                match_type: DirectMatchType::None,
+                normalized_query: normalized,
+                citation: q.to_string(),
+                canonical_id: String::new(),
+                href: String::new(),
+                parent: None,
+                cache_status: "miss".to_string(),
+                corpus_release_id: self.corpus_release.release_id().to_string(),
+            }
+        };
 
-        Ok(DirectOpenResponse {
-            matched: false,
-            match_type: DirectMatchType::None,
-            normalized_query: normalized,
-            citation: q.to_string(),
-            canonical_id: String::new(),
-            href: String::new(),
-            parent: None,
-        })
+        let mut response = response;
+        response.cache_status = "miss".to_string();
+        response.corpus_release_id = self.corpus_release.release_id().to_string();
+        self.direct_open_cache
+            .insert(cache_key, response.clone())
+            .await;
+        Ok(response)
     }
 
     pub async fn suggest(&self, q: &str, limit: Option<u32>) -> ApiResult<Vec<SuggestResult>> {
@@ -1166,6 +1309,8 @@ fn direct_response_from_result(
         canonical_id: result.id,
         href: result.href,
         parent,
+        cache_status: "miss".to_string(),
+        corpus_release_id: String::new(),
     }
 }
 
@@ -1552,6 +1697,59 @@ fn normalize_search_query_with_authority(q: &str, authority_family: Option<&str>
 fn parse_query_citations(q: &str) -> Vec<QueryCitation> {
     let mut citations = Vec::new();
 
+    let or_const_re = Regex::new(
+        r"(?i)\b(?:Or\.?\s+Const\.?|Oregon\s+Constitution)\s+(?:Art(?:icle)?\.?\s+)?([IVXLCDM]+(?:-[A-Z]+(?:\([0-9]+\))?)?|\d+)(?:\s*\((Amended|Original)\))?(?:\s*,?\s*(?:§+|section)\s*([0-9]+[A-Za-z]?))?((?:\([A-Za-z0-9]+\))*)",
+    )
+    .unwrap();
+    for caps in or_const_re.captures_iter(q) {
+        let Some(raw_match) = caps.get(0) else {
+            continue;
+        };
+        let Some(article_token) = caps.get(1).map(|m| m.as_str()) else {
+            continue;
+        };
+        let variant = caps.get(2).map(|m| m.as_str());
+        let section = caps.get(3).map(|m| m.as_str().to_string());
+        let subsection_text = caps.get(4).map(|m| m.as_str()).unwrap_or_default();
+        citations.push(oregon_constitution_query_citation(
+            raw_match.as_str().trim().to_string(),
+            article_token,
+            variant,
+            section,
+            subsection_text,
+        ));
+    }
+
+    let plain_or_const_re = Regex::new(
+        r"(?i)\bArt(?:icle)?\.?\s+([IVXLCDM]+(?:-[A-Z]+(?:\([0-9]+\))?)?|\d+)(?:\s*\((Amended|Original)\))?\s*,?\s*(?:§+|section)\s*([0-9]+[A-Za-z]?)((?:\([A-Za-z0-9]+\))*)",
+    )
+    .unwrap();
+    for caps in plain_or_const_re.captures_iter(q) {
+        let Some(raw_match) = caps.get(0) else {
+            continue;
+        };
+        let prefix = q[..raw_match.start()].to_ascii_uppercase();
+        if prefix.ends_with("U.S. CONST. ")
+            || prefix.ends_with("U.S. CONST ")
+            || prefix.ends_with("US CONST. ")
+            || prefix.ends_with("US CONST ")
+            || prefix.ends_with("UNITED STATES CONST. ")
+            || prefix.ends_with("UNITED STATES CONST ")
+        {
+            continue;
+        }
+        let Some(article_token) = caps.get(1).map(|m| m.as_str()) else {
+            continue;
+        };
+        citations.push(oregon_constitution_query_citation(
+            raw_match.as_str().trim().to_string(),
+            article_token,
+            caps.get(2).map(|m| m.as_str()),
+            caps.get(3).map(|m| m.as_str().to_string()),
+            caps.get(4).map(|m| m.as_str()).unwrap_or_default(),
+        ));
+    }
+
     let conan_re = Regex::new(r"(?i)\b((?:Amdt\d+|Art(?:[IVXLCDM]+|\d+))[A-Za-z0-9.]+)\b").unwrap();
     for caps in conan_re.captures_iter(q) {
         let Some(raw_match) = caps.get(1) else {
@@ -1711,6 +1909,92 @@ fn parse_query_citations(q: &str) -> Vec<QueryCitation> {
     }));
 
     dedupe_query_citations(citations)
+}
+
+fn oregon_constitution_query_citation(
+    raw: String,
+    article_token: &str,
+    variant: Option<&str>,
+    section: Option<String>,
+    subsection_text: &str,
+) -> QueryCitation {
+    let (chapter, article_label) = oregon_constitution_article_parts(article_token, variant);
+    let base = format!("Or. Const. art. {article_label}");
+    let mut normalized = base.clone();
+    let mut subsections = Vec::new();
+    if let Some(section) = &section {
+        normalized.push_str(&format!(", § {section}"));
+    }
+    for subsection in parse_subsections(subsection_text) {
+        normalized.push_str(&format!("({subsection})"));
+        subsections.push(subsection);
+    }
+    let parent = if !subsections.is_empty() {
+        Some(
+            section
+                .as_ref()
+                .map(|section| format!("{base}, § {section}"))
+                .unwrap_or_else(|| base.clone()),
+        )
+    } else {
+        section.as_ref().map(|_| base.clone())
+    };
+    QueryCitation {
+        raw,
+        authority_family: "ORCONST".to_string(),
+        normalized,
+        base,
+        chapter,
+        section: section.unwrap_or_default(),
+        subsections,
+        parent,
+    }
+}
+
+fn oregon_constitution_article_parts(
+    article_token: &str,
+    variant: Option<&str>,
+) -> (String, String) {
+    let label_token = article_token
+        .parse::<u32>()
+        .ok()
+        .map(to_roman)
+        .unwrap_or_else(|| article_token.trim().to_ascii_uppercase());
+    let mut chapter = format!(
+        "article-{}",
+        clean_oregon_constitution_article_token(&label_token)
+    );
+    let mut label = label_token;
+    if let Some(variant) = variant {
+        let lower = variant.to_ascii_lowercase();
+        chapter.push('-');
+        chapter.push_str(&clean_oregon_constitution_article_token(&lower));
+        label.push_str(&format!(" ({})", title_case_ascii(&lower)));
+    }
+    (chapter, label)
+}
+
+fn clean_oregon_constitution_article_token(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.trim().to_ascii_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else if matches!(ch, '-' | '_' | ' ' | '(' | ')' | '.') {
+            out.push('-');
+        }
+    }
+    while out.contains("--") {
+        out = out.replace("--", "-");
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn title_case_ascii(value: &str) -> String {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 fn parse_citation_ranges(q: &str) -> Vec<QueryCitationRange> {
@@ -1985,7 +2269,12 @@ fn normalize_jurisdiction_filter(value: &str) -> &'static str {
 
 fn infer_authority_family_from_citation(citation: &str) -> Option<String> {
     let upper = citation.trim().to_ascii_uppercase();
-    if upper.starts_with("U.S. CONST")
+    if upper.starts_with("OR. CONST")
+        || upper.starts_with("OR CONST")
+        || upper.starts_with("OREGON CONST")
+    {
+        Some("ORCONST".to_string())
+    } else if upper.starts_with("U.S. CONST")
         || upper.starts_with("US CONST")
         || upper.starts_with("UNITED STATES CONST")
         || upper.contains(" AMENDMENT")
@@ -2071,7 +2360,7 @@ fn order_candidates_after_rerank(
 fn detect_search_intent(q: &str) -> SearchIntent {
     let citation_re = Regex::new(r"^(?:ORS|UTCR)\s+\d{1,3}[A-Z]?\.\d{3}(?:\([^)]+\))?$").unwrap();
     let constitution_re = Regex::new(
-        r"(?i)^(?:U\.?\s*S\.?\s+Const\.?|(?:First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth|Eleventh|Twelfth|Thirteenth|Fourteenth|Fifteenth|Sixteenth|Seventeenth|Eighteenth|Nineteenth|Twentieth|Twenty-First|Twenty-Second|Twenty-Third|Twenty-Fourth|Twenty-Fifth|Twenty-Sixth|Twenty-Seventh)\s+Amendment|Due Process Clause|(?:Amdt|Art)[A-Za-z0-9.]+)",
+        r"(?i)^(?:Or\.?\s+Const\.?|Oregon\s+Constitution|Article\s+[IVXLCDM]+,?\s+section\s+\d+|U\.?\s*S\.?\s+Const\.?|(?:First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth|Eleventh|Twelfth|Thirteenth|Fourteenth|Fifteenth|Sixteenth|Seventeenth|Eighteenth|Nineteenth|Twentieth|Twenty-First|Twenty-Second|Twenty-Third|Twenty-Fourth|Twenty-Fifth|Twenty-Sixth|Twenty-Seventh)\s+Amendment|Due Process Clause|(?:Amdt|Art)[A-Za-z0-9.]+)",
     )
     .unwrap();
     let chapter_re = Regex::new(r"(?i)^(?:(?:ORS|UTCR)\s+)?chapter\s+\d{1,3}[A-Z]?$").unwrap();
@@ -2282,6 +2571,28 @@ mod tests {
         assert_eq!(conan[0].authority_family, "CONAN");
         assert_eq!(conan[0].normalized, "Amdt14.S1.5.1");
         assert_eq!(conan[0].chapter, "amendment-14");
+    }
+
+    #[test]
+    fn parses_oregon_constitution_citation_variants() {
+        let explicit = parse_query_citations("Or. Const. Art. I, § 8");
+        assert_eq!(explicit[0].authority_family, "ORCONST");
+        assert_eq!(explicit[0].normalized, "Or. Const. art. I, § 8");
+        assert_eq!(explicit[0].chapter, "article-i");
+        assert_eq!(explicit[0].parent.as_deref(), Some("Or. Const. art. I"));
+
+        let plain = parse_query_citations("Article XVII, section 1");
+        assert_eq!(plain[0].authority_family, "ORCONST");
+        assert_eq!(plain[0].normalized, "Or. Const. art. XVII, § 1");
+        assert_eq!(plain[0].chapter, "article-xvii");
+
+        let compound = parse_query_citations("Oregon Constitution Article XI-F(1), section 1");
+        assert_eq!(compound[0].chapter, "article-xi-f-1");
+        assert_eq!(compound[0].normalized, "Or. Const. art. XI-F(1), § 1");
+
+        let amended = parse_query_citations("Art. VII (Amended), § 2");
+        assert_eq!(amended[0].chapter, "article-vii-amended");
+        assert_eq!(amended[0].normalized, "Or. Const. art. VII (Amended), § 2");
     }
 
     #[test]
@@ -2517,6 +2828,7 @@ mod tests {
             needs_review: None,
             primary_law: None,
             official_commentary: None,
+            rerank: None,
         });
 
         assert_eq!(filters.vector_chunk_type(), Some("deadline_block"));

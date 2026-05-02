@@ -244,6 +244,7 @@ export function AdminDashboardClient() {
   const graphMetricHint = graphRowsExact
     ? `${formatNumber(overview?.graph.jsonl_files)} JSONL files`
     : `${formatNumber(overview?.graph.bytes)} bytes, row scan deferred`
+  const performance = overview?.performance
 
   async function startWorkflow(workflow: (typeof WORKFLOWS)[number]) {
     if (workflow.disabled) return
@@ -370,10 +371,18 @@ export function AdminDashboardClient() {
               Monitor source artifacts, graph outputs, crawler jobs, QC, seeding, and indexing from one control surface.
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={load} disabled={loading} className="w-fit gap-2">
-            <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-            Refresh
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline" size="sm" className="w-fit gap-2">
+              <Link href="/admin/auth">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Beta access
+              </Link>
+            </Button>
+            <Button variant="outline" size="sm" onClick={load} disabled={loading} className="w-fit gap-2">
+              <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {error && (
@@ -392,6 +401,34 @@ export function AdminDashboardClient() {
           <MetricCard icon={Database} label={graphMetricLabel} value={graphMetricValue} hint={graphMetricHint} />
           <MetricCard icon={Sparkles} label="Indexing" value={overview?.indexing.vector_search_enabled ? "enabled" : "off"} hint={overview?.indexing.vector_index ?? "no vector index"} />
         </div>
+
+        <section className="mt-5 rounded-md border border-border bg-card">
+          <div className="flex flex-col gap-3 border-b border-border px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">Authority Cost And Cache</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">Release identity, cache settings, model-call policy, and storage estimates for public legal authority reads.</p>
+            </div>
+            <Badge variant="outline" className="w-fit font-mono text-[10px]">
+              {performance?.corpus_release_id ?? "release:unversioned"}
+            </Badge>
+          </div>
+          <div className="grid gap-4 p-4 lg:grid-cols-[0.8fr_1.2fr]">
+            <div className="grid grid-cols-2 gap-2">
+              <MiniStat label="cache ttl sec" value={performance?.authority_cache_ttl_seconds ?? 0} />
+              <MiniStat label="cache cap" value={performance?.authority_cache_max_capacity ?? 0} />
+              <MiniStat label="embed ttl sec" value={performance?.query_embedding_cache_ttl_seconds ?? 0} />
+              <MiniStat label="embed cap" value={performance?.query_embedding_cache_max_capacity ?? 0} />
+            </div>
+            <div className="grid gap-2 text-xs sm:grid-cols-2">
+              <PathRow label="manifest" value={performance?.corpus_release_manifest_path ?? "data/graph/corpus_release.json"} />
+              <PathRow label="rerank" value={performance?.rerank_policy ?? "low_confidence"} />
+              <PathRow label="model spend" value={performance?.model_spend_policy ?? "delta_only_by_embedding_input_hash"} />
+              <PathRow label="edge" value={performance?.edge_authority_base_url ?? "route cache"} />
+              <PathRow label="graph gb" value={formatGb(performance?.estimated_graph_storage_gb)} />
+              <PathRow label="r2 gb" value={formatGb(performance?.estimated_r2_storage_gb)} />
+            </div>
+          </div>
+        </section>
 
         <section className="mt-5 rounded-md border border-border bg-card">
           <div className="flex flex-col gap-3 border-b border-border px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
@@ -1012,6 +1049,10 @@ function formatTime(value?: number) {
 
 function formatNumber(value?: number) {
   return (value ?? 0).toLocaleString()
+}
+
+function formatGb(value?: number) {
+  return `${(value ?? 0).toLocaleString(undefined, { maximumFractionDigits: 3 })} GB`
 }
 
 function formatDateTime(value: string) {

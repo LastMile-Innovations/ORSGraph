@@ -174,6 +174,7 @@ pub struct AdminOverview {
     pub sources: AdminSourceSummary,
     pub graph: AdminGraphSummary,
     pub indexing: AdminIndexingSummary,
+    pub performance: AdminPerformanceSummary,
     pub health: AdminHealthSummary,
 }
 
@@ -242,6 +243,21 @@ pub struct AdminIndexingSummary {
     pub vector_index: String,
     pub vector_dimension: usize,
     pub embedding_model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdminPerformanceSummary {
+    pub corpus_release_id: String,
+    pub corpus_release_manifest_path: String,
+    pub authority_cache_ttl_seconds: u64,
+    pub authority_cache_max_capacity: u64,
+    pub query_embedding_cache_ttl_seconds: u64,
+    pub query_embedding_cache_max_capacity: u64,
+    pub rerank_policy: String,
+    pub edge_authority_base_url: Option<String>,
+    pub estimated_graph_storage_gb: f64,
+    pub estimated_r2_storage_gb: f64,
+    pub model_spend_policy: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

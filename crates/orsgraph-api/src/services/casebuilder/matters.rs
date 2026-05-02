@@ -201,6 +201,9 @@ impl CaseBuilderService {
             facts: self.list_facts(matter_id).await?,
             timeline: self.list_timeline(matter_id).await?,
             timeline_suggestions: self.list_timeline_suggestions(matter_id).await?,
+            timeline_agent_runs: self
+                .list_nodes(matter_id, timeline_agent_run_spec())
+                .await?,
             claims: self.list_claims(matter_id).await?,
             evidence: self.list_evidence(matter_id).await?,
             defenses: self.list_defenses(matter_id).await?,

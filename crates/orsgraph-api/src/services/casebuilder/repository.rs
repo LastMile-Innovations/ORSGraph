@@ -1072,8 +1072,34 @@ impl CaseBuilderService {
         matter_id: &str,
         run: &TimelineAgentRun,
     ) -> ApiResult<TimelineAgentRun> {
-        self.merge_node(matter_id, timeline_agent_run_spec(), &run.agent_run_id, run)
-            .await
+        let run = self
+            .merge_node(matter_id, timeline_agent_run_spec(), &run.agent_run_id, run)
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (a:TimelineAgentRun {agent_run_id: $agent_run_id})
+                     SET a.matter_id = $matter_id,
+                         a.status = $status,
+                         a.provider_mode = $provider_mode,
+                         a.provider = $provider,
+                         a.scope_type = $scope_type,
+                         a.created_at = $created_at,
+                         a.started_at = $started_at,
+                         a.completed_at = $completed_at",
+                )
+                .param("agent_run_id", run.agent_run_id.clone())
+                .param("matter_id", matter_id)
+                .param("status", run.status.clone())
+                .param("provider_mode", run.provider_mode.clone())
+                .param("provider", run.provider.clone())
+                .param("scope_type", run.scope_type.clone())
+                .param("created_at", run.created_at.clone())
+                .param("started_at", run.started_at.clone().unwrap_or_default())
+                .param("completed_at", run.completed_at.clone().unwrap_or_default()),
+            )
+            .await?;
+        Ok(run)
     }
 
     pub(super) async fn merge_timeline_suggestion(

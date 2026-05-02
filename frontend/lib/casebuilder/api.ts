@@ -1174,6 +1174,20 @@ export async function listTimelineSuggestions(matterId: string): Promise<Timelin
   return array(live).map(normalizeTimelineSuggestion)
 }
 
+export async function listTimelineAgentRuns(matterId: string): Promise<TimelineAgentRun[]> {
+  const live = await fetchCaseBuilder<unknown[]>(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/timeline/agent-runs`,
+  )
+  return array(live).map(normalizeTimelineAgentRun)
+}
+
+export async function getTimelineAgentRun(matterId: string, agentRunId: string): Promise<TimelineAgentRun> {
+  const live = await fetchCaseBuilder<unknown>(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/timeline/agent-runs/${encodeURIComponent(agentRunId)}`,
+  )
+  return normalizeTimelineAgentRun(live)
+}
+
 export function suggestTimeline(
   matterId: string,
   input: TimelineSuggestInput,
@@ -2380,6 +2394,7 @@ function normalizeMatter(input: unknown): Matter {
     facts,
     timeline: array(raw.timeline).map(normalizeTimelineEvent),
     timeline_suggestions: array(raw.timeline_suggestions, raw.timelineSuggestions).map(normalizeTimelineSuggestion),
+    timeline_agent_runs: array(raw.timeline_agent_runs, raw.timelineAgentRuns).map(normalizeTimelineAgentRun),
     claims: array(raw.claims).map(normalizeClaim),
     evidence: array(raw.evidence).map(normalizeEvidence),
     defenses: array(raw.defenses),
@@ -3513,12 +3528,32 @@ function normalizeTimelineAgentRun(input: any): TimelineAgentRun {
     matter_id: string(input.matter_id, input.matterId),
     subject_type: string(input.subject_type, input.subjectType, "matter"),
     subject_id: input.subject_id ?? input.subjectId ?? null,
+    agent_type: string(input.agent_type, input.agentType, "timeline_builder"),
+    scope_type: string(input.scope_type, input.scopeType, input.subject_type, input.subjectType, "matter"),
+    scope_ids: array(input.scope_ids, input.scopeIds),
+    input_hash: input.input_hash ?? input.inputHash ?? null,
+    pipeline_version: string(input.pipeline_version, input.pipelineVersion),
+    extractor_version: string(input.extractor_version, input.extractorVersion),
+    prompt_template_id: input.prompt_template_id ?? input.promptTemplateId ?? null,
+    provider: string(input.provider, "disabled"),
+    model: input.model ?? null,
     mode: string(input.mode, "template"),
     provider_mode: string(input.provider_mode, input.providerMode, "template"),
     status: string(input.status, "recorded"),
     message: string(input.message),
     produced_suggestion_ids: array(input.produced_suggestion_ids, input.producedSuggestionIds),
     warnings: array(input.warnings),
+    started_at: input.started_at ?? input.startedAt ?? null,
+    completed_at: input.completed_at ?? input.completedAt ?? null,
+    duration_ms: input.duration_ms ?? input.durationMs ?? null,
+    error_code: input.error_code ?? input.errorCode ?? null,
+    error_message: input.error_message ?? input.errorMessage ?? null,
+    deterministic_candidate_count: number(input.deterministic_candidate_count, input.deterministicCandidateCount),
+    provider_enriched_count: number(input.provider_enriched_count, input.providerEnrichedCount),
+    provider_rejected_count: number(input.provider_rejected_count, input.providerRejectedCount),
+    duplicate_candidate_count: number(input.duplicate_candidate_count, input.duplicateCandidateCount),
+    stored_suggestion_count: number(input.stored_suggestion_count, input.storedSuggestionCount),
+    preserved_review_count: number(input.preserved_review_count, input.preservedReviewCount),
     created_at: string(input.created_at, input.createdAt),
   }
 }
@@ -3545,6 +3580,11 @@ function normalizeTimelineSuggestion(input: any): TimelineSuggestion {
     block_id: input.block_id ?? input.blockId ?? null,
     agent_run_id: input.agent_run_id ?? input.agentRunId ?? null,
     index_run_id: input.index_run_id ?? input.indexRunId ?? null,
+    dedupe_key: input.dedupe_key ?? input.dedupeKey ?? null,
+    cluster_id: input.cluster_id ?? input.clusterId ?? null,
+    duplicate_of_suggestion_id: input.duplicate_of_suggestion_id ?? input.duplicateOfSuggestionId ?? null,
+    agent_explanation: input.agent_explanation ?? input.agentExplanation ?? null,
+    agent_confidence: input.agent_confidence ?? input.agentConfidence ?? null,
     status: string(input.status, "suggested"),
     warnings: array(input.warnings),
     approved_event_id: input.approved_event_id ?? input.approvedEventId ?? null,

@@ -44,12 +44,13 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 }
 
 async function forwardRequest(request: NextRequest, context: RouteContext) {
+  const { path = [] } = await context.params
+  const publicAuthRequest = isPublicAuthRequest(request.method, path)
   const session = await getServerSession(authOptions)
-  if (!session?.accessToken) {
+  if (!session?.accessToken && !publicAuthRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const { path = [] } = await context.params
   const upstreamUrl = new URL(`${orsBackendApiBaseUrl()}/${path.map(encodeURIComponent).join("/")}`)
   upstreamUrl.search = request.nextUrl.search
 
@@ -59,7 +60,9 @@ async function forwardRequest(request: NextRequest, context: RouteContext) {
       headers.set(key, value)
     }
   })
-  headers.set("Authorization", `Bearer ${session.accessToken}`)
+  if (session?.accessToken) {
+    headers.set("Authorization", `Bearer ${session.accessToken}`)
+  }
 
   const init: RequestInit = {
     method: request.method,
@@ -84,3 +87,9 @@ async function forwardRequest(request: NextRequest, context: RouteContext) {
   })
 }
 
+function isPublicAuthRequest(method: string, path: string[]) {
+  return (
+    (method === "POST" && path.length === 2 && path[0] === "auth" && path[1] === "access-request") ||
+    (method === "GET" && path.length === 3 && path[0] === "auth" && path[1] === "invites")
+  )
+}

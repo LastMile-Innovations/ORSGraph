@@ -180,7 +180,9 @@ impl AuthAccessService {
                 if invite.accepted_by_subject.as_deref() == Some(subject.as_str()) {
                     return self.me(auth, admin_role).await;
                 }
-                return Err(ApiError::Conflict("Invite has already been accepted".to_string()));
+                return Err(ApiError::Conflict(
+                    "Invite has already been accepted".to_string(),
+                ));
             }
             "expired" => return Err(ApiError::BadRequest("Invite has expired".to_string())),
             "revoked" => return Err(ApiError::BadRequest("Invite has been revoked".to_string())),
@@ -207,18 +209,21 @@ impl AuthAccessService {
         let profile = UserProfile {
             subject: subject.clone(),
             email: auth.email.clone().or_else(|| invite.email.clone()),
-            name: auth.name.clone().or_else(|| {
-                existing
-                    .as_ref()
-                    .and_then(|profile| profile.name.clone())
-            }),
+            name: auth
+                .name
+                .clone()
+                .or_else(|| existing.as_ref().and_then(|profile| profile.name.clone())),
             status: "active".to_string(),
             roles: merge_roles(
                 existing
                     .as_ref()
                     .map(|profile| profile.roles.clone())
                     .unwrap_or_default(),
-                invite.roles.iter().cloned().chain(auth.roles.iter().cloned()),
+                invite
+                    .roles
+                    .iter()
+                    .cloned()
+                    .chain(auth.roles.iter().cloned()),
             ),
             situation_type: invite.situation_type.clone().or_else(|| {
                 existing
@@ -263,11 +268,7 @@ impl AuthAccessService {
         self.me(auth, admin_role).await
     }
 
-    pub async fn require_active_user(
-        &self,
-        auth: &AuthContext,
-        admin_role: &str,
-    ) -> ApiResult<()> {
+    pub async fn require_active_user(&self, auth: &AuthContext, admin_role: &str) -> ApiResult<()> {
         if auth.is_service() || auth.is_admin(admin_role) {
             return Ok(());
         }
@@ -338,7 +339,10 @@ impl AuthAccessService {
         let token = generate_invite_token();
         let token_hash = hash_invite_token(&token);
         let now = now_string();
-        let ttl_days = request.expires_in_days.unwrap_or(DEFAULT_INVITE_TTL_DAYS).clamp(1, 90);
+        let ttl_days = request
+            .expires_in_days
+            .unwrap_or(DEFAULT_INVITE_TTL_DAYS)
+            .clamp(1, 90);
         let invite = BetaInvite {
             invite_id: format!("invite:{}", hex_prefix(token_hash.as_bytes(), 24)),
             token_hash,

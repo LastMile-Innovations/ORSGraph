@@ -350,3 +350,36 @@ impl UnauthorizedLog for ApiError {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{is_auth_access_bootstrap_path, is_public_path};
+    use axum::http::Method;
+
+    #[test]
+    fn auth_access_public_paths_are_method_scoped() {
+        assert!(is_public_path(&Method::POST, "/api/v1/auth/access-request"));
+        assert!(is_public_path(&Method::GET, "/api/v1/auth/invites/token"));
+        assert!(!is_public_path(&Method::GET, "/api/v1/auth/access-request"));
+        assert!(!is_public_path(
+            &Method::POST,
+            "/api/v1/auth/invites/token/accept"
+        ));
+    }
+
+    #[test]
+    fn auth_access_bootstrap_paths_allow_authenticated_pending_users() {
+        assert!(is_auth_access_bootstrap_path(
+            &Method::GET,
+            "/api/v1/auth/me"
+        ));
+        assert!(is_auth_access_bootstrap_path(
+            &Method::POST,
+            "/api/v1/auth/invites/token/accept"
+        ));
+        assert!(!is_auth_access_bootstrap_path(
+            &Method::GET,
+            "/api/v1/matters"
+        ));
+    }
+}

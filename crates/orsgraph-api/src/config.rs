@@ -65,6 +65,18 @@ pub struct ApiConfig {
     pub assemblyai_timeout_ms: u64,
     #[serde(default = "default_assemblyai_max_media_bytes")]
     pub assemblyai_max_media_bytes: u64,
+    #[serde(default = "default_casebuilder_timeline_agent_provider")]
+    pub casebuilder_timeline_agent_provider: String,
+    #[serde(default)]
+    pub casebuilder_timeline_agent_model: Option<String>,
+    #[serde(default)]
+    pub openai_api_key: Option<String>,
+    #[serde(default = "default_casebuilder_timeline_agent_timeout_ms")]
+    pub casebuilder_timeline_agent_timeout_ms: u64,
+    #[serde(default = "default_casebuilder_timeline_agent_max_input_chars")]
+    pub casebuilder_timeline_agent_max_input_chars: usize,
+    #[serde(default = "default_casebuilder_timeline_agent_harness_version")]
+    pub casebuilder_timeline_agent_harness_version: String,
     #[serde(default = "default_log_level")]
     pub log_level: String,
 
@@ -103,6 +115,22 @@ pub struct ApiConfig {
     pub vector_min_score: f32,
     #[serde(default = "default_vector_profile")]
     pub vector_profile: String,
+
+    // Authority Release / Cost Controls
+    #[serde(default = "default_corpus_release_manifest_path")]
+    pub corpus_release_manifest_path: String,
+    #[serde(default = "default_authority_cache_ttl_seconds")]
+    pub authority_cache_ttl_seconds: u64,
+    #[serde(default = "default_authority_cache_max_capacity")]
+    pub authority_cache_max_capacity: u64,
+    #[serde(default = "default_query_embedding_cache_ttl_seconds")]
+    pub query_embedding_cache_ttl_seconds: u64,
+    #[serde(default = "default_query_embedding_cache_max_capacity")]
+    pub query_embedding_cache_max_capacity: u64,
+    #[serde(default = "default_rerank_policy")]
+    pub rerank_policy: String,
+    #[serde(default)]
+    pub authority_edge_base_url: Option<String>,
 
     // Internal Admin Operations
     #[serde(default)]
@@ -171,6 +199,22 @@ fn default_assemblyai_max_media_bytes() -> u64 {
     500 * 1024 * 1024
 }
 
+fn default_casebuilder_timeline_agent_provider() -> String {
+    "disabled".to_string()
+}
+
+fn default_casebuilder_timeline_agent_timeout_ms() -> u64 {
+    12_000
+}
+
+fn default_casebuilder_timeline_agent_max_input_chars() -> usize {
+    30_000
+}
+
+fn default_casebuilder_timeline_agent_harness_version() -> String {
+    "timeline-harness-v1".to_string()
+}
+
 fn default_api_host() -> String {
     "127.0.0.1".to_string()
 }
@@ -237,6 +281,30 @@ fn default_vector_min_score() -> f32 {
 
 fn default_vector_profile() -> String {
     "legal_chunk_primary_v1".to_string()
+}
+
+fn default_corpus_release_manifest_path() -> String {
+    "data/graph/corpus_release.json".to_string()
+}
+
+fn default_authority_cache_ttl_seconds() -> u64 {
+    86_400
+}
+
+fn default_authority_cache_max_capacity() -> u64 {
+    20_000
+}
+
+fn default_query_embedding_cache_ttl_seconds() -> u64 {
+    604_800
+}
+
+fn default_query_embedding_cache_max_capacity() -> u64 {
+    50_000
+}
+
+fn default_rerank_policy() -> String {
+    "low_confidence".to_string()
 }
 
 fn default_admin_jobs_dir() -> String {
@@ -373,6 +441,26 @@ impl ApiConfig {
         if let Some(value) = read_u64("ORS_ASSEMBLYAI_MAX_MEDIA_BYTES") {
             self.assemblyai_max_media_bytes = value;
         }
+        if let Some(value) = read_string("ORS_CASEBUILDER_TIMELINE_AGENT_PROVIDER") {
+            self.casebuilder_timeline_agent_provider = value;
+        }
+        if let Some(value) = read_string("ORS_CASEBUILDER_TIMELINE_AGENT_MODEL") {
+            self.casebuilder_timeline_agent_model = Some(value);
+        }
+        if let Some(value) =
+            read_string("ORS_OPENAI_API_KEY").or_else(|| read_string("OPENAI_API_KEY"))
+        {
+            self.openai_api_key = Some(value);
+        }
+        if let Some(value) = read_u64("ORS_CASEBUILDER_TIMELINE_AGENT_TIMEOUT_MS") {
+            self.casebuilder_timeline_agent_timeout_ms = value;
+        }
+        if let Some(value) = read_usize("ORS_CASEBUILDER_TIMELINE_AGENT_MAX_INPUT_CHARS") {
+            self.casebuilder_timeline_agent_max_input_chars = value;
+        }
+        if let Some(value) = read_string("ORS_CASEBUILDER_TIMELINE_AGENT_HARNESS_VERSION") {
+            self.casebuilder_timeline_agent_harness_version = value;
+        }
 
         if let Ok(value) = env::var("VOYAGE_API_KEY") {
             if !value.trim().is_empty() {
@@ -418,6 +506,27 @@ impl ApiConfig {
             read_string("ORS_EMBEDDING_MODEL").or_else(|| read_string("ORS_VECTOR_MODEL"))
         {
             self.embedding_model = value;
+        }
+        if let Some(value) = read_string("ORS_CORPUS_RELEASE_MANIFEST_PATH") {
+            self.corpus_release_manifest_path = value;
+        }
+        if let Some(value) = read_u64("ORS_AUTHORITY_CACHE_TTL_SECONDS") {
+            self.authority_cache_ttl_seconds = value;
+        }
+        if let Some(value) = read_u64("ORS_AUTHORITY_CACHE_MAX_CAPACITY") {
+            self.authority_cache_max_capacity = value;
+        }
+        if let Some(value) = read_u64("ORS_QUERY_EMBEDDING_CACHE_TTL_SECONDS") {
+            self.query_embedding_cache_ttl_seconds = value;
+        }
+        if let Some(value) = read_u64("ORS_QUERY_EMBEDDING_CACHE_MAX_CAPACITY") {
+            self.query_embedding_cache_max_capacity = value;
+        }
+        if let Some(value) = read_string("ORS_RERANK_POLICY") {
+            self.rerank_policy = value;
+        }
+        if let Some(value) = read_string("ORS_AUTHORITY_EDGE_BASE_URL") {
+            self.authority_edge_base_url = Some(value);
         }
 
         if let Some(value) = read_bool("ORS_ADMIN_ENABLED") {
@@ -527,6 +636,47 @@ impl ApiConfig {
                 "ORS_ASSEMBLYAI_MAX_MEDIA_BYTES must be greater than 0".to_string(),
             ));
         }
+        self.casebuilder_timeline_agent_provider = self
+            .casebuilder_timeline_agent_provider
+            .trim()
+            .to_ascii_lowercase();
+        if !matches!(
+            self.casebuilder_timeline_agent_provider.as_str(),
+            "disabled" | "openai"
+        ) {
+            return Err(ConfigError::Message(format!(
+                "Unsupported ORS_CASEBUILDER_TIMELINE_AGENT_PROVIDER {}; expected disabled or openai",
+                self.casebuilder_timeline_agent_provider
+            )));
+        }
+        self.casebuilder_timeline_agent_model = self
+            .casebuilder_timeline_agent_model
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        self.openai_api_key = self
+            .openai_api_key
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if self.casebuilder_timeline_agent_timeout_ms == 0 {
+            return Err(ConfigError::Message(
+                "ORS_CASEBUILDER_TIMELINE_AGENT_TIMEOUT_MS must be greater than 0".to_string(),
+            ));
+        }
+        if self.casebuilder_timeline_agent_max_input_chars == 0 {
+            return Err(ConfigError::Message(
+                "ORS_CASEBUILDER_TIMELINE_AGENT_MAX_INPUT_CHARS must be greater than 0".to_string(),
+            ));
+        }
+        self.casebuilder_timeline_agent_harness_version = self
+            .casebuilder_timeline_agent_harness_version
+            .trim()
+            .to_string();
+        if self.casebuilder_timeline_agent_harness_version.is_empty() {
+            self.casebuilder_timeline_agent_harness_version =
+                default_casebuilder_timeline_agent_harness_version();
+        }
         if self.storage_backend == "r2" {
             for (name, value) in [
                 ("ORS_R2_ACCOUNT_ID", &self.r2_account_id),
@@ -541,6 +691,44 @@ impl ApiConfig {
                 }
             }
         }
+        self.corpus_release_manifest_path = self.corpus_release_manifest_path.trim().to_string();
+        if self.corpus_release_manifest_path.is_empty() {
+            self.corpus_release_manifest_path = default_corpus_release_manifest_path();
+        }
+        if self.authority_cache_ttl_seconds == 0 {
+            return Err(ConfigError::Message(
+                "ORS_AUTHORITY_CACHE_TTL_SECONDS must be greater than 0".to_string(),
+            ));
+        }
+        if self.authority_cache_max_capacity == 0 {
+            return Err(ConfigError::Message(
+                "ORS_AUTHORITY_CACHE_MAX_CAPACITY must be greater than 0".to_string(),
+            ));
+        }
+        if self.query_embedding_cache_ttl_seconds == 0 {
+            return Err(ConfigError::Message(
+                "ORS_QUERY_EMBEDDING_CACHE_TTL_SECONDS must be greater than 0".to_string(),
+            ));
+        }
+        if self.query_embedding_cache_max_capacity == 0 {
+            return Err(ConfigError::Message(
+                "ORS_QUERY_EMBEDDING_CACHE_MAX_CAPACITY must be greater than 0".to_string(),
+            ));
+        }
+        self.rerank_policy = self.rerank_policy.trim().to_ascii_lowercase();
+        if !matches!(
+            self.rerank_policy.as_str(),
+            "explicit" | "low_confidence" | "always"
+        ) {
+            return Err(ConfigError::Message(
+                "ORS_RERANK_POLICY must be explicit, low_confidence, or always".to_string(),
+            ));
+        }
+        self.authority_edge_base_url = self
+            .authority_edge_base_url
+            .as_ref()
+            .map(|value| value.trim().trim_end_matches('/').to_string())
+            .filter(|value| !value.is_empty());
         if self.admin_jobs_dir.trim().is_empty() {
             return Err(ConfigError::Message(
                 "ORS_ADMIN_JOBS_DIR must not be empty".to_string(),
@@ -621,6 +809,12 @@ mod tests {
             assemblyai_webhook_secret: None,
             assemblyai_timeout_ms: 30_000,
             assemblyai_max_media_bytes: 500 * 1024 * 1024,
+            casebuilder_timeline_agent_provider: "disabled".to_string(),
+            casebuilder_timeline_agent_model: None,
+            openai_api_key: None,
+            casebuilder_timeline_agent_timeout_ms: 12_000,
+            casebuilder_timeline_agent_max_input_chars: 30_000,
+            casebuilder_timeline_agent_harness_version: "timeline-harness-v1".to_string(),
             log_level: "info".to_string(),
             voyage_api_key: None,
             rerank_enabled: false,
@@ -638,6 +832,13 @@ mod tests {
             vector_top_k: 100,
             vector_min_score: 0.55,
             vector_profile: "legal_chunk_primary_v1".to_string(),
+            corpus_release_manifest_path: "data/graph/corpus_release.json".to_string(),
+            authority_cache_ttl_seconds: 86_400,
+            authority_cache_max_capacity: 20_000,
+            query_embedding_cache_ttl_seconds: 604_800,
+            query_embedding_cache_max_capacity: 50_000,
+            rerank_policy: "low_confidence".to_string(),
+            authority_edge_base_url: None,
             admin_enabled: false,
             admin_allow_kill: false,
             admin_jobs_dir: "data/admin/jobs".to_string(),
@@ -683,6 +884,12 @@ mod tests {
             assemblyai_webhook_secret: None,
             assemblyai_timeout_ms: 30_000,
             assemblyai_max_media_bytes: 500 * 1024 * 1024,
+            casebuilder_timeline_agent_provider: "disabled".to_string(),
+            casebuilder_timeline_agent_model: None,
+            openai_api_key: None,
+            casebuilder_timeline_agent_timeout_ms: 12_000,
+            casebuilder_timeline_agent_max_input_chars: 30_000,
+            casebuilder_timeline_agent_harness_version: "timeline-harness-v1".to_string(),
             log_level: "info".to_string(),
             voyage_api_key: None,
             rerank_enabled: false,
@@ -700,6 +907,13 @@ mod tests {
             vector_top_k: 100,
             vector_min_score: 0.55,
             vector_profile: "legal_chunk_primary_v1".to_string(),
+            corpus_release_manifest_path: "data/graph/corpus_release.json".to_string(),
+            authority_cache_ttl_seconds: 86_400,
+            authority_cache_max_capacity: 20_000,
+            query_embedding_cache_ttl_seconds: 604_800,
+            query_embedding_cache_max_capacity: 50_000,
+            rerank_policy: "low_confidence".to_string(),
+            authority_edge_base_url: None,
             admin_enabled: false,
             admin_allow_kill: false,
             admin_jobs_dir: "data/admin/jobs".to_string(),

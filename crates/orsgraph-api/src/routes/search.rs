@@ -4,25 +4,33 @@ use crate::state::AppState;
 use axum::{
     Json,
     extract::{Query, State},
+    http::{HeaderMap, HeaderValue},
+    response::IntoResponse,
 };
 
 pub async fn search(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
-) -> ApiResult<Json<SearchResponse>> {
+) -> ApiResult<impl IntoResponse> {
     let response = state.search_service.search(query).await?;
-    Ok(Json(response))
+    Ok((
+        authority_headers(&response.cache_status, &response.corpus_release_id),
+        Json(response),
+    ))
 }
 
 pub async fn open(
     State(state): State<AppState>,
     Query(params): Query<OpenParams>,
-) -> ApiResult<Json<DirectOpenResponse>> {
+) -> ApiResult<impl IntoResponse> {
     let response = state
         .search_service
         .direct_open(&params.q, params.authority_family.as_deref())
         .await?;
-    Ok(Json(response))
+    Ok((
+        authority_headers(&response.cache_status, &response.corpus_release_id),
+        Json(response),
+    ))
 }
 
 pub async fn suggest(
@@ -46,4 +54,15 @@ pub struct OpenParams {
 pub struct SuggestParams {
     pub q: String,
     pub limit: Option<u32>,
+}
+
+fn authority_headers(cache_status: &str, release_id: &str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    if let Ok(value) = HeaderValue::from_str(cache_status) {
+        headers.insert("x-ors-cache", value);
+    }
+    if let Ok(value) = HeaderValue::from_str(release_id) {
+        headers.insert("x-ors-corpus-release", value);
+    }
+    headers
 }

@@ -20,7 +20,10 @@ pub fn routes() -> Router<AppState> {
         .route("/auth/me", get(me))
         .route("/admin/auth/access-requests", get(list_access_requests))
         .route("/admin/auth/invites", get(list_invites).post(create_invite))
-        .route("/admin/auth/invites/{invite_id}/revoke", post(revoke_invite))
+        .route(
+            "/admin/auth/invites/{invite_id}/revoke",
+            post(revoke_invite),
+        )
         .route("/admin/auth/users/{subject}", patch(update_user_access))
 }
 
@@ -98,7 +101,10 @@ async fn create_invite(
     Json(request): Json<CreateInviteRequest>,
 ) -> ApiResult<Json<CreateInviteResponse>> {
     Ok(Json(
-        state.auth_access_service.create_invite(request, &auth).await?,
+        state
+            .auth_access_service
+            .create_invite(request, &auth)
+            .await?,
     ))
 }
 
@@ -106,7 +112,9 @@ async fn revoke_invite(
     State(state): State<AppState>,
     Path(invite_id): Path<String>,
 ) -> ApiResult<Json<BetaInvite>> {
-    Ok(Json(state.auth_access_service.revoke_invite(&invite_id).await?))
+    Ok(Json(
+        state.auth_access_service.revoke_invite(&invite_id).await?,
+    ))
 }
 
 async fn update_user_access(

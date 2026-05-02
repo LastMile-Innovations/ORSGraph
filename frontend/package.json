@@ -14,6 +14,7 @@
     "coverage:all": "COVERAGE_ALL=true vitest run --coverage",
     "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run check:licenses",
     "check:licenses": "node scripts/check-oss-licenses.mjs",
+    "perf:authority": "node scripts/perf-authority.mjs",
     "smoke:routes": "node scripts/smoke-routes.mjs",
     "smoke:casebuilder": "node scripts/smoke-casebuilder.mjs"
   },

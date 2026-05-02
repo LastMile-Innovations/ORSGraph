@@ -9,6 +9,7 @@ import type { MatterType } from "@/lib/casebuilder/types"
 import { createMatter, runMatterIndex, uploadBinaryFile, uploadTextFile } from "@/lib/casebuilder/api"
 import { matterHref } from "@/lib/casebuilder/routes"
 import { createUploadBatchId, filesToUploadCandidates, type UploadCandidate } from "@/lib/casebuilder/upload-folders"
+import { trackConversionEvent } from "@/lib/conversion-events"
 
 type Intent = "fight" | "build" | "blank"
 
@@ -87,6 +88,13 @@ export function NewMatterClient({ initialIntent }: { initialIntent: Intent }) {
       setError(result.error || "CaseBuilder API did not create the matter.")
       return
     }
+
+    trackConversionEvent("first_matter_created", {
+      intent,
+      matter_type: type,
+      uploaded_files: files.length,
+      has_story: Boolean(story.trim()),
+    })
 
     const matterId = result.data.id || result.data.matter_id
     const uploads = []

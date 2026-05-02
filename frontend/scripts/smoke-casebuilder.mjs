@@ -87,6 +87,7 @@ async function main() {
   assert(indexRun.produced_timeline_suggestions >= 1, "matter index run reports timeline suggestions")
   assert(extraction.timeline_suggestions?.length > 0, "reviewable timeline suggestions returned")
   assert(extraction.timeline_suggestions[0].status === "suggested", "timeline suggestion is review-first")
+  assert(extraction.timeline_suggestions[0].agent_run_id, "indexed suggestion points to a timeline agent run")
   const fact = extraction.proposed_facts[0]
 
   const approvedFact = await request(
@@ -95,23 +96,52 @@ async function main() {
   )
   assert(approvedFact.status === "supported", "fact approved")
 
+  const editedSuggestion = await request(
+    `/matters/${encodeURIComponent(matterId)}/timeline/suggestions/${encodeURIComponent(extraction.timeline_suggestions[0].suggestion_id)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ title: "Smoke edited April 1 notice" }),
+    },
+  )
+  assert(editedSuggestion.title === "Smoke edited April 1 notice", "timeline suggestion title can be edited before approval")
+
   const timelineApproval = await request(
-    `/matters/${encodeURIComponent(matterId)}/timeline/suggestions/${encodeURIComponent(extraction.timeline_suggestions[0].suggestion_id)}/approve`,
+    `/matters/${encodeURIComponent(matterId)}/timeline/suggestions/${encodeURIComponent(editedSuggestion.suggestion_id)}/approve`,
     { method: "POST" },
   )
   assert(timelineApproval.suggestion?.status === "approved", "timeline suggestion approved")
   assert(timelineApproval.event?.date === "2026-04-01", "approved timeline event keeps extracted date")
+  assert(timelineApproval.event?.title === "Smoke edited April 1 notice", "approved event uses reviewed suggestion title")
 
   const timelineSuggest = await request(`/matters/${encodeURIComponent(matterId)}/timeline/suggest`, {
     method: "POST",
     body: JSON.stringify({ document_ids: [document.document_id], limit: 5 }),
   })
   assert(timelineSuggest.agent_run?.provider_mode === "template", "provider-free timeline agent run recorded")
+  assert(timelineSuggest.agent_run?.agent_type === "timeline_builder", "timeline agent run records harness agent type")
+  assert(timelineSuggest.agent_run?.scope_type === "document", "timeline agent run records request scope")
+  assert(timelineSuggest.agent_run?.input_hash, "timeline agent run records input hash")
+  assert(timelineSuggest.agent_run?.pipeline_version, "timeline agent run records pipeline version")
+  assert(timelineSuggest.agent_run?.extractor_version, "timeline agent run records extractor version")
+  assert(timelineSuggest.agent_run?.deterministic_candidate_count >= 1, "timeline agent run records deterministic candidate count")
+  assert(timelineSuggest.agent_run?.stored_suggestion_count >= 1, "timeline agent run records stored suggestion count")
+  assert(timelineSuggest.suggestions?.every((suggestion) => suggestion.agent_run_id === timelineSuggest.agent_run.agent_run_id), "suggestions point to the returned agent run")
+
+  const agentRuns = await request(`/matters/${encodeURIComponent(matterId)}/timeline/agent-runs`)
+  assert(agentRuns.some((run) => run.agent_run_id === timelineSuggest.agent_run.agent_run_id), "timeline agent run list includes latest run")
+  const agentRun = await request(
+    `/matters/${encodeURIComponent(matterId)}/timeline/agent-runs/${encodeURIComponent(timelineSuggest.agent_run.agent_run_id)}`,
+  )
+  assert(agentRun.agent_run_id === timelineSuggest.agent_run.agent_run_id, "timeline agent run detail is reachable")
 
   const graph = await request(`/matters/${encodeURIComponent(matterId)}/graph`)
   assert(
     graph.nodes?.some((node) => node.kind === "event" && node.id === timelineApproval.event.event_id),
     "approved timeline event appears in matter graph",
+  )
+  assert(
+    graph.nodes?.some((node) => node.kind === "timeline_agent_run" && node.id === timelineSuggest.agent_run.agent_run_id),
+    "timeline agent run appears in matter graph",
   )
 
   const claim = await request(`/matters/${encodeURIComponent(matterId)}/claims`, {

@@ -32,7 +32,15 @@ impl LegalHierarchyMetadata {
         let level = result
             .authority_level
             .unwrap_or_else(|| authority_level_for_family(family));
-        let tier = authority_tier_for_level(level);
+        let family_key = normalize_family(family);
+        let tier = if matches!(
+            family_key.as_str(),
+            "USCONST" | "ORCONST" | "STATECONSTITUTION"
+        ) {
+            "constitution"
+        } else {
+            authority_tier_for_level(level)
+        };
         let role = result
             .source_role
             .as_deref()
@@ -73,7 +81,7 @@ pub fn authority_level_for_family(authority_family: &str) -> i32 {
     match normalize_family(authority_family).as_str() {
         "USCONST" => AUTHORITY_LEVEL_US_CONSTITUTION,
         "FEDERALSTATUTE" | "USC" => AUTHORITY_LEVEL_FEDERAL_STATUTE,
-        "STATECONSTITUTION" => AUTHORITY_LEVEL_STATE_CONSTITUTION,
+        "ORCONST" | "STATECONSTITUTION" => AUTHORITY_LEVEL_STATE_CONSTITUTION,
         "ORS" => AUTHORITY_LEVEL_STATE_STATUTE,
         "FEDERALRULE" | "FRCP" | "FRE" | "FRAP" | "CFR" => AUTHORITY_LEVEL_FEDERAL_RULE,
         "UTCR" | "ORCP" | "ORAP" | "OAR" => AUTHORITY_LEVEL_STATE_RULE,
@@ -86,7 +94,7 @@ pub fn authority_level_for_family(authority_family: &str) -> i32 {
 
 pub fn authority_type_for_family(authority_family: &str) -> &'static str {
     match normalize_family(authority_family).as_str() {
-        "USCONST" | "STATECONSTITUTION" => "constitution",
+        "USCONST" | "ORCONST" | "STATECONSTITUTION" => "constitution",
         "FEDERALSTATUTE" | "USC" | "ORS" => "statute",
         "FEDERALRULE" | "FRCP" | "FRE" | "FRAP" | "CFR" | "UTCR" | "ORCP" | "ORAP" | "OAR"
         | "SLR" | "LOCALRULE" => "rule",
@@ -99,6 +107,7 @@ pub fn authority_type_for_family(authority_family: &str) -> &'static str {
 pub fn corpus_id_for_family(authority_family: &str) -> Option<&'static str> {
     match normalize_family(authority_family).as_str() {
         "USCONST" => Some("us:constitution"),
+        "ORCONST" => Some("or:constitution"),
         "CONAN" => Some("us:conan"),
         "USC" | "FEDERALSTATUTE" => Some("us:usc"),
         "CFR" => Some("us:cfr"),
@@ -125,9 +134,9 @@ pub fn authority_tier_for_level(level: i32) -> &'static str {
 
 pub fn source_role_for_family(authority_family: &str) -> &'static str {
     match normalize_family(authority_family).as_str() {
-        "USCONST" | "FEDERALSTATUTE" | "USC" | "STATECONSTITUTION" | "ORS" | "FEDERALRULE"
-        | "FRCP" | "FRE" | "FRAP" | "CFR" | "UTCR" | "ORCP" | "ORAP" | "OAR" | "SLR"
-        | "LOCALRULE" => "primary_law",
+        "USCONST" | "FEDERALSTATUTE" | "USC" | "ORCONST" | "STATECONSTITUTION" | "ORS"
+        | "FEDERALRULE" | "FRCP" | "FRE" | "FRAP" | "CFR" | "UTCR" | "ORCP" | "ORAP" | "OAR"
+        | "SLR" | "LOCALRULE" => "primary_law",
         "CONAN" | "OFFICIALCOMMENTARY" => "official_commentary",
         "CASELAW" => "case_law",
         _ => "secondary",
@@ -153,7 +162,12 @@ pub fn jurisdiction_for_family(authority_family: &str, corpus_id: Option<&str>) 
 
 pub fn infer_authority_family(citation: &str) -> Option<&'static str> {
     let upper = citation.trim().to_ascii_uppercase();
-    if upper.starts_with("U.S. CONST")
+    if upper.starts_with("OR. CONST")
+        || upper.starts_with("OR CONST")
+        || upper.starts_with("OREGON CONST")
+    {
+        Some("ORCONST")
+    } else if upper.starts_with("U.S. CONST")
         || upper.starts_with("US CONST")
         || upper.starts_with("UNITED STATES CONST")
         || upper.contains(" AMENDMENT")
@@ -248,5 +262,50 @@ mod tests {
         assert!(constitution > conan);
         assert_eq!(source_role_for_family("CONAN"), "official_commentary");
         assert_eq!(authority_type_for_family("USCONST"), "constitution");
+        assert_eq!(authority_level_for_family("ORCONST"), 91);
+        assert_eq!(authority_type_for_family("ORCONST"), "constitution");
+        assert_eq!(source_role_for_family("ORCONST"), "primary_law");
+        assert_eq!(corpus_id_for_family("ORCONST"), Some("or:constitution"));
+    }
+
+    #[test]
+    fn oregon_constitution_is_constitution_tier() {
+        let result = SearchResult {
+            id: "or:constitution:article-i:section-8".to_string(),
+            kind: "provision".to_string(),
+            citation: Some("Or. Const. art. I, § 8".to_string()),
+            title: None,
+            chapter: Some("article-i".to_string()),
+            status: Some("active".to_string()),
+            snippet: String::new(),
+            score: 1.0,
+            fulltext_score: None,
+            vector_score: None,
+            rerank_score: None,
+            graph_score: None,
+            pre_rerank_score: None,
+            rank_source: None,
+            score_breakdown: None,
+            semantic_types: Vec::new(),
+            source_backed: true,
+            qc_warnings: Vec::new(),
+            href: "/statutes/or:constitution:article-i:section-8".to_string(),
+            source: None,
+            graph: None,
+            authority_family: Some("ORCONST".to_string()),
+            authority_type: None,
+            authority_level: Some(91),
+            authority_tier: None,
+            jurisdiction_id: None,
+            corpus_id: None,
+            source_role: None,
+            primary_law: None,
+            official_commentary: None,
+            controlling_weight: None,
+        };
+        let metadata = LegalHierarchyMetadata::for_result(&result);
+        assert_eq!(metadata.authority_tier, "constitution");
+        assert_eq!(metadata.source_role, "primary_law");
+        assert!(metadata.controlling_weight > authority_level_for_family("ORS") as f32 / 100.0);
     }
 }

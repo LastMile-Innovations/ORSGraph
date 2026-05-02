@@ -1069,12 +1069,32 @@ export interface TimelineAgentRun {
   matter_id: string
   subject_type: string
   subject_id?: string | null
+  agent_type: string
+  scope_type: string
+  scope_ids: string[]
+  input_hash?: string | null
+  pipeline_version: string
+  extractor_version: string
+  prompt_template_id?: string | null
+  provider: string
+  model?: string | null
   mode: string
   provider_mode: string
   status: string
   message: string
   produced_suggestion_ids: string[]
   warnings: string[]
+  started_at?: string | null
+  completed_at?: string | null
+  duration_ms?: number | null
+  error_code?: string | null
+  error_message?: string | null
+  deterministic_candidate_count: number
+  provider_enriched_count: number
+  provider_rejected_count: number
+  duplicate_candidate_count: number
+  stored_suggestion_count: number
+  preserved_review_count: number
   created_at: string
 }
 
@@ -1098,6 +1118,11 @@ export interface TimelineSuggestion {
   block_id?: string | null
   agent_run_id?: string | null
   index_run_id?: string | null
+  dedupe_key?: string | null
+  cluster_id?: string | null
+  duplicate_of_suggestion_id?: string | null
+  agent_explanation?: string | null
+  agent_confidence?: number | null
   status: "suggested" | "approved" | "rejected" | "needs_attention" | string
   warnings: string[]
   approved_event_id?: string | null
@@ -2488,6 +2513,7 @@ export interface Matter extends MatterSummary {
   facts: ExtractedFact[]
   timeline: TimelineEvent[]
   timeline_suggestions: TimelineSuggestion[]
+  timeline_agent_runs: TimelineAgentRun[]
   claims: Claim[] // includes counterclaims and defenses (kind discriminator)
   evidence: CaseEvidence[]
   defenses: CaseDefense[]

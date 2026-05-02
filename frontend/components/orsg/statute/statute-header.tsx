@@ -25,9 +25,10 @@ export function StatuteHeader({
     authority_family:
       identity.authority_family
       || (identity.corpus === "us:constitution" ? "USCONST" : undefined)
+      || (identity.corpus === "or:constitution" ? "ORCONST" : undefined)
       || (identity.corpus === "or:ors" ? "ORS" : undefined),
     primary_law:
-      identity.primary_law ?? (identity.corpus === "us:constitution" || identity.corpus === "or:ors"),
+      identity.primary_law ?? (identity.corpus === "us:constitution" || identity.corpus === "or:constitution" || identity.corpus === "or:ors"),
   }
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [matterState, setMatterState] = useState<LoadState<MatterSummary[]> | null>(null)

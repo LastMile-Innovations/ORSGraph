@@ -953,47 +953,17 @@ impl CaseBuilderService {
         for fact in &proposed_facts {
             source_spans.extend(fact.source_spans.clone());
         }
-        let mut timeline_suggestions = timeline_suggestions_from_facts(
-            matter_id,
-            Some(document_id),
-            &proposed_facts,
-            &chunks,
-            "document_index",
-            None,
-            None,
-            None,
-            Some(&index_run_id_value),
-            50,
-        );
-        let timeline_agent_run = if timeline_suggestions.is_empty() {
-            None
-        } else {
-            let mut run = TimelineAgentRun {
-                agent_run_id: generate_id("timeline-agent-run", document_id),
-                id: String::new(),
-                matter_id: matter_id.to_string(),
-                subject_type: "document_index".to_string(),
-                subject_id: Some(document_id.to_string()),
-                mode: "template".to_string(),
-                provider_mode: "template".to_string(),
-                status: "recorded".to_string(),
-                message: "Provider-free timeline agent recorded deterministic indexing suggestions; no unsupported text was inserted.".to_string(),
-                produced_suggestion_ids: timeline_suggestions
-                    .iter()
-                    .map(|suggestion| suggestion.suggestion_id.clone())
-                    .collect(),
-                warnings: vec![
-                    "Timeline AI agent is provider-free during indexing; deterministic suggestions require review."
-                        .to_string(),
-                ],
-                created_at: now_string(),
-            };
-            run.id = run.agent_run_id.clone();
-            for suggestion in &mut timeline_suggestions {
-                suggestion.agent_run_id = Some(run.agent_run_id.clone());
-            }
-            Some(run)
-        };
+        let timeline_agent_outcome = self
+            .execute_timeline_agent_for_indexed_document(
+                matter_id,
+                document_id,
+                &proposed_facts,
+                &chunks,
+                &index_run_id_value,
+                50,
+            )
+            .await?;
+        let timeline_suggestions = timeline_agent_outcome.suggestions.clone();
         let (index_artifacts, artifact_manifest) = self
             .store_extraction_index_artifacts(
                 matter_id,
@@ -1088,9 +1058,10 @@ impl CaseBuilderService {
             Some(&artifact_manifest),
             &index_artifacts,
         );
-        if let Some(run) = &timeline_agent_run {
-            push_unique(&mut produced_ids, run.agent_run_id.clone());
-        }
+        push_unique(
+            &mut produced_ids,
+            timeline_agent_outcome.run.agent_run_id.clone(),
+        );
         for suggestion in &timeline_suggestions {
             push_unique(&mut produced_ids, suggestion.suggestion_id.clone());
         }
@@ -1131,16 +1102,10 @@ impl CaseBuilderService {
         for record in &search_index_records {
             self.merge_search_index_record(matter_id, record).await?;
         }
-        if let Some(run) = &timeline_agent_run {
-            self.merge_timeline_agent_run(matter_id, run).await?;
-        }
-        let mut stored_timeline_suggestions = Vec::with_capacity(timeline_suggestions.len());
-        for suggestion in &timeline_suggestions {
-            stored_timeline_suggestions.push(
-                self.merge_timeline_suggestion(matter_id, suggestion)
-                    .await?,
-            );
-        }
+        let timeline_agent_outcome = self
+            .persist_timeline_agent_outcome(matter_id, &timeline_agent_outcome)
+            .await?;
+        let stored_timeline_suggestions = timeline_agent_outcome.suggestions;
         let ingestion_run = provenance.as_ref().map(|provenance| {
             completed_ingestion_run_with_objects(
                 &provenance.ingestion_run,

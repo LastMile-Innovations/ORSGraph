@@ -1,22 +1,31 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
-  CalendarClock,
-  FileText,
   AlertTriangle,
-  Gavel,
+  CalendarClock,
   CheckCircle2,
-  Filter,
   Download,
+  ExternalLink,
+  FileText,
+  Filter,
+  Gavel,
+  Pencil,
   Plus,
+  RotateCcw,
+  Save,
   Sparkles,
   X,
 } from "lucide-react"
 import type { Matter, TimelineSuggestion } from "@/lib/casebuilder/types"
-import { matterDocumentHref, matterFactsHref, matterHref } from "@/lib/casebuilder/routes"
+import {
+  matterDocumentHref,
+  matterFactsHref,
+  matterHref,
+  matterWorkProductHref,
+} from "@/lib/casebuilder/routes"
 import { approveTimelineSuggestion, createTimelineEvent, patchTimelineSuggestion, suggestTimeline } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -39,6 +48,24 @@ type TimelineEntry = {
   disputed?: boolean
   status?: string
 }
+
+type SuggestionDraft = {
+  date: string
+  dateText: string
+  title: string
+  description: string
+  kind: string
+  status: string
+  sourceDocumentId: string
+  sourceSpanIds: string
+  textChunkIds: string
+  linkedFactIds: string
+  linkedClaimIds: string
+  warnings: string
+}
+
+const REVIEW_STATUSES = ["suggested", "approved", "rejected", "disputed", "all"]
+const EVENT_KINDS = ["other", "communication", "filing", "service", "payment", "notice", "incident", "meeting", "court"]
 
 const KIND_CONFIG: Record<TimelineEntry["kind"], { color: string; icon: typeof FileText; label: string }> = {
   event: {
@@ -70,6 +97,8 @@ const KIND_CONFIG: Record<TimelineEntry["kind"], { color: string; icon: typeof F
 
 export function TimelineView({ matter }: TimelineViewProps) {
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [activeKinds, setActiveKinds] = useState<Set<TimelineEntry["kind"]>>(
     new Set(["event", "fact", "document", "deadline", "milestone"]),
   )
@@ -81,23 +110,84 @@ export function TimelineView({ matter }: TimelineViewProps) {
   const [sourceDocumentId, setSourceDocumentId] = useState("")
   const [linkedFactId, setLinkedFactId] = useState("")
   const [saving, setSaving] = useState(false)
-  const [reviewStatus, setReviewStatus] = useState("suggested")
-  const [sourceType, setSourceType] = useState("all")
+  const [reviewStatus, setReviewStatus] = useState(() => safeReviewStatus(searchParams.get("status")))
+  const [sourceType, setSourceType] = useState(() => searchParams.get("source") ?? "all")
+  const [agentRunId, setAgentRunId] = useState(() => searchParams.get("agentRun") ?? "all")
   const [pendingSuggestionId, setPendingSuggestionId] = useState<string | null>(null)
   const [reviewMessage, setReviewMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const filteredSuggestions = useMemo(() => {
-    return (matter.timeline_suggestions ?? []).filter((suggestion) => {
-      if (reviewStatus === "disputed") return suggestion.warnings.length > 0
-      if (reviewStatus !== "all" && suggestion.status !== reviewStatus) return false
-      if (sourceType !== "all" && suggestion.source_type !== sourceType) return false
-      return true
-    })
-  }, [matter.timeline_suggestions, reviewStatus, sourceType])
+  useEffect(() => {
+    setReviewStatus(safeReviewStatus(searchParams.get("status")))
+    setSourceType(searchParams.get("source") ?? "all")
+    setAgentRunId(searchParams.get("agentRun") ?? "all")
+  }, [searchParams])
+
+  const documentsById = useMemo(() => {
+    const map = new Map<string, Matter["documents"][number]>()
+    for (const document of matter.documents) {
+      map.set(document.id, document)
+      map.set(document.document_id, document)
+    }
+    return map
+  }, [matter.documents])
+
+  const factsById = useMemo(() => {
+    const map = new Map<string, Matter["facts"][number]>()
+    for (const fact of matter.facts) {
+      map.set(fact.id, fact)
+      if (fact.fact_id) map.set(fact.fact_id, fact)
+    }
+    return map
+  }, [matter.facts])
+
+  const claimsById = useMemo(() => {
+    const map = new Map<string, Matter["claims"][number]>()
+    for (const claim of matter.claims) {
+      map.set(claim.id, claim)
+      const claimId = (claim as { claim_id?: string }).claim_id
+      if (claimId) map.set(claimId, claim)
+    }
+    return map
+  }, [matter.claims])
 
   const sourceTypes = useMemo(() => {
     return Array.from(new Set((matter.timeline_suggestions ?? []).map((suggestion) => suggestion.source_type))).sort()
+  }, [matter.timeline_suggestions])
+
+  const agentRunIds = useMemo(() => {
+    return Array.from(
+      new Set(
+        [
+          ...(matter.timeline_agent_runs ?? []).map((run) => run.agent_run_id),
+          ...(matter.timeline_suggestions ?? []).map((suggestion) => suggestion.agent_run_id),
+        ].filter((value): value is string => Boolean(value)),
+      ),
+    ).sort()
+  }, [matter.timeline_agent_runs, matter.timeline_suggestions])
+
+  const latestAgentRun = useMemo(() => {
+    return [...(matter.timeline_agent_runs ?? [])].sort((left, right) => {
+      const leftTime = agentRunTimestamp(left)
+      const rightTime = agentRunTimestamp(right)
+      return rightTime - leftTime
+    })[0]
+  }, [matter.timeline_agent_runs])
+
+  const filteredSuggestions = useMemo(() => {
+    return (matter.timeline_suggestions ?? []).filter((suggestion) => {
+      if (reviewStatus === "disputed" && suggestion.warnings.length === 0) return false
+      if (reviewStatus !== "all" && reviewStatus !== "disputed" && suggestion.status !== reviewStatus) return false
+      if (sourceType !== "all" && suggestion.source_type !== sourceType) return false
+      if (agentRunId !== "all" && suggestion.agent_run_id !== agentRunId) return false
+      return true
+    })
+  }, [agentRunId, matter.timeline_suggestions, reviewStatus, sourceType])
+
+  const pendingSuggestionCount = useMemo(() => {
+    return (matter.timeline_suggestions ?? []).filter(
+      (suggestion) => suggestion.status === "suggested" || suggestion.status === "needs_attention",
+    ).length
   }, [matter.timeline_suggestions])
 
   const entries: TimelineEntry[] = useMemo(() => {
@@ -169,7 +259,7 @@ export function TimelineView({ matter }: TimelineViewProps) {
   const grouped = useMemo(() => {
     const map = new Map<string, TimelineEntry[]>()
     for (const e of entries) {
-      const month = e.date.slice(0, 7) // YYYY-MM
+      const month = e.date.slice(0, 7)
       if (!map.has(month)) map.set(month, [])
       map.get(month)!.push(e)
     }
@@ -183,6 +273,22 @@ export function TimelineView({ matter }: TimelineViewProps) {
       else next.add(kind)
       return next
     })
+  }
+
+  function updateReviewFilters(next: { status?: string; source?: string; agentRun?: string; suggestionId?: string }) {
+    const nextStatus = next.status ?? reviewStatus
+    const nextSource = next.source ?? sourceType
+    const nextAgentRun = next.agentRun ?? agentRunId
+    setReviewStatus(safeReviewStatus(nextStatus))
+    setSourceType(nextSource)
+    setAgentRunId(nextAgentRun)
+    const params = new URLSearchParams(searchParams.toString())
+    setOptionalParam(params, "status", nextStatus, "suggested")
+    setOptionalParam(params, "source", nextSource, "all")
+    setOptionalParam(params, "agentRun", nextAgentRun, "all")
+    const query = params.toString()
+    const hash = next.suggestionId ? `#${encodeURIComponent(next.suggestionId)}` : ""
+    router.replace(`${pathname}${query ? `?${query}` : ""}${hash}`, { scroll: false })
   }
 
   async function onCreateEvent() {
@@ -212,6 +318,7 @@ export function TimelineView({ matter }: TimelineViewProps) {
     setEventDescription("")
     setSourceDocumentId("")
     setLinkedFactId("")
+    setReviewMessage("Timeline event created.")
     router.refresh()
   }
 
@@ -225,12 +332,45 @@ export function TimelineView({ matter }: TimelineViewProps) {
       setError(result.error || "Timeline suggestions could not be generated.")
       return
     }
-    setReviewMessage(`${result.data.suggestions.length} timeline suggestion${result.data.suggestions.length === 1 ? "" : "s"} ready for review.`)
+    const first = result.data.suggestions[0]
+    const providerMode = result.data.agent_run?.provider_mode ?? result.data.mode
+    setReviewMessage(`${result.data.suggestions.length} timeline suggestion${result.data.suggestions.length === 1 ? "" : "s"} ready for review (${providerMode}).`)
+    if (first) {
+      updateReviewFilters({
+        status: "suggested",
+        source: first.source_type,
+        agentRun: first.agent_run_id ?? result.data.agent_run?.agent_run_id ?? "all",
+        suggestionId: first.suggestion_id,
+      })
+    }
     router.refresh()
+  }
+
+  async function onPatchSuggestion(suggestion: TimelineSuggestion, draft: SuggestionDraft) {
+    setPendingSuggestionId(suggestion.suggestion_id)
+    setError(null)
+    setReviewMessage(null)
+    const result = await patchTimelineSuggestion(matter.id, suggestion.suggestion_id, patchFromDraft(draft))
+    setPendingSuggestionId(null)
+    if (!result.data) {
+      setError(result.error || "Timeline suggestion could not be updated.")
+      return false
+    }
+    setReviewMessage("Timeline suggestion updated.")
+    updateReviewFilters({
+      status: result.data.status,
+      source: result.data.source_type,
+      agentRun: result.data.agent_run_id ?? "all",
+      suggestionId: result.data.suggestion_id,
+    })
+    router.refresh()
+    return true
   }
 
   async function onApproveSuggestion(suggestion: TimelineSuggestion) {
     setPendingSuggestionId(suggestion.suggestion_id)
+    setError(null)
+    setReviewMessage(null)
     const result = await approveTimelineSuggestion(matter.id, suggestion.suggestion_id)
     setPendingSuggestionId(null)
     if (!result.data) {
@@ -238,11 +378,19 @@ export function TimelineView({ matter }: TimelineViewProps) {
       return
     }
     setReviewMessage("Timeline event approved.")
+    updateReviewFilters({
+      status: "approved",
+      source: result.data.suggestion.source_type,
+      agentRun: result.data.suggestion.agent_run_id ?? "all",
+      suggestionId: result.data.suggestion.suggestion_id,
+    })
     router.refresh()
   }
 
   async function onRejectSuggestion(suggestion: TimelineSuggestion) {
     setPendingSuggestionId(suggestion.suggestion_id)
+    setError(null)
+    setReviewMessage(null)
     const result = await patchTimelineSuggestion(matter.id, suggestion.suggestion_id, { status: "rejected" })
     setPendingSuggestionId(null)
     if (!result.data) {
@@ -250,18 +398,23 @@ export function TimelineView({ matter }: TimelineViewProps) {
       return
     }
     setReviewMessage("Timeline suggestion rejected.")
+    updateReviewFilters({
+      status: "rejected",
+      source: result.data.source_type,
+      agentRun: result.data.agent_run_id ?? "all",
+      suggestionId: result.data.suggestion_id,
+    })
     router.refresh()
   }
 
   return (
     <div className="flex flex-col">
-      {/* Header */}
       <div className="border-b border-border bg-background px-6 py-4">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-foreground">Timeline</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {entries.length} events across {grouped.length} months
+              {entries.length} events across {grouped.length} months · {pendingSuggestionCount} suggestion{pendingSuggestionCount === 1 ? "" : "s"} waiting
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -271,11 +424,17 @@ export function TimelineView({ matter }: TimelineViewProps) {
             </Button>
             <Button variant="outline" size="sm" className="gap-1.5 bg-transparent" onClick={onSuggestTimeline} disabled={saving}>
               <Sparkles className="h-3.5 w-3.5" />
-              Suggest
+              {saving ? "Suggesting" : "Suggest"}
             </Button>
-            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 bg-transparent"
+              disabled
+              title="Timeline export will be available after review queue export is wired."
+            >
               <Download className="h-3.5 w-3.5" />
-              Export
+              Export soon
             </Button>
           </div>
         </div>
@@ -295,9 +454,7 @@ export function TimelineView({ matter }: TimelineViewProps) {
                 onClick={() => toggleKind(kind)}
                 className={cn(
                   "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
-                  active
-                    ? cfg.color
-                    : "border-border bg-background text-muted-foreground hover:bg-muted",
+                  active ? cfg.color : "border-border bg-background text-muted-foreground hover:bg-muted",
                 )}
               >
                 <Icon className="h-3 w-3" />
@@ -307,58 +464,103 @@ export function TimelineView({ matter }: TimelineViewProps) {
           })}
         </div>
 
-        <div className="mt-4 rounded-md border border-border bg-card">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2">
-            <div>
-              <h2 className="text-sm font-medium text-foreground">Review queue</h2>
-              <p className="text-xs text-muted-foreground">
-                {filteredSuggestions.length} candidate{filteredSuggestions.length === 1 ? "" : "s"} from graph, documents, and AST sources
-              </p>
+        <section className="mt-4 rounded-md border border-border bg-card" aria-label="Timeline suggestion review queue">
+          <div className="space-y-3 border-b border-border px-3 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-medium text-foreground">Review queue</h2>
+                <p className="text-xs text-muted-foreground">
+                  {filteredSuggestions.length} candidate{filteredSuggestions.length === 1 ? "" : "s"} from graph, documents, and AST sources
+                </p>
+              </div>
+              {agentRunIds.length > 0 && (
+                <select
+                  value={agentRunId}
+                  onChange={(event) => updateReviewFilters({ agentRun: event.target.value })}
+                  className="rounded border border-border bg-background px-2 py-1 font-mono text-[11px]"
+                  aria-label="Filter by agent run"
+                >
+                  <option value="all">all agent runs</option>
+                  {agentRunIds.map((value) => (
+                    <option key={value} value={value}>
+                      {shortId(value)}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                value={reviewStatus}
-                onChange={(event) => setReviewStatus(event.target.value)}
-                className="rounded border border-border bg-background px-2 py-1 font-mono text-[11px]"
-              >
-                {["suggested", "approved", "rejected", "disputed", "all"].map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={sourceType}
-                onChange={(event) => setSourceType(event.target.value)}
-                className="rounded border border-border bg-background px-2 py-1 font-mono text-[11px]"
-              >
-                <option value="all">all sources</option>
-                {sourceTypes.map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
+            {latestAgentRun && (
+              <div className="grid gap-2 rounded-md border border-border bg-background/60 p-2 text-xs md:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge variant="outline" className="text-[9px] uppercase">
+                      {latestAgentRun.provider_mode}
+                    </Badge>
+                    <Badge variant="outline" className="text-[9px]">
+                      {latestAgentRun.provider || "disabled"}
+                    </Badge>
+                    {latestAgentRun.model && (
+                      <Badge variant="outline" className="text-[9px]">
+                        {latestAgentRun.model}
+                      </Badge>
+                    )}
+                    <span className="font-medium text-foreground">{latestAgentRun.status}</span>
+                    <span className="text-muted-foreground">scope {latestAgentRun.scope_type || latestAgentRun.subject_type}</span>
+                  </div>
+                  <p className="mt-1 truncate text-muted-foreground">{latestAgentRun.message}</p>
+                  {latestAgentRun.warnings.length > 0 && (
+                    <p className="mt-1 text-amber-600 dark:text-amber-400">{latestAgentRun.warnings[0]}</p>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5 font-mono text-[11px] text-muted-foreground md:justify-end">
+                  <span>det {latestAgentRun.deterministic_candidate_count}</span>
+                  <span>stored {latestAgentRun.stored_suggestion_count}</span>
+                  <span>enriched {latestAgentRun.provider_enriched_count}</span>
+                  <span>rejected {latestAgentRun.provider_rejected_count}</span>
+                </div>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {REVIEW_STATUSES.map((value) => (
+                <FilterChip
+                  key={value}
+                  active={reviewStatus === value}
+                  label={value}
+                  onClick={() => updateReviewFilters({ status: value })}
+                />
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <FilterChip active={sourceType === "all"} label="all sources" onClick={() => updateReviewFilters({ source: "all" })} />
+              {sourceTypes.map((value) => (
+                <FilterChip key={value} active={sourceType === value} label={value} onClick={() => updateReviewFilters({ source: value })} />
+              ))}
             </div>
           </div>
-          <div className="grid max-h-72 gap-2 overflow-y-auto p-3 md:grid-cols-2">
+          <div className="max-h-[36rem] space-y-3 overflow-y-auto p-3">
             {filteredSuggestions.map((suggestion) => (
               <TimelineSuggestionCard
                 key={suggestion.suggestion_id}
                 suggestion={suggestion}
+                documentsById={documentsById}
+                factsById={factsById}
+                claimsById={claimsById}
                 pending={pendingSuggestionId === suggestion.suggestion_id}
+                onSave={(draft) => onPatchSuggestion(suggestion, draft)}
                 onApprove={() => onApproveSuggestion(suggestion)}
                 onReject={() => onRejectSuggestion(suggestion)}
               />
             ))}
             {filteredSuggestions.length === 0 && (
-              <div className="rounded border border-dashed border-border p-4 text-sm text-muted-foreground md:col-span-2">
+              <div className="rounded border border-dashed border-border p-4 text-sm text-muted-foreground">
                 No suggestions match the current filters.
               </div>
             )}
           </div>
-        </div>
-        {reviewMessage && <p className="mt-2 text-xs text-muted-foreground">{reviewMessage}</p>}
+        </section>
+        {(reviewMessage || error) && (
+          <p className={cn("mt-2 text-xs", error ? "text-destructive" : "text-muted-foreground")}>{error || reviewMessage}</p>
+        )}
 
         {showCreate && (
           <div className="mt-4 grid gap-3 rounded-md border border-border bg-card p-3 md:grid-cols-[140px_minmax(0,1fr)_160px]">
@@ -379,7 +581,7 @@ export function TimelineView({ matter }: TimelineViewProps) {
               onChange={(event) => setEventKind(event.target.value)}
               className="rounded border border-border bg-background px-3 py-2 font-mono text-xs"
             >
-              {["other", "communication", "filing", "service", "payment", "notice", "incident", "meeting", "court"].map((kind) => (
+              {EVENT_KINDS.map((kind) => (
                 <option key={kind} value={kind}>
                   {kind}
                 </option>
@@ -426,7 +628,6 @@ export function TimelineView({ matter }: TimelineViewProps) {
         )}
       </div>
 
-      {/* Timeline */}
       <ScrollArea className="h-[calc(100vh-200px)]">
         <div className="mx-auto max-w-4xl px-6 py-8">
           {grouped.length === 0 && (
@@ -460,47 +661,238 @@ export function TimelineView({ matter }: TimelineViewProps) {
   )
 }
 
+function FilterChip({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+        active ? "border-primary/40 bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:bg-muted",
+      )}
+    >
+      {label}
+    </button>
+  )
+}
+
 function TimelineSuggestionCard({
   suggestion,
+  documentsById,
+  factsById,
+  claimsById,
   pending,
+  onSave,
   onApprove,
   onReject,
 }: {
   suggestion: TimelineSuggestion
+  documentsById: Map<string, Matter["documents"][number]>
+  factsById: Map<string, Matter["facts"][number]>
+  claimsById: Map<string, Matter["claims"][number]>
   pending: boolean
+  onSave: (draft: SuggestionDraft) => Promise<boolean>
   onApprove: () => void
   onReject: () => void
 }) {
   const approved = suggestion.status === "approved"
   const rejected = suggestion.status === "rejected"
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(() => draftFromSuggestion(suggestion))
+
+  useEffect(() => {
+    if (!editing) setDraft(draftFromSuggestion(suggestion))
+  }, [editing, suggestion])
+
+  const baseline = draftFromSuggestion(suggestion)
+  const dirty = !draftsEqual(draft, baseline)
+  const document = suggestion.source_document_id ? documentsById.get(suggestion.source_document_id) : null
+  const linkedFacts = suggestion.linked_fact_ids.map((id) => factsById.get(id)).filter(Boolean)
+  const linkedClaims = suggestion.linked_claim_ids.map((id) => claimsById.get(id)).filter(Boolean)
+  const sourceHref = suggestion.source_document_id
+    ? matterDocumentHref(suggestion.matter_id, suggestion.source_document_id, suggestion.source_span_ids[0])
+    : null
+  const workProductHref = suggestion.work_product_id
+    ? matterWorkProductHref(
+        suggestion.matter_id,
+        suggestion.work_product_id,
+        undefined,
+        suggestion.block_id ? { id: suggestion.block_id } : undefined,
+      )
+    : null
+
+  async function saveDraft() {
+    const saved = await onSave(draft)
+    if (saved) setEditing(false)
+  }
 
   return (
-    <article id={suggestion.suggestion_id} className="rounded border border-border bg-background p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+    <article id={suggestion.suggestion_id} tabIndex={-1} className="rounded-md border border-border bg-background p-3 scroll-mt-32">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
             <span>{suggestion.date}</span>
+            <span>source date: {suggestion.date_text}</span>
             <Badge variant="outline" className="text-[9px]">
               {Math.round(suggestion.date_confidence * 100)}%
             </Badge>
             <Badge variant="outline" className="text-[9px]">
               {suggestion.source_type}
             </Badge>
+            {suggestion.agent_run_id && (
+              <Badge variant="outline" className="text-[9px]">
+                agent {shortId(suggestion.agent_run_id)}
+              </Badge>
+            )}
+            {suggestion.index_run_id && (
+              <Badge variant="outline" className="text-[9px]">
+                index {shortId(suggestion.index_run_id)}
+              </Badge>
+            )}
             {suggestion.warnings.length > 0 && (
               <Badge variant="outline" className="border-amber-500/40 text-[9px] text-amber-600 dark:text-amber-400">
                 review
               </Badge>
             )}
           </div>
-          <h3 className="mt-1 line-clamp-2 text-sm font-medium leading-snug text-foreground">{suggestion.title}</h3>
-          {suggestion.description && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{suggestion.description}</p>}
+          <h3 className="text-sm font-medium leading-snug text-foreground">{suggestion.title}</h3>
         </div>
         <Badge variant={approved ? "default" : rejected ? "secondary" : "outline"} className="shrink-0 text-[9px] uppercase">
           {suggestion.status}
         </Badge>
       </div>
+
+      {editing ? (
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          <LabeledInput label="Date">
+            <input className={fieldClassName} type="date" value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} />
+          </LabeledInput>
+          <LabeledInput label="Date text">
+            <input className={fieldClassName} value={draft.dateText} onChange={(event) => setDraft({ ...draft, dateText: event.target.value })} />
+          </LabeledInput>
+          <LabeledInput label="Title">
+            <input className={fieldClassName} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
+          </LabeledInput>
+          <LabeledInput label="Kind">
+            <select className={fieldClassName} value={draft.kind} onChange={(event) => setDraft({ ...draft, kind: event.target.value })}>
+              {EVENT_KINDS.map((kind) => (
+                <option key={kind} value={kind}>
+                  {kind}
+                </option>
+              ))}
+            </select>
+          </LabeledInput>
+          <LabeledInput label="Status">
+            <select className={fieldClassName} value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
+              {["suggested", "approved", "rejected", "needs_attention"].map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </LabeledInput>
+          <LabeledInput label="Source document">
+            <select
+              className={fieldClassName}
+              value={draft.sourceDocumentId}
+              onChange={(event) => setDraft({ ...draft, sourceDocumentId: event.target.value })}
+            >
+              <option value="">No source document</option>
+              {Array.from(documentsById.values())
+                .filter((document, index, all) => all.findIndex((candidate) => candidate.id === document.id) === index)
+                .map((document) => (
+                  <option key={document.id} value={document.id}>
+                    {document.title}
+                  </option>
+                ))}
+            </select>
+          </LabeledInput>
+          <LabeledTextarea label="Source quote" value={draft.description} onChange={(value) => setDraft({ ...draft, description: value })} />
+          <LabeledTextarea label="Warnings" value={draft.warnings} onChange={(value) => setDraft({ ...draft, warnings: value })} />
+          <LabeledTextarea label="Source span IDs" value={draft.sourceSpanIds} onChange={(value) => setDraft({ ...draft, sourceSpanIds: value })} />
+          <LabeledTextarea label="Text chunk IDs" value={draft.textChunkIds} onChange={(value) => setDraft({ ...draft, textChunkIds: value })} />
+          <LabeledTextarea label="Linked fact IDs" value={draft.linkedFactIds} onChange={(value) => setDraft({ ...draft, linkedFactIds: value })} />
+          <LabeledTextarea label="Linked claim IDs" value={draft.linkedClaimIds} onChange={(value) => setDraft({ ...draft, linkedClaimIds: value })} />
+        </div>
+      ) : (
+        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_260px]">
+          <div className="space-y-3">
+            {suggestion.description && (
+              <blockquote className="rounded border border-border bg-muted/30 px-3 py-2 text-xs leading-relaxed text-foreground">
+                {suggestion.description}
+              </blockquote>
+            )}
+            {suggestion.warnings.length > 0 && (
+              <div className="rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                {suggestion.warnings.join(" · ")}
+              </div>
+            )}
+            {(suggestion.agent_explanation || suggestion.cluster_id || suggestion.agent_confidence != null) && (
+              <div className="rounded border border-cyan-500/30 bg-cyan-500/5 px-3 py-2 text-xs text-cyan-800 dark:text-cyan-200">
+                <div className="flex flex-wrap gap-2 font-mono text-[10px] uppercase">
+                  {suggestion.cluster_id && <span>cluster {shortId(suggestion.cluster_id)}</span>}
+                  {suggestion.agent_confidence != null && <span>agent {Math.round(suggestion.agent_confidence * 100)}%</span>}
+                  {suggestion.duplicate_of_suggestion_id && <span>duplicate {shortId(suggestion.duplicate_of_suggestion_id)}</span>}
+                </div>
+                {suggestion.agent_explanation && <p className="mt-1 leading-relaxed">{suggestion.agent_explanation}</p>}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {suggestion.source_span_ids.map((id) => (
+                <IdBadge key={id} label="span" value={id} />
+              ))}
+              {suggestion.text_chunk_ids.map((id) => (
+                <IdBadge key={id} label="chunk" value={id} />
+              ))}
+              {suggestion.work_product_id && <IdBadge label="work product" value={suggestion.work_product_id} />}
+              {suggestion.block_id && <IdBadge label="block" value={suggestion.block_id} />}
+            </div>
+          </div>
+          <div className="space-y-2 rounded border border-border bg-card p-2 text-xs">
+            <MetadataRow label="Document" value={document?.title ?? suggestion.source_document_id ?? "None"} href={sourceHref} />
+            <MetadataRow
+              label="Facts"
+              value={linkedFacts.length ? linkedFacts.map((fact) => fact?.statement).join(" · ") : suggestion.linked_fact_ids.join(", ") || "None"}
+            />
+            <MetadataRow
+              label="Claims"
+              value={linkedClaims.length ? linkedClaims.map((claim) => claim?.title).join(" · ") : suggestion.linked_claim_ids.join(", ") || "None"}
+            />
+            {workProductHref && <MetadataRow label="AST source" value={suggestion.block_id ?? suggestion.work_product_id ?? "Open"} href={workProductHref} />}
+            {suggestion.dedupe_key && <MetadataRow label="Dedupe" value={shortId(suggestion.dedupe_key)} />}
+          </div>
+        </div>
+      )}
+
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="outline" className="h-7 gap-1 bg-transparent text-xs" onClick={onApprove} disabled={pending || approved}>
+        {editing ? (
+          <>
+            <Button size="sm" variant="outline" className="h-7 gap-1 bg-transparent text-xs" onClick={saveDraft} disabled={pending || !dirty}>
+              <Save className="h-3.5 w-3.5" />
+              Save changes
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setDraft(baseline)} disabled={pending || !dirty}>
+              <RotateCcw className="h-3.5 w-3.5" />
+              Reset
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditing(false)} disabled={pending}>
+              Done
+            </Button>
+          </>
+        ) : (
+          <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setEditing(true)} disabled={pending}>
+            <Pencil className="h-3.5 w-3.5" />
+            Edit
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 gap-1 bg-transparent text-xs"
+          onClick={onApprove}
+          disabled={pending || approved || dirty}
+          title={dirty ? "Save edits before approving." : undefined}
+        >
           <CheckCircle2 className="h-3.5 w-3.5" />
           Approve
         </Button>
@@ -508,9 +900,10 @@ function TimelineSuggestionCard({
           <X className="h-3.5 w-3.5" />
           Reject
         </Button>
-        {suggestion.source_document_id && (
-          <Link href={matterDocumentHref(suggestion.matter_id, suggestion.source_document_id)} className="ml-auto text-xs text-primary hover:underline">
+        {sourceHref && (
+          <Link href={sourceHref} className="ml-auto inline-flex items-center gap-1 text-xs text-primary hover:underline">
             source
+            <ExternalLink className="h-3 w-3" />
           </Link>
         )}
       </div>
@@ -541,12 +934,8 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
         )}
       </div>
       <p className="text-sm font-medium leading-snug text-foreground text-pretty">{entry.title}</p>
-      {entry.description && (
-        <p className="text-xs leading-relaxed text-muted-foreground">{entry.description}</p>
-      )}
-      {entry.meta && (
-        <p className="font-mono text-[10px] text-muted-foreground/80">{entry.meta}</p>
-      )}
+      {entry.description && <p className="text-xs leading-relaxed text-muted-foreground">{entry.description}</p>}
+      {entry.meta && <p className="font-mono text-[10px] text-muted-foreground/80">{entry.meta}</p>}
     </div>
   )
 
@@ -572,6 +961,117 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
       )}
     </li>
   )
+}
+
+function LabeledInput({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="space-y-1 text-[11px] font-medium text-muted-foreground">
+      <span>{label}</span>
+      {children}
+    </label>
+  )
+}
+
+function LabeledTextarea({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="space-y-1 text-[11px] font-medium text-muted-foreground">
+      <span>{label}</span>
+      <textarea className={cn(fieldClassName, "min-h-16")} value={value} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  )
+}
+
+function MetadataRow({ label, value, href }: { label: string; value: string; href?: string | null }) {
+  return (
+    <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+      <span className="text-muted-foreground">{label}</span>
+      {href ? (
+        <Link href={href} className="truncate text-primary hover:underline">
+          {value}
+        </Link>
+      ) : (
+        <span className="truncate text-foreground">{value}</span>
+      )}
+    </div>
+  )
+}
+
+function IdBadge({ label, value }: { label: string; value: string }) {
+  return (
+    <Badge variant="outline" className="max-w-full gap-1 text-[9px]">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="truncate font-mono">{shortId(value)}</span>
+    </Badge>
+  )
+}
+
+const fieldClassName = "w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+
+function draftFromSuggestion(suggestion: TimelineSuggestion): SuggestionDraft {
+  return {
+    date: suggestion.date,
+    dateText: suggestion.date_text,
+    title: suggestion.title,
+    description: suggestion.description ?? "",
+    kind: suggestion.kind,
+    status: suggestion.status,
+    sourceDocumentId: suggestion.source_document_id ?? "",
+    sourceSpanIds: idsToText(suggestion.source_span_ids),
+    textChunkIds: idsToText(suggestion.text_chunk_ids),
+    linkedFactIds: idsToText(suggestion.linked_fact_ids),
+    linkedClaimIds: idsToText(suggestion.linked_claim_ids),
+    warnings: idsToText(suggestion.warnings),
+  }
+}
+
+function patchFromDraft(draft: SuggestionDraft) {
+  return {
+    date: draft.date,
+    date_text: draft.dateText,
+    title: draft.title,
+    description: draft.description || null,
+    kind: draft.kind,
+    status: draft.status,
+    source_document_id: draft.sourceDocumentId || null,
+    source_span_ids: textToIds(draft.sourceSpanIds),
+    text_chunk_ids: textToIds(draft.textChunkIds),
+    linked_fact_ids: textToIds(draft.linkedFactIds),
+    linked_claim_ids: textToIds(draft.linkedClaimIds),
+    warnings: textToIds(draft.warnings),
+  }
+}
+
+function draftsEqual(a: SuggestionDraft, b: SuggestionDraft) {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+function idsToText(values: string[]) {
+  return values.join("\n")
+}
+
+function textToIds(value: string) {
+  return value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function setOptionalParam(params: URLSearchParams, key: string, value: string, emptyValue: string) {
+  if (!value || value === emptyValue) params.delete(key)
+  else params.set(key, value)
+}
+
+function safeReviewStatus(value: string | null) {
+  return value && REVIEW_STATUSES.includes(value) ? value : "suggested"
+}
+
+function agentRunTimestamp(run: Matter["timeline_agent_runs"][number]) {
+  return Date.parse(run.completed_at ?? run.started_at ?? run.created_at ?? "") || 0
+}
+
+function shortId(value: string) {
+  if (value.length <= 28) return value
+  return `${value.slice(0, 16)}…${value.slice(-8)}`
 }
 
 function formatMonth(month: string): string {

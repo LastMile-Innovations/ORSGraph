@@ -1,0 +1,46 @@
+schema_version: orsgraph.perf_authority_queries.v1
+release_sensitive: true
+quality_guardrails:
+  exact_citation_correctness: required
+  source_backed_ordering: required
+  latency_must_not_reduce_source_provenance: true
+queries:
+  - id: citation_open_habitability
+    mode: citation
+    q: ORS 90.320
+    expect:
+      top_citation: ORS 90.320
+      source_backed: true
+  - id: keyword_landlord_repair
+    mode: keyword
+    q: landlord repair
+    expect:
+      must_include_terms:
+        - landlord
+        - repair
+      source_backed: true
+  - id: hybrid_tenant_notice
+    mode: hybrid
+    q: tenant notice repair
+    rerank: false
+    expect:
+      concept_packs:
+        - notices
+        - landlord_tenant
+      source_backed: true
+  - id: semantic_habitability_cached
+    mode: semantic
+    q: habitability repair duty
+    rerank: false
+    expect:
+      embedding_cache_keyed_by:
+        - normalized_query
+        - embedding_model
+        - vector_dimension
+      source_backed: true
+  - id: rules_applicability_complaint
+    mode: rules
+    q: applicable Oregon complaint rules
+    expect:
+      source_backed: true
+      jurisdiction: or:state
