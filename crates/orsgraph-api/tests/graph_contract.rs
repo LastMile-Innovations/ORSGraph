@@ -95,6 +95,7 @@ fn graph_routes_and_frontend_are_wired_end_to_end() {
     let graph_viewer = include_str!("../../../frontend/components/graph/GraphViewer.tsx");
     let graph_toolbar = include_str!("../../../frontend/components/graph/GraphToolbar.tsx");
     let frontend_api = include_str!("../../../frontend/lib/api.ts");
+    let authority_proxy = include_str!("../../../frontend/app/api/authority/[...path]/route.ts");
     let path_panel = include_str!("../../../frontend/components/graph/PathFinderPanel.tsx");
 
     assert!(routes.contains("/graph/neighborhood"));
@@ -113,6 +114,13 @@ fn graph_routes_and_frontend_are_wired_end_to_end() {
     assert!(graph_toolbar.contains("Open advanced graph controls"));
     assert!(graph_toolbar.contains("Open graph inspector"));
     assert!(frontend_api.contains("getFullGraph"));
+    assert!(frontend_api.contains("edgeLimit"));
+    assert!(authority_proxy.contains("getServerSession(authOptions)"));
+    assert!(
+        authority_proxy.contains("headers.set(\"Authorization\", `Bearer ${session.accessToken}`)")
+    );
+    assert!(authority_proxy.contains("process.env.ORS_API_KEY"));
+    assert!(authority_proxy.contains("headers.set(\"x-api-key\", API_KEY)"));
     assert!(path_panel.contains("getGraphPath"));
 }
 

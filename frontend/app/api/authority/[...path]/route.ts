@@ -1,3 +1,4 @@
+import { getServerSession } from "next-auth"
 import { NextRequest, NextResponse } from "next/server"
 import {
   authorityCacheControl,
@@ -6,6 +7,7 @@ import {
   joinUrlPath,
   normalizedAuthorityRequest,
 } from "@/lib/authority-hotset.mjs"
+import { authOptions } from "@/lib/auth"
 import { orsBackendApiBaseUrl } from "@/lib/ors-api-url"
 
 type RouteContext = {
@@ -30,6 +32,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 
 const HOTSET_BASE_URL = (process.env.ORS_AUTHORITY_HOTSET_BASE_URL || "").replace(/\/$/, "")
 const HOTSET_RELEASE_ID = releaseIdFromHotsetBaseUrl(HOTSET_BASE_URL)
+const API_KEY = process.env.ORS_API_KEY
 
 export async function GET(request: NextRequest, context: RouteContext) {
   return forwardAuthorityRead(request, context)
@@ -64,6 +67,7 @@ async function forwardAuthorityRead(request: NextRequest, context: RouteContext)
   const upstreamUrl = new URL(`${orsBackendApiBaseUrl()}/${normalized.encodedPath}`)
   upstreamUrl.search = normalized.normalizedSearch
 
+  const session = await getServerSession(authOptions)
   const headers = new Headers()
   request.headers.forEach((value, key) => {
     const normalized = key.toLowerCase()
@@ -72,6 +76,11 @@ async function forwardAuthorityRead(request: NextRequest, context: RouteContext)
     }
   })
   headers.set("accept", request.headers.get("accept") || "application/json")
+  if (session?.accessToken) {
+    headers.set("Authorization", `Bearer ${session.accessToken}`)
+  } else if (API_KEY && !headers.has("x-api-key")) {
+    headers.set("x-api-key", API_KEY)
+  }
 
   const response = await fetch(upstreamUrl, {
     method: request.method,
