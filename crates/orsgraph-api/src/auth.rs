@@ -264,6 +264,30 @@ pub fn is_public_path(method: &Method, path: &str) -> bool {
         || (path.starts_with("/api/v1/auth/invites/")
             && !path.ends_with("/accept")
             && *method == Method::GET)
+        || is_public_authority_read(method, path)
+}
+
+fn is_public_authority_read(method: &Method, path: &str) -> bool {
+    if !matches!(*method, Method::GET | Method::HEAD) {
+        return false;
+    }
+
+    matches!(
+        path,
+        "/api/v1/home"
+            | "/api/v1/featured-statutes"
+            | "/api/v1/analytics/home"
+            | "/api/v1/stats"
+            | "/api/v1/search"
+            | "/api/v1/search/open"
+            | "/api/v1/search/suggest"
+            | "/api/v1/sources"
+            | "/api/v1/statutes"
+            | "/api/v1/graph/neighborhood"
+    ) || path.starts_with("/api/v1/sources/")
+        || path.starts_with("/api/v1/statutes/")
+        || path.starts_with("/api/v1/provisions/")
+        || path.starts_with("/api/v1/rules/")
 }
 
 pub fn is_auth_access_bootstrap_path(method: &Method, path: &str) -> bool {
@@ -370,6 +394,49 @@ mod tests {
             &Method::POST,
             "/api/v1/auth/invites/token/accept"
         ));
+    }
+
+    #[test]
+    fn public_authority_reads_are_method_scoped_and_private_routes_stay_private() {
+        for path in [
+            "/api/v1/home",
+            "/api/v1/stats",
+            "/api/v1/search",
+            "/api/v1/search/open",
+            "/api/v1/statutes",
+            "/api/v1/statutes/or:ors:90.320/page",
+            "/api/v1/provisions/or:ors:90.320:1",
+            "/api/v1/graph/neighborhood",
+            "/api/v1/rules/applicable",
+        ] {
+            assert!(
+                is_public_path(&Method::GET, path),
+                "{path} should be a public GET"
+            );
+            assert!(
+                is_public_path(&Method::HEAD, path),
+                "{path} should be a public HEAD"
+            );
+            assert!(
+                !is_public_path(&Method::POST, path),
+                "{path} should not be public for POST"
+            );
+        }
+
+        for path in [
+            "/api/v1/ask",
+            "/api/v1/admin",
+            "/api/v1/sidebar",
+            "/api/v1/graph/full",
+            "/api/v1/graph/path",
+            "/api/v1/matters/demo",
+            "/api/v1/casebuilder/webhooks/assemblyai",
+        ] {
+            assert!(
+                !is_public_path(&Method::GET, path),
+                "{path} should remain private"
+            );
+        }
     }
 
     #[test]
