@@ -18,7 +18,7 @@ const baseUrl = (
 ).replace(/\/$/, "")
 const manifestPath = process.env.ORS_CORPUS_RELEASE_MANIFEST_PATH || join(repoRoot, "data/graph/corpus_release.json")
 const outDir = process.env.ORS_AUTHORITY_HOTSET_OUT_DIR || join(repoRoot, "data/authority-hotset")
-const releaseId = await readReleaseId(manifestPath)
+const releaseId = await resolveReleaseId(manifestPath, baseUrl)
 
 const endpoints = [
   "/home",
@@ -42,10 +42,11 @@ const generated = []
 const failures = []
 
 for (const endpoint of endpoints) {
-  const target = new URL(endpoint, `${baseUrl}/`)
-  const path = target.pathname.replace(/^\/+/, "").split("/").filter(Boolean).map(decodeURIComponent)
-  const objectPath = authorityHotsetObjectPath(path, target.searchParams, releaseId)
-  const normalized = normalizedAuthorityRequest(path, target.searchParams)
+  const authorityRequest = new URL(endpoint, "https://authority.local")
+  const target = new URL(`${baseUrl}${authorityRequest.pathname}${authorityRequest.search}`)
+  const path = authorityRequest.pathname.replace(/^\/+/, "").split("/").filter(Boolean).map(decodeURIComponent)
+  const objectPath = authorityHotsetObjectPath(path, authorityRequest.searchParams, releaseId)
+  const normalized = normalizedAuthorityRequest(path, authorityRequest.searchParams)
   const outputPath = join(outDir, objectPath)
 
   try {
@@ -95,13 +96,27 @@ if (failures.length > 0) {
   process.exitCode = 1
 }
 
-async function readReleaseId(path) {
+async function resolveReleaseId(path, baseUrl) {
   try {
     const manifest = JSON.parse(await readFile(path, "utf8"))
-    return String(manifest.release_id || "release:unversioned")
+    if (manifest.release_id) return String(manifest.release_id)
   } catch {
-    return "release:unversioned"
+    // Local release manifests are ignored data artifacts in most checkouts.
   }
+
+  try {
+    const response = await fetch(new URL("stats", `${baseUrl}/`), { headers: { accept: "application/json" } })
+    const headerRelease = response.headers.get("x-ors-corpus-release")
+    if (headerRelease) return headerRelease
+    if (response.ok) {
+      const payload = await response.json()
+      if (payload?.corpus_release_id) return String(payload.corpus_release_id)
+    }
+  } catch {
+    // Keep hotset builds possible for local development without a running API.
+  }
+
+  return "release:unversioned"
 }
 
 function validateAuthorityPayload(endpoint, payload) {

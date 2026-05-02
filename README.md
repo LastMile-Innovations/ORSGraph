@@ -43,6 +43,15 @@ is intentionally not threshold-gated yet.
 Route, live API, Neo4j, Docker, and provider-backed smoke checks are separate
 because they require a running service, local graph database, or credentials.
 
+## Authority Read Cache
+
+Public law/statute reads can use a Cloudflare/R2 hotset in front of Railway.
+This is optional and release-addressed: set only
+`ORS_AUTHORITY_HOTSET_BASE_URL` on the frontend when a generated hotset has been
+published. Private CaseBuilder/auth/admin routes stay off this cache path. See
+[Cloudflare Authority Cache](docs/deploy/cloudflare-authority-cache.md) for the
+request flow, route allowlist, publish steps, and verification commands.
+
 ## Run
 
 ### Crawler
