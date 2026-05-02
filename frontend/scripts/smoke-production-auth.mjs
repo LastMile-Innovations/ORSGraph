@@ -32,13 +32,7 @@ await checkJson("frontend auth providers", `${frontendUrl}/api/auth/providers`, 
   status: 200,
   validate: (body) => body.zitadel?.id === "zitadel" && body.zitadel?.type === "oauth",
 })
-await checkRedirect("frontend ZITADEL signin redirect", `${frontendUrl}/api/auth/signin/zitadel?callbackUrl=${encodeURIComponent(`${frontendUrl}/dashboard`)}`, {
-  status: 302,
-  validateLocation: (location) => {
-    const redirect = new URL(location, frontendUrl)
-    return redirect.origin === zitadelUrl && redirect.pathname === "/oauth/v2/authorize"
-  },
-})
+await checkNextAuthSigninRedirect()
 await checkJson("API health", `${apiUrl}/health`, {
   status: 200,
   validate: (body) => body.ok === true && body.neo4j === "connected",
@@ -84,22 +78,81 @@ async function check(name, url, expectation, readBody) {
   }
 }
 
-async function checkRedirect(name, url, expectation) {
+async function checkNextAuthSigninRedirect() {
+  const name = "frontend ZITADEL signin redirect"
+  const cookies = new Map()
   try {
-    const response = await fetch(url, { redirect: "manual" })
-    const location = response.headers.get("location")
-    if (response.status !== expectation.status) {
-      failures.push({ name, reason: `expected ${expectation.status}, got ${response.status}` })
+    const csrfResponse = await fetch(`${frontendUrl}/api/auth/csrf`, {
+      headers: cookieHeaders(cookies),
+      redirect: "manual",
+    })
+    storeCookies(csrfResponse, cookies)
+    const csrfBody = await csrfResponse.json()
+    if (csrfResponse.status !== 200 || typeof csrfBody.csrfToken !== "string" || csrfBody.csrfToken.length === 0) {
+      failures.push({ name, reason: "could not fetch NextAuth CSRF token" })
       return
     }
-    if (!location || !expectation.validateLocation(location)) {
-      failures.push({ name, reason: `unexpected redirect ${location || "<none>"}` })
+
+    const callbackUrl = `${frontendUrl}/dashboard`
+    const form = new URLSearchParams({
+      csrfToken: csrfBody.csrfToken,
+      callbackUrl,
+      json: "true",
+    })
+    const signinResponse = await fetch(`${frontendUrl}/api/auth/signin/zitadel`, {
+      method: "POST",
+      headers: {
+        ...cookieHeaders(cookies),
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: form,
+      redirect: "manual",
+    })
+    storeCookies(signinResponse, cookies)
+    const signinBody = await signinResponse.json()
+    const redirect = typeof signinBody.url === "string" ? new URL(signinBody.url) : null
+    const scopes = redirect?.searchParams.get("scope") ?? ""
+    const ok =
+      signinResponse.status === 200 &&
+      redirect?.origin === zitadelUrl &&
+      redirect.pathname === "/oauth/v2/authorize" &&
+      redirect.searchParams.get("client_id") &&
+      scopes.includes("openid") &&
+      scopes.includes("urn:zitadel:iam:org:projects:roles")
+
+    if (!ok) {
+      failures.push({ name, reason: `unexpected signin response ${signinResponse.status} ${signinBody.url || "<no url>"}` })
       return
     }
-    console.log(`ok ${response.status} ${name} -> ${location}`)
+    console.log(`ok ${signinResponse.status} ${name} -> ${redirect.origin}${redirect.pathname}`)
   } catch (error) {
     failures.push({ name, reason: error instanceof Error ? error.message : String(error) })
   }
+}
+
+function cookieHeaders(cookies) {
+  if (cookies.size === 0) return {}
+  return {
+    cookie: Array.from(cookies, ([key, value]) => `${key}=${value}`).join("; "),
+  }
+}
+
+function storeCookies(response, cookies) {
+  const setCookies =
+    typeof response.headers.getSetCookie === "function"
+      ? response.headers.getSetCookie()
+      : splitSetCookieHeader(response.headers.get("set-cookie"))
+  for (const setCookie of setCookies) {
+    const [pair] = setCookie.split(";")
+    const separator = pair.indexOf("=")
+    if (separator <= 0) continue
+    cookies.set(pair.slice(0, separator), pair.slice(separator + 1))
+  }
+}
+
+function splitSetCookieHeader(header) {
+  if (!header) return []
+  return header.split(/,(?=\s*[^;,]+=)/g)
 }
 
 function normalizeUrl(value) {
