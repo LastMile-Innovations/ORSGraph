@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { AlertTriangle, CheckCircle2, ChevronRight, Database, FileSearch, GitBranch, Hash, Layers, Sparkles, XCircle } from "lucide-react"
+import { AlertTriangle, CheckCircle2, ChevronRight, Database, Download, FileSearch, GitBranch, Hash, Layers, RotateCcw, ShieldCheck, Sparkles, XCircle } from "lucide-react"
 import { getQCReport, getQCSummary, runQCRun, type QCSummary } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import type { QCPanel, QCRunSummary } from "@/lib/types"
@@ -98,23 +98,26 @@ export function QCConsoleClient() {
       {/* Main */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Header / topline */}
-        <div className="border-b border-border bg-card px-6 py-5">
+        <div className="border-b border-border bg-card px-4 py-5 sm:px-6">
           <div className="flex items-start justify-between gap-4 mb-4">
             <div>
-              <div className="text-xs font-mono uppercase tracking-wider text-muted-foreground mb-1">
+              <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                <ShieldCheck className="h-3.5 w-3.5 text-primary" />
                 Quality control
               </div>
-              <h1 className="font-serif text-3xl tracking-tight text-foreground">QC Console</h1>
-              <p className="text-sm text-muted-foreground mt-1 font-mono">
-                run {qcCorpus.run_id.replace(/^qc:run:/, "")} · {(qcCorpus.duration_ms / 1000).toFixed(1)}s
+              <h1 className="text-2xl font-semibold tracking-normal text-foreground">QC Console</h1>
+              <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                Run {qcCorpus.run_id.replace(/^qc:run:/, "")} completed in {(qcCorpus.duration_ms / 1000).toFixed(1)}s.
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" className="font-mono text-xs" disabled={busy} onClick={rerunChecks}>
-                rerun checks
+              <Button variant="outline" size="sm" className="gap-1.5" disabled={busy} onClick={rerunChecks}>
+                <RotateCcw className="h-3.5 w-3.5" />
+                Rerun
               </Button>
-              <Button size="sm" className="font-mono text-xs" disabled={busy} onClick={exportReport}>
-                export report
+              <Button size="sm" className="gap-1.5" disabled={busy} onClick={exportReport}>
+                <Download className="h-3.5 w-3.5" />
+                Export
               </Button>
             </div>
           </div>

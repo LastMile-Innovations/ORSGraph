@@ -91,17 +91,18 @@ export function StatuteIndexClient({
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <DataStateBanner source={dataSource} error={dataError} label="Statute index data" />
-      <header className="border-b border-border bg-card px-4 py-4 sm:px-6">
+      <header className="border-b border-border bg-card px-4 py-5 sm:px-6">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <BookOpen className="h-5 w-5 text-primary" />
-              <h1 className="font-mono text-lg font-semibold text-foreground">Oregon Revised Statutes</h1>
+            <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+              <BookOpen className="h-3.5 w-3.5 text-primary" />
+              statute directory
               <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
                 2025
               </span>
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <h1 className="text-2xl font-semibold tracking-normal text-foreground">Oregon Revised Statutes</h1>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
               {pageStart}-{pageEnd} of {total} indexed sections
             </p>
           </div>

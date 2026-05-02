@@ -11,7 +11,7 @@ interface ShellProps {
 
 export async function Shell({ children, rightPanel, hideLeftRail = false }: ShellProps) {
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background">
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <TopNav />
       <div className="flex flex-1 overflow-hidden">
         {!hideLeftRail && (
@@ -21,7 +21,7 @@ export async function Shell({ children, rightPanel, hideLeftRail = false }: Shel
             </Suspense>
           </div>
         )}
-        <main id="app-main" className="flex min-w-0 flex-1 flex-col overflow-hidden" tabIndex={-1}>
+        <main id="app-main" className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background" tabIndex={-1}>
           {children}
         </main>
         {rightPanel && (

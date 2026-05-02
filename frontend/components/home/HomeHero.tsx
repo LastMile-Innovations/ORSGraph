@@ -1,6 +1,6 @@
 import { HeroSearch } from "./HeroSearch"
 import Link from "next/link"
-import { ArrowRight, Database, GitBranch, ShieldCheck } from "lucide-react"
+import { ArrowRight, Briefcase, Database, GitBranch, Search, ShieldCheck } from "lucide-react"
 import type { BuildInfo, CorpusStatus, SystemHealth } from "@/lib/types"
 import type { DataSource } from "@/lib/data-state"
 
@@ -16,20 +16,20 @@ export function HomeHero({ corpus, health, build, dataSource }: HomeHeroProps) {
   const liveLabel = dataSource === "live" && health.api === "connected" ? "Live graph" : "Fallback graph"
 
   return (
-    <section className="border-b border-border bg-card px-4 py-10 sm:px-6 lg:px-8">
-      <div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-end">
+    <section className="border-b border-border bg-card px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[minmax(0,1fr)_23rem] lg:items-end">
         <div className="min-w-0">
           <div className="mb-5 inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-background px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
             <span className="h-2 w-2 rounded-full bg-primary" aria-hidden="true" />
             <span className="truncate">ORSGraph / {corpus.source} / {corpus.editionYear}</span>
           </div>
 
-          <h1 className="max-w-4xl text-balance font-mono text-3xl font-semibold tracking-tight text-foreground sm:text-4xl lg:text-5xl">
-            Oregon law, wired as a source-first legal graph.
+          <h1 className="max-w-4xl text-balance text-3xl font-semibold tracking-normal text-foreground sm:text-4xl lg:text-5xl">
+            The command center for source-backed Oregon legal work.
           </h1>
 
           <p className="mt-4 max-w-3xl text-pretty text-sm leading-6 text-muted-foreground sm:text-base">
-            Search statutes, inspect citation paths, track QC, and open legal work surfaces from one operational home base.
+            Search statutes, ask graph-grounded questions, open matters, and watch runtime health from one operational home base.
           </p>
 
           <div className="mt-6 flex flex-wrap gap-2">
@@ -44,7 +44,15 @@ export function HomeHero({ corpus, health, build, dataSource }: HomeHeroProps) {
               href="/search"
               className="inline-flex min-h-10 items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:border-primary/50 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             >
+              <Search className="h-4 w-4" />
               Explore Search
+            </Link>
+            <Link
+              href="/matters"
+              className="inline-flex min-h-10 items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:border-primary/50 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              <Briefcase className="h-4 w-4" />
+              Open Matters
             </Link>
           </div>
 

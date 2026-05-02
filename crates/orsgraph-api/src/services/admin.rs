@@ -2087,6 +2087,51 @@ mod tests {
     }
 
     #[test]
+    fn builds_oregon_constitution_source_commands() {
+        let service = test_service(test_config());
+        let ingest = service
+            .build_command(
+                AdminJobKind::SourceIngest,
+                &AdminJobParams {
+                    source_id: Some("or_leg_constitution".to_string()),
+                    edition_year: Some(2026),
+                    mode: Some("discover".to_string()),
+                    max_chapters: Some(3),
+                    allow_network: Some(false),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(ingest.args.contains(&"source-ingest".to_string()));
+        assert!(ingest.args.contains(&"--source-id".to_string()));
+        assert!(ingest.args.contains(&"or_leg_constitution".to_string()));
+        assert!(ingest.args.contains(&"--edition-year".to_string()));
+        assert!(ingest.args.contains(&"2026".to_string()));
+        assert!(ingest.args.contains(&"--mode".to_string()));
+        assert!(ingest.args.contains(&"discover".to_string()));
+        assert!(ingest.args.contains(&"--max-items".to_string()));
+        assert!(ingest.args.contains(&"3".to_string()));
+        assert!(ingest.args.contains(&"--allow-network".to_string()));
+        assert!(ingest.args.contains(&"false".to_string()));
+
+        let combine = service
+            .build_command(
+                AdminJobKind::CombineGraph,
+                &AdminJobParams {
+                    source_id: Some("or_leg_constitution".to_string()),
+                    graph_dir: Some("data/graph".to_string()),
+                    out_dir: Some("data/sources".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(combine.args.contains(&"combine-graph".to_string()));
+        assert!(combine.args.contains(&"--source-id".to_string()));
+        assert!(combine.args.contains(&"or_leg_constitution".to_string()));
+        assert!(combine.output_paths.contains_key("graph_dir"));
+    }
+
+    #[test]
     fn source_ingest_requires_selection() {
         let service = test_service(test_config());
         let err = service
@@ -2117,6 +2162,18 @@ mod tests {
                 .iter()
                 .all(|source| source.priority == "P0")
         );
+
+        let implemented_p1 = service
+            .list_sources(Some("P1".to_string()), Some("implemented".to_string()))
+            .await
+            .unwrap();
+        let constitution = implemented_p1
+            .sources
+            .iter()
+            .find(|source| source.source_id == "or_leg_constitution")
+            .expect("Oregon Constitution source is exposed to admin controls");
+        assert_eq!(constitution.connector_status, "implemented");
+        assert_eq!(constitution.priority, "P1");
     }
 
     #[tokio::test]
@@ -2130,6 +2187,17 @@ mod tests {
         assert!(detail.qc_report.is_none());
         assert!(detail.graph_files.is_empty());
         assert!(detail.raw_artifacts.is_empty());
+
+        let constitution = service.get_source("or_leg_constitution").await.unwrap();
+        assert_eq!(constitution.source.source_id, "or_leg_constitution");
+        assert_eq!(constitution.source.connector_status, "implemented");
+        assert!(
+            constitution
+                .source
+                .graph_nodes_created
+                .iter()
+                .any(|node| node == "Commentary")
+        );
     }
 
     #[tokio::test]

@@ -22,12 +22,12 @@ export function MatterShell({ matter, children, rightPanel, counts, dataState }:
         <div className="hidden shrink-0 md:flex">
           <MatterSidebar matter={matter} counts={counts} />
         </div>
-        <main id="app-main" className="flex flex-1 flex-col overflow-hidden" tabIndex={-1}>
+        <main id="app-main" className="flex min-w-0 flex-1 flex-col overflow-hidden" tabIndex={-1}>
           <MatterSidebarSheet matter={matter} counts={counts} />
           {children}
         </main>
         {rightPanel && (
-          <aside className="flex w-80 flex-col overflow-hidden border-l border-border bg-card">
+          <aside className="hidden w-80 shrink-0 flex-col overflow-hidden border-l border-border bg-card xl:flex">
             {rightPanel}
           </aside>
         )}

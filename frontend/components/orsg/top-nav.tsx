@@ -20,6 +20,7 @@ import {
   LogOut,
   Menu,
   MessageSquare,
+  Plus,
   Search,
   ShieldCheck,
   SlidersHorizontal,
@@ -61,13 +62,13 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Home", icon: LayoutDashboard, match: ["/dashboard"] },
+  { href: "/matters", label: "Matters", icon: Briefcase, match: ["/casebuilder", "/matters"] },
   { href: "/search", label: "Search", icon: Search, match: ["/search"] },
   { href: "/ask", label: "Ask", icon: MessageSquare, match: ["/ask"] },
   { href: "/statutes", label: "Statutes", icon: BookOpen, match: ["/statutes", "/provisions"] },
   { href: "/graph", label: "Graph", icon: GitGraphIcon, match: ["/graph"] },
   { href: "/qc", label: "QC", icon: ShieldCheck, match: ["/qc"] },
   { href: "/admin", label: "Admin", icon: SlidersHorizontal, match: ["/admin"] },
-  { href: "/casebuilder", label: "Matters", icon: Briefcase, match: ["/casebuilder", "/matters"] },
 ]
 
 const STATUS_REFRESH_MS = 60_000
@@ -196,7 +197,7 @@ export function TopNav() {
   )
 
   return (
-    <header className="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-2 border-b border-sidebar-border bg-sidebar/95 px-3 text-sidebar-foreground backdrop-blur supports-[backdrop-filter]:bg-sidebar/85 sm:px-4">
+    <header className="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-2 border-b border-sidebar-border bg-sidebar/95 px-3 text-sidebar-foreground shadow-sm shadow-black/5 backdrop-blur supports-[backdrop-filter]:bg-sidebar/85 sm:px-4">
       <a
         href="#app-main"
         className="sr-only rounded bg-background px-3 py-2 text-sm font-medium text-foreground shadow focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50"
@@ -265,7 +266,7 @@ export function TopNav() {
         <BrandMark />
         <span className="truncate font-mono text-sm font-semibold tracking-tight">ORSGraph</span>
         <span className="hidden font-mono text-[10px] uppercase tracking-widest text-muted-foreground xl:inline">
-          internal
+          workspace
         </span>
       </Link>
 
@@ -278,7 +279,7 @@ export function TopNav() {
 
       <div className="min-w-0 flex-1" />
 
-      <form onSubmit={submitSearch} className="hidden w-full max-w-sm items-center gap-2 rounded-md border border-sidebar-border bg-background px-2 focus-within:border-primary lg:flex">
+      <form onSubmit={submitSearch} className="hidden w-full max-w-md items-center gap-2 rounded-md border border-sidebar-border bg-background px-2 shadow-sm focus-within:border-primary lg:flex">
         <label className="sr-only" htmlFor="header-search">
           Search ORSGraph
         </label>
@@ -296,6 +297,12 @@ export function TopNav() {
       </form>
 
       <div className="flex shrink-0 items-center gap-1.5">
+        <Button asChild variant="outline" size="sm" className="hidden h-8 gap-1.5 px-2.5 xl:inline-flex">
+          <Link href="/casebuilder/new">
+            <Plus className="h-3.5 w-3.5" />
+            New matter
+          </Link>
+        </Button>
         <RuntimeStatusMenu status={status} />
         <AccountMenu
           status={session.status}
@@ -401,7 +408,7 @@ function TopNavLink({
         "group flex shrink-0 items-center gap-2 rounded-md font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60",
         variant === "mobile" ? "px-3 py-2 text-sm" : "px-2 py-1.5 text-xs xl:px-2.5",
         active
-          ? "bg-primary/10 text-primary"
+          ? "bg-primary/15 text-primary ring-1 ring-primary/15"
           : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
       )}
       title={item.label}

@@ -1,6 +1,7 @@
 import Link from "next/link"
 import { Shell } from "@/components/orsg/shell"
 import { DataStateBanner } from "@/components/casebuilder/data-state-banner"
+import { PageHeader } from "@/components/orsg/page-header"
 import { getMatterSummariesState } from "@/lib/casebuilder/api"
 import { matterHref, newMatterHref } from "@/lib/casebuilder/routes"
 import {
@@ -44,64 +45,44 @@ export default async function MattersPage() {
     <Shell hideLeftRail>
       <div className="flex flex-1 flex-col overflow-y-auto scrollbar-thin">
         <DataStateBanner source={matterState.source} error={matterState.error} />
-        {/* Hero */}
-        <section className="border-b border-border bg-card px-6 py-10">
-          <div className="mx-auto max-w-6xl">
-            <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              <Briefcase className="h-3 w-3 text-primary" />
-              CaseBuilder
-              <span className="text-border">/</span>
-              <span>cursor for law</span>
-            </div>
-            <h1 className="text-balance font-mono text-3xl font-semibold tracking-tight text-foreground">
-              Your matters, structured.
-            </h1>
-            <p className="mt-2 max-w-2xl text-pretty text-sm text-muted-foreground">
-              Import every file. CaseBuilder extracts facts, builds a case graph, links evidence to claims,
-              fact-checks every paragraph, and turns what you have into legal work product — anchored to the
-              ORSGraph authority layer.
-            </p>
-
-            <div className="mt-6 flex flex-wrap gap-2">
+        <PageHeader
+          icon={Briefcase}
+          eyebrow="CaseBuilder / matters"
+          title="Your matters, structured."
+          description="Import files, preserve folder context, extract facts, build claims, track deadlines, and draft work product against the ORSGraph authority layer."
+          actions={
+            <>
               <Link
                 href={newMatterHref()}
-                className="flex items-center gap-1.5 rounded bg-primary px-3 py-2 font-mono text-xs uppercase tracking-wider text-primary-foreground hover:bg-primary/90"
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
               >
-                <Plus className="h-3.5 w-3.5" />
-                new matter
+                <Plus className="h-4 w-4" />
+                New matter
               </Link>
               <Link
                 href={newMatterHref("fight")}
-                className="flex items-center gap-1.5 rounded border border-border bg-background px-3 py-2 font-mono text-xs uppercase tracking-wider hover:border-primary hover:text-primary"
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-md border border-border bg-background px-4 text-sm font-medium hover:border-primary/50 hover:text-primary"
               >
-                <Upload className="h-3.5 w-3.5" />
-                fight a complaint
+                <Upload className="h-4 w-4" />
+                Fight a complaint
               </Link>
               <Link
                 href={newMatterHref("build")}
-                className="flex items-center gap-1.5 rounded border border-border bg-background px-3 py-2 font-mono text-xs uppercase tracking-wider hover:border-primary hover:text-primary"
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-md border border-border bg-background px-4 text-sm font-medium hover:border-primary/50 hover:text-primary"
               >
-                <GavelIcon className="h-3.5 w-3.5" />
-                build a complaint
+                <GavelIcon className="h-4 w-4" />
+                Build a complaint
               </Link>
-              <Link
-                href="/fact-check"
-                className="flex items-center gap-1.5 rounded border border-border bg-background px-3 py-2 font-mono text-xs uppercase tracking-wider hover:border-primary hover:text-primary"
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-                fact-check a draft
-              </Link>
-            </div>
-
-            <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded border border-border bg-border md:grid-cols-5">
-              <Stat label="matters" value={matters.length} />
-              <Stat label="documents" value={totals.documents} />
-              <Stat label="facts extracted" value={totals.facts} />
-              <Stat label="open drafts" value={totals.drafts} accent="text-primary" />
-              <Stat label="open tasks" value={totals.tasks} accent="text-warning" />
-            </div>
-          </div>
-        </section>
+            </>
+          }
+          stats={[
+            { label: "matters", value: matters.length },
+            { label: "documents", value: totals.documents },
+            { label: "facts extracted", value: totals.facts },
+            { label: "open drafts", value: totals.drafts, tone: "primary" },
+            { label: "open tasks", value: totals.tasks, tone: "warning" },
+          ]}
+        />
 
         {/* Matters list */}
         <section className="px-6 py-8">
@@ -211,11 +192,11 @@ export default async function MattersPage() {
           </div>
         </section>
 
-        {/* Killer workflows */}
+        {/* Core workflows */}
         <section className="border-t border-border bg-card px-6 py-8">
           <div className="mx-auto max-w-6xl">
             <h2 className="mb-3 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              killer workflows
+              core workflows
             </h2>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <Workflow
@@ -241,24 +222,6 @@ export default async function MattersPage() {
         </section>
       </div>
     </Shell>
-  )
-}
-
-function Stat({
-  label,
-  value,
-  accent = "text-foreground",
-}: {
-  label: string
-  value: number | string
-  accent?: string
-}) {
-  const display = typeof value === "number" ? value.toLocaleString() : value
-  return (
-    <div className="bg-card px-4 py-3">
-      <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className={cn("mt-0.5 font-mono text-lg font-semibold tabular-nums", accent)}>{display}</div>
-    </div>
   )
 }
 

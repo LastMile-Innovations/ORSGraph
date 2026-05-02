@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { AlertTriangle, ChevronLeft, ChevronRight, Database, GitBranch, Sparkles, X } from "lucide-react"
+import { AlertTriangle, ChevronLeft, ChevronRight, Database, GitBranch, Search, Sparkles, X } from "lucide-react"
 import type { SearchResponse, SuggestResult } from "@/lib/types"
 import type { DataSource } from "@/lib/data-state"
 import { SearchInput } from "./search-input"
@@ -252,7 +252,26 @@ export function SearchClient({
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <DataStateBanner source={dataSource} error={dataError} label="Search data" />
-      <header className="border-b border-border bg-card px-6 py-3">
+      <header className="border-b border-border bg-card px-4 py-4 sm:px-6">
+        <div className="mb-4 flex flex-col gap-1">
+          <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            <Search className="h-3.5 w-3.5 text-primary" />
+            Source search
+          </div>
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-normal text-foreground">Find the authority, then inspect the trail.</h1>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+                Search citations, titles, concepts, semantic nodes, and source-backed records from one filterable surface.
+              </p>
+            </div>
+            {response && (
+              <div className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                {pageStart}-{pageEnd} of {response.total.toLocaleString()}
+              </div>
+            )}
+          </div>
+        </div>
         <SearchInput
           value={q}
           onChange={setQ}

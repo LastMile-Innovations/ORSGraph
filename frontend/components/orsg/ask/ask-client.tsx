@@ -74,15 +74,19 @@ export function AskClient({
     <div className="flex flex-1 flex-col overflow-hidden">
       <DataStateBanner source={dataSource} error={dataError} label="Ask response" />
       {/* Question bar */}
-      <header className="border-b border-border bg-card px-6 py-4">
+      <header className="border-b border-border bg-card px-4 py-4 sm:px-6">
         <div className="mx-auto max-w-5xl">
           <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
             <Sparkles className="h-3 w-3 text-primary" />
             ask ORSGraph
-            <span className="text-border">/</span>
-            <span>graph-grounded legal QA</span>
           </div>
-          <div className="flex items-start gap-2 rounded border border-border bg-background p-2 focus-within:border-primary">
+          <h1 className="text-2xl font-semibold tracking-normal text-foreground">
+            Ask a source-grounded legal question.
+          </h1>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+            Answers stay tied to parsed provisions, retrieved chunks, definitions, caveats, and QC notes.
+          </p>
+          <div className="mt-4 flex items-start gap-2 rounded-md border border-border bg-background p-2 shadow-sm focus-within:border-primary">
             <Sparkles className="mt-2 h-4 w-4 flex-none text-primary" />
             <textarea
               value={q}
@@ -100,14 +104,14 @@ export function AskClient({
             <button
               onClick={() => submitQuestion()}
               disabled={loading || q.trim().length === 0}
-              className="mt-1 flex h-7 items-center gap-1 rounded bg-primary px-2.5 font-mono text-[10px] uppercase tracking-wide text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="mt-1 flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Send className="h-3 w-3" />
               {loading ? "asking" : "answer"}
             </button>
           </div>
 
-          <div className="mt-2 flex items-center gap-1 overflow-x-auto scrollbar-thin">
+          <div className="mt-3 flex items-center gap-1 overflow-x-auto scrollbar-thin">
             <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
               mode:
             </span>

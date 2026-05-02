@@ -256,6 +256,23 @@ export function GraphViewer({
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex min-h-0 flex-1">
         <section className="flex min-w-0 flex-1 flex-col">
+          <div className="border-b border-border bg-card px-4 py-4 sm:px-6">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                  <GitBranch className="h-3.5 w-3.5 text-primary" />
+                  graph explorer
+                </div>
+                <h1 className="text-2xl font-semibold tracking-normal text-foreground">Trace the legal graph visually.</h1>
+                <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+                  Open a statute, citation, concept, or chapter and inspect the relationships driving search and work product support.
+                </p>
+              </div>
+              <div className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                {response.stats.nodeCount.toLocaleString()} nodes / {response.stats.edgeCount.toLocaleString()} edges
+              </div>
+            </div>
+          </div>
           <GraphToolbar
             query={query}
             mode={mode}

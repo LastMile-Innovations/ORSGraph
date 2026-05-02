@@ -36,10 +36,10 @@ export function ActionCard({ action }: { action: HomeAction }) {
     <Link 
       href={action.href}
       className={cn(
-        "group relative flex min-h-52 flex-col rounded-md border p-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+        "group relative flex min-h-48 flex-col rounded-md border p-5 transition-[border-color,background-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
         isPrimary 
-          ? "border-primary/40 bg-primary/10 hover:border-primary/70"
-          : "border-border bg-card hover:border-primary/40"
+          ? "border-primary/40 bg-primary/10 hover:border-primary/70 hover:shadow-sm"
+          : "border-border bg-card hover:border-primary/40 hover:shadow-sm"
       )}
     >
       <div className="mb-4 flex items-start justify-between gap-3">

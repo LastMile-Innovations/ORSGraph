@@ -62,6 +62,8 @@ const REFRESH_MS = 5000
 const PRIORITY_FILTERS = ["all", "P0", "P1", "P2", "P3"] as const
 const CONNECTOR_FILTERS = ["all", "implemented", "partial", "planned", "deferred"] as const
 const INGEST_MODES = ["all", "fetch", "parse", "qc", "discover"] as const
+const OR_CONSTITUTION_SOURCE_ID = "or_leg_constitution"
+const OR_CONSTITUTION_EDITION_YEAR = 2026
 
 const WORKFLOWS: Array<{
   id: string
@@ -230,6 +232,10 @@ export function AdminDashboardClient() {
   )
   const selectedSourceDetail = sourceDetail?.source.source_id === selectedSourceId ? sourceDetail : null
   const displayedSource = selectedSourceDetail?.source ?? selectedSource
+  const oregonConstitutionSource = useMemo(
+    () => sourceRegistry?.sources.find((source) => source.source_id === OR_CONSTITUTION_SOURCE_ID) ?? null,
+    [sourceRegistry],
+  )
   const graphProgress = useMemo(() => {
     if (!overview?.graph.jsonl_files) return 0
     return Math.min(100, Math.round((overview.graph.jsonl_files / 70) * 100))
@@ -298,9 +304,9 @@ export function AdminDashboardClient() {
           ? { priority: "P0", out_dir: `${dataDir}/sources`, graph_dir: overview.paths.graph_dir }
           : kind === "p0"
             ? { priority: "P0", out_dir: `${dataDir}/sources`, edition_year: 2025 }
-            : { source_id: selectedSourceId, out_dir: `${dataDir}/sources`, edition_year: 2025 }
+            : { source_id: selectedSourceId, out_dir: `${dataDir}/sources`, edition_year: sourceIngestEditionYear(selectedSourceId) }
       if (kind !== "combine") {
-        if (sessionKey.trim()) params.session_key = sessionKey.trim()
+        if ((kind === "p0" || sourceUsesSessionKey(selectedSourceId)) && sessionKey.trim()) params.session_key = sessionKey.trim()
         applySourceIngestControls(params)
       }
       const detail = await startAdminJob(kind === "combine" ? "combine_graph" : "source_ingest", params)
@@ -313,20 +319,24 @@ export function AdminDashboardClient() {
   }
 
   async function startSourceOperation(source: AdminSourceRegistryEntry, operation: "ingest" | "combine") {
+    await startSourceOperationById(source.source_id, operation)
+  }
+
+  async function startSourceOperationById(sourceId: string, operation: "ingest" | "combine") {
     if (!overview) {
       setError("Admin API is not ready yet.")
       return
     }
-    const jobKey = `source-${operation}-${source.source_id}`
+    const jobKey = `source-${operation}-${sourceId}`
     setStarting(jobKey)
     try {
       const dataDir = overview.paths.data_dir.replace(/\/$/, "")
       const params: AdminJobParams =
         operation === "combine"
-          ? { source_id: source.source_id, out_dir: `${dataDir}/sources`, graph_dir: overview.paths.graph_dir }
-          : { source_id: source.source_id, out_dir: `${dataDir}/sources`, edition_year: 2025 }
+          ? { source_id: sourceId, out_dir: `${dataDir}/sources`, graph_dir: overview.paths.graph_dir }
+          : { source_id: sourceId, out_dir: `${dataDir}/sources`, edition_year: sourceIngestEditionYear(sourceId) }
       if (operation === "ingest") {
-        if (sessionKey.trim()) params.session_key = sessionKey.trim()
+        if (sourceUsesSessionKey(sourceId) && sessionKey.trim()) params.session_key = sessionKey.trim()
         applySourceIngestControls(params)
       }
       const detail = await startAdminJob(operation === "combine" ? "combine_graph" : "source_ingest", params)
@@ -356,6 +366,12 @@ export function AdminDashboardClient() {
     if (ingestMode !== "all") params.mode = ingestMode
     if (refreshArtifacts) params.refresh = true
     if (!allowNetwork) params.allow_network = false
+  }
+
+  function focusOregonConstitution() {
+    setSourcePriorityFilter("P1")
+    setConnectorStatusFilter("implemented")
+    setSelectedSourceId(OR_CONSTITUTION_SOURCE_ID)
   }
 
   return (
@@ -547,6 +563,30 @@ export function AdminDashboardClient() {
                   ))}
                 </SelectContent>
               </Select>
+              <div className="rounded-md border border-primary/20 bg-primary/5 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-foreground">Oregon Constitution</div>
+                    <div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{OR_CONSTITUTION_SOURCE_ID}</div>
+                  </div>
+                  <Badge variant="outline" className="font-mono text-[10px]">
+                    {oregonConstitutionSource?.local.qc_status ?? "not run"}
+                  </Badge>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-1.5">
+                  <Button size="sm" variant="outline" onClick={focusOregonConstitution}>
+                    Monitor
+                  </Button>
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={!adminReady || Boolean(starting) || activeMutating} onClick={() => startSourceOperationById(OR_CONSTITUTION_SOURCE_ID, "ingest")}>
+                    {starting === `source-ingest-${OR_CONSTITUTION_SOURCE_ID}` ? <RefreshCcw className="h-3.5 w-3.5 animate-spin" /> : <Braces className="h-3.5 w-3.5" />}
+                    Ingest
+                  </Button>
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={!adminReady || Boolean(starting) || activeMutating || (oregonConstitutionSource?.local.graph_files ?? 0) === 0} onClick={() => startSourceOperationById(OR_CONSTITUTION_SOURCE_ID, "combine")}>
+                    {starting === `source-combine-${OR_CONSTITUTION_SOURCE_ID}` ? <RefreshCcw className="h-3.5 w-3.5 animate-spin" /> : <GitBranch className="h-3.5 w-3.5" />}
+                    Combine
+                  </Button>
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <MiniStat label="listed" value={sourceRegistry?.totals.sources ?? 0} />
                 <MiniStat label="artifacts" value={sourceRegistry?.totals.local_artifacts ?? 0} />
@@ -1059,6 +1099,14 @@ function formatDateTime(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(date)
+}
+
+function sourceIngestEditionYear(sourceId: string) {
+  return sourceId === OR_CONSTITUTION_SOURCE_ID ? OR_CONSTITUTION_EDITION_YEAR : 2025
+}
+
+function sourceUsesSessionKey(sourceId: string) {
+  return sourceId === "or_leg_odata"
 }
 
 function numberFrom(value: unknown) {
