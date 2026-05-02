@@ -209,7 +209,11 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    match cli.command {
+    let Some(command) = cli.command else {
+        return run_railway_default_worker().await;
+    };
+
+    match command {
         Command::Rag {
             uri,
             user,
@@ -866,6 +870,205 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
+    }
+}
+
+async fn run_railway_default_worker() -> Result<()> {
+    let data_dir = env_path("ORS_DATA_DIR", "/app/data");
+    let graph_dir = env_path("ORS_GRAPH_DIR", &data_dir.join("graph").to_string_lossy());
+    let edition_year = env_i32("EDITION_YEAR", 2025)?;
+    let seed_mode = std::env::var("SEED_MODE").unwrap_or_else(|_| "append".to_string());
+
+    info!("No subcommand provided; running Railway crawler worker default");
+
+    if seed_mode == "skip" {
+        info!("SEED_MODE=skip, exiting without Neo4j changes");
+        return Ok(());
+    }
+
+    if env_bool("REBUILD_GRAPH", false)? {
+        rebuild_graph_from_cached_html(&data_dir, &graph_dir, edition_year).await?;
+    }
+
+    if !graph_dir.is_dir() {
+        return Err(anyhow!(
+            "{} is missing. Set REBUILD_GRAPH=true or prepare graph JSONL before starting the crawler worker.",
+            graph_dir.display()
+        ));
+    }
+
+    let neo4j_uri = required_env("NEO4J_URI")?;
+    let neo4j_user = std::env::var("NEO4J_USER").unwrap_or_else(|_| "neo4j".to_string());
+    let neo4j_password = required_env("NEO4J_PASSWORD")?;
+    let node_batch_size = env_usize("SEED_NODE_BATCH_SIZE", 1000)?;
+    let edge_batch_size = env_usize("SEED_EDGE_BATCH_SIZE", 1000)?;
+    let relationship_batch_size = env_usize("SEED_RELATIONSHIP_BATCH_SIZE", 500)?;
+    let seed_batch_config = neo4j_loader::SeedBatchConfig::new(
+        node_batch_size,
+        edge_batch_size,
+        relationship_batch_size,
+    );
+
+    let loader = neo4j_loader::Neo4jLoader::new(&neo4j_uri, &neo4j_user, &neo4j_password).await?;
+
+    match seed_mode.as_str() {
+        "append" => {}
+        "replace" => {
+            if !env_bool("ORS_ALLOW_PRODUCTION_REPLACE", false)? {
+                return Err(anyhow!(
+                    "SEED_MODE=replace requires ORS_ALLOW_PRODUCTION_REPLACE=true after a backup"
+                ));
+            }
+            let clear_batch_size = env_usize("NEO4J_CLEAR_BATCH_SIZE", 100)?;
+            let (is_community, _, version) = loader.health_check().await?;
+            info!(
+                "Connected to Neo4j {} (Community: {})",
+                version, is_community
+            );
+            info!("Clearing Neo4j before replace seed");
+            loader.clear_database(clear_batch_size).await?;
+            info!("Neo4j clear complete");
+        }
+        other => {
+            return Err(anyhow!(
+                "Unsupported SEED_MODE={other}. Use skip, append, or replace."
+            ));
+        }
+    }
+
+    info!("Seeding Neo4j in {seed_mode} mode");
+    run_seed(
+        graph_dir,
+        loader,
+        edition_year,
+        false,
+        "legal_chunk_primary_v1".to_string(),
+        "voyage-4-large".to_string(),
+        1024,
+        "float".to_string(),
+        100,
+        500_000,
+        110_000,
+        false,
+        true,
+        false,
+        false,
+        false,
+        ChunkFilePolicy::RootOnly,
+        seed_batch_config,
+    )
+    .await?;
+    info!("Neo4j seed complete");
+    Ok(())
+}
+
+async fn rebuild_graph_from_cached_html(
+    data_dir: &Path,
+    graph_dir: &Path,
+    edition_year: i32,
+) -> Result<()> {
+    let raw_dir = env_path(
+        "ORS_RAW_DIR",
+        &data_dir.join("raw/official").to_string_lossy(),
+    );
+    if !raw_dir.is_dir() {
+        return Err(anyhow!(
+            "REBUILD_GRAPH=true but {} is missing",
+            raw_dir.display()
+        ));
+    }
+
+    let chapters = discover_cached_ors_chapters(&raw_dir)?;
+    if chapters.is_empty() {
+        return Err(anyhow!(
+            "No cached official ORS HTML files found in {}",
+            raw_dir.display()
+        ));
+    }
+
+    if let Some(parent) = graph_dir.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let _ = fs::remove_dir_all(graph_dir);
+
+    let out_dir = graph_dir.parent().unwrap_or(data_dir).to_path_buf();
+    let chapters_arg = chapters.join(",");
+    let fail_on_qc = env_bool("PARSE_FAIL_ON_QC", false)?;
+    run_parse_cached(
+        raw_dir,
+        out_dir,
+        chapters_arg,
+        edition_year,
+        fail_on_qc,
+        true,
+    )
+    .await?;
+    run_resolve_citations(graph_dir.to_path_buf(), edition_year)?;
+    info!("Graph JSONL rebuild complete");
+    Ok(())
+}
+
+fn discover_cached_ors_chapters(raw_dir: &Path) -> Result<Vec<String>> {
+    let mut chapters = Vec::new();
+    for entry in fs::read_dir(raw_dir)? {
+        let path = entry?.path();
+        let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Some(chapter) = file_name
+            .strip_prefix("ors")
+            .and_then(|value| value.strip_suffix(".html"))
+        else {
+            continue;
+        };
+        if chapter.chars().all(|ch| ch.is_ascii_digit()) {
+            chapters.push(chapter.to_string());
+        }
+    }
+    chapters.sort_by_key(|chapter| chapter.parse::<u32>().unwrap_or(u32::MAX));
+    Ok(chapters)
+}
+
+fn env_path(name: &str, default: &str) -> PathBuf {
+    std::env::var(name)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(default))
+}
+
+fn required_env(name: &str) -> Result<String> {
+    let value = std::env::var(name).with_context(|| format!("{name} is required"))?;
+    if value.trim().is_empty() {
+        return Err(anyhow!("{name} is required"));
+    }
+    Ok(value)
+}
+
+fn env_bool(name: &str, default: bool) -> Result<bool> {
+    match std::env::var(name) {
+        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "y" => Ok(true),
+            "0" | "false" | "no" | "n" => Ok(false),
+            other => Err(anyhow!("{name} must be true or false, got {other}")),
+        },
+        Err(_) => Ok(default),
+    }
+}
+
+fn env_i32(name: &str, default: i32) -> Result<i32> {
+    match std::env::var(name) {
+        Ok(value) => value
+            .parse::<i32>()
+            .with_context(|| format!("{name} must be an integer")),
+        Err(_) => Ok(default),
+    }
+}
+
+fn env_usize(name: &str, default: usize) -> Result<usize> {
+    match std::env::var(name) {
+        Ok(value) => value
+            .parse::<usize>()
+            .with_context(|| format!("{name} must be a positive integer")),
+        Err(_) => Ok(default),
     }
 }
 

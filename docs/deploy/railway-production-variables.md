@@ -41,10 +41,14 @@ This manifest lists required Railway variables by service without secret values.
 
 - Keep public domains disabled.
 - `ORS_CONTAINER_ROLE`: set to `crawler` for worker/job deployments.
+- With Railpack, starting `ors-crawler-v0` without a subcommand runs the guarded worker default instead of printing CLI help.
 - `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`: same canonical Neo4j variables as the API.
 - `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`: sealed cache/object-storage sync settings when S3 sync is enabled.
 - `SEED_MODE`: default `append`; valid values are `skip`, `append`, and `replace`.
 - `ORS_ALLOW_PRODUCTION_REPLACE`: must be `true` for destructive replace runs after a volume backup.
+- `ORS_DATA_DIR`: default `/app/data`.
+- `ORS_GRAPH_DIR`: default `/app/data/graph`.
+- `ORS_RAW_DIR`: default `/app/data/raw/official`, used only with `REBUILD_GRAPH=true`.
 - `NEO4J_CLEAR_BATCH_SIZE`: default `100`.
 - `SEED_NODE_BATCH_SIZE`: default `1000`.
 - `SEED_EDGE_BATCH_SIZE`: default `1000`.

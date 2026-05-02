@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[command(about = "ORSGraph registry crawler, import tools, graph QC, and Neo4j maintenance")]
 pub(crate) struct Cli {
     #[command(subcommand)]
-    pub(crate) command: Command,
+    pub(crate) command: Option<Command>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -388,4 +388,15 @@ pub(crate) enum Command {
 pub(crate) enum ChunkFilePolicy {
     RootOnly,
     Recursive,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_subcommand_is_valid_for_railway_default_worker() {
+        let cli = Cli::try_parse_from(["ors-crawler-v0"]).expect("parse cli");
+        assert!(cli.command.is_none());
+    }
 }
