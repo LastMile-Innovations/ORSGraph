@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AlertTriangle, GitBranch, RotateCcw } from "lucide-react"
 import { getFullGraph, getGraphNeighborhood } from "@/lib/api"
-import { classifyFallbackSource, type DataSource } from "@/lib/data-state"
-import { DataStateBanner } from "@/components/orsg/data-state-banner"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -76,7 +74,6 @@ export function GraphViewer({
   const [selectedId, setSelectedId] = useState<string>(initialNode)
   const [loading, setLoading] = useState(false)
   const [warning, setWarning] = useState<string | null>(null)
-  const [source, setSource] = useState<DataSource>("empty")
   const [refreshKey, setRefreshKey] = useState(0)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(false)
@@ -110,12 +107,10 @@ export function GraphViewer({
       setResponse(normalized)
       const nextSelected = normalized.center?.id ?? normalized.nodes[0]?.id ?? DEFAULT_FOCUS
       setSelectedId(nextSelected)
-      setSource(normalized.nodes.length > 0 ? "live" : "empty")
       if (normalized.stats.warnings.length > 0) setWarning(normalized.stats.warnings[0])
     } catch (error) {
       setResponse(emptyGraphResponse())
       setSelectedId(DEFAULT_FOCUS)
-      setSource(classifyFallbackSource(error))
       setWarning(error instanceof Error ? `Full graph unavailable: ${error.message}` : "Full graph unavailable.")
     } finally {
       setLoading(false)
@@ -169,7 +164,6 @@ export function GraphViewer({
         if (cancelled) return
         setResponse(normalizeResponse(next))
         setSelectedId(next.center?.id ?? focus)
-        setSource(next.nodes.length > 0 ? "live" : "empty")
         if (next.layout?.name === "timeline") setLayout("timeline")
         if (next.layout?.name === "radial") setLayout("radial")
       })
@@ -177,7 +171,6 @@ export function GraphViewer({
         if (cancelled) return
         setResponse(emptyGraphResponse())
         setSelectedId(focus)
-        setSource(classifyFallbackSource(error))
         setWarning(error instanceof Error ? `Graph API unavailable: ${error.message}` : "Graph API unavailable.")
       })
       .finally(() => {
@@ -261,11 +254,6 @@ export function GraphViewer({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <DataStateBanner
-        source={source}
-        error={warning ?? undefined}
-        label="Graph data"
-      />
       <div className="flex min-h-0 flex-1">
         <section className="flex min-w-0 flex-1 flex-col">
           <GraphToolbar
