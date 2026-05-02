@@ -20,16 +20,16 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/rules/registry", get(get_registry))
         .route(
-            "/rules/jurisdictions/:jurisdiction_id/current",
+            "/rules/jurisdictions/{jurisdiction_id}/current",
             get(get_current_for_jurisdiction),
         )
         .route(
-            "/rules/jurisdictions/:jurisdiction_id/history",
+            "/rules/jurisdictions/{jurisdiction_id}/history",
             get(get_history_for_jurisdiction),
         )
         .route("/rules/applicable", get(get_applicable_rules))
-        .route("/rules/orders/:authority_document_id", get(get_order))
-        .route("/rules/slr/:jurisdiction_id/:year", get(get_slr_edition))
+        .route("/rules/orders/{authority_document_id}", get(get_order))
+        .route("/rules/slr/{jurisdiction_id}/{year}", get(get_slr_edition))
 }
 
 async fn get_registry(State(state): State<AppState>) -> ApiResult<Json<impl serde::Serialize>> {

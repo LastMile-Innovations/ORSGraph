@@ -15,12 +15,12 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/admin/overview", get(get_overview))
         .route("/admin/sources", get(list_sources))
-        .route("/admin/sources/:source_id", get(get_source))
+        .route("/admin/sources/{source_id}", get(get_source))
         .route("/admin/jobs", get(list_jobs).post(start_job))
-        .route("/admin/jobs/:id", get(get_job))
-        .route("/admin/jobs/:id/logs", get(get_job_logs))
-        .route("/admin/jobs/:id/cancel", post(cancel_job))
-        .route("/admin/jobs/:id/kill", post(kill_job))
+        .route("/admin/jobs/{id}", get(get_job))
+        .route("/admin/jobs/{id}/logs", get(get_job_logs))
+        .route("/admin/jobs/{id}/cancel", post(cancel_job))
+        .route("/admin/jobs/{id}/kill", post(kill_job))
 }
 
 #[derive(Debug, Deserialize)]

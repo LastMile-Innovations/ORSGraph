@@ -38,40 +38,40 @@ pub fn create_routes() -> Router<AppState> {
         .route("/search/suggest", axum::routing::get(search::suggest))
         .route("/sources", axum::routing::get(sources::list_sources))
         .route(
-            "/sources/:source_id",
+            "/sources/{source_id}",
             axum::routing::get(sources::get_source),
         )
         .route("/statutes", axum::routing::get(statutes::list_statutes))
         .route(
-            "/statutes/:citation",
+            "/statutes/{citation}",
             axum::routing::get(statutes::get_statute),
         )
         .route(
-            "/statutes/:citation/page",
+            "/statutes/{citation}/page",
             axum::routing::get(statutes::get_statute_page),
         )
         .route(
-            "/statutes/:citation/provisions",
+            "/statutes/{citation}/provisions",
             axum::routing::get(statutes::get_provisions),
         )
         .route(
-            "/statutes/:citation/citations",
+            "/statutes/{citation}/citations",
             axum::routing::get(statutes::get_citations),
         )
         .route(
-            "/statutes/:citation/semantics",
+            "/statutes/{citation}/semantics",
             axum::routing::get(statutes::get_semantics),
         )
         .route(
-            "/statutes/:citation/history",
+            "/statutes/{citation}/history",
             axum::routing::get(statutes::get_history),
         )
         .route(
-            "/statutes/:citation/chunks",
+            "/statutes/{citation}/chunks",
             axum::routing::get(statutes::get_chunks),
         )
         .route(
-            "/provisions/:id",
+            "/provisions/{id}",
             axum::routing::get(statutes::get_provision),
         )
         .route(
@@ -87,4 +87,14 @@ pub fn create_routes() -> Router<AppState> {
             axum::routing::get(qc::get_latest_report),
         )
         .route("/ask", axum::routing::post(ask::ask))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::create_routes;
+
+    #[test]
+    fn create_routes_constructs_without_panic() {
+        let _ = create_routes();
+    }
 }

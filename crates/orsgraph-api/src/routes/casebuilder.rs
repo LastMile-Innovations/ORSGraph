@@ -5,13 +5,13 @@ use crate::models::search::{SearchMode, SearchQuery};
 use crate::services::casebuilder::BinaryUploadRequest;
 use crate::state::AppState;
 use axum::{
+    Json, Router,
     body::Bytes,
     extract::DefaultBodyLimit,
     extract::{Extension, Path, Query, State},
-    http::{header, HeaderMap, HeaderValue},
+    http::{HeaderMap, HeaderValue, header},
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
-    Json, Router,
 };
 use serde::Deserialize;
 
@@ -32,84 +32,84 @@ pub fn routes() -> Router<AppState> {
         .route("/matters", get(list_matters).post(create_matter))
         .route("/admin/matters/claim-ownerless", post(claim_ownerless_matters))
         .route(
-            "/matters/:matter_id",
+            "/matters/{matter_id}",
             get(get_matter).patch(patch_matter).delete(delete_matter),
         )
-        .route("/matters/:matter_id/graph", get(get_matter_graph))
-        .route("/matters/:matter_id/audit", get(list_matter_audit_events))
-        .route("/matters/:matter_id/index", get(get_matter_index))
-        .route("/matters/:matter_id/index/run", post(run_matter_index))
-        .route("/matters/:matter_id/qc/run", post(run_matter_qc))
-        .route("/matters/:matter_id/issues/spot", post(spot_issues))
+        .route("/matters/{matter_id}/graph", get(get_matter_graph))
+        .route("/matters/{matter_id}/audit", get(list_matter_audit_events))
+        .route("/matters/{matter_id}/index", get(get_matter_index))
+        .route("/matters/{matter_id}/index/run", post(run_matter_index))
+        .route("/matters/{matter_id}/qc/run", post(run_matter_qc))
+        .route("/matters/{matter_id}/issues/spot", post(spot_issues))
         .route(
-            "/matters/:matter_id/parties",
+            "/matters/{matter_id}/parties",
             get(list_parties).post(create_party),
         )
-        .route("/matters/:matter_id/files", post(upload_file))
-        .route("/matters/:matter_id/files/binary", post(upload_binary_file))
+        .route("/matters/{matter_id}/files", post(upload_file))
+        .route("/matters/{matter_id}/files/binary", post(upload_binary_file))
         .route(
-            "/matters/:matter_id/files/uploads",
+            "/matters/{matter_id}/files/uploads",
             post(create_file_upload),
         )
         .route(
-            "/matters/:matter_id/files/uploads/:upload_id/complete",
+            "/matters/{matter_id}/files/uploads/{upload_id}/complete",
             post(complete_file_upload),
         )
-        .route("/matters/:matter_id/documents", get(list_documents))
+        .route("/matters/{matter_id}/documents", get(list_documents))
         .route(
-            "/matters/:matter_id/documents/:document_id",
+            "/matters/{matter_id}/documents/{document_id}",
             get(get_document).delete(delete_document),
         )
         .route(
-            "/matters/:matter_id/documents/:document_id/workspace",
+            "/matters/{matter_id}/documents/{document_id}/workspace",
             get(get_document_workspace),
         )
         .route(
-            "/matters/:matter_id/documents/:document_id/content",
+            "/matters/{matter_id}/documents/{document_id}/content",
             get(get_document_content),
         )
         .route(
-            "/matters/:matter_id/documents/:document_id/annotations",
+            "/matters/{matter_id}/documents/{document_id}/annotations",
             get(list_document_annotations).post(create_document_annotation),
         )
         .route(
-            "/matters/:matter_id/documents/:document_id/text",
+            "/matters/{matter_id}/documents/{document_id}/text",
             patch(save_document_text),
         )
         .route(
-            "/matters/:matter_id/documents/:document_id/promote-work-product",
+            "/matters/{matter_id}/documents/{document_id}/promote-work-product",
             post(promote_document_work_product),
         )
         .route(
-            "/matters/:matter_id/documents/:document_id/download-url",
+            "/matters/{matter_id}/documents/{document_id}/download-url",
             post(create_download_url),
         )
         .route(
-            "/matters/:matter_id/documents/:document_id/transcriptions",
+            "/matters/{matter_id}/documents/{document_id}/transcriptions",
             get(list_transcriptions).post(create_transcription),
         )
         .route(
-            "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id",
+            "/matters/{matter_id}/documents/{document_id}/transcriptions/{transcription_job_id}",
             get(get_transcription),
         )
         .route(
-            "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id/sync",
+            "/matters/{matter_id}/documents/{document_id}/transcriptions/{transcription_job_id}/sync",
             post(sync_transcription),
         )
         .route(
-            "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id/segments/:segment_id",
+            "/matters/{matter_id}/documents/{document_id}/transcriptions/{transcription_job_id}/segments/{segment_id}",
             patch(patch_transcript_segment),
         )
         .route(
-            "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id/speakers/:speaker_id",
+            "/matters/{matter_id}/documents/{document_id}/transcriptions/{transcription_job_id}/speakers/{speaker_id}",
             patch(patch_transcript_speaker),
         )
         .route(
-            "/matters/:matter_id/documents/:document_id/transcriptions/:transcription_job_id/review",
+            "/matters/{matter_id}/documents/{document_id}/transcriptions/{transcription_job_id}/review",
             post(review_transcription),
         )
         .route(
-            "/matters/:matter_id/documents/:document_id/extract",
+            "/matters/{matter_id}/documents/{document_id}/extract",
             post(extract_document),
         )
         .route(
@@ -121,332 +121,332 @@ pub fn routes() -> Router<AppState> {
             get(list_assemblyai_transcripts),
         )
         .route(
-            "/casebuilder/providers/assemblyai/transcripts/:transcript_id",
+            "/casebuilder/providers/assemblyai/transcripts/{transcript_id}",
             delete(delete_assemblyai_transcript),
         )
         .route(
-            "/matters/:matter_id/documents/:document_id/import-complaint",
+            "/matters/{matter_id}/documents/{document_id}/import-complaint",
             post(import_document_complaint),
         )
         .route(
-            "/matters/:matter_id/facts",
+            "/matters/{matter_id}/facts",
             get(list_facts).post(create_fact),
         )
-        .route("/matters/:matter_id/facts/:fact_id", patch(patch_fact))
+        .route("/matters/{matter_id}/facts/{fact_id}", patch(patch_fact))
         .route(
-            "/matters/:matter_id/facts/:fact_id/approve",
+            "/matters/{matter_id}/facts/{fact_id}/approve",
             post(approve_fact),
         )
         .route(
-            "/matters/:matter_id/timeline",
+            "/matters/{matter_id}/timeline",
             get(list_timeline).post(create_timeline_event),
         )
         .route(
-            "/matters/:matter_id/claims",
+            "/matters/{matter_id}/claims",
             get(list_claims).post(create_claim),
         )
         .route(
-            "/matters/:matter_id/claims/:claim_id/map-elements",
+            "/matters/{matter_id}/claims/{claim_id}/map-elements",
             post(map_claim_elements),
         )
         .route(
-            "/matters/:matter_id/defenses",
+            "/matters/{matter_id}/defenses",
             get(list_defenses).post(create_defense),
         )
         .route(
-            "/matters/:matter_id/evidence",
+            "/matters/{matter_id}/evidence",
             get(list_evidence).post(create_evidence),
         )
         .route(
-            "/matters/:matter_id/evidence/:evidence_id/link-fact",
+            "/matters/{matter_id}/evidence/{evidence_id}/link-fact",
             post(link_evidence_fact),
         )
-        .route("/matters/:matter_id/ask", post(ask_matter))
+        .route("/matters/{matter_id}/ask", post(ask_matter))
         .route(
-            "/matters/:matter_id/deadlines",
+            "/matters/{matter_id}/deadlines",
             get(list_deadlines).post(create_deadline),
         )
         .route(
-            "/matters/:matter_id/deadlines/compute",
+            "/matters/{matter_id}/deadlines/compute",
             post(compute_deadlines),
         )
         .route(
-            "/matters/:matter_id/deadlines/:deadline_id",
+            "/matters/{matter_id}/deadlines/{deadline_id}",
             patch(patch_deadline),
         )
         .route(
-            "/matters/:matter_id/tasks",
+            "/matters/{matter_id}/tasks",
             get(list_tasks).post(create_task),
         )
-        .route("/matters/:matter_id/tasks/:task_id", patch(patch_task))
+        .route("/matters/{matter_id}/tasks/{task_id}", patch(patch_task))
         .route(
-            "/matters/:matter_id/work-products",
+            "/matters/{matter_id}/work-products",
             get(list_work_products).post(create_work_product),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id",
+            "/matters/{matter_id}/work-products/{work_product_id}",
             get(get_work_product).patch(patch_work_product),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/blocks",
+            "/matters/{matter_id}/work-products/{work_product_id}/blocks",
             post(create_work_product_block),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/blocks/:block_id",
+            "/matters/{matter_id}/work-products/{work_product_id}/blocks/{block_id}",
             patch(patch_work_product_block),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/links",
+            "/matters/{matter_id}/work-products/{work_product_id}/links",
             post(link_work_product_support),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/links/:anchor_id",
+            "/matters/{matter_id}/work-products/{work_product_id}/links/{anchor_id}",
             patch(patch_work_product_support).delete(delete_work_product_support),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/text-ranges",
+            "/matters/{matter_id}/work-products/{work_product_id}/text-ranges",
             post(link_work_product_text_range),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/ast",
+            "/matters/{matter_id}/work-products/{work_product_id}/ast",
             get(get_work_product_ast).patch(patch_work_product_ast),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/ast/patch",
+            "/matters/{matter_id}/work-products/{work_product_id}/ast/patch",
             post(apply_work_product_ast_patch),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/ast/validate",
+            "/matters/{matter_id}/work-products/{work_product_id}/ast/validate",
             post(validate_work_product_ast),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/ast/to-markdown",
+            "/matters/{matter_id}/work-products/{work_product_id}/ast/to-markdown",
             post(work_product_ast_to_markdown),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/ast/from-markdown",
+            "/matters/{matter_id}/work-products/{work_product_id}/ast/from-markdown",
             post(work_product_ast_from_markdown),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/ast/to-html",
+            "/matters/{matter_id}/work-products/{work_product_id}/ast/to-html",
             post(work_product_ast_to_html),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/ast/to-plain-text",
+            "/matters/{matter_id}/work-products/{work_product_id}/ast/to-plain-text",
             post(work_product_ast_to_plain_text),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/qc/run",
+            "/matters/{matter_id}/work-products/{work_product_id}/qc/run",
             post(run_work_product_qc),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/qc/findings",
+            "/matters/{matter_id}/work-products/{work_product_id}/qc/findings",
             get(list_work_product_findings),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/qc/findings/:finding_id",
+            "/matters/{matter_id}/work-products/{work_product_id}/qc/findings/{finding_id}",
             patch(patch_work_product_finding),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/preview",
+            "/matters/{matter_id}/work-products/{work_product_id}/preview",
             get(preview_work_product),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/export",
+            "/matters/{matter_id}/work-products/{work_product_id}/export",
             post(export_work_product),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/artifacts/:artifact_id",
+            "/matters/{matter_id}/work-products/{work_product_id}/artifacts/{artifact_id}",
             get(get_work_product_artifact),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/artifacts/:artifact_id/download",
+            "/matters/{matter_id}/work-products/{work_product_id}/artifacts/{artifact_id}/download",
             get(download_work_product_artifact),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/ai/commands",
+            "/matters/{matter_id}/work-products/{work_product_id}/ai/commands",
             post(run_work_product_ai_command),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/history",
+            "/matters/{matter_id}/work-products/{work_product_id}/history",
             get(work_product_history),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/change-sets/:change_set_id",
+            "/matters/{matter_id}/work-products/{work_product_id}/change-sets/{change_set_id}",
             get(get_work_product_change_set),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/snapshots",
+            "/matters/{matter_id}/work-products/{work_product_id}/snapshots",
             get(list_work_product_snapshots).post(create_work_product_snapshot),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/snapshots/:snapshot_id",
+            "/matters/{matter_id}/work-products/{work_product_id}/snapshots/{snapshot_id}",
             get(get_work_product_snapshot),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/compare",
+            "/matters/{matter_id}/work-products/{work_product_id}/compare",
             get(compare_work_product_snapshots),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/restore",
+            "/matters/{matter_id}/work-products/{work_product_id}/restore",
             post(restore_work_product_version),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/export-history",
+            "/matters/{matter_id}/work-products/{work_product_id}/export-history",
             get(work_product_export_history),
         )
         .route(
-            "/matters/:matter_id/work-products/:work_product_id/ai-audit",
+            "/matters/{matter_id}/work-products/{work_product_id}/ai-audit",
             get(work_product_ai_audit),
         )
         .route(
-            "/matters/:matter_id/complaints",
+            "/matters/{matter_id}/complaints",
             get(list_complaints).post(create_complaint),
         )
         .route(
-            "/matters/:matter_id/complaints/import",
+            "/matters/{matter_id}/complaints/import",
             post(import_complaints),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id",
+            "/matters/{matter_id}/complaints/{complaint_id}",
             get(get_complaint).patch(patch_complaint),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/setup",
+            "/matters/{matter_id}/complaints/{complaint_id}/setup",
             patch(update_complaint_setup),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/sections",
+            "/matters/{matter_id}/complaints/{complaint_id}/sections",
             post(create_complaint_section),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/counts",
+            "/matters/{matter_id}/complaints/{complaint_id}/counts",
             post(create_complaint_count),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/paragraphs",
+            "/matters/{matter_id}/complaints/{complaint_id}/paragraphs",
             post(create_complaint_paragraph),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/paragraphs/renumber",
+            "/matters/{matter_id}/complaints/{complaint_id}/paragraphs/renumber",
             post(renumber_complaint_paragraphs),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/paragraphs/:paragraph_id",
+            "/matters/{matter_id}/complaints/{complaint_id}/paragraphs/{paragraph_id}",
             patch(patch_complaint_paragraph),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/links",
+            "/matters/{matter_id}/complaints/{complaint_id}/links",
             post(link_complaint_support),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/qc/run",
+            "/matters/{matter_id}/complaints/{complaint_id}/qc/run",
             post(run_complaint_qc),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/qc/findings",
+            "/matters/{matter_id}/complaints/{complaint_id}/qc/findings",
             get(list_complaint_findings),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/qc/findings/:finding_id",
+            "/matters/{matter_id}/complaints/{complaint_id}/qc/findings/{finding_id}",
             patch(patch_complaint_finding),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/preview",
+            "/matters/{matter_id}/complaints/{complaint_id}/preview",
             get(preview_complaint),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/export",
+            "/matters/{matter_id}/complaints/{complaint_id}/export",
             post(export_complaint),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/artifacts/:artifact_id",
+            "/matters/{matter_id}/complaints/{complaint_id}/artifacts/{artifact_id}",
             get(get_complaint_artifact),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/artifacts/:artifact_id/download",
+            "/matters/{matter_id}/complaints/{complaint_id}/artifacts/{artifact_id}/download",
             get(download_complaint_artifact),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/ai/commands",
+            "/matters/{matter_id}/complaints/{complaint_id}/ai/commands",
             post(run_complaint_ai_command),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/history",
+            "/matters/{matter_id}/complaints/{complaint_id}/history",
             get(work_product_history),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/change-sets/:change_set_id",
+            "/matters/{matter_id}/complaints/{complaint_id}/change-sets/{change_set_id}",
             get(get_work_product_change_set),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/snapshots",
+            "/matters/{matter_id}/complaints/{complaint_id}/snapshots",
             get(list_work_product_snapshots).post(create_work_product_snapshot),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/snapshots/:snapshot_id",
+            "/matters/{matter_id}/complaints/{complaint_id}/snapshots/{snapshot_id}",
             get(get_work_product_snapshot),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/compare",
+            "/matters/{matter_id}/complaints/{complaint_id}/compare",
             get(compare_work_product_snapshots),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/restore",
+            "/matters/{matter_id}/complaints/{complaint_id}/restore",
             post(restore_work_product_version),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/export-history",
+            "/matters/{matter_id}/complaints/{complaint_id}/export-history",
             get(work_product_export_history),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/ai-audit",
+            "/matters/{matter_id}/complaints/{complaint_id}/ai-audit",
             get(work_product_ai_audit),
         )
         .route(
-            "/matters/:matter_id/complaints/:complaint_id/filing-packet",
+            "/matters/{matter_id}/complaints/{complaint_id}/filing-packet",
             get(filing_packet),
         )
         .route(
-            "/matters/:matter_id/drafts",
+            "/matters/{matter_id}/drafts",
             get(list_drafts).post(create_draft),
         )
         .route(
-            "/matters/:matter_id/drafts/:draft_id",
+            "/matters/{matter_id}/drafts/{draft_id}",
             get(get_draft).patch(patch_draft),
         )
         .route(
-            "/matters/:matter_id/drafts/:draft_id/generate",
+            "/matters/{matter_id}/drafts/{draft_id}/generate",
             post(generate_draft),
         )
         .route(
-            "/matters/:matter_id/drafts/:draft_id/fact-check",
+            "/matters/{matter_id}/drafts/{draft_id}/fact-check",
             post(fact_check_draft),
         )
         .route(
-            "/matters/:matter_id/drafts/:draft_id/citation-check",
+            "/matters/{matter_id}/drafts/{draft_id}/citation-check",
             post(citation_check_draft),
         )
         .route(
-            "/matters/:matter_id/authority/search",
+            "/matters/{matter_id}/authority/search",
             get(authority_search),
         )
         .route(
-            "/matters/:matter_id/authority/recommend",
+            "/matters/{matter_id}/authority/recommend",
             post(authority_recommend),
         )
         .route(
-            "/matters/:matter_id/authority/attach",
+            "/matters/{matter_id}/authority/attach",
             post(authority_attach),
         )
         .route(
-            "/matters/:matter_id/authority/detach",
+            "/matters/{matter_id}/authority/detach",
             post(authority_detach),
         )
-        .route("/matters/:matter_id/export/docx", post(export_matter_docx))
-        .route("/matters/:matter_id/export/pdf", post(export_matter_pdf))
+        .route("/matters/{matter_id}/export/docx", post(export_matter_docx))
+        .route("/matters/{matter_id}/export/pdf", post(export_matter_pdf))
         .route(
-            "/matters/:matter_id/export/filing-packet",
+            "/matters/{matter_id}/export/filing-packet",
             post(export_matter_filing_packet),
         )
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))

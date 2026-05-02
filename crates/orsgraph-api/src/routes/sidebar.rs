@@ -23,12 +23,12 @@ pub fn routes() -> Router<AppState> {
         .route("/sidebar", get(get_sidebar))
         .route("/sidebar/saved-searches", post(save_sidebar_search))
         .route(
-            "/sidebar/saved-searches/:saved_search_id",
+            "/sidebar/saved-searches/{saved_search_id}",
             delete(delete_sidebar_search),
         )
         .route("/sidebar/saved-statutes", post(save_sidebar_statute))
         .route(
-            "/sidebar/saved-statutes/:statute_id",
+            "/sidebar/saved-statutes/{statute_id}",
             delete(delete_sidebar_statute),
         )
         .route("/sidebar/recent-statutes", post(record_recent_statute))
