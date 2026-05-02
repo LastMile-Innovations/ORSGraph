@@ -79,7 +79,7 @@ cargo run --release -p ors-crawler-v0 --bin ors-crawler-v0 -- seed-neo4j \
   --neo4j-password-env NEO4J_PASSWORD
 ```
 
-`seed-neo4j` creates constraints and uses idempotent upserts/materialization, so rerunning a seed updates matching nodes and relationships instead of truncating the database. Use `--dry-run` to validate JSONL without connecting to Neo4j. To replace existing graph data, run `clear-neo4j --yes` first, or set Docker `SEED_MODE=replace`; Docker defaults to append mode.
+`seed-neo4j` creates constraints and uses idempotent upserts/materialization, so rerunning a seed updates matching nodes and relationships instead of truncating the database. Use `--dry-run` to validate JSONL without connecting to Neo4j. To replace existing graph data, run `clear-neo4j --yes` first. Docker/Railway startup does not crawl or seed unless `ORS_RUN_STARTUP_CRAWLER=true`; in that explicit startup mode, `SEED_MODE=replace` clears before seeding.
 
 Outputs:
 

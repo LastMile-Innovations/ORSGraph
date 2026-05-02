@@ -2,7 +2,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::models::api::*;
 use crate::models::search::{SearchResult as SearchResultModel, *};
 use crate::services::legal_hierarchy;
-use neo4rs::{query, Graph, Row};
+use neo4rs::{Graph, Row, query};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -2101,7 +2101,8 @@ impl Neo4jService {
         let edge_limit = (node_limit * 3).min(1500);
         let mut relationship_types =
             graph_relationship_types(&params.mode, params.relationship_types.as_deref());
-        if params.include_similarity.unwrap_or(false)
+        if !relationship_types.is_empty()
+            && params.include_similarity.unwrap_or(false)
             && !relationship_types
                 .iter()
                 .any(|rel_type| rel_type == "SIMILAR_TO")
@@ -2357,6 +2358,200 @@ impl Neo4jService {
                     "citation" => "radial".to_string(),
                     _ => "force".to_string(),
                 },
+            }),
+        })
+    }
+
+    pub async fn get_full_graph(
+        &self,
+        params: &GraphFullRequest,
+    ) -> ApiResult<GraphNeighborhoodResponse> {
+        let mut relationship_types = graph_csv(params.relationship_types.as_deref());
+        if !relationship_types.is_empty()
+            && params.include_similarity.unwrap_or(false)
+            && !relationship_types
+                .iter()
+                .any(|rel_type| rel_type == "SIMILAR_TO")
+        {
+            relationship_types.push("SIMILAR_TO".to_string());
+        }
+        let node_types = graph_csv(params.node_types.as_deref());
+        let include_chunks = params.include_chunks.unwrap_or(true);
+        let similarity_threshold = params.similarity_threshold.unwrap_or(-1.0);
+        let node_id_expr = search_node_id_expr("node");
+        let source_id_expr = search_node_id_expr("source");
+        let target_id_expr = search_node_id_expr("target");
+
+        let cypher = format!(
+            "CALL {{
+               MATCH (node)
+               WHERE ($include_chunks = true OR NOT 'RetrievalChunk' IN labels(node))
+                 AND (size($node_types) = 0 OR any(label IN labels(node) WHERE label IN $node_types))
+               RETURN 'node' AS record_kind,
+                      {node_id_expr} AS node_id,
+                      coalesce(node.citation, node.display_citation, node.term, node.title, node.label, node.chapter_id, node.semantic_type, labels(node)[0], {node_id_expr}) AS node_label,
+                      labels(node)[0] AS node_type,
+                      labels(node) AS node_labels,
+                      coalesce(node.citation, node.display_citation) AS citation,
+                      node.title AS title,
+                      node.chapter AS chapter,
+                      node.status AS status,
+                      left(coalesce(node.text, node.normalized_text, node.definition_text, node.raw_text, node.description, node.status_text, node.trigger_text, ''), 260) AS text_snippet,
+                      coalesce(node.confidence, node.parser_confidence) AS confidence,
+                      coalesce(node.source_backed, node.sourceBacked) AS source_backed,
+                      coalesce(node.qc_warnings, node.parser_warnings, []) AS qc_warnings,
+                      null AS edge_id,
+                      null AS source_id,
+                      null AS target_id,
+                      null AS edge_type,
+                      null AS edge_confidence,
+                      null AS edge_weight,
+                      null AS edge_similarity_score
+               UNION ALL
+               MATCH (source)-[rel]->(target)
+               WHERE (size($relationship_types) = 0 OR type(rel) IN $relationship_types)
+                 AND ($include_chunks = true OR (NOT 'RetrievalChunk' IN labels(source) AND NOT 'RetrievalChunk' IN labels(target)))
+                 AND (size($node_types) = 0 OR (
+                   any(label IN labels(source) WHERE label IN $node_types)
+                   AND any(label IN labels(target) WHERE label IN $node_types)
+                 ))
+                 AND ($similarity_threshold < 0 OR type(rel) <> 'SIMILAR_TO' OR coalesce(rel.similarity_score, rel.score, rel.weight, 0.0) >= $similarity_threshold)
+               RETURN 'edge' AS record_kind,
+                      null AS node_id,
+                      null AS node_label,
+                      null AS node_type,
+                      [] AS node_labels,
+                      null AS citation,
+                      null AS title,
+                      null AS chapter,
+                      null AS status,
+                      null AS text_snippet,
+                      null AS confidence,
+                      null AS source_backed,
+                      [] AS qc_warnings,
+                      elementId(rel) AS edge_id,
+                      {source_id_expr} AS source_id,
+                      {target_id_expr} AS target_id,
+                      type(rel) AS edge_type,
+                      rel.confidence AS edge_confidence,
+                      coalesce(rel.weight, rel.score, rel.similarity_score) AS edge_weight,
+                      coalesce(rel.similarity_score, rel.score, rel.weight) AS edge_similarity_score
+             }}
+             RETURN *",
+        );
+
+        let mut result = self
+            .graph
+            .execute(
+                query(&cypher)
+                    .param("relationship_types", relationship_types)
+                    .param("node_types", node_types)
+                    .param("include_chunks", include_chunks)
+                    .param("similarity_threshold", similarity_threshold),
+            )
+            .await
+            .map_err(ApiError::Neo4jConnection)?;
+
+        let mut nodes_by_id: HashMap<String, GraphNode> = HashMap::new();
+        let mut edges_by_id: HashMap<String, GraphEdge> = HashMap::new();
+
+        while let Some(row) = result.next().await.map_err(ApiError::Neo4jConnection)? {
+            let record_kind: String = row.get("record_kind").unwrap_or_default();
+            if record_kind == "node" {
+                let id: String = row.get("node_id").unwrap_or_default();
+                if id.is_empty() {
+                    continue;
+                }
+                let node_type = row
+                    .get::<String>("node_type")
+                    .unwrap_or_else(|_| "Unknown".to_string());
+                nodes_by_id.entry(id.clone()).or_insert_with(|| GraphNode {
+                    href: graph_node_href(&id, &node_type),
+                    id,
+                    label: row.get("node_label").unwrap_or_else(|_| node_type.clone()),
+                    node_type: node_type.clone(),
+                    labels: row
+                        .get("node_labels")
+                        .unwrap_or_else(|_| vec![node_type.clone()]),
+                    citation: row.get("citation").ok(),
+                    title: row.get("title").ok(),
+                    chapter: row.get("chapter").ok(),
+                    status: row.get("status").ok(),
+                    text_snippet: row.get("text_snippet").ok(),
+                    size: None,
+                    score: None,
+                    similarity_score: None,
+                    confidence: row.get("confidence").ok(),
+                    source_backed: row.get("source_backed").ok(),
+                    qc_warnings: row.get("qc_warnings").unwrap_or_default(),
+                    metrics: None,
+                });
+            } else if record_kind == "edge" {
+                let edge_id: String = row.get("edge_id").unwrap_or_default();
+                let source: String = row.get("source_id").unwrap_or_default();
+                let target: String = row.get("target_id").unwrap_or_default();
+                let edge_type: String = row.get("edge_type").unwrap_or_default();
+                if edge_id.is_empty()
+                    || source.is_empty()
+                    || target.is_empty()
+                    || edge_type.is_empty()
+                {
+                    continue;
+                }
+                edges_by_id.entry(edge_id.clone()).or_insert_with(|| {
+                    let kind = graph_edge_kind(&edge_type).to_string();
+                    GraphEdge {
+                        id: edge_id,
+                        source,
+                        target,
+                        edge_type: edge_type.clone(),
+                        label: Some(edge_type.clone()),
+                        kind,
+                        weight: row.get("edge_weight").ok(),
+                        confidence: row.get("edge_confidence").ok(),
+                        similarity_score: row.get("edge_similarity_score").ok(),
+                        source_backed: Some(true),
+                        style: Some(graph_edge_style(&edge_type)),
+                    }
+                });
+            }
+        }
+
+        let mut nodes: Vec<GraphNode> = nodes_by_id.into_values().collect();
+        nodes.sort_by_key(|node| (node.node_type.clone(), node.label.clone()));
+
+        let node_ids: HashSet<String> = nodes.iter().map(|node| node.id.clone()).collect();
+        let mut edges: Vec<GraphEdge> = edges_by_id.into_values().collect();
+        edges.retain(|edge| node_ids.contains(&edge.source) && node_ids.contains(&edge.target));
+        edges.sort_by_key(|edge| {
+            (
+                edge.edge_type.clone(),
+                edge.source.clone(),
+                edge.target.clone(),
+            )
+        });
+
+        let mut warnings = Vec::new();
+        if nodes.len() > 1000 || edges.len() > 3000 {
+            warnings.push(format!(
+                "Full graph loaded with {} nodes and {} edges; rendering may be slow.",
+                nodes.len(),
+                edges.len()
+            ));
+        }
+
+        Ok(GraphNeighborhoodResponse {
+            center: None,
+            stats: GraphStats {
+                node_count: nodes.len(),
+                edge_count: edges.len(),
+                truncated: false,
+                warnings,
+            },
+            nodes,
+            edges,
+            layout: Some(GraphLayoutHint {
+                name: "force".to_string(),
             }),
         })
     }

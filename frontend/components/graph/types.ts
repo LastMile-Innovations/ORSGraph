@@ -83,3 +83,13 @@ export type GraphNeighborhoodParams = {
   includeSimilarity?: boolean
   similarityThreshold?: number
 }
+
+export type GraphFullParams = {
+  relationshipTypes?: string[]
+  nodeTypes?: string[]
+  includeChunks?: boolean
+  includeSimilarity?: boolean
+  similarityThreshold?: number
+}
+
+export type GraphViewScope = "neighborhood" | "full"

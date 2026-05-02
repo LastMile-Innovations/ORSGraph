@@ -1,8 +1,8 @@
 use crate::error::ApiResult;
 use crate::models::api::HealthResponse;
 use crate::state::AppState;
-use axum::extract::State;
 use axum::Json;
+use axum::extract::State;
 
 pub async fn health(State(state): State<AppState>) -> ApiResult<Json<HealthResponse>> {
     let neo4j_ok = state.health_service.check_neo4j().await.unwrap_or(false);

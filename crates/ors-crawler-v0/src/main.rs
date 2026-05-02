@@ -210,7 +210,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let Some(command) = cli.command else {
-        return run_railway_default_worker().await;
+        if env_bool("ORS_RUN_STARTUP_CRAWLER", false)? {
+            return run_railway_default_worker().await;
+        }
+        info!(
+            "No subcommand provided; startup crawler is disabled. Use the admin dashboard or pass an explicit crawler command."
+        );
+        return Ok(());
     };
 
     match command {

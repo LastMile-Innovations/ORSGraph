@@ -94,7 +94,7 @@ Important behavior:
 - Missing rows in a new JSONL run are not automatically deleted from Neo4j.
 - `seed-neo4j --dry-run` validates JSONL row contracts without mutating Neo4j.
 - `clear-neo4j --yes` is the explicit destructive reset command.
-- Docker uses append mode by default. Set `SEED_MODE=replace` to clear before seeding.
+- Docker/Railway startup does not seed by default. If `ORS_RUN_STARTUP_CRAWLER=true` is deliberately enabled, it uses append mode unless `SEED_MODE=replace` is also set.
 
 Use append mode for normal refreshes. Use replace mode only when the graph contract changed enough that stale nodes or relationships would be misleading.
 
@@ -123,6 +123,7 @@ Configuration is environment-first. Key operational variables:
 | `ORS_ADMIN_DATA_DIR` | Data root used by admin command construction. |
 | `ORS_ADMIN_JOBS_DIR` | Persistent admin job log directory. |
 | `ORS_ADMIN_CRAWLER_BIN` | Crawler binary path. `cargo` is special-cased for local development. |
+| `ORS_RUN_STARTUP_CRAWLER` | Opt-in only. When `true`, a no-subcommand crawler process runs the legacy one-shot startup seed path. Defaults to no crawler work. |
 | `ORS_STORAGE_BACKEND` | `local` or `r2` for CaseBuilder artifacts. |
 | `ORS_ASSEMBLYAI_ENABLED`, `ASSEMBLYAI_API_KEY` | Enable external transcription provider support. |
 | `VOYAGE_API_KEY`, `ORS_VECTOR_SEARCH_ENABLED` | Embedding, vector search, and rerank support. |
@@ -153,7 +154,7 @@ The Docker image contains both binaries:
 - `/app/orsgraph-api`
 - `/app/ors-crawler-v0`
 
-The default entrypoint starts the API server after optional S3 sync and optional Neo4j seed. Set `RUN_CRAWLER_ONLY=true` to bypass the API server and run a crawler command directly:
+The default entrypoint starts the API server. It does not crawl, rebuild graph JSONL, or seed Neo4j during image build or service startup. Set `RUN_CRAWLER_ONLY=true` with an explicit crawler command to run a one-shot admin/maintenance action:
 
 ```sh
 docker run --rm \
@@ -164,10 +165,11 @@ docker run --rm \
 
 Runtime seed behavior:
 
-- If `NEO4J_URI` and `NEO4J_PASSWORD` are unset, the entrypoint skips seed and starts the API.
-- If credentials are set, the entrypoint can rebuild graph JSONL from cached official ORS HTML with `import-ors-cache`.
-- `SEED_MODE=append` is the default.
-- `SEED_MODE=replace` runs `clear-neo4j --yes` before `seed-neo4j`.
+- No crawler command means no crawler work. This is the normal production/admin-dashboard mode.
+- Admin dashboard jobs pass explicit subcommands such as `source-ingest`, `combine-graph`, and `seed-neo4j`.
+- `ORS_RUN_STARTUP_CRAWLER=true` is a legacy one-shot opt-in for startup seeding. Use it only for deliberate maintenance runs outside the dashboard.
+- In that opt-in startup mode, `REBUILD_GRAPH=true` rebuilds graph JSONL from cached official ORS HTML.
+- In that opt-in startup mode, `SEED_MODE=append` is the default and `SEED_MODE=replace` runs `clear-neo4j --yes` before `seed-neo4j`.
 
 The image copies `docs/data` so default registry commands work inside the container.
 

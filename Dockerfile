@@ -15,6 +15,7 @@ WORKDIR /app
 # Copy the workspace files
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY cypher ./cypher
 
 # Build the application
 RUN cargo build --release

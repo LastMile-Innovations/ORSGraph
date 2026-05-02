@@ -461,6 +461,20 @@ pub struct GraphNeighborhoodRequest {
     pub similarity_threshold: Option<f64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct GraphFullRequest {
+    #[serde(default, alias = "relationshipTypes")]
+    pub relationship_types: Option<String>,
+    #[serde(default, alias = "nodeTypes")]
+    pub node_types: Option<String>,
+    #[serde(default, alias = "includeChunks")]
+    pub include_chunks: Option<bool>,
+    #[serde(default, alias = "includeSimilarity")]
+    pub include_similarity: Option<bool>,
+    #[serde(default, alias = "similarityThreshold")]
+    pub similarity_threshold: Option<f64>,
+}
+
 fn default_graph_depth() -> usize {
     1
 }

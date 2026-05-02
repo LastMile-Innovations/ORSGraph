@@ -2,7 +2,7 @@
 
 import { GraphCanvasSigma } from "./GraphCanvasSigma"
 import type { GraphForces } from "./GraphForceControls"
-import type { GraphEdge, GraphLayoutName, GraphNode } from "./types"
+import type { GraphEdge, GraphLayoutName, GraphNode, GraphViewScope } from "./types"
 
 export function GraphCanvasReactFlow({
   nodes,
@@ -10,6 +10,7 @@ export function GraphCanvasReactFlow({
   selectedId,
   layout,
   forces,
+  viewScope = "neighborhood",
   onSelect,
   onRecenter,
 }: {
@@ -18,6 +19,7 @@ export function GraphCanvasReactFlow({
   selectedId?: string
   layout: GraphLayoutName
   forces: GraphForces
+  viewScope?: GraphViewScope
   onSelect: (id: string) => void
   onRecenter: (id: string) => void
 }) {
@@ -28,6 +30,7 @@ export function GraphCanvasReactFlow({
       selectedId={selectedId}
       layout={layout}
       forces={forces}
+      viewScope={viewScope}
       onSelect={onSelect}
       onRecenter={onRecenter}
     />

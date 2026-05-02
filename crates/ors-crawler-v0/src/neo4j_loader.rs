@@ -17,11 +17,15 @@ use crate::models::{
 use anyhow::{Context, Result};
 use neo4rs::{query, ConfigBuilder, Graph};
 use regex::Regex;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::info;
 
 const DEFAULT_EMBEDDING_UPDATE_BATCH_SIZE: usize = 1000;
+
+mod cypher_assets {
+    include!(concat!(env!("OUT_DIR"), "/cypher_assets.rs"));
+}
 
 static CONCURRENT_TX_PATTERN: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| {
     Regex::new(r"IN \d+ CONCURRENT TRANSACTIONS OF \d+ ROWS").unwrap()
@@ -95,8 +99,68 @@ impl Neo4jLoader {
     /// The query string as a Result
     fn load_query(query_name: &str) -> Result<String> {
         let query_path = Path::new("cypher/queries").join(format!("{}.cypher", query_name));
-        std::fs::read_to_string(&query_path)
+        Self::load_cypher_asset(&query_path)
             .with_context(|| format!("Failed to read query file: {}", query_path.display()))
+    }
+
+    fn load_cypher_asset(relative_path: &Path) -> Result<String> {
+        let asset_key = relative_path.to_string_lossy().replace('\\', "/");
+        let mut searched = Vec::new();
+
+        for candidate in Self::cypher_asset_candidates(relative_path) {
+            let display = candidate.display().to_string();
+            if searched.iter().any(|path| path == &display) {
+                continue;
+            }
+            searched.push(display);
+
+            match std::fs::read_to_string(&candidate) {
+                Ok(content) => return Ok(content),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("Failed to read Cypher asset {}", candidate.display())
+                    });
+                }
+            }
+        }
+
+        if let Some(content) = cypher_assets::get(&asset_key) {
+            return Ok(content.to_string());
+        }
+
+        anyhow::bail!(
+            "Failed to read Cypher asset {asset_key}; searched: {}",
+            searched.join(", ")
+        );
+    }
+
+    fn cypher_asset_candidates(relative_path: &Path) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        if let Ok(cypher_dir) = std::env::var("ORS_CYPHER_DIR") {
+            let cypher_dir = PathBuf::from(cypher_dir);
+            paths.push(cypher_dir.join(relative_path));
+            if let Ok(stripped) = relative_path.strip_prefix("cypher") {
+                paths.push(cypher_dir.join(stripped));
+            }
+        }
+
+        paths.push(relative_path.to_path_buf());
+
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        paths.push(manifest_dir.join(relative_path));
+
+        let manifest_root = manifest_dir.join("../..");
+        paths.push(manifest_root.join(relative_path));
+
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                paths.push(exe_dir.join(relative_path));
+            }
+        }
+
+        paths.push(PathBuf::from("/app").join(relative_path));
+        paths
     }
 
     /// Transforms Cypher query batch directives for Community Edition compatibility.
@@ -275,7 +339,7 @@ impl Neo4jLoader {
         create_vector_index: bool,
     ) -> Result<()> {
         // Load constraints and indexes from cypher/indexes.cypher
-        let cypher_content = std::fs::read_to_string("cypher/indexes.cypher")
+        let cypher_content = Self::load_cypher_asset(Path::new("cypher/indexes.cypher"))
             .context("Failed to read cypher/indexes.cypher")?;
 
         // Split by semicolon and filter out empty lines or lines that are just comments
@@ -2427,5 +2491,16 @@ mod tests {
         assert!(normalized.starts_with("CALL {"));
         assert!(normalized.contains("MENTIONS_CITATION"));
         assert!(!normalized.contains("//"));
+    }
+
+    #[test]
+    fn embedded_cypher_assets_include_seed_files() {
+        let indexes = super::cypher_assets::get("cypher/indexes.cypher")
+            .expect("indexes.cypher should be embedded");
+        let loader_query = super::cypher_assets::get("cypher/queries/load_jurisdictions.cypher")
+            .expect("load_jurisdictions.cypher should be embedded");
+
+        assert!(indexes.contains("CREATE CONSTRAINT"));
+        assert!(loader_query.contains("MERGE (us:Jurisdiction"));
     }
 }

@@ -2,7 +2,7 @@ use crate::error::ApiResult;
 use crate::models::api::*;
 use crate::models::search::{SearchMode, SearchQuery};
 use crate::state::AppState;
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use std::collections::HashSet;
 
 pub async fn ask(

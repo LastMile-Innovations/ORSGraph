@@ -23,7 +23,7 @@ import {
   askAnswer as mockAskAnswer,
 } from './mock-data';
 import { getSourceById as getDemoSourceById, sourceIndex as demoSourceIndex } from "./mock-sources";
-import type { GraphNeighborhoodParams, GraphViewerResponse } from '@/components/graph/types';
+import type { GraphFullParams, GraphNeighborhoodParams, GraphViewerResponse } from '@/components/graph/types';
 import {
   classifyApiFailureSource,
   classifyFallbackSource,
@@ -729,6 +729,19 @@ export async function getGraphNeighborhood(input: GraphNeighborhoodParams): Prom
   if (input.similarityThreshold !== undefined) params.set('similarityThreshold', String(input.similarityThreshold));
 
   return fetchApi<GraphViewerResponse>(`/graph/neighborhood?${params}`);
+}
+
+export async function getFullGraph(input: GraphFullParams = {}): Promise<GraphViewerResponse> {
+  const params = new URLSearchParams();
+
+  if (input.relationshipTypes?.length) params.set('relationshipTypes', input.relationshipTypes.join(','));
+  if (input.nodeTypes?.length) params.set('nodeTypes', input.nodeTypes.join(','));
+  if (input.includeChunks !== undefined) params.set('includeChunks', String(input.includeChunks));
+  if (input.includeSimilarity !== undefined) params.set('includeSimilarity', String(input.includeSimilarity));
+  if (input.similarityThreshold !== undefined) params.set('similarityThreshold', String(input.similarityThreshold));
+
+  const query = params.toString();
+  return fetchApi<GraphViewerResponse>(`/graph/full${query ? `?${query}` : ''}`);
 }
 
 export interface GraphPathResponse {

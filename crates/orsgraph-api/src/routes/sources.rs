@@ -1,8 +1,8 @@
 use crate::error::ApiResult;
 use crate::models::api::{SourceDetailResponse, SourceIndexRequest, SourceIndexResponse};
 use crate::state::AppState;
-use axum::extract::{Path, Query, State};
 use axum::Json;
+use axum::extract::{Path, Query, State};
 
 pub async fn list_sources(
     State(state): State<AppState>,

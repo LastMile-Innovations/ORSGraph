@@ -1,9 +1,9 @@
 use crate::error::ApiResult;
 use crate::state::AppState;
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::get,
-    Json, Router,
 };
 use serde::Deserialize;
 

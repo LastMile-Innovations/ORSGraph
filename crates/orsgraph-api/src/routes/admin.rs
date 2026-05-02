@@ -5,9 +5,9 @@ use crate::models::admin::{
 };
 use crate::state::AppState;
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{get, post},
-    Json, Router,
 };
 use serde::Deserialize;
 

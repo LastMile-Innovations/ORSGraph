@@ -1,7 +1,7 @@
 use crate::error::ApiResult;
 use crate::models::home::{FeaturedStatute, HomePageData};
 use crate::state::AppState;
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 
 pub async fn get_home(State(state): State<AppState>) -> ApiResult<Json<HomePageData>> {
     let data = state.home_service.get_home_page_data().await?;

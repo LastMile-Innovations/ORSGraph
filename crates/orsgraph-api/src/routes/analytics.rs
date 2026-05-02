@@ -1,7 +1,7 @@
 use crate::error::ApiResult;
 use crate::models::home::GraphInsightCard;
 use crate::state::AppState;
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 
 pub async fn home_insights(
     State(state): State<AppState>,

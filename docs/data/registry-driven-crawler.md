@@ -132,7 +132,7 @@ cargo run -p ors-crawler-v0 --bin ors-crawler-v0 -- seed-neo4j \
   --neo4j-password-env NEO4J_PASSWORD
 ```
 
-Current Neo4j behavior is append/upsert by default. The loader creates constraints, reads graph JSONL batches, and writes nodes and relationships with stable IDs and `MERGE`-based materialization. It does not prune rows that disappeared from the JSONL contract. For a clean replacement, run `clear-neo4j --yes` before `seed-neo4j`, or use Docker with `SEED_MODE=replace`. Use `seed-neo4j --dry-run` to validate the JSONL row contract without connecting to Neo4j.
+Current Neo4j behavior is append/upsert by default. The loader creates constraints, reads graph JSONL batches, and writes nodes and relationships with stable IDs and `MERGE`-based materialization. It does not prune rows that disappeared from the JSONL contract. For a clean replacement, run `clear-neo4j --yes` before `seed-neo4j`, or deliberately enable startup seeding with `ORS_RUN_STARTUP_CRAWLER=true` and `SEED_MODE=replace`. Use `seed-neo4j --dry-run` to validate the JSONL row contract without connecting to Neo4j.
 
 The registry path is the primary ORS crawler path:
 

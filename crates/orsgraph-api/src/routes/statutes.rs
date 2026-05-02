@@ -1,8 +1,8 @@
 use crate::error::ApiResult;
 use crate::models::api::*;
 use crate::state::AppState;
-use axum::extract::{Path, Query, State};
 use axum::Json;
+use axum::extract::{Path, Query, State};
 
 #[derive(serde::Deserialize)]
 pub struct StatuteListParams {

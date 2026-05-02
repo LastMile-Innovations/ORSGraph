@@ -80,22 +80,53 @@ fn container_runs_api_by_default_and_keeps_crawler_escape_hatch() {
 fn graph_routes_and_frontend_are_wired_end_to_end() {
     let routes = include_str!("../src/routes/mod.rs");
     let graph_routes = include_str!("../src/routes/graph.rs");
+    let graph_models = include_str!("../src/models/api.rs");
     let graph_page = include_str!("../../../frontend/app/graph/page.tsx");
     let graph_viewer = include_str!("../../../frontend/components/graph/GraphViewer.tsx");
     let graph_toolbar = include_str!("../../../frontend/components/graph/GraphToolbar.tsx");
+    let frontend_api = include_str!("../../../frontend/lib/api.ts");
     let path_panel = include_str!("../../../frontend/components/graph/PathFinderPanel.tsx");
 
     assert!(routes.contains("/graph/neighborhood"));
+    assert!(routes.contains("/graph/full"));
     assert!(routes.contains("/graph/path"));
+    assert!(graph_routes.contains("GraphFullRequest"));
     assert!(graph_routes.contains("GraphPathRequest"));
+    assert!(graph_models.contains("pub struct GraphFullRequest"));
     assert!(graph_page.contains("searchParams"));
     assert!(graph_page.contains("initialFocus"));
     assert!(graph_viewer.contains("updateGraphUrl"));
+    assert!(graph_viewer.contains("viewScope"));
+    assert!(graph_viewer.contains("Render full graph"));
     assert!(graph_viewer.contains("PathFinderPanel"));
     assert!(graph_viewer.contains("SheetContent"));
-    assert!(graph_toolbar.contains("Open graph controls"));
+    assert!(graph_toolbar.contains("Open advanced graph controls"));
     assert!(graph_toolbar.contains("Open graph inspector"));
+    assert!(frontend_api.contains("getFullGraph"));
     assert!(path_panel.contains("getGraphPath"));
+}
+
+#[test]
+fn full_graph_contract_is_unfocused_and_unbounded_by_neighborhood_id() {
+    let graph_models = include_str!("../src/models/api.rs");
+    let service = include_str!("../src/services/neo4j.rs");
+
+    let full_request = graph_models
+        .split("pub struct GraphFullRequest")
+        .nth(1)
+        .expect("GraphFullRequest should be declared")
+        .split("fn default_graph_depth")
+        .next()
+        .expect("GraphFullRequest block should precede graph defaults");
+
+    assert!(!full_request.contains("pub id"));
+    assert!(!full_request.contains("pub citation"));
+    assert!(service.contains("pub async fn get_full_graph"));
+    assert!(service.contains("MATCH (node)"));
+    assert!(service.contains("MATCH (source)-[rel]->(target)"));
+    assert!(service.contains("include_chunks.unwrap_or(true)"));
+    assert!(service.contains("if !relationship_types.is_empty()"));
+    assert!(!service.contains("Full graph requires id or citation"));
 }
 
 #[test]
@@ -139,8 +170,11 @@ fn statute_sidebar_routes_use_live_api_contracts_without_mock_fallbacks() {
     );
     assert!(frontend_api.contains("fetchApi<StatuteIndexApiResponse>(`/statutes?${params}`)"));
     assert!(frontend_api.contains("fetchApi<SidebarData>(\"/sidebar\")"));
-    assert!(frontend_api
-        .contains("fetchApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)"));
+    assert!(
+        frontend_api.contains(
+            "fetchApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)"
+        )
+    );
     assert!(frontend_api.contains("apiFailureState(\"/statutes\""));
     assert!(frontend_api.contains("apiFailureState(\"/sidebar\", null"));
     assert!(statute_page.contains("state.source === \"empty\""));

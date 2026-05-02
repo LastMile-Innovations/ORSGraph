@@ -78,6 +78,7 @@ pub fn create_routes() -> Router<AppState> {
             "/graph/neighborhood",
             axum::routing::get(graph::get_neighborhood),
         )
+        .route("/graph/full", axum::routing::get(graph::get_full))
         .route("/graph/path", axum::routing::get(graph::get_path))
         .route("/qc/summary", axum::routing::get(qc::get_qc_summary))
         .route("/qc/runs", axum::routing::post(qc::run_qc))

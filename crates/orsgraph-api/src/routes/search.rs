@@ -2,8 +2,8 @@ use crate::error::ApiResult;
 use crate::models::search::*;
 use crate::state::AppState;
 use axum::{
-    extract::{Query, State},
     Json,
+    extract::{Query, State},
 };
 
 pub async fn search(

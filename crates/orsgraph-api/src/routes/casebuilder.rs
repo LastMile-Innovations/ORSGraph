@@ -4,13 +4,13 @@ use crate::models::search::{SearchMode, SearchQuery};
 use crate::services::casebuilder::BinaryUploadRequest;
 use crate::state::AppState;
 use axum::{
+    Json, Router,
     body::Bytes,
     extract::DefaultBodyLimit,
     extract::{Path, Query, State},
-    http::{header, HeaderMap, HeaderValue},
+    http::{HeaderMap, HeaderValue, header},
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
-    Json, Router,
 };
 use serde::Deserialize;
 

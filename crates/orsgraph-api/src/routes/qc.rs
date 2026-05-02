@@ -1,8 +1,8 @@
 use crate::error::ApiResult;
 use crate::models::api::{QCReportRequest, QCReportResponse, QCRunResponse, QCSummaryResponse};
 use crate::state::AppState;
-use axum::extract::{Query, State};
 use axum::Json;
+use axum::extract::{Query, State};
 
 pub async fn get_qc_summary(State(state): State<AppState>) -> ApiResult<Json<QCSummaryResponse>> {
     let summary = state.neo4j_service.get_qc_summary().await?;

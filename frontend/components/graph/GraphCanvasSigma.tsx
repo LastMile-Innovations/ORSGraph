@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { NODE_COLORS } from "./constants"
 import type { GraphForces } from "./GraphForceControls"
-import type { GraphEdge, GraphLayoutName, GraphNode } from "./types"
+import type { GraphEdge, GraphLayoutName, GraphNode, GraphViewScope } from "./types"
 
 const WIDTH = 1400
 const HEIGHT = 850
@@ -16,6 +16,7 @@ export function GraphCanvasSigma({
   selectedId,
   layout,
   forces,
+  viewScope = "neighborhood",
   onSelect,
   onRecenter,
 }: {
@@ -24,13 +25,15 @@ export function GraphCanvasSigma({
   selectedId?: string
   layout: GraphLayoutName
   forces: GraphForces
+  viewScope?: GraphViewScope
   onSelect: (id: string) => void
   onRecenter: (id: string) => void
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [rendererReady, setRendererReady] = useState(false)
-  const positions = useMemo(() => computeLayout(nodes, edges, selectedId, layout, forces), [nodes, edges, selectedId, layout, forces])
+  const effectiveLabelDensity = viewScope === "full" ? Math.min(forces.labelDensity, 10) : forces.labelDensity
+  const positions = useMemo(() => computeLayout(nodes, edges, selectedId, layout, forces, viewScope), [nodes, edges, selectedId, layout, forces, viewScope])
   const selectedNeighborIds = useMemo(() => {
     if (!selectedId) return new Set<string>()
     return new Set(edges.flatMap((edge) => edge.source === selectedId ? [edge.target] : edge.target === selectedId ? [edge.source] : []))
@@ -42,6 +45,7 @@ export function GraphCanvasSigma({
       | {
           kill: () => void
           on: (event: string, handler: (payload: { node: string }) => void) => void
+          getCamera?: () => { animatedReset?: (options?: { duration?: number }) => void }
         }
       | undefined
     const container = containerRef.current
@@ -83,11 +87,13 @@ export function GraphCanvasSigma({
 
         renderer = new Sigma(graph, container, {
           allowInvalidContainer: true,
-          stagePadding: nodes.length <= 6
+          stagePadding: viewScope === "full"
+            ? 48
+            : nodes.length <= 6
             ? container.clientWidth < 640 ? 150 : 96
             : container.clientWidth < 640 ? 96 : 72,
           renderEdgeLabels: false,
-          labelDensity: Math.max(0.08, forces.labelDensity / 100),
+          labelDensity: Math.max(0.04, effectiveLabelDensity / 100),
           defaultEdgeType: "arrow",
           nodeReducer: (node: string, data) => {
             const active = node === selectedId || selectedNeighborIds.has(node)
@@ -95,7 +101,7 @@ export function GraphCanvasSigma({
             const size = typeof data.size === "number" ? data.size : 8
             return {
               ...data,
-              label: active || forces.labelDensity > 40 ? label : "",
+              label: active || effectiveLabelDensity > 40 ? label : "",
               highlighted: active,
               size: active ? size * 1.35 : size,
               borderColor: data.qc ? "#f59e0b" : undefined,
@@ -108,12 +114,19 @@ export function GraphCanvasSigma({
         }) as {
           kill: () => void
           on: (event: string, handler: (payload: { node: string }) => void) => void
+          getCamera?: () => { animatedReset?: (options?: { duration?: number }) => void }
         }
 
         renderer.on("enterNode", ({ node }: { node: string }) => setHoveredId(node))
         renderer.on("leaveNode", () => setHoveredId(null))
         renderer.on("clickNode", ({ node }: { node: string }) => onSelect(node))
         renderer.on("doubleClickNode", ({ node }: { node: string }) => onRecenter(node))
+
+        if (viewScope === "full") {
+          window.requestAnimationFrame(() => {
+            renderer?.getCamera?.()?.animatedReset?.({ duration: 450 })
+          })
+        }
 
         if (!cancelled) setRendererReady(true)
       } catch {
@@ -126,7 +139,7 @@ export function GraphCanvasSigma({
       cancelled = true
       renderer?.kill()
     }
-  }, [nodes, edges, positions, selectedId, selectedNeighborIds, forces.labelDensity, onSelect, onRecenter])
+  }, [nodes, edges, positions, selectedId, selectedNeighborIds, effectiveLabelDensity, onSelect, onRecenter, viewScope])
 
   return (
     <div className="relative h-full min-h-[520px] overflow-hidden bg-background">
@@ -189,7 +202,7 @@ export function GraphCanvasSigma({
             const neighbor = selectedNeighborIds.has(node.id)
             const hovered = hoveredId === node.id
             const radius = selected ? 15 : Math.max(7, Math.min(14, 7 + (node.metrics?.degree ?? 0) * 0.35 + (node.similarityScore ?? 0) * 5))
-            const showLabel = selected || hovered || neighbor || index < Math.max(10, forces.labelDensity)
+            const showLabel = selected || hovered || neighbor || index < Math.max(8, effectiveLabelDensity)
             return (
               <g
                 key={node.id}
@@ -229,17 +242,51 @@ export function GraphCanvasSigma({
       </svg>
       )}
       <div className="absolute left-3 top-3 rounded border border-border bg-card/90 px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground backdrop-blur">
-        {rendererReady ? "sigma webgl" : "svg fallback"} / {layout.replace("_", " ")}
+        {rendererReady ? "sigma webgl" : "svg fallback"} / {viewScope === "full" ? "full graph" : layout.replace("_", " ")}
       </div>
     </div>
   )
 }
 
-function computeLayout(nodes: GraphNode[], edges: GraphEdge[], selectedId: string | undefined, layout: GraphLayoutName, forces: GraphForces) {
+function computeLayout(nodes: GraphNode[], edges: GraphEdge[], selectedId: string | undefined, layout: GraphLayoutName, forces: GraphForces, viewScope: GraphViewScope) {
   if (layout === "timeline") return timelineLayout(nodes)
   if (layout === "hierarchical") return hierarchicalLayout(nodes)
   if (layout === "embedding_projection") return projectionLayout(nodes)
+  if (viewScope === "full") return fullCorpusLayout(nodes)
   return radialForceLayout(nodes, edges, selectedId, layout, forces)
+}
+
+function fullCorpusLayout(nodes: GraphNode[]) {
+  const groups = groupBy(nodes, (node) => node.type || "Unknown")
+  const types = Object.keys(groups).sort((a, b) => (groups[b]?.length ?? 0) - (groups[a]?.length ?? 0))
+  const positions: Record<string, Point> = {}
+  const center = { x: WIDTH / 2, y: HEIGHT / 2 }
+  const clusterRadius = Math.min(WIDTH, HEIGHT) * 0.34
+
+  types.forEach((type, clusterIndex) => {
+    const group = groups[type] ?? []
+    const angle = (Math.PI * 2 * clusterIndex) / Math.max(types.length, 1)
+    const clusterCenter = {
+      x: center.x + Math.cos(angle) * clusterRadius,
+      y: center.y + Math.sin(angle) * clusterRadius,
+    }
+    const innerStep = Math.max(18, Math.min(42, 160 / Math.sqrt(Math.max(group.length, 1))))
+
+    group.forEach((node, index) => {
+      if (types.length === 1 && index === 0) {
+        positions[node.id] = center
+        return
+      }
+      const spiral = Math.sqrt(index + 1) * innerStep
+      const theta = index * 2.399963229728653
+      positions[node.id] = {
+        x: clamp(clusterCenter.x + Math.cos(theta) * spiral, 45, WIDTH - 45),
+        y: clamp(clusterCenter.y + Math.sin(theta) * spiral, 45, HEIGHT - 45),
+      }
+    })
+  })
+
+  return positions
 }
 
 function radialForceLayout(nodes: GraphNode[], edges: GraphEdge[], selectedId: string | undefined, layout: GraphLayoutName, forces: GraphForces) {
@@ -339,4 +386,8 @@ function stableHash(value: string) {
   let hash = 0
   for (let i = 0; i < value.length; i += 1) hash = (hash * 31 + value.charCodeAt(i)) >>> 0
   return hash
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
 }

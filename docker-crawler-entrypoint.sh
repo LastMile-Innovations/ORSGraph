@@ -101,6 +101,13 @@ if [ "$#" -gt 0 ]; then
     exec /app/ors-crawler-v0 "$@"
 fi
 
+if [ "${ORS_RUN_STARTUP_CRAWLER:-false}" != "true" ]; then
+    echo "No crawler command provided; startup crawler is disabled."
+    echo "Use the admin dashboard or pass an explicit ors-crawler-v0 command to run ingest, combine, seed, or maintenance jobs."
+    echo "Set ORS_RUN_STARTUP_CRAWLER=true only for intentional one-shot startup seeding."
+    exit 0
+fi
+
 sync_data
 rebuild_graph_from_cache
 
