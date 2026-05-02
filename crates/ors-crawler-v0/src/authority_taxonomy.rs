@@ -51,8 +51,8 @@ pub fn authority_tier_for_level(level: i32) -> &'static str {
 pub fn source_role_for_family(authority_family: &str) -> &'static str {
     match normalize_family(authority_family).as_str() {
         "USCONST" | "FEDERALSTATUTE" | "USC" | "ORCONST" | "STATECONSTITUTION" | "ORS"
-        | "FEDERALRULE" | "FRCP" | "FRE" | "FRAP" | "CFR" | "UTCR" | "ORCP" | "ORAP"
-        | "OAR" | "SLR" | "LOCALRULE" => "primary_law",
+        | "FEDERALRULE" | "FRCP" | "FRE" | "FRAP" | "CFR" | "UTCR" | "ORCP" | "ORAP" | "OAR"
+        | "SLR" | "LOCALRULE" => "primary_law",
         "CONAN" | "OFFICIALCOMMENTARY" => "official_commentary",
         "CASELAW" => "case_law",
         _ => "secondary",

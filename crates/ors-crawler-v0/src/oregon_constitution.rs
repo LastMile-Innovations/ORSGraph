@@ -38,8 +38,10 @@ const SECTION_SYMBOL: char = '\u{00a7}';
 static ANNOTATION_LINK_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?i)\banc(0[0-9]{2})\.html\b"#).expect("valid annotation link"));
 static ARTICLE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^ARTICLE\s+([IVXLCDM]+(?:-[A-Z]+(?:\([0-9]+\))?)?)(?:\s+\((Amended|Original)\))?$")
-        .expect("valid article regex")
+    Regex::new(
+        r"(?i)^ARTICLE\s+([IVXLCDM]+(?:-[A-Z]+(?:\([0-9]+\))?)?)(?:\s+\((Amended|Original)\))?$",
+    )
+    .expect("valid article regex")
 });
 static SECTION_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)^Section\s+([0-9]+[a-z]?)\.\s+([^\.]+)\.\s*(.*)$")
@@ -52,8 +54,10 @@ static BRACKETED_SOURCE_NOTE_RE: Lazy<Regex> =
 static NOTE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)^Note:\s*(.+)$").expect("valid note regex"));
 static CREATED_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\bCreated through ([^;\.]+?)(?: and adopted by the people ([^;\.]+))?(?:;|\.|$)")
-        .expect("valid created regex")
+    Regex::new(
+        r"(?i)\bCreated through ([^;\.]+?)(?: and adopted by the people ([^;\.]+))?(?:;|\.|$)",
+    )
+    .expect("valid created regex")
 });
 static AMENDMENT_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\bAmendment proposed by ([A-Z]\.J\.R\.\s*[0-9A-Z.-]+),?\s*([0-9]{4})?,?\s*and adopted by the people ([^;\.]+)")
@@ -119,7 +123,10 @@ impl DataConnector for OregonConstitutionConnector {
             annotation_items = fallback_annotation_items();
         }
         for item in annotation_items {
-            if !items.iter().any(|existing| existing.item_id == item.item_id) {
+            if !items
+                .iter()
+                .any(|existing| existing.item_id == item.item_id)
+            {
                 items.push(item);
             }
         }
@@ -198,8 +205,8 @@ async fn discover_annotation_items(max_items: usize) -> Vec<SourceItem> {
 
 fn fallback_annotation_items() -> Vec<SourceItem> {
     [
-        "001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012",
-        "014", "015", "016", "017", "018",
+        "001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "014",
+        "015", "016", "017", "018",
     ]
     .into_iter()
     .map(annotation_item)
@@ -315,10 +322,7 @@ fn parse_preamble_html(artifact: &RawArtifact, edition_year: i32) -> Result<Grap
                 source_toc_entry_id: format!("{source_document_id}:toc:{}", toc.article_key),
                 source_document_id: source_document_id.clone(),
                 citation: Some(article_citation(&toc.article_key)),
-                canonical_id: Some(format!(
-                    "{OR_CONSTITUTION_CORPUS_ID}:{}",
-                    toc.article_key
-                )),
+                canonical_id: Some(format!("{OR_CONSTITUTION_CORPUS_ID}:{}", toc.article_key)),
                 title: toc.title,
                 chapter: Some(toc.article_key),
                 page_label: None,
@@ -468,7 +472,10 @@ fn parse_annotation_html(artifact: &RawArtifact, edition_year: i32) -> Result<Gr
         }
         if line.to_ascii_uppercase().starts_with("ATTY. GEN. OPINIONS") {
             commentary_type = "attorney_general_opinion_note".to_string();
-        } else if line.to_ascii_uppercase().starts_with("LAW REVIEW CITATIONS") {
+        } else if line
+            .to_ascii_uppercase()
+            .starts_with("LAW REVIEW CITATIONS")
+        {
             commentary_type = "law_review_citation_note".to_string();
         }
 
@@ -697,7 +704,10 @@ fn append_section(
         title: section.title.clone(),
         chapter: section.article.key.clone(),
         provision_type: "section".to_string(),
-        local_path: vec![section.article.label.clone(), format!("Section {}", section.number)],
+        local_path: vec![
+            section.article.label.clone(),
+            format!("Section {}", section.number),
+        ],
         text,
         order_index: section.order_index,
         heading_path: vec![section.article.label.clone(), section.title.clone()],
@@ -1496,7 +1506,10 @@ impl SectionDraft {
         let mut text = normalize_ws(line);
         if let Some(caps) = BRACKETED_SOURCE_NOTE_RE.captures(&text) {
             if let Some(note) = caps.get(1).map(|m| normalize_ws(m.as_str())) {
-                text = BRACKETED_SOURCE_NOTE_RE.replace(&text, "").trim().to_string();
+                text = BRACKETED_SOURCE_NOTE_RE
+                    .replace(&text, "")
+                    .trim()
+                    .to_string();
                 self.push_source_note("source_history", &note, source_order);
             }
         }
@@ -1569,7 +1582,9 @@ fn parse_section_start(line: &str) -> Option<(String, String, String)> {
     Some((
         caps.get(1)?.as_str().to_string(),
         normalize_ws(caps.get(2)?.as_str()),
-        caps.get(3).map(|m| normalize_ws(m.as_str())).unwrap_or_default(),
+        caps.get(3)
+            .map(|m| normalize_ws(m.as_str()))
+            .unwrap_or_default(),
     ))
 }
 
@@ -1647,9 +1662,9 @@ fn is_article_title_only(line: &str) -> bool {
     let trimmed = line.trim();
     !trimmed.is_empty()
         && trimmed.chars().any(|ch| ch.is_ascii_alphabetic())
-        && trimmed
-            .chars()
-            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_whitespace() || matches!(ch, '-' | '(' | ')'))
+        && trimmed.chars().all(|ch| {
+            ch.is_ascii_uppercase() || ch.is_ascii_whitespace() || matches!(ch, '-' | '(' | ')')
+        })
         && !trimmed.starts_with("ARTICLE")
 }
 
@@ -1660,14 +1675,15 @@ fn is_preamble_text(line: &str) -> bool {
 
 fn article_toc_entries(lines: &[String]) -> Vec<TocEntry> {
     let mut entries = Vec::new();
-    let toc_re = Regex::new(
-        r"(?i)^Article\s+([IVXLCDM]+(?:-[A-Z]+(?:\([0-9]+\))?)?)\s+(.+)$",
-    )
-    .unwrap();
+    let toc_re =
+        Regex::new(r"(?i)^Article\s+([IVXLCDM]+(?:-[A-Z]+(?:\([0-9]+\))?)?)\s+(.+)$").unwrap();
     for line in lines {
         if let Some(caps) = toc_re.captures(line) {
             let token = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
-            let title = caps.get(2).map(|m| normalize_ws(m.as_str())).unwrap_or_default();
+            let title = caps
+                .get(2)
+                .map(|m| normalize_ws(m.as_str()))
+                .unwrap_or_default();
             entries.push(TocEntry {
                 article_key: article_key(&token.to_ascii_uppercase(), None),
                 title,
@@ -1741,13 +1757,7 @@ fn clean_article_token(token: &str) -> String {
         .replace('(', "-")
         .replace(')', "")
         .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch
-            } else {
-                '-'
-            }
-        })
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
         .collect::<String>()
         .trim_matches('-')
         .replace("--", "-")
@@ -1844,11 +1854,7 @@ fn decode_html(bytes: &[u8]) -> String {
 }
 
 fn normalize_constitution_text(value: &str) -> String {
-    normalize_ws(
-        &value
-            .replace('\u{00a0}', " ")
-            .replace('\u{fffd}', " "),
-    )
+    normalize_ws(&value.replace('\u{00a0}', " ").replace('\u{fffd}', " "))
 }
 
 fn normalize_ws(value: &str) -> String {
@@ -1923,7 +1929,9 @@ mod tests {
           <p>ARTICLE VII (Amended)</p>
           <p>Section 2. Courts. The courts shall continue.</p>
         "#;
-        let batch = parse_constitution_html(&artifact(CONSTITUTION_URL, "constitution-text", html), 2026).unwrap();
+        let batch =
+            parse_constitution_html(&artifact(CONSTITUTION_URL, "constitution-text", html), 2026)
+                .unwrap();
         let provisions = batch.files.get("provisions.jsonl").unwrap();
         assert!(provisions.iter().any(|row| {
             row.get("provision_id").and_then(|value| value.as_str())
@@ -1964,10 +1972,17 @@ mod tests {
             2026,
         )
         .unwrap();
-        assert!(batch.files.get("provisions.jsonl").unwrap().iter().any(|row| {
-            row.get("provision_id").and_then(|value| value.as_str())
-                == Some("or:constitution:preamble")
-        }));
+        assert!(
+            batch
+                .files
+                .get("provisions.jsonl")
+                .unwrap()
+                .iter()
+                .any(|row| {
+                    row.get("provision_id").and_then(|value| value.as_str())
+                        == Some("or:constitution:preamble")
+                })
+        );
 
         let annotations = r#"
           <h1>Oregon Constitution Annotations</h1>
@@ -1986,10 +2001,18 @@ mod tests {
             2026,
         )
         .unwrap();
-        assert!(batch.files.get("commentaries.jsonl").unwrap().iter().any(|row| {
-            row.get("target_canonical_id").and_then(|value| value.as_str())
-                == Some("or:constitution:article-xvii:section-1")
-        }));
+        assert!(
+            batch
+                .files
+                .get("commentaries.jsonl")
+                .unwrap()
+                .iter()
+                .any(|row| {
+                    row.get("target_canonical_id")
+                        .and_then(|value| value.as_str())
+                        == Some("or:constitution:article-xvii:section-1")
+                })
+        );
         assert!(
             batch
                 .files
