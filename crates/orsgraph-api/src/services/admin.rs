@@ -816,6 +816,7 @@ impl AdminService {
                 {
                     push_arg(&mut crawler_args, "--chapters", chapters);
                 }
+                self.push_source_ingest_controls(&mut crawler_args, params)?;
                 output_paths.insert("sources_dir".to_string(), source_out.to_string());
             }
             AdminJobKind::Parse => {
@@ -937,6 +938,7 @@ impl AdminService {
                 {
                     push_arg(&mut crawler_args, "--session-key", session_key);
                 }
+                self.push_source_ingest_controls(&mut crawler_args, params)?;
                 output_paths.insert("sources_dir".to_string(), source_out.to_string());
             }
             AdminJobKind::CombineGraph => {
@@ -1009,6 +1011,27 @@ impl AdminService {
         push_arg(args, "--neo4j-password-env", "NEO4J_PASSWORD");
     }
 
+    fn push_source_ingest_controls(
+        &self,
+        args: &mut Vec<String>,
+        params: &AdminJobParams,
+    ) -> ApiResult<()> {
+        if let Some(mode) = params
+            .mode
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            push_arg(args, "--mode", validate_ingest_mode(mode)?);
+        }
+        if params.refresh.unwrap_or(false) {
+            args.push("--refresh".to_string());
+        }
+        if let Some(allow_network) = params.allow_network {
+            push_arg(args, "--allow-network", allow_network.to_string());
+        }
+        Ok(())
+    }
+
     fn validate_params(&self, kind: AdminJobKind, params: &AdminJobParams) -> ApiResult<()> {
         if !matches!(
             kind,
@@ -1016,8 +1039,7 @@ impl AdminService {
         ) && (params.source_id.is_some() || params.priority.is_some())
         {
             return Err(ApiError::BadRequest(
-                "source_id and priority are reserved for connector-backed source jobs"
-                    .to_string(),
+                "source_id and priority are reserved for connector-backed source jobs".to_string(),
             ));
         }
         if let Some(year) = params.edition_year {
@@ -1035,6 +1057,14 @@ impl AdminService {
         }
         if let Some(session_key) = params.session_key.as_deref() {
             validate_session_key(session_key)?;
+        }
+        if let Some(mode) = params.mode.as_deref() {
+            validate_ingest_mode(mode)?;
+        }
+        if !matches!(kind, AdminJobKind::Crawl | AdminJobKind::SourceIngest) {
+            reject_param(params.mode.is_some(), "mode", kind)?;
+            reject_param(params.refresh.is_some(), "refresh", kind)?;
+            reject_param(params.allow_network.is_some(), "allow_network", kind)?;
         }
         if !matches!(kind, AdminJobKind::SourceIngest) && params.session_key.is_some() {
             return Err(ApiError::BadRequest(
@@ -1267,6 +1297,16 @@ fn validate_chapters(chapters: &str) -> ApiResult<()> {
         Err(ApiError::BadRequest(
             "chapters may contain only digits, commas, ranges, and spaces".to_string(),
         ))
+    }
+}
+
+fn validate_ingest_mode(mode: &str) -> ApiResult<&str> {
+    let mode = mode.trim();
+    match mode {
+        "discover" | "fetch" | "parse" | "qc" | "all" => Ok(mode),
+        _ => Err(ApiError::BadRequest(
+            "mode must be one of discover, fetch, parse, qc, or all".to_string(),
+        )),
     }
 }
 
@@ -1830,6 +1870,9 @@ mod tests {
                 AdminJobKind::Crawl,
                 &AdminJobParams {
                     max_chapters: Some(2),
+                    mode: Some("fetch".to_string()),
+                    refresh: Some(true),
+                    allow_network: Some(false),
                     ..Default::default()
                 },
             )
@@ -1838,6 +1881,11 @@ mod tests {
         assert!(command.args.contains(&"source-ingest".to_string()));
         assert!(command.args.contains(&"or_leg_ors_html".to_string()));
         assert!(command.args.contains(&"--max-items".to_string()));
+        assert!(command.args.contains(&"--mode".to_string()));
+        assert!(command.args.contains(&"fetch".to_string()));
+        assert!(command.args.contains(&"--refresh".to_string()));
+        assert!(command.args.contains(&"--allow-network".to_string()));
+        assert!(command.args.contains(&"false".to_string()));
         assert!(!command.display.iter().any(|arg| arg == "secret"));
     }
 
@@ -1849,6 +1897,7 @@ mod tests {
                 AdminJobKind::SourceIngest,
                 &AdminJobParams {
                     priority: Some("P0".to_string()),
+                    mode: Some("qc".to_string()),
                     ..Default::default()
                 },
             )
@@ -1856,6 +1905,8 @@ mod tests {
         assert!(command.args.contains(&"source-ingest".to_string()));
         assert!(command.args.contains(&"--priority".to_string()));
         assert!(command.args.contains(&"P0".to_string()));
+        assert!(command.args.contains(&"--mode".to_string()));
+        assert!(command.args.contains(&"qc".to_string()));
         assert!(command.output_paths.contains_key("sources_dir"));
     }
 

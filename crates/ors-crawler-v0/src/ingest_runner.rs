@@ -1,6 +1,9 @@
-use crate::artifact_store::{ArtifactMetadata, ArtifactStore};
+use crate::artifact_store::{ArtifactMetadata, ArtifactStore, RawArtifact};
 use crate::connectors::{connector_for, ConnectorOptions, DataConnector, SourceItem};
-use crate::fetcher::{client, fetch_item_with_metadata, FetchOutcome, FetchPolicy};
+use crate::fetcher::{
+    client, fetch_item_with_cache_validation, CacheValidators, FetchOutcome, FetchPolicy,
+    FetchResult,
+};
 use crate::graph_batch::GraphBatch;
 use crate::source_registry::{
     by_id, load_default_registry, load_registry, validate_registry, write_canonical_registry_json,
@@ -251,8 +254,61 @@ async fn process_item(
     } else {
         None
     };
-    let artifact = if let Some(cached) = cached {
-        cached
+    let artifact = if item.url.is_none() {
+        if let Some(cached) = cached {
+            cached
+        } else {
+            let outcome = FetchOutcome {
+                content_type: item.content_type.clone(),
+                etag: None,
+                last_modified: None,
+                bytes: serde_json::to_vec_pretty(entry)
+                    .context("failed to serialize registry-only artifact")?,
+            };
+            store.write_raw(
+                &entry.source_id,
+                &item.item_id,
+                &entry.source_url,
+                outcome.content_type,
+                outcome.bytes,
+                outcome.etag,
+                outcome.last_modified,
+                "generated",
+            )?
+        }
+    } else if let Some(cached) = cached {
+        let validators = validators_for_cached_artifact(&cached);
+        if policy.allow_network && validators.as_ref().is_some_and(|value| !value.is_empty()) {
+            match fetch_item_with_cache_validation(
+                client,
+                &entry.source_id,
+                &item,
+                policy,
+                fixture_dir,
+                validators.as_ref(),
+            )
+            .await?
+            {
+                FetchResult::Fetched(outcome) => store.write_raw(
+                    &entry.source_id,
+                    &item.item_id,
+                    item.url.as_deref().unwrap_or(&entry.source_url),
+                    outcome.content_type,
+                    outcome.bytes,
+                    outcome.etag,
+                    outcome.last_modified,
+                    "fetched",
+                )?,
+                FetchResult::NotModified => {
+                    let mut cached = cached;
+                    cached.metadata.status = "not_modified".to_string();
+                    cached.metadata.skipped = true;
+                    cached
+                }
+            }
+        } else {
+            cached
+        }
     } else {
         let outcome = if item.url.is_none() {
             FetchOutcome {
@@ -263,7 +319,25 @@ async fn process_item(
                     .context("failed to serialize registry-only artifact")?,
             }
         } else {
-            fetch_item_with_metadata(client, &entry.source_id, &item, policy, fixture_dir).await?
+            match fetch_item_with_cache_validation(
+                client,
+                &entry.source_id,
+                &item,
+                policy,
+                fixture_dir,
+                None,
+            )
+            .await?
+            {
+                FetchResult::Fetched(outcome) => outcome,
+                FetchResult::NotModified => {
+                    return Err(anyhow!(
+                        "{}:{} returned 304 without a cached artifact",
+                        entry.source_id,
+                        item.item_id
+                    ));
+                }
+            }
         };
         store.write_raw(
             &entry.source_id,
@@ -292,6 +366,18 @@ async fn process_item(
         artifact: artifact.metadata,
         batch,
     })
+}
+
+fn validators_for_cached_artifact(artifact: &RawArtifact) -> Option<CacheValidators> {
+    let validators = CacheValidators {
+        etag: artifact.metadata.etag.clone(),
+        last_modified: artifact.metadata.last_modified.clone(),
+    };
+    if validators.is_empty() {
+        None
+    } else {
+        Some(validators)
+    }
 }
 
 pub fn combine_graph(

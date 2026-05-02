@@ -145,7 +145,7 @@ Current job kinds:
 | `source_ingest` | `source-ingest` with `source_id` or `priority` |
 | `combine_graph` | `combine-graph` |
 
-`crawl` remains an admin concept for the ORS quick workflow, but it now runs the registry-backed ORS connector. `source_id`, `priority`, and `session_key` are reserved for connector-backed source ingest jobs. `fetch_only` and `skip_citation_resolution` are legacy flags and should not be sent to registry-backed crawl jobs.
+`crawl` remains an admin concept for the ORS quick workflow, but it now runs the registry-backed ORS connector. `source_id`, `priority`, and `session_key` are reserved for connector-backed source ingest jobs. `mode`, `refresh`, and `allow_network` are accepted only for registry-backed crawl/source-ingest jobs. `fetch_only` and `skip_citation_resolution` are legacy flags and should not be sent to registry-backed crawl jobs.
 
 ## Docker
 
@@ -243,8 +243,7 @@ Live Neo4j seed, live API startup, and provider-backed transcription smoke are s
 
 ## Current Gaps
 
-- The registry runner records ETag and Last-Modified headers, but does not yet send conditional HTTP requests.
-- OData paging diagnostics exist, but automatic `__next` or `@odata.nextLink` following is not yet implemented.
+- Live Oregon Legislature OData fetches follow `__next`, `odata.nextLink`, and `@odata.nextLink` before writing the raw artifact; stale cached or fixture pages can still emit a paging diagnostic if they already contain a next link.
 - Many non-ORS and non-OData registry entries still use the generic connector or older specialized import commands.
 - New legislative JSONL files may need more dedicated Neo4j loaders/materializers as their graph contract stabilizes.
 - Live Neo4j/API/provider smoke should be opt-in because it mutates external state or depends on credentials.

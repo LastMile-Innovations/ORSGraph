@@ -56,6 +56,10 @@ This manifest lists required Railway variables by service without secret values.
 - `SEED_RELATIONSHIP_BATCH_SIZE`: default `500`.
 - `REBUILD_GRAPH`: only used when `ORS_RUN_STARTUP_CRAWLER=true`; default `false`; set true only when rebuilding graph JSONL from cached official HTML.
 
+### 2026-05-02 crawler startup audit
+
+Read-only Railway checks against the linked `ORSGraph` production project found the `ors-crawler` service has no public domain, its latest deployment is stopped, `ORS_RUN_STARTUP_CRAWLER` is unset, `REBUILD_GRAPH=false`, and `SEED_MODE=append`. With the current crawler startup guard, those variables do not trigger crawl, rebuild, clear, or seed work on build/startup.
+
 ## MCP
 
 Railway MCP resources/templates were not registered in this Codex session when this manifest was written. Add Railway MCP as a separate local setup task, then use it for read-only `list-services`, `list-variables`, and log checks before future production mutation.

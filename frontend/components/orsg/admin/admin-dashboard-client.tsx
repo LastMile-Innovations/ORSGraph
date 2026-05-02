@@ -40,6 +40,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
+import { Switch } from "@/components/ui/switch"
 import {
   Select,
   SelectContent,
@@ -60,6 +61,7 @@ const REFRESH_MS = 5000
 
 const PRIORITY_FILTERS = ["all", "P0", "P1", "P2", "P3"] as const
 const CONNECTOR_FILTERS = ["all", "implemented", "partial", "planned", "deferred"] as const
+const INGEST_MODES = ["all", "fetch", "parse", "qc", "discover"] as const
 
 const WORKFLOWS: Array<{
   id: string
@@ -139,6 +141,9 @@ export function AdminDashboardClient() {
   const [maxChapters, setMaxChapters] = useState("2")
   const [chapters, setChapters] = useState("")
   const [sessionKey, setSessionKey] = useState("2025R1")
+  const [ingestMode, setIngestMode] = useState<(typeof INGEST_MODES)[number]>("all")
+  const [refreshArtifacts, setRefreshArtifacts] = useState(false)
+  const [allowNetwork, setAllowNetwork] = useState(true)
   const [sourcePriorityFilter, setSourcePriorityFilter] = useState<(typeof PRIORITY_FILTERS)[number]>("all")
   const [connectorStatusFilter, setConnectorStatusFilter] = useState<(typeof CONNECTOR_FILTERS)[number]>("all")
   const [selectedSourceId, setSelectedSourceId] = useState("")
@@ -258,10 +263,12 @@ export function AdminDashboardClient() {
       if (workflow.kind === "crawl") {
         params.max_chapters = Number(maxChapters) || 0
         if (chapters.trim()) params.chapters = chapters.trim()
+        applySourceIngestControls(params)
       }
       if (workflow.id === "source-ingest" && params.priority === "P0") {
         params.out_dir = `${overview.paths.data_dir.replace(/\/$/, "")}/sources`
         if (sessionKey.trim()) params.session_key = sessionKey.trim()
+        applySourceIngestControls(params)
       }
       const detail = await startAdminJob(workflow.kind, params)
       router.push(`/admin/jobs/${encodeURIComponent(detail.job.job_id)}`)
@@ -291,7 +298,10 @@ export function AdminDashboardClient() {
           : kind === "p0"
             ? { priority: "P0", out_dir: `${dataDir}/sources`, edition_year: 2025 }
             : { source_id: selectedSourceId, out_dir: `${dataDir}/sources`, edition_year: 2025 }
-      if (kind !== "combine" && sessionKey.trim()) params.session_key = sessionKey.trim()
+      if (kind !== "combine") {
+        if (sessionKey.trim()) params.session_key = sessionKey.trim()
+        applySourceIngestControls(params)
+      }
       const detail = await startAdminJob(kind === "combine" ? "combine_graph" : "source_ingest", params)
       router.push(`/admin/jobs/${encodeURIComponent(detail.job.job_id)}`)
     } catch (err) {
@@ -314,7 +324,10 @@ export function AdminDashboardClient() {
         operation === "combine"
           ? { source_id: source.source_id, out_dir: `${dataDir}/sources`, graph_dir: overview.paths.graph_dir }
           : { source_id: source.source_id, out_dir: `${dataDir}/sources`, edition_year: 2025 }
-      if (operation === "ingest" && sessionKey.trim()) params.session_key = sessionKey.trim()
+      if (operation === "ingest") {
+        if (sessionKey.trim()) params.session_key = sessionKey.trim()
+        applySourceIngestControls(params)
+      }
       const detail = await startAdminJob(operation === "combine" ? "combine_graph" : "source_ingest", params)
       router.push(`/admin/jobs/${encodeURIComponent(detail.job.job_id)}`)
     } catch (err) {
@@ -336,6 +349,12 @@ export function AdminDashboardClient() {
     } finally {
       setActionBusy(null)
     }
+  }
+
+  function applySourceIngestControls(params: AdminJobParams) {
+    if (ingestMode !== "all") params.mode = ingestMode
+    if (refreshArtifacts) params.refresh = true
+    if (!allowNetwork) params.allow_network = false
   }
 
   return (
@@ -498,6 +517,31 @@ export function AdminDashboardClient() {
               <div>
                 <Label htmlFor="session-key" className="text-xs">Legislature session</Label>
                 <Input id="session-key" value={sessionKey} onChange={(event) => setSessionKey(event.target.value)} placeholder="2025R1" className="mt-1 h-8" />
+              </div>
+              <div>
+                <Label className="text-xs">Ingest mode</Label>
+                <Select value={ingestMode} onValueChange={(value) => setIngestMode(value as (typeof INGEST_MODES)[number])}>
+                  <SelectTrigger className="mt-1 w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {INGEST_MODES.map((mode) => (
+                      <SelectItem key={mode} value={mode}>
+                        {mode}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2 rounded-md border border-border bg-background/40 p-3">
+                <label className="flex items-center justify-between gap-3 text-xs">
+                  <span className="text-muted-foreground">Refresh cache</span>
+                  <Switch checked={refreshArtifacts} onCheckedChange={setRefreshArtifacts} />
+                </label>
+                <label className="flex items-center justify-between gap-3 text-xs">
+                  <span className="text-muted-foreground">Network</span>
+                  <Switch checked={allowNetwork} onCheckedChange={setAllowNetwork} />
+                </label>
               </div>
             </div>
             <SourceSummary

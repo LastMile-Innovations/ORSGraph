@@ -11,7 +11,7 @@ The source registry is maintained in two forms:
 
 The runtime types live in `crates/ors-crawler-v0/src/source_registry.rs`.
 
-The registry currently contains 79 sources and 15 P0 sources. `validate-source-registry` validates all rows against the 20 required fields and enum values. It also warns when acceptable-use review is still marked `needs_review`.
+The registry currently contains 81 sources and 17 P0 sources. `validate-source-registry` validates all rows against the 20 required fields and enum values. It also warns when acceptable-use review is still marked `needs_review`.
 
 ## Runtime Modules
 
@@ -28,7 +28,7 @@ The registry-driven path is split across these modules:
 | `ingest_runner.rs` | Orchestrates source selection, discovery, fetch, parse, QC, and graph combination. |
 | `source_qc.rs` | Shared source-level QC checks. |
 
-The crawler records ETag and Last-Modified response headers when present. Current conditional behavior is cache-based: if cache use is enabled and the artifact sidecar exists, the runner reuses the cached raw file. It does not yet send `If-None-Match` or `If-Modified-Since` requests.
+The crawler records ETag and Last-Modified response headers when present. If cache use is enabled and a cached artifact has validators, the runner sends `If-None-Match` and/or `If-Modified-Since`; a `304 Not Modified` response preserves the cached artifact and marks it skipped. Cached artifacts without validators are reused unless `--refresh` is set.
 
 ## Connector Contract
 
@@ -166,7 +166,7 @@ Important `source-ingest` flags:
 | `--max-attempts <n>` | Retry attempts for live fetches. |
 | `--concurrency <n>` | Bounded fetch/parse concurrency. |
 | `--allow-network false` | Fail closed unless a fixture or cache satisfies each item. |
-| `--refresh` | Ignore artifact sidecar cache and fetch/read fixtures again. |
+| `--refresh` | Ignore artifact sidecar cache and fetch/read fixtures again. Without this flag, validator-backed cached artifacts are conditionally revalidated. |
 | `--fail-on-qc` | Return an error if source QC fails. |
 
 ## Artifact Layout
@@ -251,6 +251,8 @@ MeasureVotes_2025R1
 CommitteeVotes_2025R1
 ```
 
+The fetch layer follows live OData paging links before writing the raw artifact. It supports legacy `d.__next` plus `odata.nextLink` and `@odata.nextLink`, then stores a combined JSON payload for parsing. Stale cached artifacts and offline fixtures can still contain a next link; in that case the parser records a paging diagnostic so the source can be refreshed if row counts look truncated.
+
 The parser accepts legacy OData JSON shapes such as `d.results`, `d`, `value`, `results`, top-level arrays, and object keys matching the entity set. It borrows rows from the parsed JSON payload rather than cloning them, records per-entity-set row stats, and deduplicates graph rows by stable ID before returning each graph batch.
 
 OData graph outputs include:
@@ -332,7 +334,7 @@ materialize_neo4j
 embed_neo4j
 ```
 
-The dashboard Source Registry panel can run selected-source ingest, P0 ingest, and P0 combine jobs. It also has a per-source operations table with priority/status filters, local artifact and graph metrics, and Monitor/Ingest/Combine controls for each registry source. It includes a Legislature session key field that passes `session_key` to source ingest jobs. The admin service validates `session_key` as a short alphanumeric/dash/underscore value and passes it to the crawler as `--session-key`.
+The dashboard Source Registry panel can run selected-source ingest, P0 ingest, and P0 combine jobs. It also has a per-source operations table with priority/status filters, local artifact and graph metrics, and Monitor/Ingest/Combine controls for each registry source. It includes a Legislature session key field plus ingest mode, refresh-cache, and network controls. The admin service validates `session_key` as a short alphanumeric/dash/underscore value and passes supported ingest controls to the crawler as `--session-key`, `--mode`, `--refresh`, and `--allow-network`.
 
 `GET /api/v1/admin/overview` also includes a crawler runtime summary for the dashboard: configured crawler binary, command prefix, admin workdir, active PID, running/read-only/mutating job counts, active mutating lock state, and last terminal job status. The dashboard shows those fields in the Crawler Runtime panel and can cancel the active crawler job directly from the admin landing page. The overview path uses a fast graph summary for large local corpora: file and byte counts are immediate, while exact row counts are reserved for smaller source-detail views and explicit QC jobs.
 
@@ -342,8 +344,7 @@ The dashboard `crawl` shortcut is retained for UI continuity, but it now builds 
 
 The registry-driven crawler is functional, but these gaps remain:
 
-- Live HTTP conditional requests are not yet sent even though ETag and Last-Modified headers are recorded.
-- OData paging is detected and reported via diagnostics, but the runner does not yet follow `__next` or `@odata.nextLink`.
+- OData fixture-page chaining is not implemented; offline fixtures with next links still emit paging diagnostics unless the fixture is already combined.
 - Most non-ORS and non-OData P0 sources still use the generic registry-backed connector or older specialized parser commands.
 - Dedicated Neo4j loaders/materializers for the new legislative JSONL files are still needed; currently `combine-graph` merges them as JSONL outputs.
 - Fixture lookup does not include `.xml`, so XML metadata fixtures should use `.txt`.

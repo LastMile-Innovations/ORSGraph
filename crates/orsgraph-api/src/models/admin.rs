@@ -81,6 +81,12 @@ pub struct AdminJobParams {
     #[serde(default)]
     pub session_key: Option<String>,
     #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub refresh: Option<bool>,
+    #[serde(default)]
+    pub allow_network: Option<bool>,
+    #[serde(default)]
     pub fetch_only: Option<bool>,
     #[serde(default)]
     pub skip_citation_resolution: Option<bool>,

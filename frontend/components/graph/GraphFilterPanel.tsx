@@ -20,7 +20,18 @@ export function GraphFilterPanel({
     const next = new Set(filters[kind])
     if (next.has(value)) next.delete(value)
     else next.add(value)
-    onChange({ ...filters, [kind]: next })
+    onChange({
+      ...filters,
+      [kind]: next,
+      includeChunks: kind === "nodeFamilies" && value === "chunks" ? next.has("chunks") : filters.includeChunks,
+    })
+  }
+
+  function toggleChunks(checked: boolean) {
+    const nextNodeFamilies = new Set(filters.nodeFamilies)
+    if (checked) nextNodeFamilies.add("chunks")
+    else nextNodeFamilies.delete("chunks")
+    onChange({ ...filters, includeChunks: checked, nodeFamilies: nextNodeFamilies })
   }
 
   return (
@@ -40,7 +51,7 @@ export function GraphFilterPanel({
       <label className="flex items-center gap-2 rounded border border-border bg-background p-2 text-xs">
         <Checkbox
           checked={filters.includeChunks}
-          onCheckedChange={(checked) => onChange({ ...filters, includeChunks: checked === true })}
+          onCheckedChange={(checked) => toggleChunks(checked === true)}
         />
         <span className="font-mono uppercase tracking-wide text-muted-foreground">Show chunks</span>
       </label>

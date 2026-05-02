@@ -25,6 +25,9 @@ export interface AdminJobParams {
   max_chapters?: number
   chapters?: string
   session_key?: string
+  mode?: "discover" | "fetch" | "parse" | "qc" | "all"
+  refresh?: boolean
+  allow_network?: boolean
   fetch_only?: boolean
   skip_citation_resolution?: boolean
   dry_run?: boolean

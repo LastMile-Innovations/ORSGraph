@@ -268,7 +268,7 @@ impl OregonLegODataConnector {
                 "warning",
                 "odata_paging_next_link_present",
                 format!(
-                    "{entity_set} response contains an OData next link; this run preserved the first page and should be resumed with paging support if row counts look truncated."
+                    "{entity_set} response contains an OData next link; live fetches normally follow paging, so this artifact may be a cached or fixture page that should be refreshed if row counts look truncated."
                 ),
                 Some(artifact.metadata.item_id.clone()),
             )?;

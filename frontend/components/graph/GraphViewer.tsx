@@ -69,7 +69,7 @@ export function GraphViewer({
   const [forces, setForces] = useState<GraphForces>(DEFAULT_FORCES)
   const [filters, setFilters] = useState<GraphFilters>({
     relationshipFamilies: modeDefaultFamilies(initialMode),
-    nodeFamilies: allNodeFamilies(),
+    nodeFamilies: defaultNodeFamilies(),
     includeChunks: false,
   })
   const [response, setResponse] = useState<GraphViewerResponse>(() => emptyGraphResponse())
@@ -228,7 +228,7 @@ export function GraphViewer({
     setForces(DEFAULT_FORCES)
     setFilters({
       relationshipFamilies: modeDefaultFamilies(mode),
-      nodeFamilies: allNodeFamilies(),
+      nodeFamilies: defaultNodeFamilies(),
       includeChunks: false,
     })
     setLayout(modeDefaultLayout(mode))
@@ -513,6 +513,12 @@ function allRelationshipFamilies() {
 
 function allNodeFamilies() {
   return new Set(Object.keys(NODE_FAMILIES))
+}
+
+function defaultNodeFamilies() {
+  const families = allNodeFamilies()
+  families.delete("chunks")
+  return families
 }
 
 function modeDefaultFamilies(mode: GraphMode) {
