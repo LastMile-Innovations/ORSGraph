@@ -23,6 +23,7 @@ use tokio::sync::{RwLock, Semaphore};
 use tokio::task::JoinSet;
 
 const SOURCE_HYDRATE_CONCURRENCY: usize = 16;
+const SOURCE_REGISTRY_RELATIVE_PATH: &str = "docs/data/source-registry.yaml";
 
 #[derive(Clone)]
 pub struct AdminService {
@@ -1506,14 +1507,60 @@ fn filter_source_registry_entries(
 }
 
 fn source_registry_path() -> PathBuf {
-    let cwd_path = PathBuf::from("docs/data/source-registry.yaml");
-    if cwd_path.exists() {
-        return cwd_path;
+    for candidate in source_registry_path_candidates() {
+        if candidate.exists() {
+            return std::fs::canonicalize(&candidate).unwrap_or(candidate);
+        }
     }
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/data/source-registry.yaml")
-        .components()
-        .collect()
+    PathBuf::from(SOURCE_REGISTRY_RELATIVE_PATH)
+}
+
+fn source_registry_path_candidates() -> Vec<PathBuf> {
+    source_registry_path_candidates_from(
+        std::env::var_os("ORS_SOURCE_REGISTRY_PATH").map(PathBuf::from),
+        std::env::current_exe().ok(),
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+}
+
+fn source_registry_path_candidates_from(
+    configured_path: Option<PathBuf>,
+    current_exe: Option<PathBuf>,
+    manifest_dir: &Path,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Some(path) = configured_path {
+        push_unique_path(&mut candidates, path);
+    }
+
+    push_unique_path(
+        &mut candidates,
+        PathBuf::from(SOURCE_REGISTRY_RELATIVE_PATH),
+    );
+
+    if let Some(exe_dir) = current_exe.as_deref().and_then(Path::parent) {
+        push_unique_path(&mut candidates, exe_dir.join(SOURCE_REGISTRY_RELATIVE_PATH));
+    }
+
+    push_unique_path(
+        &mut candidates,
+        manifest_dir.join(SOURCE_REGISTRY_RELATIVE_PATH),
+    );
+    push_unique_path(
+        &mut candidates,
+        manifest_dir
+            .join("../..")
+            .join(SOURCE_REGISTRY_RELATIVE_PATH),
+    );
+
+    candidates
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
 }
 
 async fn hydrate_source_local_status(
@@ -1860,6 +1907,26 @@ mod tests {
             sleep(Duration::from_millis(25)).await;
         }
         service.get_job(job_id).await.unwrap()
+    }
+
+    #[test]
+    fn source_registry_candidates_cover_runtime_container_path() {
+        let configured = PathBuf::from("/custom/source-registry.yaml");
+        let candidates = source_registry_path_candidates_from(
+            Some(configured.clone()),
+            Some(PathBuf::from("/app/orsgraph-api")),
+            Path::new("/build/crates/orsgraph-api"),
+        );
+
+        assert_eq!(candidates.first(), Some(&configured));
+        assert!(candidates.contains(&PathBuf::from(SOURCE_REGISTRY_RELATIVE_PATH)));
+        assert!(candidates.contains(&PathBuf::from("/app/docs/data/source-registry.yaml")));
+        assert!(candidates.contains(&PathBuf::from(
+            "/build/crates/orsgraph-api/docs/data/source-registry.yaml"
+        )));
+        assert!(candidates.contains(&PathBuf::from(
+            "/build/crates/orsgraph-api/../../docs/data/source-registry.yaml"
+        )));
     }
 
     #[test]
