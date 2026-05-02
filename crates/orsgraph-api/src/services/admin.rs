@@ -24,6 +24,7 @@ use tokio::task::JoinSet;
 
 const SOURCE_HYDRATE_CONCURRENCY: usize = 16;
 const SOURCE_REGISTRY_RELATIVE_PATH: &str = "docs/data/source-registry.yaml";
+const SOURCE_REGISTRY_EMBEDDED: &str = include_str!("../../../../docs/data/source-registry.yaml");
 
 #[derive(Clone)]
 pub struct AdminService {
@@ -1465,12 +1466,9 @@ struct SourceRegistryRawEntry {
 }
 
 async fn read_source_registry() -> ApiResult<Vec<AdminSourceRegistryEntry>> {
-    let path = source_registry_path();
-    let text = fs::read_to_string(&path)
-        .await
-        .map_err(|e| ApiError::Internal(format!("failed to read {}: {e}", path.display())))?;
+    let (text, location) = read_source_registry_text().await?;
     let registry: SourceRegistryFile = serde_json::from_str(&text)
-        .map_err(|e| ApiError::Internal(format!("failed to parse {}: {e}", path.display())))?;
+        .map_err(|e| ApiError::Internal(format!("failed to parse {location}: {e}")))?;
     Ok(registry
         .sources
         .into_iter()
@@ -1493,6 +1491,30 @@ async fn read_source_registry() -> ApiResult<Vec<AdminSourceRegistryEntry>> {
         .collect())
 }
 
+async fn read_source_registry_text() -> ApiResult<(String, String)> {
+    read_source_registry_text_from(source_registry_path_candidates()).await
+}
+
+async fn read_source_registry_text_from(candidates: Vec<PathBuf>) -> ApiResult<(String, String)> {
+    for candidate in candidates {
+        match fs::read_to_string(&candidate).await {
+            Ok(text) => return Ok((text, candidate.display().to_string())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(ApiError::Internal(format!(
+                    "failed to read {}: {error}",
+                    candidate.display()
+                )));
+            }
+        }
+    }
+
+    Ok((
+        SOURCE_REGISTRY_EMBEDDED.to_string(),
+        format!("embedded {SOURCE_REGISTRY_RELATIVE_PATH}"),
+    ))
+}
+
 fn filter_source_registry_entries(
     sources: &mut Vec<AdminSourceRegistryEntry>,
     priority: Option<&str>,
@@ -1504,15 +1526,6 @@ fn filter_source_registry_entries(
     if let Some(status) = connector_status.filter(|value| !value.trim().is_empty()) {
         sources.retain(|source| source.connector_status.eq_ignore_ascii_case(status.trim()));
     }
-}
-
-fn source_registry_path() -> PathBuf {
-    for candidate in source_registry_path_candidates() {
-        if candidate.exists() {
-            return std::fs::canonicalize(&candidate).unwrap_or(candidate);
-        }
-    }
-    PathBuf::from(SOURCE_REGISTRY_RELATIVE_PATH)
 }
 
 fn source_registry_path_candidates() -> Vec<PathBuf> {
@@ -1927,6 +1940,23 @@ mod tests {
         assert!(candidates.contains(&PathBuf::from(
             "/build/crates/orsgraph-api/../../docs/data/source-registry.yaml"
         )));
+    }
+
+    #[tokio::test]
+    async fn source_registry_reader_falls_back_to_embedded_registry() {
+        let missing =
+            std::env::temp_dir().join(format!("orsgraph-missing-source-registry-{}", now_ms()));
+        let (text, location) = read_source_registry_text_from(vec![missing]).await.unwrap();
+        let registry: SourceRegistryFile = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(
+            location,
+            format!("embedded {SOURCE_REGISTRY_RELATIVE_PATH}")
+        );
+        assert!(registry
+            .sources
+            .iter()
+            .any(|source| source.source_id == "or_leg_ors_html"));
     }
 
     #[test]
