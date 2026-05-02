@@ -84,6 +84,20 @@ export interface AdminOverview {
     data_dir: string
     graph_dir: string
   }
+  crawler: {
+    configured_bin: string
+    command_prefix: string[]
+    workdir: string
+    control_mode: string
+    active_pid?: number | null
+    active_mutating_job: boolean
+    running_jobs: number
+    read_only_running_jobs: number
+    mutating_running_jobs: number
+    last_success_at_ms?: number | null
+    last_failure_at_ms?: number | null
+    last_terminal_status?: AdminJobStatus | null
+  }
   sources: {
     registry_sources: number
     source_dirs: number
@@ -94,6 +108,7 @@ export interface AdminOverview {
     jsonl_files: number
     rows: number
     bytes: number
+    rows_are_exact?: boolean
   }
   indexing: {
     vector_enabled: boolean

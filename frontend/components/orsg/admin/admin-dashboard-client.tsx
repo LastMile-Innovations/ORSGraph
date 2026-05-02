@@ -2,10 +2,11 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   Activity,
   AlertTriangle,
+  Ban,
   Braces,
   Database,
   FileSearch,
@@ -19,6 +20,7 @@ import {
   Square,
 } from "lucide-react"
 import {
+  cancelAdminJob,
   getAdminOverview,
   getAdminSource,
   isTerminalJob,
@@ -55,6 +57,9 @@ import {
 } from "@/components/ui/table"
 
 const REFRESH_MS = 5000
+
+const PRIORITY_FILTERS = ["all", "P0", "P1", "P2", "P3"] as const
+const CONNECTOR_FILTERS = ["all", "implemented", "partial", "planned", "deferred"] as const
 
 const WORKFLOWS: Array<{
   id: string
@@ -130,19 +135,25 @@ export function AdminDashboardClient() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [starting, setStarting] = useState<string | null>(null)
+  const [actionBusy, setActionBusy] = useState<string | null>(null)
   const [maxChapters, setMaxChapters] = useState("2")
   const [chapters, setChapters] = useState("")
   const [sessionKey, setSessionKey] = useState("2025R1")
+  const [sourcePriorityFilter, setSourcePriorityFilter] = useState<(typeof PRIORITY_FILTERS)[number]>("all")
+  const [connectorStatusFilter, setConnectorStatusFilter] = useState<(typeof CONNECTOR_FILTERS)[number]>("all")
   const [selectedSourceId, setSelectedSourceId] = useState("")
   const [sourceDetail, setSourceDetail] = useState<AdminSourceDetail | null>(null)
   const [sourceDetailLoading, setSourceDetailLoading] = useState(false)
   const [sourceDetailError, setSourceDetailError] = useState<string | null>(null)
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       const [next, sources] = await Promise.all([
         getAdminOverview(),
-        listAdminSources({ priority: "P0" }),
+        listAdminSources({
+          priority: sourcePriorityFilter === "all" ? undefined : sourcePriorityFilter,
+          connector_status: connectorStatusFilter === "all" ? undefined : connectorStatusFilter,
+        }),
       ])
       setOverview(next)
       setSourceRegistry(sources)
@@ -156,13 +167,13 @@ export function AdminDashboardClient() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [connectorStatusFilter, sourcePriorityFilter])
 
   useEffect(() => {
     load()
     const interval = window.setInterval(load, REFRESH_MS)
     return () => window.clearInterval(interval)
-  }, [])
+  }, [load])
 
   useEffect(() => {
     if (!selectedSourceId) {
@@ -215,11 +226,19 @@ export function AdminDashboardClient() {
   const selectedSourceDetail = sourceDetail?.source.source_id === selectedSourceId ? sourceDetail : null
   const displayedSource = selectedSourceDetail?.source ?? selectedSource
   const graphProgress = useMemo(() => {
-    if (!overview?.graph.rows) return 0
+    if (!overview?.graph.jsonl_files) return 0
     return Math.min(100, Math.round((overview.graph.jsonl_files / 70) * 100))
   }, [overview])
   const apiMetricValue = overview?.health.api ?? (error ? "offline" : loading ? "checking" : "unavailable")
   const neo4jMetricValue = overview?.health.neo4j ?? (error ? "unknown" : "checking")
+  const crawlerRunning = overview?.crawler.running_jobs ?? 0
+  const crawlerMetricValue = crawlerRunning > 0 ? "running" : adminReady ? "idle" : loading ? "checking" : "unavailable"
+  const graphRowsExact = overview?.graph.rows_are_exact !== false
+  const graphMetricLabel = graphRowsExact ? "Graph rows" : "Graph files"
+  const graphMetricValue = graphRowsExact ? formatNumber(overview?.graph.rows) : formatNumber(overview?.graph.jsonl_files)
+  const graphMetricHint = graphRowsExact
+    ? `${formatNumber(overview?.graph.jsonl_files)} JSONL files`
+    : `${formatNumber(overview?.graph.bytes)} bytes, row scan deferred`
 
   async function startWorkflow(workflow: (typeof WORKFLOWS)[number]) {
     if (workflow.disabled) return
@@ -282,6 +301,43 @@ export function AdminDashboardClient() {
     }
   }
 
+  async function startSourceOperation(source: AdminSourceRegistryEntry, operation: "ingest" | "combine") {
+    if (!overview) {
+      setError("Admin API is not ready yet.")
+      return
+    }
+    const jobKey = `source-${operation}-${source.source_id}`
+    setStarting(jobKey)
+    try {
+      const dataDir = overview.paths.data_dir.replace(/\/$/, "")
+      const params: AdminJobParams =
+        operation === "combine"
+          ? { source_id: source.source_id, out_dir: `${dataDir}/sources`, graph_dir: overview.paths.graph_dir }
+          : { source_id: source.source_id, out_dir: `${dataDir}/sources`, edition_year: 2025 }
+      if (operation === "ingest" && sessionKey.trim()) params.session_key = sessionKey.trim()
+      const detail = await startAdminJob(operation === "combine" ? "combine_graph" : "source_ingest", params)
+      router.push(`/admin/jobs/${encodeURIComponent(detail.job.job_id)}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to ${operation} source`)
+    } finally {
+      setStarting(null)
+    }
+  }
+
+  async function cancelActiveJob() {
+    if (!activeJob || isTerminalJob(activeJob.status)) return
+    setActionBusy("cancel-active")
+    try {
+      await cancelAdminJob(activeJob.job_id)
+      await load()
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to cancel crawler job")
+    } finally {
+      setActionBusy(null)
+    }
+  }
+
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden">
       <div className="border-b border-border bg-card px-6 py-5">
@@ -310,19 +366,67 @@ export function AdminDashboardClient() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <MetricCard icon={Activity} label="API" value={apiMetricValue} hint={`Neo4j ${neo4jMetricValue}`} />
+          <MetricCard icon={Activity} label="Crawler" value={crawlerMetricValue} hint={`${formatNumber(overview?.crawler.mutating_running_jobs)} mutating, ${formatNumber(overview?.crawler.read_only_running_jobs)} read-only`} />
           <MetricCard icon={FileSearch} label="Sources" value={formatNumber(sourceRegistry?.totals.sources ?? overview?.sources.registry_sources)} hint={`${formatNumber(sourceRegistry?.totals.p0_sources)} P0, ${formatNumber(overview?.sources.source_dirs)} local dirs`} />
-          <MetricCard icon={Database} label="Graph rows" value={formatNumber(overview?.graph.rows)} hint={`${formatNumber(overview?.graph.jsonl_files)} JSONL files`} />
+          <MetricCard icon={Database} label={graphMetricLabel} value={graphMetricValue} hint={graphMetricHint} />
           <MetricCard icon={Sparkles} label="Indexing" value={overview?.indexing.vector_search_enabled ? "enabled" : "off"} hint={overview?.indexing.vector_index ?? "no vector index"} />
         </div>
+
+        <section className="mt-5 rounded-md border border-border bg-card">
+          <div className="flex flex-col gap-3 border-b border-border px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">Crawler Runtime</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">Backend process wrapper, active lock, and command path used by admin jobs.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {activeJob && (
+                <Button asChild size="sm" variant="outline" className="gap-2">
+                  <Link href={`/admin/jobs/${encodeURIComponent(activeJob.job_id)}`}>
+                    <Activity className="h-3.5 w-3.5" />
+                    Open active
+                  </Link>
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-2"
+                disabled={!activeJob || isTerminalJob(activeJob.status) || Boolean(actionBusy)}
+                onClick={cancelActiveJob}
+              >
+                {actionBusy === "cancel-active" ? <RefreshCcw className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}
+                Cancel active
+              </Button>
+            </div>
+          </div>
+          <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2">
+              <MiniStat label="running" value={overview?.crawler.running_jobs ?? 0} />
+              <MiniStat label="mutating" value={overview?.crawler.mutating_running_jobs ?? 0} />
+              <MiniStat label="read-only" value={overview?.crawler.read_only_running_jobs ?? 0} />
+              <MiniStat label="pid" value={overview?.crawler.active_pid ?? 0} />
+            </div>
+            <div className="grid gap-2 text-xs sm:grid-cols-2">
+              <PathRow label="mode" value={overview?.crawler.control_mode ?? "unavailable"} />
+              <PathRow label="binary" value={overview?.crawler.configured_bin ?? "cargo"} />
+              <PathRow label="workdir" value={overview?.crawler.workdir ?? "."} />
+              <PathRow label="kill" value={overview?.allow_kill ? "enabled" : "disabled"} />
+              <PathRow label="last success" value={overview?.crawler.last_success_at_ms ? formatTime(overview.crawler.last_success_at_ms) : "none"} />
+              <PathRow label="last terminal" value={overview?.crawler.last_terminal_status?.replace("_", " ") ?? "none"} />
+              <PathRow label="command" value={overview?.crawler.command_prefix.join(" ") ?? "cargo run -p ors-crawler-v0"} />
+              <PathRow label="lock" value={overview?.crawler.active_mutating_job ? "mutating job active" : "available"} />
+            </div>
+          </div>
+        </section>
 
         <section className="mt-5 rounded-md border border-border bg-card">
           <div className="border-b border-border px-4 py-3">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h2 className="text-sm font-semibold text-foreground">Source Registry</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">Inspect P0 sources and start connector-backed ingest runs.</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">Monitor every registry source and start connector-backed ingest or combine runs.</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" className="gap-2" disabled={!adminReady || !selectedSource || Boolean(starting) || activeMutating} onClick={() => startSourceJob("selected")}>
@@ -342,7 +446,39 @@ export function AdminDashboardClient() {
           </div>
           <div className="grid gap-4 p-4 lg:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1.2fr)]">
             <div className="space-y-3">
-              <Label className="text-xs">P0 source</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-xs">Priority</Label>
+                  <Select value={sourcePriorityFilter} onValueChange={(value) => setSourcePriorityFilter(value as (typeof PRIORITY_FILTERS)[number])}>
+                    <SelectTrigger className="mt-1 w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PRIORITY_FILTERS.map((priority) => (
+                        <SelectItem key={priority} value={priority}>
+                          {priority === "all" ? "All" : priority}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">Connector</Label>
+                  <Select value={connectorStatusFilter} onValueChange={(value) => setConnectorStatusFilter(value as (typeof CONNECTOR_FILTERS)[number])}>
+                    <SelectTrigger className="mt-1 w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CONNECTOR_FILTERS.map((status) => (
+                        <SelectItem key={status} value={status}>
+                          {status === "all" ? "All" : status}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <Label className="text-xs">Source</Label>
               <Select value={selectedSourceId} onValueChange={setSelectedSourceId}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select a source" />
@@ -356,7 +492,7 @@ export function AdminDashboardClient() {
                 </SelectContent>
               </Select>
               <div className="grid grid-cols-2 gap-2">
-                <MiniStat label="local dirs" value={sourceRegistry?.totals.local_source_dirs ?? 0} />
+                <MiniStat label="listed" value={sourceRegistry?.totals.sources ?? 0} />
                 <MiniStat label="artifacts" value={sourceRegistry?.totals.local_artifacts ?? 0} />
               </div>
               <div>
@@ -371,6 +507,15 @@ export function AdminDashboardClient() {
               error={sourceDetailError}
             />
           </div>
+          <SourceRegistryTable
+            sources={sourceRegistry?.sources ?? []}
+            selectedSourceId={selectedSourceId}
+            starting={starting}
+            disabled={!adminReady || Boolean(starting) || activeMutating}
+            onMonitor={setSelectedSourceId}
+            onIngest={(source) => startSourceOperation(source, "ingest")}
+            onCombine={(source) => startSourceOperation(source, "combine")}
+          />
         </section>
 
         <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(24rem,0.9fr)]">
@@ -516,7 +661,7 @@ function SourceSummary({
   if (!source) {
     return (
       <div className="rounded-md border border-border bg-background/40 p-4 text-sm text-muted-foreground">
-        No P0 source selected.
+        No source selected.
       </div>
     )
   }
@@ -602,6 +747,115 @@ function SourceSummary({
           />
         </div>
       )}
+    </div>
+  )
+}
+
+function SourceRegistryTable({
+  sources,
+  selectedSourceId,
+  starting,
+  disabled,
+  onMonitor,
+  onIngest,
+  onCombine,
+}: {
+  sources: AdminSourceRegistryEntry[]
+  selectedSourceId: string
+  starting: string | null
+  disabled: boolean
+  onMonitor: (sourceId: string) => void
+  onIngest: (source: AdminSourceRegistryEntry) => void
+  onCombine: (source: AdminSourceRegistryEntry) => void
+}) {
+  return (
+    <div className="border-t border-border">
+      <div className="flex items-center justify-between gap-3 px-4 py-3">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Source Operations</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">Per-source status, artifact counts, and job controls.</p>
+        </div>
+        <Badge variant="outline" className="font-mono text-[10px]">{formatNumber(sources.length)} listed</Badge>
+      </div>
+      <div className="max-h-[32rem] overflow-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Source</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Artifacts</TableHead>
+              <TableHead>Graph</TableHead>
+              <TableHead>Last run</TableHead>
+              <TableHead className="text-right">Controls</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sources.map((source) => {
+              const selected = source.source_id === selectedSourceId
+              const ingestKey = `source-ingest-${source.source_id}`
+              const combineKey = `source-combine-${source.source_id}`
+              const ingesting = starting === ingestKey
+              const combining = starting === combineKey
+              const combineDisabled = disabled || source.local.graph_files === 0
+              return (
+                <TableRow key={source.source_id} className={cn(selected && "bg-primary/5")}>
+                  <TableCell className="min-w-72">
+                    <button
+                      type="button"
+                      onClick={() => onMonitor(source.source_id)}
+                      className="block max-w-sm text-left hover:text-primary"
+                    >
+                      <span className="block truncate text-sm font-medium text-foreground">{source.name}</span>
+                      <span className="mt-0.5 block truncate font-mono text-xs text-muted-foreground">{source.source_id}</span>
+                    </button>
+                    <div className="mt-1 truncate text-xs text-muted-foreground">{source.owner}</div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1.5">
+                      <Badge variant="outline" className="font-mono text-[10px]">{source.priority}</Badge>
+                      <Badge variant="outline" className="font-mono text-[10px]">{source.connector_status}</Badge>
+                      <SourceQcBadge status={source.local.qc_status} exists={source.local.source_dir_exists} />
+                    </div>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    <div>{formatNumber(source.local.source_artifacts)} files</div>
+                    <div className="mt-0.5 text-muted-foreground">{formatNumber(source.local.source_bytes)} bytes</div>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    <div>{formatNumber(source.local.graph_files)} files</div>
+                    <div className="mt-0.5 text-muted-foreground">{formatNumber(source.local.graph_rows)} rows</div>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {source.local.last_finished_at ? formatDateTime(source.local.last_finished_at) : "not run"}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex justify-end gap-1.5">
+                      <Button size="sm" variant={selected ? "secondary" : "outline"} onClick={() => onMonitor(source.source_id)}>
+                        Monitor
+                      </Button>
+                      <Button size="sm" variant="outline" className="gap-1.5" disabled={disabled} onClick={() => onIngest(source)}>
+                        {ingesting ? <RefreshCcw className="h-3.5 w-3.5 animate-spin" /> : <Braces className="h-3.5 w-3.5" />}
+                        Ingest
+                      </Button>
+                      <Button size="sm" variant="outline" className="gap-1.5" disabled={combineDisabled} onClick={() => onCombine(source)}>
+                        {combining ? <RefreshCcw className="h-3.5 w-3.5 animate-spin" /> : <GitBranch className="h-3.5 w-3.5" />}
+                        Combine
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+            {sources.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                  No sources match the current filters.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   )
 }

@@ -1,9 +1,9 @@
 use crate::config::ApiConfig;
 use crate::error::{ApiError, ApiResult};
 use crate::models::admin::{
-    AdminGraphSummary, AdminHealthSummary, AdminIndexingSummary, AdminJob, AdminJobDetail,
-    AdminJobEvent, AdminJobKind, AdminJobParams, AdminJobStatus, AdminLogResponse, AdminOverview,
-    AdminPathSummary, AdminSourceArtifact, AdminSourceDetail, AdminSourceGraphFile,
+    AdminCrawlerSummary, AdminGraphSummary, AdminHealthSummary, AdminIndexingSummary, AdminJob,
+    AdminJobDetail, AdminJobEvent, AdminJobKind, AdminJobParams, AdminJobStatus, AdminLogResponse,
+    AdminOverview, AdminPathSummary, AdminSourceArtifact, AdminSourceDetail, AdminSourceGraphFile,
     AdminSourceLocalStatus, AdminSourceRegistryEntry, AdminSourceRegistryResponse,
     AdminSourceRegistryTotals, AdminSourceSummary, AdminStartJobRequest,
 };
@@ -87,10 +87,11 @@ impl AdminService {
         self.require_enabled()?;
         let neo4j_ok = health.check_neo4j().await.unwrap_or(false);
         let jobs = self.sorted_jobs().await;
+        let crawler = self.crawler_summary(&jobs).await;
         let active_job = jobs.iter().find(|job| !job.status.is_terminal()).cloned();
-        let recent_jobs = jobs.into_iter().take(12).collect::<Vec<_>>();
+        let recent_jobs = jobs.iter().take(12).cloned().collect::<Vec<_>>();
         let mut job_counts = BTreeMap::<String, usize>::new();
-        for job in self.inner.jobs.read().await.values() {
+        for job in &jobs {
             *job_counts
                 .entry(job.status.as_str().to_string())
                 .or_default() += 1;
@@ -109,8 +110,9 @@ impl AdminService {
                 data_dir: self.inner.config.admin_data_dir.clone(),
                 graph_dir: graph_dir.display().to_string(),
             },
+            crawler,
             sources: summarize_sources(&data_dir).await,
-            graph: summarize_graph(&graph_dir).await,
+            graph: summarize_graph_fast(&graph_dir).await,
             indexing: AdminIndexingSummary {
                 vector_enabled: self.inner.config.vector_enabled,
                 vector_search_enabled: self.inner.config.vector_search_enabled,
@@ -629,6 +631,66 @@ impl AdminService {
         })
     }
 
+    async fn crawler_summary(&self, jobs: &[AdminJob]) -> AdminCrawlerSummary {
+        let (_program, _args, command_prefix) = self.crawler_program();
+        let active_job = jobs.iter().find(|job| !job.status.is_terminal());
+        let active_pid = if let Some(job) = active_job {
+            self.inner
+                .running
+                .read()
+                .await
+                .get(&job.job_id)
+                .and_then(|running| running.pid)
+        } else {
+            None
+        };
+
+        let running_jobs = jobs.iter().filter(|job| !job.status.is_terminal()).count();
+        let read_only_running_jobs = jobs
+            .iter()
+            .filter(|job| !job.status.is_terminal() && job.is_read_only)
+            .count();
+        let mutating_running_jobs = running_jobs.saturating_sub(read_only_running_jobs);
+        let last_terminal_status = jobs
+            .iter()
+            .find(|job| job.status.is_terminal())
+            .map(|job| job.status);
+        let last_success_at_ms = jobs
+            .iter()
+            .find(|job| job.status == AdminJobStatus::Succeeded)
+            .and_then(job_finished_or_started_at);
+        let last_failure_at_ms = jobs
+            .iter()
+            .find(|job| {
+                matches!(
+                    job.status,
+                    AdminJobStatus::Failed | AdminJobStatus::Cancelled
+                )
+            })
+            .and_then(job_finished_or_started_at);
+        let configured_bin = self.inner.config.admin_crawler_bin.trim().to_string();
+        let control_mode = if configured_bin == "cargo" {
+            "cargo-run".to_string()
+        } else {
+            "direct-binary".to_string()
+        };
+
+        AdminCrawlerSummary {
+            configured_bin,
+            command_prefix,
+            workdir: self.inner.config.admin_workdir.clone(),
+            control_mode,
+            active_pid,
+            active_mutating_job: mutating_running_jobs > 0,
+            running_jobs,
+            read_only_running_jobs,
+            mutating_running_jobs,
+            last_success_at_ms,
+            last_failure_at_ms,
+            last_terminal_status,
+        }
+    }
+
     async fn persist_job(&self, job: &AdminJob) -> ApiResult<()> {
         let path = self.job_dir(&job.job_id).join("job.json");
         write_json_pretty(&path, job).await
@@ -954,7 +1016,7 @@ impl AdminService {
         ) && (params.source_id.is_some() || params.priority.is_some())
         {
             return Err(ApiError::BadRequest(
-                "source_id and priority are reserved for connector-backed source_ingest jobs"
+                "source_id and priority are reserved for connector-backed source jobs"
                     .to_string(),
             ));
         }
@@ -1250,6 +1312,12 @@ fn normalize_path(path: &Path) -> PathBuf {
         }
     }
     normalized
+}
+
+fn job_finished_or_started_at(job: &AdminJob) -> Option<u128> {
+    job.finished_at_ms
+        .or(job.started_at_ms)
+        .or(Some(job.created_at_ms))
 }
 
 fn now_ms() -> u128 {
@@ -1565,7 +1633,16 @@ async fn read_json_value(path: &Path) -> Option<serde_json::Value> {
 }
 
 async fn summarize_graph(path: &Path) -> AdminGraphSummary {
+    summarize_graph_inner(path, true).await
+}
+
+async fn summarize_graph_fast(path: &Path) -> AdminGraphSummary {
+    summarize_graph_inner(path, false).await
+}
+
+async fn summarize_graph_inner(path: &Path, count_rows: bool) -> AdminGraphSummary {
     let mut summary = AdminGraphSummary::default();
+    summary.rows_are_exact = count_rows;
     let Ok(mut entries) = fs::read_dir(path).await else {
         return summary;
     };
@@ -1578,7 +1655,9 @@ async fn summarize_graph(path: &Path) -> AdminGraphSummary {
         if let Ok(metadata) = entry.metadata().await {
             summary.bytes += metadata.len();
         }
-        summary.rows += count_non_empty_lines(&entry_path).await.unwrap_or(0);
+        if count_rows {
+            summary.rows += count_non_empty_lines(&entry_path).await.unwrap_or(0);
+        }
     }
     summary
 }
@@ -1616,21 +1695,38 @@ async fn summarize_dir(path: &Path) -> (usize, usize, u64) {
 }
 
 async fn count_non_empty_lines(path: &Path) -> std::io::Result<usize> {
-    let file = fs::File::open(path).await?;
-    let mut reader = BufReader::new(file);
-    let mut buf = String::new();
-    let mut count = 0usize;
-    loop {
-        buf.clear();
-        let read = reader.read_line(&mut buf).await?;
-        if read == 0 {
-            break;
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let mut file = std::fs::File::open(path)?;
+        let mut buffer = vec![0u8; 1024 * 1024];
+        let mut count = 0usize;
+        let mut line_has_content = false;
+
+        loop {
+            let read = std::io::Read::read(&mut file, &mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            for byte in &buffer[..read] {
+                if *byte == b'\n' {
+                    if line_has_content {
+                        count += 1;
+                    }
+                    line_has_content = false;
+                } else if !byte.is_ascii_whitespace() {
+                    line_has_content = true;
+                }
+            }
         }
-        if !buf.trim().is_empty() {
+
+        if line_has_content {
             count += 1;
         }
-    }
-    Ok(count)
+
+        Ok(count)
+    })
+    .await
+    .map_err(|error| std::io::Error::other(format!("line counter task failed: {error}")))?
 }
 
 #[cfg(test)]
@@ -1803,6 +1899,98 @@ mod tests {
         assert!(detail.qc_report.is_none());
         assert!(detail.graph_files.is_empty());
         assert!(detail.raw_artifacts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fast_graph_summary_defers_expensive_row_counts() {
+        let root = std::env::temp_dir().join(format!("orsgraph-admin-graph-{}", now_ms()));
+        fs::create_dir_all(&root).await.unwrap();
+        fs::write(root.join("nodes.jsonl"), "{\"id\":1}\n{\"id\":2}\n")
+            .await
+            .unwrap();
+
+        let fast = summarize_graph_fast(&root).await;
+        assert_eq!(fast.jsonl_files, 1);
+        assert_eq!(fast.rows, 0);
+        assert!(!fast.rows_are_exact);
+        assert!(fast.bytes > 0);
+
+        let exact = summarize_graph(&root).await;
+        assert_eq!(exact.jsonl_files, 1);
+        assert_eq!(exact.rows, 2);
+        assert!(exact.rows_are_exact);
+
+        let _ = fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn crawler_summary_exposes_runtime_control_state() {
+        let service = test_service(test_config());
+        let running_job = AdminJob {
+            job_id: "job-running".to_string(),
+            kind: AdminJobKind::SourceIngest,
+            status: AdminJobStatus::Running,
+            params: AdminJobParams {
+                source_id: Some("or_leg_ors_html".to_string()),
+                ..Default::default()
+            },
+            command: vec!["cargo".to_string(), "run".to_string()],
+            command_display: "cargo run -p ors-crawler-v0".to_string(),
+            is_read_only: false,
+            created_at_ms: now_ms(),
+            started_at_ms: Some(now_ms()),
+            finished_at_ms: None,
+            exit_code: None,
+            message: None,
+            output_paths: BTreeMap::new(),
+            progress: Default::default(),
+        };
+        let succeeded_job = AdminJob {
+            job_id: "job-succeeded".to_string(),
+            kind: AdminJobKind::Qc,
+            status: AdminJobStatus::Succeeded,
+            params: AdminJobParams::default(),
+            command: vec!["cargo".to_string(), "run".to_string()],
+            command_display: "cargo run -p ors-crawler-v0".to_string(),
+            is_read_only: true,
+            created_at_ms: now_ms().saturating_sub(1000),
+            started_at_ms: Some(now_ms().saturating_sub(900)),
+            finished_at_ms: Some(now_ms().saturating_sub(800)),
+            exit_code: Some(0),
+            message: Some("job completed".to_string()),
+            output_paths: BTreeMap::new(),
+            progress: Default::default(),
+        };
+
+        {
+            let mut jobs = service.inner.jobs.write().await;
+            jobs.insert(running_job.job_id.clone(), running_job.clone());
+            jobs.insert(succeeded_job.job_id.clone(), succeeded_job);
+        }
+        service
+            .inner
+            .running
+            .write()
+            .await
+            .insert(running_job.job_id, RunningJob { pid: Some(4242) });
+
+        let jobs = service.sorted_jobs().await;
+        let summary = service.crawler_summary(&jobs).await;
+
+        assert_eq!(summary.configured_bin, "cargo");
+        assert_eq!(summary.control_mode, "cargo-run");
+        assert_eq!(summary.running_jobs, 1);
+        assert_eq!(summary.mutating_running_jobs, 1);
+        assert!(summary.active_mutating_job);
+        assert_eq!(summary.active_pid, Some(4242));
+        assert_eq!(
+            summary.last_terminal_status,
+            Some(AdminJobStatus::Succeeded)
+        );
+        assert!(summary
+            .command_prefix
+            .contains(&"ors-crawler-v0".to_string()));
+        assert!(summary.last_success_at_ms.is_some());
     }
 
     #[test]

@@ -332,7 +332,9 @@ materialize_neo4j
 embed_neo4j
 ```
 
-The dashboard Source Registry panel can run selected-source ingest, P0 ingest, and P0 combine jobs. It includes a Legislature session key field that passes `session_key` to source ingest jobs. The admin service validates `session_key` as a short alphanumeric/dash/underscore value and passes it to the crawler as `--session-key`.
+The dashboard Source Registry panel can run selected-source ingest, P0 ingest, and P0 combine jobs. It also has a per-source operations table with priority/status filters, local artifact and graph metrics, and Monitor/Ingest/Combine controls for each registry source. It includes a Legislature session key field that passes `session_key` to source ingest jobs. The admin service validates `session_key` as a short alphanumeric/dash/underscore value and passes it to the crawler as `--session-key`.
+
+`GET /api/v1/admin/overview` also includes a crawler runtime summary for the dashboard: configured crawler binary, command prefix, admin workdir, active PID, running/read-only/mutating job counts, active mutating lock state, and last terminal job status. The dashboard shows those fields in the Crawler Runtime panel and can cancel the active crawler job directly from the admin landing page. The overview path uses a fast graph summary for large local corpora: file and byte counts are immediate, while exact row counts are reserved for smaller source-detail views and explicit QC jobs.
 
 The dashboard `crawl` shortcut is retained for UI continuity, but it now builds `source-ingest --source-id or_leg_ors_html`, not the legacy ORS crawler. Legacy-only params such as `fetch_only` and `skip_citation_resolution` should not be sent to registry-backed jobs.
 

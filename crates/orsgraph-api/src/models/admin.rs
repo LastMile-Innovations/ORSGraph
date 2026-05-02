@@ -164,6 +164,7 @@ pub struct AdminOverview {
     pub recent_jobs: Vec<AdminJob>,
     pub job_counts: BTreeMap<String, usize>,
     pub paths: AdminPathSummary,
+    pub crawler: AdminCrawlerSummary,
     pub sources: AdminSourceSummary,
     pub graph: AdminGraphSummary,
     pub indexing: AdminIndexingSummary,
@@ -177,6 +178,25 @@ pub struct AdminPathSummary {
     pub graph_dir: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdminCrawlerSummary {
+    pub configured_bin: String,
+    pub command_prefix: Vec<String>,
+    pub workdir: String,
+    pub control_mode: String,
+    pub active_pid: Option<u32>,
+    pub active_mutating_job: bool,
+    pub running_jobs: usize,
+    pub read_only_running_jobs: usize,
+    pub mutating_running_jobs: usize,
+    #[serde(default)]
+    pub last_success_at_ms: Option<u128>,
+    #[serde(default)]
+    pub last_failure_at_ms: Option<u128>,
+    #[serde(default)]
+    pub last_terminal_status: Option<AdminJobStatus>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AdminSourceSummary {
     pub registry_sources: usize,
@@ -185,11 +205,28 @@ pub struct AdminSourceSummary {
     pub source_bytes: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdminGraphSummary {
     pub jsonl_files: usize,
     pub rows: usize,
     pub bytes: u64,
+    #[serde(default = "default_true")]
+    pub rows_are_exact: bool,
+}
+
+impl Default for AdminGraphSummary {
+    fn default() -> Self {
+        Self {
+            jsonl_files: 0,
+            rows: 0,
+            bytes: 0,
+            rows_are_exact: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
