@@ -100,6 +100,20 @@ This manifest lists required Railway variables by service without secret values.
 
 Read-only Railway checks against the linked `ORSGraph` production project found the `ors-crawler` service has no public domain, its latest deployment is stopped, `ORS_RUN_STARTUP_CRAWLER` is unset, `REBUILD_GRAPH=false`, and `SEED_MODE=append`. With the current crawler startup guard, those variables do not trigger crawl, rebuild, clear, or seed work on build/startup.
 
+### 2026-05-02 deployment watch paths
+
+The repo is a shared monorepo on Railway. Each deployable service should use
+`build.watchPatterns` so a docs-only or frontend-only push does not rebuild the
+Rust API/crawler services.
+
+- `frontend`: `frontend/**`
+- `orsgraph-api`: `Cargo.toml`, `Cargo.lock`, `crates/orsgraph-api/**`, `docs/data/**`
+- `ors-crawler`: `Cargo.toml`, `Cargo.lock`, `crates/ors-crawler-v0/**`, `cypher/**`, `docs/data/**`
+
+The first push that adds these config-as-code files may still redeploy the
+affected services. Later pushes should only deploy services whose watch paths
+match the changed files.
+
 ## MCP
 
 Railway MCP resources/templates were not registered in this Codex session when this manifest was written. Add Railway MCP as a separate local setup task, then use it for read-only `list-services`, `list-variables`, and log checks before future production mutation.
