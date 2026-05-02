@@ -1294,7 +1294,8 @@ impl Neo4jService {
                        OPTIONAL MATCH (v)-[:HAS_SOURCE_NOTE]->(version_note:SourceNote)
                        WITH v, collect(DISTINCT version_note.text) AS version_notes
                        OPTIONAL MATCH (v)-[:CONTAINS]->(:Provision)-[:HAS_SOURCE_NOTE]->(provision_note:SourceNote)
-                       WITH version_notes + collect(DISTINCT provision_note.text) AS notes
+                       WITH version_notes, collect(DISTINCT provision_note.text) AS provision_notes
+                       WITH version_notes + provision_notes AS notes
                        RETURN [note IN notes
                                WHERE note IS NOT NULL AND note <> ''][0..25] AS source_notes
                      }
@@ -1645,7 +1646,8 @@ impl Neo4jService {
                        OPTIONAL MATCH (v)-[:HAS_SOURCE_NOTE]->(version_note:SourceNote)
                        WITH v, collect(DISTINCT version_note) AS version_notes
                        OPTIONAL MATCH (v)-[:CONTAINS]->(:Provision)-[:HAS_SOURCE_NOTE]->(provision_note:SourceNote)
-                       WITH version_notes + collect(DISTINCT provision_note) AS notes
+                       WITH version_notes, collect(DISTINCT provision_note) AS provision_notes
+                       WITH version_notes + provision_notes AS notes
                        RETURN [note IN notes WHERE note IS NOT NULL | note.text][0..200] AS source_notes
                      }
                      CALL {
@@ -1663,11 +1665,13 @@ impl Neo4jService {
                        OPTIONAL MATCH (i)-[:HAS_STATUS_EVENT]->(identity_event:StatusEvent)
                        WITH i, v, collect(DISTINCT identity_event) AS identity_events
                        OPTIONAL MATCH (v)-[:HAS_STATUS_EVENT]->(version_event:StatusEvent)
-                       WITH i, v, identity_events + collect(DISTINCT version_event) AS status_events
+                       WITH i, v, identity_events, collect(DISTINCT version_event) AS version_events
+                       WITH i, v, identity_events + version_events AS status_events
                        OPTIONAL MATCH (v)-[:HAS_TEMPORAL_EFFECT]->(version_effect:TemporalEffect)
                        WITH v, status_events, collect(DISTINCT version_effect) AS version_effects
                        OPTIONAL MATCH (v)-[:CONTAINS]->(:Provision)-[:HAS_TEMPORAL_EFFECT]->(provision_effect:TemporalEffect)
-                       WITH status_events + version_effects + collect(DISTINCT provision_effect) AS events
+                       WITH status_events, version_effects, collect(DISTINCT provision_effect) AS provision_effects
+                       WITH status_events + version_effects + provision_effects AS events
                        RETURN [event IN events WHERE event IS NOT NULL | {
                          event_id: coalesce(event.status_event_id, event.temporal_effect_id),
                          event_type: coalesce(event.status_type, event.effect_type, 'temporal_effect'),
@@ -1682,9 +1686,11 @@ impl Neo4jService {
                        OPTIONAL MATCH (am:Amendment)
                        WHERE (am)-[:AFFECTS]->(i) OR (v IS NOT NULL AND (am)-[:AFFECTS_VERSION]->(v))
                        OPTIONAL MATCH (law_from_amendment:SessionLaw)-[:ENACTS]->(am)
-                       WITH v, source_laws + collect(DISTINCT law_from_amendment) AS laws
+                       WITH v, source_laws, collect(DISTINCT law_from_amendment) AS amendment_laws
+                       WITH v, source_laws + amendment_laws AS laws
                        OPTIONAL MATCH (v)-[:HAS_TEMPORAL_EFFECT]->(:TemporalEffect)-[:REFERENCES_SESSION_LAW]->(law_from_effect:SessionLaw)
-                       WITH laws + collect(DISTINCT law_from_effect) AS session_laws
+                       WITH laws, collect(DISTINCT law_from_effect) AS effect_laws
+                       WITH laws + effect_laws AS session_laws
                        RETURN [law IN session_laws WHERE law IS NOT NULL | {
                          session_law_id: law.session_law_id,
                          citation: coalesce(law.citation, ''),
