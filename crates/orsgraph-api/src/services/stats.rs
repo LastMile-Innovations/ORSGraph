@@ -8,6 +8,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
+const CORPUS_STATS_CACHE_TTL_SECONDS: u64 = 300;
+
 pub struct StatsService {
     neo4j: Arc<Neo4jService>,
     cache: RwLock<Option<(Instant, CorpusCounts)>>,
@@ -74,7 +76,7 @@ impl StatsService {
         {
             let cache = self.cache.read().await;
             if let Some((time, counts)) = &*cache {
-                if time.elapsed() < Duration::from_secs(30) {
+                if time.elapsed() < Duration::from_secs(CORPUS_STATS_CACHE_TTL_SECONDS) {
                     return Ok(counts.clone());
                 }
             }
@@ -145,7 +147,7 @@ impl StatsService {
         {
             let cache = self.stats_cache.read().await;
             if let Some((time, response)) = &*cache {
-                if time.elapsed() < Duration::from_secs(30) {
+                if time.elapsed() < Duration::from_secs(CORPUS_STATS_CACHE_TTL_SECONDS) {
                     // clone manually since StatsResponse doesn't implement Clone, or we could just implement Clone for it.
                     // Wait, models/api.rs StatsResponse doesn't have Clone. Let's return a new instance.
                     return Ok(StatsResponse {

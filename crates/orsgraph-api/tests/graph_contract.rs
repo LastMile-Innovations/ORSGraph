@@ -155,7 +155,7 @@ fn invite_only_auth_routes_and_frontend_are_wired() {
 }
 
 #[test]
-fn full_graph_contract_is_unfocused_and_unbounded_by_neighborhood_id() {
+fn full_graph_contract_is_unfocused_bounded_and_chunk_light_by_default() {
     let graph_models = include_str!("../src/models/api.rs");
     let service = include_str!("../src/services/neo4j.rs");
 
@@ -169,11 +169,19 @@ fn full_graph_contract_is_unfocused_and_unbounded_by_neighborhood_id() {
 
     assert!(!full_request.contains("pub id"));
     assert!(!full_request.contains("pub citation"));
+    assert!(full_request.contains("pub limit: Option<usize>"));
+    assert!(full_request.contains("pub edge_limit: Option<usize>"));
     assert!(service.contains("pub async fn get_full_graph"));
+    assert!(service.contains("GRAPH_FULL_DEFAULT_NODE_LIMIT"));
+    assert!(service.contains("GRAPH_FULL_MAX_EDGE_LIMIT"));
     assert!(service.contains("MATCH (node)"));
     assert!(service.contains("MATCH (source)-[rel]->(target)"));
-    assert!(service.contains("include_chunks.unwrap_or(true)"));
+    assert!(service.contains("include_chunks.unwrap_or(false)"));
+    assert!(service.contains("LIMIT $node_limit"));
+    assert!(service.contains("LIMIT $edge_limit"));
+    assert!(service.contains("target IN sampled_nodes"));
     assert!(service.contains("if !relationship_types.is_empty()"));
+    assert!(service.contains("truncated = nodes.len() >= node_limit || edges.len() >= edge_limit"));
     assert!(!service.contains("Full graph requires id or citation"));
 }
 

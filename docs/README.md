@@ -3,6 +3,7 @@
 ## Operations
 
 - [Crawler And API Overview](crawler-api-overview.md): Current operating map for the crawler CLI, graph JSONL flow, admin job runner, Neo4j lifecycle, Docker entrypoint, API server boundary, CaseBuilder transcription boundary, and verification commands.
+- [Neo4j Cost And Performance Runbook](deploy/neo4j-cost-performance.md): Runtime guardrails for graph reads, Railway Neo4j sizing, cache posture, query review, and admin-only full-graph use.
 
 ## Data Model
 

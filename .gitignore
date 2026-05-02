@@ -15,6 +15,7 @@ Thumbs.db
 
 # Environment
 .env
+.wrangler/
 
 # Data
 # CaseBuilder uploads default to data/casebuilder/uploads and must stay local.

@@ -93,15 +93,17 @@ export function GraphViewer({
     setLayout("force")
     setForces(FULL_GRAPH_FORCES)
     setFilters({
-      relationshipFamilies: allRelationshipFamilies(),
-      nodeFamilies: allNodeFamilies(),
-      includeChunks: true,
+      relationshipFamilies: modeDefaultFamilies("legal"),
+      nodeFamilies: defaultNodeFamilies(),
+      includeChunks: false,
     })
 
     try {
       const next = await getFullGraph({
-        includeChunks: true,
-        includeSimilarity: true,
+        limit: 250,
+        edgeLimit: 750,
+        includeChunks: false,
+        includeSimilarity: false,
       })
       const normalized = normalizeResponse(next)
       setResponse(normalized)
@@ -510,10 +512,6 @@ function flattenFamilies<T extends Record<string, readonly string[]>>(families: 
   return Object.entries(families)
     .filter(([family]) => enabled.has(family))
     .flatMap(([, values]) => [...values])
-}
-
-function allRelationshipFamilies() {
-  return new Set(Object.keys(RELATIONSHIP_FAMILIES))
 }
 
 function allNodeFamilies() {

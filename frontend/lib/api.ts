@@ -754,6 +754,8 @@ export async function getGraphNeighborhood(input: GraphNeighborhoodParams): Prom
 export async function getFullGraph(input: GraphFullParams = {}): Promise<GraphViewerResponse> {
   const params = new URLSearchParams();
 
+  if (input.limit !== undefined) params.set('limit', String(input.limit));
+  if (input.edgeLimit !== undefined) params.set('edgeLimit', String(input.edgeLimit));
   if (input.relationshipTypes?.length) params.set('relationshipTypes', input.relationshipTypes.join(','));
   if (input.nodeTypes?.length) params.set('nodeTypes', input.nodeTypes.join(','));
   if (input.includeChunks !== undefined) params.set('includeChunks', String(input.includeChunks));

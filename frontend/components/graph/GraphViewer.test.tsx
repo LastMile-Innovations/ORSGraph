@@ -116,8 +116,10 @@ describe("GraphViewer", () => {
 
     await waitFor(() => {
       expect(getFullGraph).toHaveBeenCalledWith({
-        includeChunks: true,
-        includeSimilarity: true,
+        limit: 250,
+        edgeLimit: 750,
+        includeChunks: false,
+        includeSimilarity: false,
       })
     })
     expect(await screen.findByText("canvas:full")).toBeInTheDocument()

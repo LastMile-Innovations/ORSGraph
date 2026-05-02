@@ -463,6 +463,9 @@ pub struct GraphNeighborhoodRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct GraphFullRequest {
+    pub limit: Option<usize>,
+    #[serde(default, alias = "edgeLimit")]
+    pub edge_limit: Option<usize>,
     #[serde(default, alias = "relationshipTypes")]
     pub relationship_types: Option<String>,
     #[serde(default, alias = "nodeTypes")]

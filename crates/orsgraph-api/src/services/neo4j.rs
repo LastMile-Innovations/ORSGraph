@@ -7,6 +7,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const GRAPH_FULL_DEFAULT_NODE_LIMIT: usize = 250;
+const GRAPH_FULL_MAX_NODE_LIMIT: usize = 1_000;
+const GRAPH_FULL_DEFAULT_EDGE_LIMIT: usize = 750;
+const GRAPH_FULL_MAX_EDGE_LIMIT: usize = 3_000;
+
 pub struct Neo4jService {
     graph: Arc<Graph>,
 }
@@ -2165,22 +2170,12 @@ impl Neo4jService {
             .replace("source.", "target.")
             .replace("elementId(source)", "elementId(target)");
 
+        let center_lookup_cypher =
+            graph_single_node_lookup_cypher("lookup", "center", "center_priority");
         let cypher = format!(
-            "MATCH (center)
-             WHERE ($id IS NOT NULL AND any(value IN [
-                    center.canonical_id, center.version_id, center.provision_id, center.chunk_id,
-                    center.semantic_id, center.source_note_id, center.definition_id, center.defined_term_id,
-                    center.deadline_id, center.penalty_id, center.exception_id, center.remedy_id,
-                    center.required_notice_id, center.notice_id, center.form_text_id, center.actor_id,
-                    center.action_id, center.mention_id, center.citation_mention_id, center.external_citation_id,
-                    center.status_event_id, center.temporal_effect_id, center.lineage_event_id,
-                    center.session_law_id, center.amendment_id, center.chapter_id, elementId(center)
-                  ] WHERE value = $id))
-                OR ($citation IS NOT NULL AND (
-                    toUpper(coalesce(center.citation, '')) = toUpper($citation)
-                    OR toUpper(coalesce(center.display_citation, '')) = toUpper($citation)
-                  ))
-             WITH center
+            "{center_lookup_cypher}
+             WITH center, center_priority
+             ORDER BY center_priority
              LIMIT 1
              CALL {{
                WITH center
@@ -2257,8 +2252,7 @@ impl Neo4jService {
             .graph
             .execute(
                 query(&cypher)
-                    .param("id", params.id.as_deref().unwrap_or(lookup))
-                    .param("citation", params.citation.as_deref().unwrap_or(lookup))
+                    .param("lookup", lookup.as_str())
                     .param("relationship_types", relationship_types.clone())
                     .param("node_types", node_types)
                     .param("include_chunks", include_chunks)
@@ -2411,7 +2405,8 @@ impl Neo4jService {
         &self,
         params: &GraphFullRequest,
     ) -> ApiResult<GraphNeighborhoodResponse> {
-        let mut relationship_types = graph_csv(params.relationship_types.as_deref());
+        let mut relationship_types =
+            graph_relationship_types("legal", params.relationship_types.as_deref());
         if !relationship_types.is_empty()
             && params.include_similarity.unwrap_or(false)
             && !relationship_types
@@ -2421,8 +2416,16 @@ impl Neo4jService {
             relationship_types.push("SIMILAR_TO".to_string());
         }
         let node_types = graph_csv(params.node_types.as_deref());
-        let include_chunks = params.include_chunks.unwrap_or(true);
+        let include_chunks = params.include_chunks.unwrap_or(false);
         let similarity_threshold = params.similarity_threshold.unwrap_or(-1.0);
+        let node_limit = params
+            .limit
+            .unwrap_or(GRAPH_FULL_DEFAULT_NODE_LIMIT)
+            .clamp(1, GRAPH_FULL_MAX_NODE_LIMIT);
+        let edge_limit = params
+            .edge_limit
+            .unwrap_or_else(|| (node_limit * 3).min(GRAPH_FULL_DEFAULT_EDGE_LIMIT))
+            .clamp(1, GRAPH_FULL_MAX_EDGE_LIMIT);
         let node_id_expr = search_node_id_expr("node");
         let source_id_expr = search_node_id_expr("source");
         let target_id_expr = search_node_id_expr("target");
@@ -2432,6 +2435,13 @@ impl Neo4jService {
                MATCH (node)
                WHERE ($include_chunks = true OR NOT 'RetrievalChunk' IN labels(node))
                  AND (size($node_types) = 0 OR any(label IN labels(node) WHERE label IN $node_types))
+               WITH node
+               LIMIT $node_limit
+               RETURN collect(node) AS sampled_nodes
+             }}
+             CALL {{
+               WITH sampled_nodes
+               UNWIND sampled_nodes AS node
                RETURN 'node' AS record_kind,
                       {node_id_expr} AS node_id,
                       coalesce(node.citation, node.display_citation, node.term, node.title, node.label, node.chapter_id, node.semantic_type, labels(node)[0], {node_id_expr}) AS node_label,
@@ -2453,14 +2463,19 @@ impl Neo4jService {
                       null AS edge_weight,
                       null AS edge_similarity_score
                UNION ALL
+               WITH sampled_nodes
+               UNWIND sampled_nodes AS source
                MATCH (source)-[rel]->(target)
-               WHERE (size($relationship_types) = 0 OR type(rel) IN $relationship_types)
+               WHERE target IN sampled_nodes
+                 AND (size($relationship_types) = 0 OR type(rel) IN $relationship_types)
                  AND ($include_chunks = true OR (NOT 'RetrievalChunk' IN labels(source) AND NOT 'RetrievalChunk' IN labels(target)))
                  AND (size($node_types) = 0 OR (
                    any(label IN labels(source) WHERE label IN $node_types)
                    AND any(label IN labels(target) WHERE label IN $node_types)
                  ))
                  AND ($similarity_threshold < 0 OR type(rel) <> 'SIMILAR_TO' OR coalesce(rel.similarity_score, rel.score, rel.weight, 0.0) >= $similarity_threshold)
+               WITH DISTINCT rel, source, target
+               LIMIT $edge_limit
                RETURN 'edge' AS record_kind,
                       null AS node_id,
                       null AS node_label,
@@ -2492,7 +2507,9 @@ impl Neo4jService {
                     .param("relationship_types", relationship_types)
                     .param("node_types", node_types)
                     .param("include_chunks", include_chunks)
-                    .param("similarity_threshold", similarity_threshold),
+                    .param("similarity_threshold", similarity_threshold)
+                    .param("node_limit", node_limit as i64)
+                    .param("edge_limit", edge_limit as i64),
             )
             .await
             .map_err(ApiError::Neo4jConnection)?;
@@ -2504,7 +2521,7 @@ impl Neo4jService {
             let record_kind: String = row.get("record_kind").unwrap_or_default();
             if record_kind == "node" {
                 let id: String = row.get("node_id").unwrap_or_default();
-                if id.is_empty() {
+                if id.is_empty() || nodes_by_id.len() >= node_limit {
                     continue;
                 }
                 let node_type = row
@@ -2531,7 +2548,7 @@ impl Neo4jService {
                     qc_warnings: row.get("qc_warnings").unwrap_or_default(),
                     metrics: None,
                 });
-            } else if record_kind == "edge" {
+            } else if record_kind == "edge" && edges_by_id.len() < edge_limit {
                 let edge_id: String = row.get("edge_id").unwrap_or_default();
                 let source: String = row.get("source_id").unwrap_or_default();
                 let target: String = row.get("target_id").unwrap_or_default();
@@ -2577,11 +2594,11 @@ impl Neo4jService {
         });
 
         let mut warnings = Vec::new();
-        if nodes.len() > 1000 || edges.len() > 3000 {
+        let truncated = nodes.len() >= node_limit || edges.len() >= edge_limit;
+        if truncated {
             warnings.push(format!(
-                "Full graph loaded with {} nodes and {} edges; rendering may be slow.",
-                nodes.len(),
-                edges.len()
+                "Full graph sample truncated to {} nodes and {} edges. Use /graph/neighborhood for focused exploration.",
+                node_limit, edge_limit
             ));
         }
 
@@ -2590,7 +2607,7 @@ impl Neo4jService {
             stats: GraphStats {
                 node_count: nodes.len(),
                 edge_count: edges.len(),
-                truncated: false,
+                truncated,
                 warnings,
             },
             nodes,
@@ -2741,20 +2758,20 @@ impl Neo4jService {
         let target_id_expr = node_id_expr
             .replace("node.", "endNode(rel).")
             .replace("elementId(node)", "elementId(endNode(rel))");
-        let from_lookup_expr = node_id_expr
-            .replace("node.", "from.")
-            .replace("elementId(node)", "elementId(from)");
-        let to_lookup_expr = node_id_expr
-            .replace("node.", "to.")
-            .replace("elementId(node)", "elementId(to)");
+        let from_lookup_cypher =
+            graph_single_node_lookup_cypher("from", "from_node", "from_priority");
+        let to_lookup_cypher = graph_single_node_lookup_cypher("to", "to_node", "to_priority");
 
         let cypher = format!(
-            "MATCH (from), (to)
-             WHERE ({from_lookup_expr} = $from OR toUpper(coalesce(from.citation, from.display_citation, '')) = toUpper($from))
-               AND ({to_lookup_expr} = $to OR toUpper(coalesce(to.citation, to.display_citation, '')) = toUpper($to))
-             WITH from, to
+            "{from_lookup_cypher}
+             WITH from_node, from_priority
+             ORDER BY from_priority
              LIMIT 1
-             MATCH path = shortestPath((from)-[*..6]-(to))
+             {to_lookup_cypher}
+             WITH from_node, to_node, to_priority
+             ORDER BY to_priority
+             LIMIT 1
+             MATCH path = shortestPath((from_node)-[*..6]-(to_node))
              WHERE all(rel IN relationships(path) WHERE type(rel) IN $relationship_types)
              WITH path
              LIMIT $limit
@@ -3741,6 +3758,159 @@ fn search_node_resolver_cypher() -> &'static str {
     }"
 }
 
+fn graph_single_node_lookup_cypher(
+    param_name: &str,
+    node_alias: &str,
+    priority_alias: &str,
+) -> String {
+    let template = r#"CALL {
+        WITH $<<PARAM>> AS lookup, toLower($<<PARAM>>) AS lookup_lower, toUpper($<<PARAM>>) AS lookup_upper
+        MATCH (candidate:LegalTextIdentity)
+        WHERE lookup IS NOT NULL AND (
+            candidate.canonical_id = lookup
+            OR candidate.canonical_id = lookup_lower
+            OR candidate.citation = lookup
+            OR candidate.citation = lookup_upper
+        )
+        RETURN candidate AS <<NODE_ALIAS>>, 10 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup, toLower($<<PARAM>>) AS lookup_lower, toUpper($<<PARAM>>) AS lookup_upper
+        MATCH (candidate:LegalTextVersion)
+        WHERE lookup IS NOT NULL AND (
+            candidate.version_id = lookup
+            OR candidate.canonical_id = lookup
+            OR candidate.canonical_id = lookup_lower
+        )
+        RETURN candidate AS <<NODE_ALIAS>>, 20 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup, toLower($<<PARAM>>) AS lookup_lower, toUpper($<<PARAM>>) AS lookup_upper
+        MATCH (candidate:Provision)
+        WHERE lookup IS NOT NULL AND (
+            candidate.provision_id = lookup
+            OR candidate.canonical_id = lookup
+            OR candidate.canonical_id = lookup_lower
+            OR candidate.version_id = lookup
+            OR candidate.display_citation = lookup
+            OR candidate.display_citation = lookup_upper
+        )
+        RETURN candidate AS <<NODE_ALIAS>>, 30 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:ChapterVersion {chapter_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 40 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:RetrievalChunk {chunk_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 50 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:Definition {definition_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 60 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:DefinedTerm {defined_term_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 70 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:LegalSemanticNode {semantic_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 80 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:Obligation {obligation_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 90 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:Exception {exception_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 91 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:Deadline {deadline_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 92 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:Penalty {penalty_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 93 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:Remedy {remedy_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 94 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:RequiredNotice {required_notice_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 95 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:FormText {form_text_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 96 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:ProceduralRequirement {requirement_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 97 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup, toLower($<<PARAM>>) AS lookup_lower
+        MATCH (candidate:SourceNote)
+        WHERE candidate.source_note_id = lookup
+            OR candidate.canonical_id = lookup
+            OR candidate.canonical_id = lookup_lower
+            OR candidate.provision_id = lookup
+            OR candidate.version_id = lookup
+        RETURN candidate AS <<NODE_ALIAS>>, 110 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup, toLower($<<PARAM>>) AS lookup_lower
+        MATCH (candidate:StatusEvent)
+        WHERE candidate.status_event_id = lookup
+            OR candidate.canonical_id = lookup
+            OR candidate.canonical_id = lookup_lower
+            OR candidate.version_id = lookup
+        RETURN candidate AS <<NODE_ALIAS>>, 120 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup, toLower($<<PARAM>>) AS lookup_lower
+        MATCH (candidate:TemporalEffect)
+        WHERE candidate.temporal_effect_id = lookup
+            OR candidate.canonical_id = lookup
+            OR candidate.canonical_id = lookup_lower
+            OR candidate.version_id = lookup
+        RETURN candidate AS <<NODE_ALIAS>>, 130 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:SessionLaw {session_law_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 140 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:Amendment {amendment_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 150 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:LineageEvent {lineage_event_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 160 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:TaxRule {tax_rule_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 170 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:MoneyAmount {money_amount_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 180 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:RateLimit {rate_limit_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 190 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:LegalActor {actor_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 200 AS <<PRIORITY_ALIAS>>
+        UNION
+        WITH $<<PARAM>> AS lookup
+        MATCH (candidate:LegalAction {action_id: lookup})
+        RETURN candidate AS <<NODE_ALIAS>>, 210 AS <<PRIORITY_ALIAS>>
+    }"#;
+
+    template
+        .replace("<<PARAM>>", param_name)
+        .replace("<<NODE_ALIAS>>", node_alias)
+        .replace("<<PRIORITY_ALIAS>>", priority_alias)
+}
+
 const SEARCH_NODE_ID_PROPERTIES: &[&str] = &[
     "canonical_id",
     "version_id",
@@ -3997,6 +4167,30 @@ mod search_support_tests {
             !resolver.contains("MATCH (n)\n"),
             "resolver should avoid label-free graph scans"
         );
+    }
+
+    #[test]
+    fn graph_lookup_uses_indexed_label_branches() {
+        let lookup = graph_single_node_lookup_cypher("lookup", "center", "center_priority");
+        for branch in [
+            "MATCH (candidate:LegalTextIdentity)",
+            "candidate.citation = lookup_upper",
+            "MATCH (candidate:Provision)",
+            "candidate.display_citation = lookup_upper",
+            "MATCH (candidate:RetrievalChunk {chunk_id: lookup})",
+            "MATCH (candidate:LegalSemanticNode {semantic_id: lookup})",
+            "MATCH (candidate:ChapterVersion {chapter_id: lookup})",
+        ] {
+            assert!(
+                lookup.contains(branch),
+                "graph lookup should include {branch}"
+            );
+        }
+        assert!(
+            !lookup.contains("MATCH (candidate)\n"),
+            "graph lookup should avoid label-free scans"
+        );
+        assert!(lookup.contains("RETURN candidate AS center, 10 AS center_priority"));
     }
 
     #[test]

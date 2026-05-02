@@ -85,6 +85,8 @@ export type GraphNeighborhoodParams = {
 }
 
 export type GraphFullParams = {
+  limit?: number
+  edgeLimit?: number
   relationshipTypes?: string[]
   nodeTypes?: string[]
   includeChunks?: boolean
