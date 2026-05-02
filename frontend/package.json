@@ -18,7 +18,8 @@
     "perf:bundle": "next build --profile",
     "hotset:authority": "node scripts/build-authority-hotset.mjs",
     "smoke:routes": "node scripts/smoke-routes.mjs",
-    "smoke:casebuilder": "node scripts/smoke-casebuilder.mjs"
+    "smoke:casebuilder": "node scripts/smoke-casebuilder.mjs",
+    "smoke:production-auth": "node scripts/smoke-production-auth.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
