@@ -44,7 +44,7 @@ export default async function AuthoritiesPage({ params }: PageProps) {
                 Authorities
               </h1>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Statutes, rules, and procedural authorities linked to claims, defenses, and draft sections.
+                Constitutional, statutory, rule, commentary, and procedural authorities linked to claims, defenses, and draft sections.
               </p>
             </div>
             <div className="rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">

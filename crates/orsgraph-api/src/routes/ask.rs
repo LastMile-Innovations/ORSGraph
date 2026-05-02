@@ -15,6 +15,9 @@ pub async fn ask(
             q: request.question.clone(),
             r#type: Some("all".to_string()),
             authority_family: None,
+            authority_tier: None,
+            jurisdiction: None,
+            source_role: None,
             chapter: None,
             status: None,
             mode: Some(SearchMode::Auto),
@@ -28,6 +31,8 @@ pub async fn ask(
             has_deadlines: None,
             has_penalties: None,
             needs_review: None,
+            primary_law: None,
+            official_commentary: None,
         })
         .await?;
 

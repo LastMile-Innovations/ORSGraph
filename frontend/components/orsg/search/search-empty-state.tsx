@@ -3,12 +3,12 @@
 import { Search, ArrowRight } from "lucide-react"
 
 const SUGGESTED_SEARCHES = [
+  "U.S. Const. amend. XIV, § 1",
+  "Amdt14.S1.5.1",
+  "Fourteenth Amendment due process",
   "ORS 90.300",
   "chapter 90 habitability",
-  "ORS 90.320 to 90.330",
-  "definition of dwelling unit",
   "security deposit deadline",
-  "landlord notice",
 ]
 
 interface SearchEmptyStateProps {
@@ -21,9 +21,9 @@ export function SearchEmptyState({ onSelectSuggestion }: SearchEmptyStateProps) 
       <div className="rounded-full bg-muted p-6 mb-6">
         <Search className="h-12 w-12 text-muted-foreground" />
       </div>
-      <h2 className="text-xl font-semibold text-foreground mb-2">Search the ORS Graph</h2>
+      <h2 className="text-xl font-semibold text-foreground mb-2">Search authorities</h2>
       <p className="text-muted-foreground max-w-md mb-8">
-        Start with a citation, legal concept, actor, deadline, or penalty to explore the Oregon Revised Statutes.
+        Start with a citation, legal concept, actor, deadline, or penalty.
       </p>
 
       <div className="w-full max-w-2xl">

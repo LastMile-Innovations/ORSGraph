@@ -1267,6 +1267,9 @@ async fn ask_matter(
                 q: request.question.clone(),
                 r#type: Some("all".to_string()),
                 authority_family: None,
+                authority_tier: None,
+                jurisdiction: None,
+                source_role: None,
                 chapter: None,
                 status: None,
                 mode: Some(SearchMode::Auto),
@@ -1280,6 +1283,8 @@ async fn ask_matter(
                 has_deadlines: None,
                 has_penalties: None,
                 needs_review: None,
+                primary_law: None,
+                official_commentary: None,
             })
             .await?;
         authority_count = search.results.len();
@@ -2188,6 +2193,9 @@ async fn authority_search(
             q: params.q.clone(),
             r#type: Some("all".to_string()),
             authority_family: params.authority_family.clone(),
+            authority_tier: None,
+            jurisdiction: None,
+            source_role: None,
             chapter: None,
             status: None,
             mode: Some(SearchMode::Auto),
@@ -2201,13 +2209,15 @@ async fn authority_search(
             has_deadlines: None,
             has_penalties: None,
             needs_review: None,
+            primary_law: None,
+            official_commentary: None,
         })
         .await?;
 
     Ok(Json(AuthoritySearchResponse {
         matter_id,
         query: params.q,
-        source: "live_orsgraph".to_string(),
+        source: "orsgraph".to_string(),
         warnings: search.warnings,
         results: search
             .results
@@ -2220,6 +2230,13 @@ async fn authority_search(
                     .or_else(|| result.citation.clone()),
                 id: result.id,
                 kind: result.kind,
+                authority_family: result.authority_family,
+                authority_level: result.authority_level,
+                authority_tier: result.authority_tier,
+                source_role: result.source_role,
+                primary_law: result.primary_law,
+                official_commentary: result.official_commentary,
+                controlling_weight: result.controlling_weight,
                 citation: result.citation,
                 title: result.title,
                 snippet: result.snippet,

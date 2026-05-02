@@ -1,6 +1,7 @@
 use crate::error::ApiResult;
 use crate::models::search::*;
 use crate::services::graph_expand::GraphExpandService;
+use crate::services::legal_hierarchy;
 use crate::services::neo4j::Neo4jService;
 use crate::services::rerank::RerankService;
 use crate::services::vector_search::VectorSearchService;
@@ -568,6 +569,14 @@ impl SearchService {
             boost += 0.5;
         }
 
+        let hierarchy = legal_hierarchy::LegalHierarchyMetadata::for_result(res);
+        boost += hierarchy.controlling_weight;
+        if hierarchy.is_primary_law {
+            boost += 0.35;
+        } else if hierarchy.is_official_commentary {
+            boost -= 0.1;
+        }
+
         if res.kind == "provision" {
             boost += 0.35;
         } else if res.kind == "chunk" {
@@ -672,6 +681,9 @@ impl SearchService {
                         return false;
                     }
                 }
+                if !candidate_matches_hierarchy_filters(candidate, filters) {
+                    return false;
+                }
                 if let Some(chapter) = filters.chapter.as_deref() {
                     if candidate.chapter.as_deref() != Some(chapter) {
                         return false;
@@ -709,6 +721,9 @@ impl SearchService {
                 if !candidate_matches_authority_family(candidate, authority_family) {
                     return false;
                 }
+            }
+            if !candidate_matches_hierarchy_filters(candidate, filters) {
+                return false;
             }
             if let Some(chapter) = filters.chapter.as_deref() {
                 if candidate.chapter.as_deref() != Some(chapter) {
@@ -1533,37 +1548,167 @@ fn normalize_search_query_with_authority(q: &str, authority_family: Option<&str>
 }
 
 fn parse_query_citations(q: &str) -> Vec<QueryCitation> {
+    let mut citations = Vec::new();
+
+    let conan_re = Regex::new(r"(?i)\b((?:Amdt\d+|Art(?:[IVXLCDM]+|\d+))[A-Za-z0-9.]+)\b").unwrap();
+    for caps in conan_re.captures_iter(q) {
+        let Some(raw_match) = caps.get(1) else {
+            continue;
+        };
+        let raw = raw_match.as_str().trim().to_string();
+        let normalized = normalize_conan_serial(&raw);
+        let chapter = conan_chapter(&normalized);
+        citations.push(QueryCitation {
+            raw,
+            authority_family: "CONAN".to_string(),
+            normalized: normalized.clone(),
+            base: normalized.clone(),
+            chapter,
+            section: normalized.clone(),
+            subsections: Vec::new(),
+            parent: None,
+        });
+    }
+
+    let const_re = Regex::new(
+        r"(?i)\bU\.?\s*S\.?\s+Const\.?\s+(?:(art\.?)\s+([IVXLCDM]+|\d+)(?:,\s*§+\s*(\d+))?(?:,\s*cl\.?\s*(\d+))?|(amend\.?)\s+([IVXLCDM]+|\d+)(?:,\s*§+\s*(\d+))?)",
+    )
+    .unwrap();
+    for caps in const_re.captures_iter(q) {
+        let Some(raw_match) = caps.get(0) else {
+            continue;
+        };
+        let raw = raw_match.as_str().trim().to_string();
+        if caps.get(1).is_some() {
+            let Some(article_token) = caps.get(2).map(|m| m.as_str()) else {
+                continue;
+            };
+            let article_number = roman_or_decimal_to_u32(article_token).unwrap_or(1);
+            let article = to_roman(article_number);
+            let section = caps.get(3).map(|m| m.as_str().to_string());
+            let clause = caps.get(4).map(|m| m.as_str().to_string());
+            let base = format!("U.S. Const. art. {article}");
+            let mut normalized = base.clone();
+            let mut subsections = Vec::new();
+            if let Some(section) = &section {
+                normalized.push_str(&format!(", § {section}"));
+            }
+            let parent = if let Some(clause) = &clause {
+                let parent = normalized.clone();
+                normalized.push_str(&format!(", cl. {clause}"));
+                subsections.push(format!("clause-{clause}"));
+                Some(parent)
+            } else {
+                section.as_ref().map(|_| base.clone())
+            };
+            citations.push(QueryCitation {
+                raw,
+                authority_family: "USCONST".to_string(),
+                normalized,
+                base,
+                chapter: format!("article-{article_number}"),
+                section: section.unwrap_or_default(),
+                subsections,
+                parent,
+            });
+        } else {
+            let Some(amendment_token) = caps.get(6).map(|m| m.as_str()) else {
+                continue;
+            };
+            let amendment_number = roman_or_decimal_to_u32(amendment_token).unwrap_or(14);
+            let amendment = to_roman(amendment_number);
+            let section = caps.get(7).map(|m| m.as_str().to_string());
+            let base = format!("U.S. Const. amend. {amendment}");
+            let normalized = section
+                .as_ref()
+                .map(|section| format!("{base}, § {section}"))
+                .unwrap_or_else(|| base.clone());
+            let parent = section.as_ref().map(|_| base.clone());
+            citations.push(QueryCitation {
+                raw,
+                authority_family: "USCONST".to_string(),
+                normalized,
+                base,
+                chapter: format!("amendment-{amendment_number}"),
+                section: section.unwrap_or_default(),
+                subsections: Vec::new(),
+                parent,
+            });
+        }
+    }
+
+    let named_amendment_re = Regex::new(
+        r"(?i)\b(First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth|Eleventh|Twelfth|Thirteenth|Fourteenth|Fifteenth|Sixteenth|Seventeenth|Eighteenth|Nineteenth|Twentieth|Twenty-First|Twenty-Second|Twenty-Third|Twenty-Fourth|Twenty-Fifth|Twenty-Sixth|Twenty-Seventh)\s+Amendment\b",
+    )
+    .unwrap();
+    for caps in named_amendment_re.captures_iter(q) {
+        let Some(raw_match) = caps.get(0) else {
+            continue;
+        };
+        let raw = raw_match.as_str().trim().to_string();
+        let number =
+            ordinal_amendment_number(caps.get(1).map(|m| m.as_str()).unwrap_or("")).unwrap_or(14);
+        let normalized = format!("U.S. Const. amend. {}", to_roman(number));
+        citations.push(QueryCitation {
+            raw,
+            authority_family: "USCONST".to_string(),
+            normalized: normalized.clone(),
+            base: normalized,
+            chapter: format!("amendment-{number}"),
+            section: String::new(),
+            subsections: Vec::new(),
+            parent: None,
+        });
+    }
+
+    let due_process_re = Regex::new(r"(?i)\bDue Process Clause\b").unwrap();
+    for caps in due_process_re.captures_iter(q) {
+        let Some(raw_match) = caps.get(0) else {
+            continue;
+        };
+        let base = "U.S. Const. amend. XIV".to_string();
+        citations.push(QueryCitation {
+            raw: raw_match.as_str().trim().to_string(),
+            authority_family: "USCONST".to_string(),
+            normalized: format!("{base}, § 1"),
+            base,
+            chapter: "amendment-14".to_string(),
+            section: "1".to_string(),
+            subsections: vec!["due-process".to_string()],
+            parent: Some("U.S. Const. amend. XIV".to_string()),
+        });
+    }
+
     let citation_re =
         Regex::new(r"(?i)\b(?:(ORS|UTCR)\s+)?(\d{1,3}[A-Z]?)\.(\d{3})((?:\([A-Za-z0-9]+\))*)")
             .unwrap();
-    citation_re
-        .captures_iter(q)
-        .filter_map(|caps| {
-            let raw = caps.get(0)?.as_str().trim().to_string();
-            let authority_family = caps
-                .get(1)
-                .map(|m| m.as_str().to_ascii_uppercase())
-                .unwrap_or_else(|| "ORS".to_string());
-            let chapter = caps.get(2)?.as_str().to_ascii_uppercase();
-            let section = caps.get(3)?.as_str().to_string();
-            let subsection_text = caps.get(4).map(|m| m.as_str()).unwrap_or_default();
-            let subsections = parse_subsections(subsection_text);
-            let base = format!("{authority_family} {chapter}.{section}");
-            let normalized = format!("{base}{subsection_text}");
-            let parent = (!subsections.is_empty()).then(|| base.clone());
+    citations.extend(citation_re.captures_iter(q).filter_map(|caps| {
+        let raw = caps.get(0)?.as_str().trim().to_string();
+        let authority_family = caps
+            .get(1)
+            .map(|m| m.as_str().to_ascii_uppercase())
+            .unwrap_or_else(|| "ORS".to_string());
+        let chapter = caps.get(2)?.as_str().to_ascii_uppercase();
+        let section = caps.get(3)?.as_str().to_string();
+        let subsection_text = caps.get(4).map(|m| m.as_str()).unwrap_or_default();
+        let subsections = parse_subsections(subsection_text);
+        let base = format!("{authority_family} {chapter}.{section}");
+        let normalized = format!("{base}{subsection_text}");
+        let parent = (!subsections.is_empty()).then(|| base.clone());
 
-            Some(QueryCitation {
-                raw,
-                authority_family,
-                normalized,
-                base,
-                chapter,
-                section,
-                subsections,
-                parent,
-            })
+        Some(QueryCitation {
+            raw,
+            authority_family,
+            normalized,
+            base,
+            chapter,
+            section,
+            subsections,
+            parent,
         })
-        .collect()
+    }));
+
+    dedupe_query_citations(citations)
 }
 
 fn parse_citation_ranges(q: &str) -> Vec<QueryCitationRange> {
@@ -1621,6 +1766,133 @@ fn parse_subsections(value: &str) -> Vec<String> {
         .collect()
 }
 
+fn dedupe_query_citations(citations: Vec<QueryCitation>) -> Vec<QueryCitation> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for citation in citations {
+        let key = format!("{}:{}", citation.authority_family, citation.normalized);
+        if seen.insert(key) {
+            out.push(citation);
+        }
+    }
+    out
+}
+
+fn normalize_conan_serial(value: &str) -> String {
+    let mut parts = value
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .map(|part| part.to_string())
+        .collect::<Vec<_>>();
+    if let Some(first) = parts.first_mut() {
+        if first.to_ascii_lowercase().starts_with("amdt") {
+            *first = format!("Amdt{}", first[4..].to_string());
+        } else if first.to_ascii_lowercase().starts_with("art") {
+            *first = format!("Art{}", first[3..].to_string());
+        }
+    }
+    parts.join(".")
+}
+
+fn conan_chapter(serial: &str) -> String {
+    let head = serial.split('.').next().unwrap_or(serial);
+    let lower = head.to_ascii_lowercase();
+    if let Some(rest) = lower.strip_prefix("amdt") {
+        format!("amendment-{rest}")
+    } else if let Some(rest) = lower.strip_prefix("art") {
+        format!("article-{}", roman_or_decimal_to_u32(rest).unwrap_or(0))
+    } else {
+        "constitution-annotated".to_string()
+    }
+}
+
+fn roman_or_decimal_to_u32(value: &str) -> Option<u32> {
+    value.parse::<u32>().ok().or_else(|| roman_to_u32(value))
+}
+
+fn roman_to_u32(value: &str) -> Option<u32> {
+    let mut total = 0;
+    let mut previous = 0;
+    for ch in value.trim().to_ascii_uppercase().chars().rev() {
+        let current = match ch {
+            'I' => 1,
+            'V' => 5,
+            'X' => 10,
+            'L' => 50,
+            'C' => 100,
+            'D' => 500,
+            'M' => 1000,
+            _ => return None,
+        };
+        if current < previous {
+            total -= current;
+        } else {
+            total += current;
+            previous = current;
+        }
+    }
+    (total > 0).then_some(total as u32)
+}
+
+fn to_roman(mut value: u32) -> String {
+    let pairs = [
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ];
+    let mut out = String::new();
+    for (number, roman) in pairs {
+        while value >= number {
+            out.push_str(roman);
+            value -= number;
+        }
+    }
+    out
+}
+
+fn ordinal_amendment_number(value: &str) -> Option<u32> {
+    match value.trim().to_ascii_lowercase().replace(' ', "-").as_str() {
+        "first" => Some(1),
+        "second" => Some(2),
+        "third" => Some(3),
+        "fourth" => Some(4),
+        "fifth" => Some(5),
+        "sixth" => Some(6),
+        "seventh" => Some(7),
+        "eighth" => Some(8),
+        "ninth" => Some(9),
+        "tenth" => Some(10),
+        "eleventh" => Some(11),
+        "twelfth" => Some(12),
+        "thirteenth" => Some(13),
+        "fourteenth" => Some(14),
+        "fifteenth" => Some(15),
+        "sixteenth" => Some(16),
+        "seventeenth" => Some(17),
+        "eighteenth" => Some(18),
+        "nineteenth" => Some(19),
+        "twentieth" => Some(20),
+        "twenty-first" => Some(21),
+        "twenty-second" => Some(22),
+        "twenty-third" => Some(23),
+        "twenty-fourth" => Some(24),
+        "twenty-fifth" => Some(25),
+        "twenty-sixth" => Some(26),
+        "twenty-seventh" => Some(27),
+        _ => None,
+    }
+}
+
 fn parse_chapter_query(q: &str) -> (Option<String>, Option<String>, Option<String>) {
     let chapter_re =
         Regex::new(r"(?i)^\s*(?:(ORS|UTCR)\s+)?chapter\s+(\d{1,3}[A-Z]?)\b\s*(.*)$").unwrap();
@@ -1668,9 +1940,59 @@ fn candidate_matches_authority_family(candidate: &SearchResult, authority_family
         .unwrap_or(false)
 }
 
+fn candidate_matches_hierarchy_filters(
+    candidate: &SearchResult,
+    filters: &SearchRetrievalFilters,
+) -> bool {
+    if let Some(tier) = filters.authority_tier.as_deref() {
+        if !legal_hierarchy::matches_authority_tier(candidate, tier) {
+            return false;
+        }
+    }
+    if let Some(source_role) = filters.source_role.as_deref() {
+        if !legal_hierarchy::matches_source_role(candidate, source_role) {
+            return false;
+        }
+    }
+    if let Some(jurisdiction) = filters.jurisdiction.as_deref() {
+        let metadata = legal_hierarchy::LegalHierarchyMetadata::for_result(candidate);
+        if metadata.jurisdiction_id != normalize_jurisdiction_filter(jurisdiction) {
+            return false;
+        }
+    }
+    if filters.primary_law
+        && !legal_hierarchy::LegalHierarchyMetadata::for_result(candidate).is_primary_law
+    {
+        return false;
+    }
+    if filters.official_commentary
+        && !legal_hierarchy::LegalHierarchyMetadata::for_result(candidate).is_official_commentary
+    {
+        return false;
+    }
+    true
+}
+
+fn normalize_jurisdiction_filter(value: &str) -> &'static str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "us" | "federal" | "united_states" | "united states" => "us",
+        "local" => "local",
+        _ => "or:state",
+    }
+}
+
 fn infer_authority_family_from_citation(citation: &str) -> Option<String> {
     let upper = citation.trim().to_ascii_uppercase();
-    if upper.starts_with("UTCR ") {
+    if upper.starts_with("U.S. CONST")
+        || upper.starts_with("US CONST")
+        || upper.starts_with("UNITED STATES CONST")
+        || upper.contains(" AMENDMENT")
+        || upper.contains("DUE PROCESS CLAUSE")
+    {
+        Some("USCONST".to_string())
+    } else if upper.starts_with("CONAN ") || upper.starts_with("AMDT") || upper.starts_with("ART") {
+        Some("CONAN".to_string())
+    } else if upper.starts_with("UTCR ") {
         Some("UTCR".to_string())
     } else if upper.starts_with("ORS ") {
         Some("ORS".to_string())
@@ -1746,6 +2068,10 @@ fn order_candidates_after_rerank(
 
 fn detect_search_intent(q: &str) -> SearchIntent {
     let citation_re = Regex::new(r"^(?:ORS|UTCR)\s+\d{1,3}[A-Z]?\.\d{3}(?:\([^)]+\))?$").unwrap();
+    let constitution_re = Regex::new(
+        r"(?i)^(?:U\.?\s*S\.?\s+Const\.?|(?:First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth|Eleventh|Twelfth|Thirteenth|Fourteenth|Fifteenth|Sixteenth|Seventeenth|Eighteenth|Nineteenth|Twentieth|Twenty-First|Twenty-Second|Twenty-Third|Twenty-Fourth|Twenty-Fifth|Twenty-Sixth|Twenty-Seventh)\s+Amendment|Due Process Clause|(?:Amdt|Art)[A-Za-z0-9.]+)",
+    )
+    .unwrap();
     let chapter_re = Regex::new(r"(?i)^(?:(?:ORS|UTCR)\s+)?chapter\s+\d{1,3}[A-Z]?$").unwrap();
     let definition_re = Regex::new(r"(?i)^definition\s+of|defines?\b|meaning\s+of").unwrap();
     let deadline_re =
@@ -1761,7 +2087,7 @@ fn detect_search_intent(q: &str) -> SearchIntent {
         Regex::new(r"(?i)operative|effective|amended|repealed|renumbered|session law|current")
             .unwrap();
 
-    if citation_re.is_match(q) {
+    if citation_re.is_match(q) || constitution_re.is_match(q) {
         SearchIntent::Citation
     } else if chapter_re.is_match(q) {
         SearchIntent::Chapter
@@ -1837,6 +2163,13 @@ mod tests {
             kind: "provision".to_string(),
             authority_family: Some("ORS".to_string()),
             authority_type: Some("statute".to_string()),
+            authority_level: Some(90),
+            authority_tier: Some("statute".to_string()),
+            jurisdiction_id: Some("or:state".to_string()),
+            source_role: Some("primary_law".to_string()),
+            primary_law: Some(true),
+            official_commentary: Some(false),
+            controlling_weight: Some(3.0),
             corpus_id: Some("or:ors".to_string()),
             citation: Some(format!("ORS 90.{id}")),
             title: None,
@@ -1898,6 +2231,14 @@ mod tests {
     fn detects_legal_search_intents() {
         assert_eq!(detect_search_intent("ORS 90.300"), SearchIntent::Citation);
         assert_eq!(detect_search_intent("UTCR 2.010"), SearchIntent::Citation);
+        assert_eq!(
+            detect_search_intent("U.S. Const. amend. XIV, § 1"),
+            SearchIntent::Citation
+        );
+        assert_eq!(
+            detect_search_intent("Amdt14.S1.5.1"),
+            SearchIntent::Citation
+        );
         assert_eq!(detect_search_intent("Chapter 90"), SearchIntent::Chapter);
         assert_eq!(
             detect_search_intent("definition of dwelling unit"),
@@ -1908,6 +2249,37 @@ mod tests {
             SearchIntent::Deadline
         );
         assert_eq!(detect_search_intent("civil penalty"), SearchIntent::Penalty);
+    }
+
+    #[test]
+    fn parses_constitution_and_conan_citations() {
+        let article = parse_query_citations("U.S. Const. art. I, § 8, cl. 3");
+        assert_eq!(article[0].authority_family, "USCONST");
+        assert_eq!(article[0].normalized, "U.S. Const. art. I, § 8, cl. 3");
+        assert_eq!(article[0].chapter, "article-1");
+        assert_eq!(
+            article[0].parent.as_deref(),
+            Some("U.S. Const. art. I, § 8")
+        );
+
+        let due_process = analyze_search_query("Fourteenth Amendment due process");
+        assert_eq!(
+            due_process.analysis.inferred_authority_family.as_deref(),
+            Some("USCONST")
+        );
+        assert_eq!(
+            due_process.analysis.citations[0].normalized,
+            "U.S. Const. amend. XIV"
+        );
+        assert_eq!(
+            due_process.analysis.residual_text.as_deref(),
+            Some("due process")
+        );
+
+        let conan = parse_query_citations("Amdt14.S1.5.1");
+        assert_eq!(conan[0].authority_family, "CONAN");
+        assert_eq!(conan[0].normalized, "Amdt14.S1.5.1");
+        assert_eq!(conan[0].chapter, "amendment-14");
     }
 
     #[test]
@@ -2121,6 +2493,9 @@ mod tests {
             q: "security deposit deadline".to_string(),
             r#type: Some("deadline".to_string()),
             authority_family: Some("ORS".to_string()),
+            authority_tier: None,
+            jurisdiction: None,
+            source_role: None,
             chapter: Some("90".to_string()),
             status: Some("all".to_string()),
             mode: Some(SearchMode::Hybrid),
@@ -2134,6 +2509,8 @@ mod tests {
             has_deadlines: Some(true),
             has_penalties: None,
             needs_review: None,
+            primary_law: None,
+            official_commentary: None,
         });
 
         assert_eq!(filters.vector_chunk_type(), Some("deadline_block"));

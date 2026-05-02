@@ -2,7 +2,7 @@
 
 export type QCStatus = "pass" | "warning" | "fail"
 export type LegalStatus = "active" | "repealed" | "renumbered" | "amended"
-export type AuthorityLevel = "constitution" | "statute" | "regulation" | "case" | "agency_guidance"
+export type AuthorityLevel = "constitution" | "statute" | "rule" | "regulation" | "official_commentary" | "case" | "agency_guidance" | "secondary"
 
 export type ChunkType =
   | "full_statute"
@@ -23,6 +23,13 @@ export interface StatuteIdentity {
   title: string
   jurisdiction: string
   corpus: string
+  authority_family?: string
+  authority_level?: number
+  authority_tier?: string
+  source_role?: string
+  primary_law?: boolean
+  official_commentary?: boolean
+  controlling_weight?: number
   chapter: string
   status: LegalStatus
   edition: number
@@ -251,6 +258,16 @@ export interface SearchResult {
   id?: string
   result_type?: string
   kind?: string
+  authority_family?: string
+  authority_type?: string
+  authority_level?: number
+  authority_tier?: string
+  jurisdiction_id?: string
+  source_role?: string
+  primary_law?: boolean
+  official_commentary?: boolean
+  controlling_weight?: number
+  corpus_id?: string
   citation?: string
   title?: string
   chapter?: string
@@ -401,7 +418,7 @@ export interface AskAnswer {
 export interface GraphNode {
   id: string
   label: string
-  type: "Statute" | "Provision" | "CitationMention" | "Chapter" | "Definition" | "Exception" | "Deadline" | "Penalty"
+  type: "Statute" | "Provision" | "CitationMention" | "Chapter" | "Definition" | "Exception" | "Deadline" | "Penalty" | "Source"
   status?: LegalStatus
   qc_status?: QCStatus
 }
@@ -420,6 +437,9 @@ export interface GraphEdge {
     | "DEFINES"
     | "EXCEPTION_TO"
     | "HAS_DEADLINE"
+    | "ANNOTATES"
+    | "INTERPRETS"
+    | "HAS_COMMENTARY"
 }
 
 export interface QCRunSummary {
@@ -744,6 +764,13 @@ export interface AuthoritySuggestion {
   canonical_id: string
   title: string
   status: LegalStatus
+  authority_family?: string
+  authority_level?: number
+  authority_tier?: string
+  source_role?: string
+  primary_law?: boolean
+  official_commentary?: boolean
+  controlling_weight?: number
   edition_year: number
   snippet: string
   cites_count: number

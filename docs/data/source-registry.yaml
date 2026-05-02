@@ -1339,6 +1339,98 @@
       "docs_url": "https://uscode.house.gov/download/download.shtml"
     },
     {
+      "source_id": "congress_gov_us_constitution",
+      "name": "U.S. Constitution",
+      "owner": "Library of Congress / Congress.gov",
+      "jurisdiction": "us",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "constitutional text",
+        "articles",
+        "amendments",
+        "clauses",
+        "source provenance"
+      ],
+      "update_frequency": "stable with official web updates",
+      "rate_limits_terms": "Use Congress.gov static pages and cache by source hash.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Dedicated Congress.gov Constitution connector.",
+      "fallback_ingestion_method": "U.S. Constitution Literal Print PDF",
+      "graph_nodes_created": [
+        "LegalCorpus",
+        "CorpusEdition",
+        "SourceDocument",
+        "SourcePage",
+        "LegalTextIdentity",
+        "LegalTextVersion",
+        "Provision",
+        "RetrievalChunk"
+      ],
+      "graph_edges_created": [
+        "HAS_EDITION",
+        "HAS_VERSION",
+        "CONTAINS",
+        "DERIVED_FROM",
+        "SOURCE_FOR"
+      ],
+      "connector_status": "implemented",
+      "priority": "P0",
+      "risks": [
+        "Official web text and literal-print PDF must remain hash-provenanced."
+      ],
+      "source_url": "https://constitution.congress.gov/constitution/",
+      "docs_url": "https://constitution.congress.gov/"
+    },
+    {
+      "source_id": "congress_gov_constitution_annotated",
+      "name": "Constitution Annotated",
+      "owner": "Congressional Research Service / Library of Congress",
+      "jurisdiction": "us",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "data_types": [
+        "official constitutional analysis",
+        "CONAN essay hierarchy",
+        "Supreme Court citations",
+        "interpretive commentary"
+      ],
+      "update_frequency": "regularly updated web resource",
+      "rate_limits_terms": "Use Congress.gov browse and essay pages; cache by source hash.",
+      "robots_acceptable_use": "needs_review",
+      "preferred_ingestion_method": "Dedicated Congress.gov CONAN connector with browse discovery.",
+      "fallback_ingestion_method": "GovInfo CONAN PDF archives",
+      "graph_nodes_created": [
+        "LegalCorpus",
+        "CorpusEdition",
+        "SourceDocument",
+        "SourcePage",
+        "LegalTextIdentity",
+        "LegalTextVersion",
+        "Commentary",
+        "RetrievalChunk",
+        "ExternalLegalCitation"
+      ],
+      "graph_edges_created": [
+        "HAS_EDITION",
+        "HAS_VERSION",
+        "ANNOTATES",
+        "INTERPRETS",
+        "HAS_COMMENTARY",
+        "DERIVED_FROM"
+      ],
+      "connector_status": "implemented",
+      "priority": "P0",
+      "risks": [
+        "CONAN is official analysis, not controlling text by itself.",
+        "Case-law links remain external citations until full case ingestion lands."
+      ],
+      "source_url": "https://constitution.congress.gov/browse/",
+      "docs_url": "https://constitution.congress.gov/about/constitution-annotated/"
+    },
+    {
       "source_id": "congress_gov_api",
       "name": "Congress.gov API",
       "owner": "Library of Congress",

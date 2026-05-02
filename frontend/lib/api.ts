@@ -56,6 +56,10 @@ export interface SearchParams {
   mode?: SearchMode | string
   limit?: number
   offset?: number
+  authority_family?: string
+  authority_tier?: string
+  jurisdiction?: string
+  source_role?: string
   chapter?: string
   status?: string
   semantic_type?: string
@@ -65,6 +69,8 @@ export interface SearchParams {
   has_deadlines?: boolean
   has_penalties?: boolean
   needs_review?: boolean
+  primary_law?: boolean
+  official_commentary?: boolean
 }
 
 async function fetchApi<T>(
@@ -519,6 +525,10 @@ export async function searchWithParams(paramsInput: SearchParams): Promise<Searc
   });
 
   const optionalStringParams = [
+    'authority_family',
+    'authority_tier',
+    'jurisdiction',
+    'source_role',
     'chapter',
     'status',
     'semantic_type',
@@ -536,6 +546,8 @@ export async function searchWithParams(paramsInput: SearchParams): Promise<Searc
     'has_deadlines',
     'has_penalties',
     'needs_review',
+    'primary_law',
+    'official_commentary',
   ] as const
 
   for (const key of optionalBooleanParams) {

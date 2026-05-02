@@ -509,7 +509,19 @@ pub struct Commentary {
     pub canonical_id: Option<String>,
     pub version_id: Option<String>,
     pub source_provision_id: Option<String>,
+    #[serde(default)]
+    pub target_canonical_id: Option<String>,
+    #[serde(default)]
+    pub target_provision_id: Option<String>,
     pub citation: Option<String>,
+    #[serde(default)]
+    pub authority_family: Option<String>,
+    #[serde(default)]
+    pub corpus_id: Option<String>,
+    #[serde(default)]
+    pub authority_level: Option<i32>,
+    #[serde(default)]
+    pub source_role: Option<String>,
     pub commentary_type: String,
     pub text: String,
     pub normalized_text: String,

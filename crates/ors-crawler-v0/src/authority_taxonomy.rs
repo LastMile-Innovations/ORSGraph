@@ -28,8 +28,8 @@ pub fn authority_type_for_family(authority_family: &str) -> &'static str {
     match normalize_family(authority_family).as_str() {
         "USCONST" | "STATECONSTITUTION" => "constitution",
         "FEDERALSTATUTE" | "USC" | "ORS" => "statute",
-        "FEDERALRULE" | "FRCP" | "FRE" | "FRAP" | "CFR" | "UTCR" | "ORCP" | "ORAP"
-        | "OAR" | "SLR" | "LOCALRULE" => "rule",
+        "FEDERALRULE" | "FRCP" | "FRE" | "FRAP" | "CFR" | "UTCR" | "ORCP" | "ORAP" | "OAR"
+        | "SLR" | "LOCALRULE" => "rule",
         "CONAN" | "OFFICIALCOMMENTARY" => "official_commentary",
         "CASELAW" => "case_law",
         _ => "secondary",
@@ -60,11 +60,16 @@ pub fn source_role_for_family(authority_family: &str) -> &'static str {
 }
 
 pub fn jurisdiction_for_family(authority_family: &str, corpus_id: Option<&str>) -> &'static str {
-    if matches!(normalize_family(authority_family).as_str(), "USCONST" | "CONAN")
-        || corpus_id.is_some_and(|id| id.starts_with("us:"))
+    if matches!(
+        normalize_family(authority_family).as_str(),
+        "USCONST" | "CONAN"
+    ) || corpus_id.is_some_and(|id| id.starts_with("us:"))
     {
         "us"
-    } else if matches!(normalize_family(authority_family).as_str(), "SLR" | "LOCALRULE") {
+    } else if matches!(
+        normalize_family(authority_family).as_str(),
+        "SLR" | "LOCALRULE"
+    ) {
         "local"
     } else {
         "or:state"

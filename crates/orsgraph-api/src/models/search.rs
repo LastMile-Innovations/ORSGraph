@@ -176,9 +176,10 @@ pub fn normalized_authority_filter(value: Option<&str>) -> Option<String> {
             "ors" | "or:ors" | "statute" | "statutes" => Some("ORS".to_string()),
             "usconst" | "us_const" | "us:constitution" | "constitution" | "u.s. constitution"
             | "us constitution" => Some("USCONST".to_string()),
-            "conan" | "constitution_annotated" | "constitution annotated" | "official_commentary" => {
-                Some("CONAN".to_string())
-            }
+            "conan"
+            | "constitution_annotated"
+            | "constitution annotated"
+            | "official_commentary" => Some("CONAN".to_string()),
             "utcr" | "or:utcr" | "court_rule" | "court_rules" | "rule" | "rules" => {
                 Some("UTCR".to_string())
             }

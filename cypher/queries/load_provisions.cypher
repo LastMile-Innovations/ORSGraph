@@ -19,6 +19,7 @@ CALL (row) {
         p.schema_version = '1.0.0',
         p.source_system = 'ors_crawler',
         p.jurisdiction_id = CASE
+            WHEN coalesce(row.authority_family, 'ORS') IN ['USCONST', 'CONAN'] THEN 'us'
             WHEN coalesce(row.authority_family, 'ORS') = 'SLR' THEN coalesce(split(row.corpus_id, ':slr')[0], 'or:linn')
             ELSE 'or:state'
         END,
@@ -30,4 +31,6 @@ CALL (row) {
     FOREACH (_ IN CASE WHEN row.authority_family = 'UTCR' THEN [1] ELSE [] END | SET p:UTCRProvision)
     FOREACH (_ IN CASE WHEN row.authority_family = 'SLR' THEN [1] ELSE [] END | SET p:SLRProvision:SupplementaryLocalRuleProvision)
     FOREACH (_ IN CASE WHEN coalesce(row.authority_family, 'ORS') = 'ORS' THEN [1] ELSE [] END | SET p:ORSProvision)
+    FOREACH (_ IN CASE WHEN row.authority_family = 'USCONST' THEN [1] ELSE [] END | SET p:USConstitutionProvision:ConstitutionProvision:PrimaryLaw)
+    FOREACH (_ IN CASE WHEN row.authority_family = 'CONAN' THEN [1] ELSE [] END | SET p:ConstitutionAnnotatedProvision:OfficialCommentary)
 } IN 8 CONCURRENT TRANSACTIONS OF 5000 ROWS

@@ -49,7 +49,44 @@ export const SEMANTIC_FILTERS = [
   { id: "TaxRule", label: "Tax rules" },
 ] as const
 
+export const AUTHORITY_FAMILIES = [
+  { id: "all", label: "Any authority" },
+  { id: "USCONST", label: "U.S. Constitution" },
+  { id: "CONAN", label: "CONAN" },
+  { id: "ORS", label: "ORS" },
+  { id: "UTCR", label: "UTCR" },
+] as const
+
+export const AUTHORITY_TIERS = [
+  { id: "all", label: "Any tier" },
+  { id: "constitution", label: "Constitution" },
+  { id: "statute", label: "Statute" },
+  { id: "rule", label: "Rule" },
+  { id: "official_commentary", label: "Official commentary" },
+  { id: "case_law", label: "Case law" },
+  { id: "secondary", label: "Secondary" },
+] as const
+
+export const SOURCE_ROLES = [
+  { id: "all", label: "Any source role" },
+  { id: "primary_law", label: "Primary law" },
+  { id: "official_commentary", label: "Official commentary" },
+  { id: "case_law", label: "Case law" },
+  { id: "secondary", label: "Secondary" },
+] as const
+
+export const JURISDICTIONS = [
+  { id: "all", label: "Any jurisdiction" },
+  { id: "us", label: "Federal" },
+  { id: "or:state", label: "Oregon" },
+  { id: "local", label: "Local" },
+] as const
+
 export type SearchFiltersState = {
+  authority_family: string
+  authority_tier: string
+  jurisdiction: string
+  source_role: string
   chapter: string
   status: string
   semantic_type: string
@@ -59,9 +96,15 @@ export type SearchFiltersState = {
   has_deadlines: boolean
   has_penalties: boolean
   needs_review: boolean
+  primary_law: boolean
+  official_commentary: boolean
 }
 
 export const DEFAULT_FILTERS: SearchFiltersState = {
+  authority_family: "all",
+  authority_tier: "all",
+  jurisdiction: "all",
+  source_role: "all",
   chapter: "",
   status: "all",
   semantic_type: "all",
@@ -71,6 +114,8 @@ export const DEFAULT_FILTERS: SearchFiltersState = {
   has_deadlines: false,
   has_penalties: false,
   needs_review: false,
+  primary_law: false,
+  official_commentary: false,
 }
 
 interface SearchFiltersProps {
@@ -141,7 +186,71 @@ export function SearchFilters({
         </Section>
 
         <Section title="Authority">
-          <label className="block">
+          <Select
+            value={filters.authority_family}
+            onValueChange={(value) => setFilter("authority_family", value)}
+          >
+            <SelectTrigger className="h-8 w-full text-xs">
+              <SelectValue placeholder="Authority" />
+            </SelectTrigger>
+            <SelectContent>
+              {AUTHORITY_FAMILIES.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={filters.authority_tier}
+            onValueChange={(value) => setFilter("authority_tier", value)}
+          >
+            <SelectTrigger className="mt-2 h-8 w-full text-xs">
+              <SelectValue placeholder="Authority tier" />
+            </SelectTrigger>
+            <SelectContent>
+              {AUTHORITY_TIERS.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={filters.jurisdiction}
+            onValueChange={(value) => setFilter("jurisdiction", value)}
+          >
+            <SelectTrigger className="mt-2 h-8 w-full text-xs">
+              <SelectValue placeholder="Jurisdiction" />
+            </SelectTrigger>
+            <SelectContent>
+              {JURISDICTIONS.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={filters.source_role}
+            onValueChange={(value) => setFilter("source_role", value)}
+          >
+            <SelectTrigger className="mt-2 h-8 w-full text-xs">
+              <SelectValue placeholder="Source role" />
+            </SelectTrigger>
+            <SelectContent>
+              {SOURCE_ROLES.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <label className="mt-2 block">
             <span className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
               <Hash className="h-3 w-3" />
               chapter
@@ -193,6 +302,16 @@ export function SearchFilters({
         </Section>
 
         <Section title="Required signals">
+          <ToggleRow
+            label="Primary law"
+            checked={filters.primary_law}
+            onCheckedChange={(checked) => setFilter("primary_law", checked)}
+          />
+          <ToggleRow
+            label="Official commentary"
+            checked={filters.official_commentary}
+            onCheckedChange={(checked) => setFilter("official_commentary", checked)}
+          />
           <ToggleRow
             label="Current edition"
             checked={filters.current_only}

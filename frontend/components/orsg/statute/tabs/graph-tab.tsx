@@ -87,6 +87,7 @@ function toMiniEdge(edge: { id: string; source: string; target: string; type: st
 function miniNodeType(type: string): GraphNode["type"] {
   if (type === "LegalTextIdentity" || type === "LegalTextVersion") return "Statute"
   if (type === "RetrievalChunk") return "Provision"
+  if (type === "Commentary" || type === "ConstitutionAnnotated") return "Source"
   if (type === "DefinedTerm") return "Definition"
   if (["Provision", "CitationMention", "Chapter", "Definition", "Exception", "Deadline", "Penalty"].includes(type)) {
     return type as GraphNode["type"]
@@ -95,7 +96,7 @@ function miniNodeType(type: string): GraphNode["type"] {
 }
 
 function miniEdgeType(type: string): GraphEdge["type"] {
-  if (["CITES", "MENTIONS_CITATION", "RESOLVES_TO", "HAS_VERSION", "CONTAINS", "DERIVED_FROM", "DEFINES", "EXCEPTION_TO", "HAS_DEADLINE"].includes(type)) {
+  if (["CITES", "MENTIONS_CITATION", "RESOLVES_TO", "HAS_VERSION", "CONTAINS", "DERIVED_FROM", "DEFINES", "EXCEPTION_TO", "HAS_DEADLINE", "ANNOTATES", "INTERPRETS", "HAS_COMMENTARY"].includes(type)) {
     return type as GraphEdge["type"]
   }
   return "CONTAINS"

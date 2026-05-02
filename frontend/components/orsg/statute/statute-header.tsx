@@ -3,6 +3,7 @@
 import { useState } from "react"
 import type { StatutePageResponse } from "@/lib/types"
 import Link from "next/link"
+import { authorityBadges, authorityReason } from "@/lib/authority-taxonomy"
 import { StatusBadge, QCBadge } from "@/components/orsg/badges"
 import { Button } from "@/components/ui/button"
 import { attachAuthority, getMatterSummariesState, type LoadState } from "@/lib/casebuilder/api"
@@ -19,6 +20,15 @@ export function StatuteHeader({
 }) {
   const { identity, current_version, qc, inbound_citations, outbound_citations } = data
   const counts = data.summary_counts
+  const authorityMeta = {
+    ...identity,
+    authority_family:
+      identity.authority_family
+      || (identity.corpus === "us:constitution" ? "USCONST" : undefined)
+      || (identity.corpus === "or:ors" ? "ORS" : undefined),
+    primary_law:
+      identity.primary_law ?? (identity.corpus === "us:constitution" || identity.corpus === "or:ors"),
+  }
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [matterState, setMatterState] = useState<LoadState<MatterSummary[]> | null>(null)
   const [selectedMatter, setSelectedMatter] = useState("")
@@ -75,8 +85,19 @@ export function StatuteHeader({
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <StatusBadge status={identity.status} />
               <QCBadge status={qc.status} />
+              {authorityBadges(authorityMeta).map((badge) => (
+                <span
+                  key={badge}
+                  className="inline-flex items-center rounded border border-primary/20 bg-primary/5 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-primary"
+                >
+                  {badge}
+                </span>
+              ))}
               <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
                 effective {current_version.effective_date}
+              </span>
+              <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                {authorityReason(authorityMeta)}
               </span>
               <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
                 {data.versions.length} versions

@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import type { AuthoritySuggestion } from "@/lib/types"
+import { authorityBadges, authorityReason } from "@/lib/authority-taxonomy"
 import { StatusBadge, SignalBadge } from "./badges"
 import { ArrowRight, Plus } from "lucide-react"
 
@@ -39,6 +40,14 @@ export function AuthorityCard({ authority, onAdd, showAddButton = false, classNa
       </p>
 
       <div className="flex flex-wrap items-center gap-1.5">
+        {authorityBadges(authority).map((badge) => (
+          <span
+            key={badge}
+            className="rounded border border-primary/20 bg-primary/5 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-primary"
+          >
+            {badge}
+          </span>
+        ))}
         {authority.signals.map((s) => (
           <SignalBadge key={s} signal={s} />
         ))}
@@ -46,6 +55,8 @@ export function AuthorityCard({ authority, onAdd, showAddButton = false, classNa
 
       <div className="mt-2 flex items-center justify-between border-t border-border pt-2">
         <div className="flex items-center gap-3 font-mono text-[10px] tabular-nums text-muted-foreground">
+          <span>{authorityReason(authority)}</span>
+          <span className="text-border">|</span>
           <span>edition {authority.edition_year}</span>
           <span className="text-border">|</span>
           <span>cites {authority.cites_count}</span>

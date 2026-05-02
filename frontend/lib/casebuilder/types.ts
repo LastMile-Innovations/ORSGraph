@@ -1117,6 +1117,13 @@ export interface CaseAiActionResponse<T> {
 export interface CaseAuthoritySearchItem {
   id: string
   kind: string
+  authority_family?: string | null
+  authority_level?: number | null
+  authority_tier?: string | null
+  source_role?: string | null
+  primary_law?: boolean | null
+  official_commentary?: boolean | null
+  controlling_weight?: number | null
   citation?: string | null
   canonical_id?: string | null
   title?: string | null

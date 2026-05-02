@@ -1,6 +1,7 @@
 use crate::error::{ApiError, ApiResult};
 use crate::models::api::*;
 use crate::models::search::{SearchResult as SearchResultModel, *};
+use crate::services::legal_hierarchy;
 use neo4rs::{query, Graph, Row};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -157,11 +158,16 @@ impl Neo4jService {
             .execute(
                 query(
                     "MATCH (n:LegalTextIdentity)
-                     WHERE (n.citation = $c OR n.citation = $c_upper OR n.canonical_id = $c)
+                     WHERE (n.citation = $c OR n.citation = $c_upper OR n.canonical_id = $c OR n.canonical_id = $c_upper)
                        AND ($authority_family = '' OR coalesce(n.authority_family, 'ORS') = $authority_family)
                      RETURN n.canonical_id as id, n.citation as citation, n.title as title,
                             n.chapter as chapter, n.status as status,
-                            CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule' ELSE 'statute' END as kind,
+                            CASE
+                              WHEN coalesce(n.authority_family, 'ORS') = 'USCONST' THEN 'constitution'
+                              WHEN coalesce(n.authority_family, 'ORS') = 'CONAN' THEN 'official_commentary'
+                              WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule'
+                              ELSE 'statute'
+                            END as kind,
                             coalesce(n.text, n.title) as text,
                             n.authority_family as authority_family,
                             n.authority_type as authority_type,
@@ -194,11 +200,16 @@ impl Neo4jService {
             .execute(
                 query(
                     "MATCH (n:Provision)
-                     WHERE (n.display_citation = $c OR n.display_citation = $c_upper)
+                     WHERE (n.display_citation = $c OR n.display_citation = $c_upper OR n.provision_id = $c OR n.canonical_id = $c)
                        AND ($authority_family = '' OR coalesce(n.authority_family, 'ORS') = $authority_family)
                      RETURN n.provision_id as id, n.display_citation as citation, null as title,
                             n.chapter as chapter, n.status as status,
-                            CASE WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule_provision' ELSE 'provision' END as kind,
+                            CASE
+                              WHEN coalesce(n.authority_family, 'ORS') = 'USCONST' THEN 'constitution_provision'
+                              WHEN coalesce(n.authority_family, 'ORS') = 'CONAN' THEN 'official_commentary'
+                              WHEN coalesce(n.authority_family, 'ORS') = 'UTCR' THEN 'court_rule_provision'
+                              ELSE 'provision'
+                            END as kind,
                             n.text as text,
                             n.authority_family as authority_family,
                             n.authority_type as authority_type,
@@ -1095,10 +1106,30 @@ impl Neo4jService {
         let authority_type = row.get::<String>("authority_type").ok().or_else(|| {
             authority_type_for_family(authority_family.as_deref()).map(ToString::to_string)
         });
+        let authority_level = row
+            .get::<i64>("authority_level")
+            .ok()
+            .map(|value| value as i32)
+            .or_else(|| {
+                authority_family
+                    .as_deref()
+                    .map(legal_hierarchy::authority_level_for_family)
+            });
+        let source_role = row.get::<String>("source_role").ok().or_else(|| {
+            authority_family
+                .as_deref()
+                .map(legal_hierarchy::source_role_for_family)
+                .map(ToString::to_string)
+        });
         let corpus_id = row
             .get::<String>("corpus_id")
             .ok()
             .or_else(|| corpus_id_for_family(authority_family.as_deref()).map(ToString::to_string));
+        let jurisdiction_id = row.get::<String>("jurisdiction_id").ok().or_else(|| {
+            authority_family.as_deref().map(|family| {
+                legal_hierarchy::jurisdiction_for_family(family, corpus_id.as_deref()).to_string()
+            })
+        });
 
         // Basic snippet generation
         let text: Option<String> = row.get("text").ok();
@@ -1114,6 +1145,15 @@ impl Neo4jService {
         };
 
         let href = match (authority_family.as_deref(), kind.as_str()) {
+            (Some("USCONST"), "constitution" | "statute" | "legaltextidentity") => {
+                format!("/statutes/{}", citation.as_deref().unwrap_or(&id))
+            }
+            (Some("USCONST"), "constitution_provision" | "provision") => format!(
+                "/statutes/{}?provision={}",
+                citation.as_deref().unwrap_or(&id),
+                id
+            ),
+            (Some("CONAN"), _) => format!("/search?q={}", citation.as_deref().unwrap_or(&id)),
             (Some("UTCR"), "court_rule" | "legaltextidentity" | "utcrrule") => {
                 format!("/rules/utcr/{}", citation.as_deref().unwrap_or(&id))
             }
@@ -1135,11 +1175,18 @@ impl Neo4jService {
         let mut semantic_types = semantic_types_for_search_kind(&kind);
         seed_history_semantic_types(&mut semantic_types, &id, &kind, &snippet);
 
-        Ok(SearchResultModel {
+        let mut result = SearchResultModel {
             id,
             kind,
             authority_family,
             authority_type,
+            authority_level,
+            authority_tier: None,
+            jurisdiction_id,
+            source_role,
+            primary_law: None,
+            official_commentary: None,
+            controlling_weight: None,
             corpus_id,
             citation: citation.clone(),
             title,
@@ -1166,7 +1213,9 @@ impl Neo4jService {
                 source_note_id: row.get("source_note_id").ok(),
             }),
             graph: None,
-        })
+        };
+        legal_hierarchy::enrich_result(&mut result);
+        Ok(result)
     }
 
     pub async fn list_statutes(
@@ -2966,7 +3015,15 @@ impl Neo4jService {
 
 fn infer_authority_family_from_citation(citation: &str) -> Option<String> {
     let upper = citation.trim().to_ascii_uppercase();
-    if upper.starts_with("UTCR ") {
+    if upper.starts_with("U.S. CONST")
+        || upper.starts_with("US CONST")
+        || upper.starts_with("UNITED STATES CONST")
+        || upper.contains(" AMENDMENT")
+    {
+        Some("USCONST".to_string())
+    } else if upper.starts_with("CONAN ") || upper.starts_with("AMDT") || upper.starts_with("ART") {
+        Some("CONAN".to_string())
+    } else if upper.starts_with("UTCR ") {
         Some("UTCR".to_string())
     } else if upper.starts_with("ORS ") {
         Some("ORS".to_string())
@@ -2977,6 +3034,8 @@ fn infer_authority_family_from_citation(citation: &str) -> Option<String> {
 
 fn authority_type_for_family(authority_family: Option<&str>) -> Option<&'static str> {
     match authority_family {
+        Some("USCONST") => Some("constitution"),
+        Some("CONAN") => Some("official_commentary"),
         Some("UTCR") => Some("court_rule"),
         Some("ORS") => Some("statute"),
         _ => None,
@@ -2985,6 +3044,8 @@ fn authority_type_for_family(authority_family: Option<&str>) -> Option<&'static 
 
 fn corpus_id_for_family(authority_family: Option<&str>) -> Option<&'static str> {
     match authority_family {
+        Some("USCONST") => Some("us:constitution"),
+        Some("CONAN") => Some("us:conan"),
         Some("UTCR") => Some("or:utcr"),
         Some("ORS") => Some("or:ors"),
         _ => None,

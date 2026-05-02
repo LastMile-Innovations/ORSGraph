@@ -8,6 +8,10 @@ type SearchPageParams = {
   mode?: string
   limit?: string
   offset?: string
+  authority_family?: string
+  authority_tier?: string
+  jurisdiction?: string
+  source_role?: string
   chapter?: string
   status?: string
   semantic_type?: string
@@ -17,6 +21,8 @@ type SearchPageParams = {
   has_deadlines?: string
   has_penalties?: string
   needs_review?: string
+  primary_law?: string
+  official_commentary?: string
 }
 
 function boolParam(value?: string) {
@@ -40,6 +46,10 @@ export default async function SearchPage({
   const initialLimit = numberParam(params.limit, 20)
   const initialOffset = Math.max(0, Number(params.offset || 0) || 0)
   const initialFilters = {
+    authority_family: params.authority_family || "all",
+    authority_tier: params.authority_tier || "all",
+    jurisdiction: params.jurisdiction || "all",
+    source_role: params.source_role || "all",
     chapter: params.chapter || "",
     status: params.status || "all",
     semantic_type: params.semantic_type || "all",
@@ -49,6 +59,8 @@ export default async function SearchPage({
     has_deadlines: boolParam(params.has_deadlines),
     has_penalties: boolParam(params.has_penalties),
     needs_review: boolParam(params.needs_review),
+    primary_law: boolParam(params.primary_law),
+    official_commentary: boolParam(params.official_commentary),
   }
 
   const responseState = q

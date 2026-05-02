@@ -6,9 +6,9 @@ import "./globals.css"
 const enableVercelAnalytics = process.env.VERCEL === "1"
 
 export const metadata: Metadata = {
-  title: "ORSGraph — Legal Operating Environment",
+  title: "ORSGraph - Legal Operating Environment",
   description:
-    "Source-first legal graph for Oregon Revised Statutes. Statute intelligence, citation graph, fact-check, and complaint analysis.",
+    "Source-first legal graph for controlling, persuasive, and official analytical authorities.",
   generator: "v0.app",
 }
 

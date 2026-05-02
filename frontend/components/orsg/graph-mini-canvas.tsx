@@ -13,6 +13,7 @@ const NODE_TYPE_COLOR: Record<GraphNode["type"], string> = {
   Exception: "fill-warning",
   Deadline: "fill-chart-3",
   Penalty: "fill-destructive",
+  Source: "fill-muted-foreground",
 }
 
 const EDGE_TYPE_COLOR: Record<GraphEdge["type"], string> = {
@@ -25,6 +26,9 @@ const EDGE_TYPE_COLOR: Record<GraphEdge["type"], string> = {
   DEFINES: "stroke-chart-1",
   EXCEPTION_TO: "stroke-warning",
   HAS_DEADLINE: "stroke-chart-3",
+  ANNOTATES: "stroke-primary",
+  INTERPRETS: "stroke-primary",
+  HAS_COMMENTARY: "stroke-muted-foreground",
 }
 
 interface Props {

@@ -55,6 +55,11 @@ pub fn connector_for(
         Box::new(crate::oregon_leg_odata::OregonLegODataConnector::new(
             entry, options,
         ))
+    } else if matches!(
+        entry.source_id.as_str(),
+        "congress_gov_us_constitution" | "congress_gov_constitution_annotated"
+    ) {
+        Box::new(crate::congress_constitution::CongressConstitutionConnector::new(entry, options))
     } else {
         Box::new(RegistryBackedConnector { entry, options })
     }
@@ -372,6 +377,8 @@ fn normalize_text(value: &str) -> String {
 
 fn authority_family(entry: &SourceRegistryEntry) -> String {
     match entry.source_id.as_str() {
+        "congress_gov_us_constitution" => "USCONST",
+        "congress_gov_constitution_annotated" => "CONAN",
         "or_leg_orcp" => "ORCP",
         "or_sos_oar" => "OAR",
         "ojd_utcr" => "UTCR",

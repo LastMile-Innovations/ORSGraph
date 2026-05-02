@@ -7,7 +7,11 @@
 
 CALL {
     MATCH (sd:SourceDocument)
-    WITH sd, CASE WHEN sd.authority_family = 'UTCR' THEN 'or:judicial_department' ELSE 'or:legislature' END AS public_body_id
+    WITH sd, CASE
+        WHEN sd.authority_family IN ['USCONST', 'CONAN'] THEN 'us:library_of_congress'
+        WHEN sd.authority_family = 'UTCR' THEN 'or:judicial_department'
+        ELSE 'or:legislature'
+    END AS public_body_id
     OPTIONAL MATCH (pb:PublicBody {public_body_id: public_body_id})
     FOREACH (_ IN CASE WHEN pb IS NULL THEN [] ELSE [1] END |
         MERGE (pb)-[:PUBLISHED]->(sd)
@@ -48,9 +52,15 @@ CALL {
     MATCH (c:Commentary)
     OPTIONAL MATCH (p:Provision {provision_id: c.source_provision_id})
     OPTIONAL MATCH (ltv:LegalTextVersion {version_id: c.version_id})
-    WITH c, coalesce(p, ltv) AS target
+    OPTIONAL MATCH (targetProvision:Provision)
+    WHERE targetProvision.provision_id = c.target_provision_id
+       OR targetProvision.canonical_id = c.target_canonical_id
+    OPTIONAL MATCH (targetIdentity:LegalTextIdentity {canonical_id: c.target_canonical_id})
+    WITH c, coalesce(targetProvision, p, targetIdentity, ltv) AS target
     FOREACH (_ IN CASE WHEN target IS NULL THEN [] ELSE [1] END |
         MERGE (target)-[:HAS_COMMENTARY]->(c)
+        MERGE (c)-[:ANNOTATES]->(target)
+        MERGE (c)-[:INTERPRETS]->(target)
     )
 } IN 8 CONCURRENT TRANSACTIONS OF 5000 ROWS
 CALL {

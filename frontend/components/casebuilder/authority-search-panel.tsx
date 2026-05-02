@@ -6,6 +6,7 @@ import Link from "next/link"
 import { BookOpen, Link2, Search } from "lucide-react"
 import type { AuthorityTargetType, CaseAuthoritySearchItem, Matter } from "@/lib/casebuilder/types"
 import { attachAuthority, searchAuthority } from "@/lib/casebuilder/api"
+import { authorityBadges, authorityReason } from "@/lib/authority-taxonomy"
 
 interface AuthoritySearchPanelProps {
   matter: Matter
@@ -77,7 +78,7 @@ export function AuthoritySearchPanel({ matter }: AuthoritySearchPanelProps) {
     <section className="overflow-hidden rounded border border-border bg-card">
       <div className="border-b border-border px-4 py-3">
         <h2 className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-          live ORS authority search
+          authority search
         </h2>
         <div className="mt-3 flex gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-2 rounded border border-border bg-background px-2.5">
@@ -88,7 +89,7 @@ export function AuthoritySearchPanel({ matter }: AuthoritySearchPanelProps) {
               onKeyDown={(event) => {
                 if (event.key === "Enter") void onSearch()
               }}
-              placeholder="Search ORS provisions, definitions, duties, remedies..."
+              placeholder="Search Constitution, CONAN, ORS, rules, definitions..."
               className="min-w-0 flex-1 bg-transparent py-2 text-xs focus:outline-none"
             />
           </div>
@@ -153,11 +154,21 @@ export function AuthoritySearchPanel({ matter }: AuthoritySearchPanelProps) {
                 {result.title && (
                   <p className="mt-0.5 text-xs font-medium text-foreground">{result.title}</p>
                 )}
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {authorityBadges(result).map((badge) => (
+                    <span
+                      key={badge}
+                      className="rounded border border-primary/20 bg-primary/5 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-primary"
+                    >
+                      {badge}
+                    </span>
+                  ))}
+                </div>
                 <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-muted-foreground">
                   {result.snippet}
                 </p>
                 <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                  {result.kind} · score {result.score.toFixed(2)}
+                  {result.kind} · {authorityReason(result)} · score {result.score.toFixed(2)}
                 </p>
                 <button
                   type="button"
@@ -173,7 +184,7 @@ export function AuthoritySearchPanel({ matter }: AuthoritySearchPanelProps) {
           </article>
         ))}
         {searched && results.length === 0 && !error && (
-          <div className="p-4 text-xs text-muted-foreground">No matching ORS authority found.</div>
+          <div className="p-4 text-xs text-muted-foreground">No matching authority found.</div>
         )}
       </div>
     </section>

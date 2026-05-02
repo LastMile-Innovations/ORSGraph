@@ -88,8 +88,8 @@ pub fn authority_type_for_family(authority_family: &str) -> &'static str {
     match normalize_family(authority_family).as_str() {
         "USCONST" | "STATECONSTITUTION" => "constitution",
         "FEDERALSTATUTE" | "USC" | "ORS" => "statute",
-        "FEDERALRULE" | "FRCP" | "FRE" | "FRAP" | "CFR" | "UTCR" | "ORCP" | "ORAP"
-        | "OAR" | "SLR" | "LOCALRULE" => "rule",
+        "FEDERALRULE" | "FRCP" | "FRE" | "FRAP" | "CFR" | "UTCR" | "ORCP" | "ORAP" | "OAR"
+        | "SLR" | "LOCALRULE" => "rule",
         "CONAN" | "OFFICIALCOMMENTARY" => "official_commentary",
         "CASELAW" => "case_law",
         _ => "secondary",
@@ -135,11 +135,16 @@ pub fn source_role_for_family(authority_family: &str) -> &'static str {
 }
 
 pub fn jurisdiction_for_family(authority_family: &str, corpus_id: Option<&str>) -> &'static str {
-    if matches!(normalize_family(authority_family).as_str(), "USCONST" | "CONAN")
-        || corpus_id.is_some_and(|id| id.starts_with("us:"))
+    if matches!(
+        normalize_family(authority_family).as_str(),
+        "USCONST" | "CONAN"
+    ) || corpus_id.is_some_and(|id| id.starts_with("us:"))
     {
         "us"
-    } else if matches!(normalize_family(authority_family).as_str(), "SLR" | "LOCALRULE") {
+    } else if matches!(
+        normalize_family(authority_family).as_str(),
+        "SLR" | "LOCALRULE"
+    ) {
         "local"
     } else {
         "or:state"
@@ -152,10 +157,10 @@ pub fn infer_authority_family(citation: &str) -> Option<&'static str> {
         || upper.starts_with("US CONST")
         || upper.starts_with("UNITED STATES CONST")
         || upper.contains(" AMENDMENT")
+        || upper.contains("DUE PROCESS CLAUSE")
     {
         Some("USCONST")
-    } else if upper.starts_with("CONAN ") || upper.starts_with("AMDT") || upper.starts_with("ART")
-    {
+    } else if upper.starts_with("CONAN ") || upper.starts_with("AMDT") || upper.starts_with("ART") {
         Some("CONAN")
     } else if upper.starts_with("UTCR ") {
         Some("UTCR")

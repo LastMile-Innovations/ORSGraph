@@ -94,7 +94,7 @@ export function AskClient({
                 }
               }}
               rows={2}
-              placeholder="Ask anything grounded in Oregon Revised Statutes…"
+              placeholder="Ask anything grounded in source-backed authority..."
               className="flex-1 resize-none bg-transparent py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
             />
             <button

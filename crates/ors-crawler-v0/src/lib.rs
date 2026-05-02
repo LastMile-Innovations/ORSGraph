@@ -1,6 +1,8 @@
 pub mod artifact_store;
+pub mod authority_taxonomy;
 pub mod chunks;
 pub mod citations;
+pub mod congress_constitution;
 pub mod connectors;
 pub mod court_rules_registry_parser;
 pub mod embedding_profiles;
@@ -10,7 +12,6 @@ pub mod graph_batch;
 pub mod hash;
 pub mod ingest_runner;
 pub mod io_jsonl;
-pub mod authority_taxonomy;
 pub mod local_rule_pdf_parser;
 pub mod models;
 pub mod neo4j_loader;

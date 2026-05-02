@@ -2946,6 +2946,13 @@ pub struct AuthoritySearchResponse {
 pub struct AuthoritySearchItem {
     pub id: String,
     pub kind: String,
+    pub authority_family: Option<String>,
+    pub authority_level: Option<i32>,
+    pub authority_tier: Option<String>,
+    pub source_role: Option<String>,
+    pub primary_law: Option<bool>,
+    pub official_commentary: Option<bool>,
+    pub controlling_weight: Option<f32>,
     pub citation: Option<String>,
     pub canonical_id: Option<String>,
     pub title: Option<String>,

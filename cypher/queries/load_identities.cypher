@@ -20,3 +20,5 @@ FOREACH (_ IN CASE WHEN row.authority_family IN ['UTCR', 'SLR'] THEN [1] ELSE []
 FOREACH (_ IN CASE WHEN row.authority_family = 'UTCR' THEN [1] ELSE [] END | SET lti:UTCRRule)
 FOREACH (_ IN CASE WHEN row.authority_family = 'SLR' THEN [1] ELSE [] END | SET lti:SLRRule:SupplementaryLocalRule)
 FOREACH (_ IN CASE WHEN row.authority_family = 'ORS' THEN [1] ELSE [] END | SET lti:ORSSectionIdentity:Statute)
+FOREACH (_ IN CASE WHEN row.authority_family = 'USCONST' THEN [1] ELSE [] END | SET lti:USConstitution:Constitution:PrimaryLaw)
+FOREACH (_ IN CASE WHEN row.authority_family = 'CONAN' THEN [1] ELSE [] END | SET lti:ConstitutionAnnotated:OfficialCommentary)

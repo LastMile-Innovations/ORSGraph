@@ -7,9 +7,13 @@ import type { SearchResponse, SuggestResult } from "@/lib/types"
 import type { DataSource } from "@/lib/data-state"
 import { SearchInput } from "./search-input"
 import {
+  AUTHORITY_FAMILIES,
+  AUTHORITY_TIERS,
   DEFAULT_FILTERS,
+  JURISDICTIONS,
   RESULT_TYPES,
   SEMANTIC_FILTERS,
+  SOURCE_ROLES,
   SearchFilters,
   type SearchFiltersState,
 } from "./search-filters"
@@ -17,6 +21,7 @@ import { SearchResultCard } from "./search-result-card"
 import { SearchEmptyState } from "./search-empty-state"
 import { SearchLoadingState } from "./search-loading-state"
 import { directOpen, searchWithParamsState } from "@/lib/api"
+import { AUTHORITY_LADDER } from "@/lib/authority-taxonomy"
 import { DataStateBanner } from "@/components/orsg/data-state-banner"
 import { cn } from "@/lib/utils"
 
@@ -466,6 +471,7 @@ function SearchRunSummary({
         {response?.rerank?.enabled && (
           <span>rerank {response.rerank.model || "enabled"}</span>
         )}
+        <span>{AUTHORITY_LADDER.join(" > ")}</span>
       </div>
       {response?.warnings && response.warnings.length > 0 && (
         <div className="mt-2 flex flex-col gap-1">
@@ -492,6 +498,10 @@ function SearchError({ message }: { message: string }) {
 
 function normalizeFilters(filters: SearchFiltersState) {
   return {
+    authority_family: filters.authority_family !== "all" ? filters.authority_family : undefined,
+    authority_tier: filters.authority_tier !== "all" ? filters.authority_tier : undefined,
+    jurisdiction: filters.jurisdiction !== "all" ? filters.jurisdiction : undefined,
+    source_role: filters.source_role !== "all" ? filters.source_role : undefined,
     chapter: filters.chapter || undefined,
     status: filters.status !== "all" ? filters.status : undefined,
     semantic_type: filters.semantic_type !== "all" ? filters.semantic_type : undefined,
@@ -501,6 +511,8 @@ function normalizeFilters(filters: SearchFiltersState) {
     has_deadlines: filters.has_deadlines || undefined,
     has_penalties: filters.has_penalties || undefined,
     needs_review: filters.needs_review || undefined,
+    primary_law: filters.primary_law || undefined,
+    official_commentary: filters.official_commentary || undefined,
   }
 }
 
@@ -509,6 +521,22 @@ function buildActiveFilterChips(resultType: string, filters: SearchFiltersState)
   if (resultType !== "all") {
     const type = RESULT_TYPES.find((item) => item.id === resultType)
     chips.push({ id: "type", label: type?.label ?? resultType })
+  }
+  if (filters.authority_family !== "all") {
+    const authority = AUTHORITY_FAMILIES.find((item) => item.id === filters.authority_family)
+    chips.push({ id: "authority_family", label: authority?.label ?? filters.authority_family })
+  }
+  if (filters.authority_tier !== "all") {
+    const tier = AUTHORITY_TIERS.find((item) => item.id === filters.authority_tier)
+    chips.push({ id: "authority_tier", label: tier?.label ?? filters.authority_tier })
+  }
+  if (filters.jurisdiction !== "all") {
+    const jurisdiction = JURISDICTIONS.find((item) => item.id === filters.jurisdiction)
+    chips.push({ id: "jurisdiction", label: jurisdiction?.label ?? filters.jurisdiction })
+  }
+  if (filters.source_role !== "all") {
+    const sourceRole = SOURCE_ROLES.find((item) => item.id === filters.source_role)
+    chips.push({ id: "source_role", label: sourceRole?.label ?? filters.source_role })
   }
   if (filters.chapter) chips.push({ id: "chapter", label: `Chapter ${filters.chapter}` })
   if (filters.status !== "all") chips.push({ id: "status", label: `Status ${filters.status}` })
@@ -522,6 +550,8 @@ function buildActiveFilterChips(resultType: string, filters: SearchFiltersState)
   if (filters.has_deadlines) chips.push({ id: "has_deadlines", label: "Deadlines" })
   if (filters.has_penalties) chips.push({ id: "has_penalties", label: "Penalties" })
   if (filters.needs_review) chips.push({ id: "needs_review", label: "Needs review" })
+  if (filters.primary_law) chips.push({ id: "primary_law", label: "Primary law" })
+  if (filters.official_commentary) chips.push({ id: "official_commentary", label: "Official commentary" })
   return chips
 }
 
@@ -530,6 +560,10 @@ function isDirectOpenCandidate(query: string, mode: string) {
   const trimmed = query.trim()
   if (/\s+(to|through)\s+|[–—-]/i.test(trimmed)) return false
   return /^(?:(?:ORS|UTCR)\s*)?\d{1,3}[A-Z]?\.\d{3}(?:\([A-Za-z0-9]+\))*$/i.test(trimmed)
+    || /^U\.?\s*S\.?\s+Const\.?\s+(?:(?:art\.?)\s+(?:[IVXLCDM]+|\d+)(?:,\s*§+\s*\d+)?(?:,\s*cl\.?\s*\d+)?|(?:amend\.?)\s+(?:[IVXLCDM]+|\d+)(?:,\s*§+\s*\d+)?)$/i.test(trimmed)
+    || /^(?:Amdt\d+|Art[IVXLCDM]+|Art\d+)[A-Za-z0-9.]+$/i.test(trimmed)
+    || /^(?:First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth|Eleventh|Twelfth|Thirteenth|Fourteenth|Fifteenth|Sixteenth|Seventeenth|Eighteenth|Nineteenth|Twentieth|Twenty-First|Twenty-Second|Twenty-Third|Twenty-Fourth|Twenty-Fifth|Twenty-Sixth|Twenty-Seventh)\s+Amendment$/i.test(trimmed)
+    || /^Due Process Clause$/i.test(trimmed)
 }
 
 function toSearchParams(params: Record<string, string | number | boolean | undefined>) {

@@ -13,6 +13,7 @@ import {
   Scale,
 } from "lucide-react"
 import type { SearchResult } from "@/lib/types"
+import { authorityBadges, authorityReason, formatAuthorityTier } from "@/lib/authority-taxonomy"
 import { StatusBadge, SemanticBadge, SourceBadge } from "@/components/orsg/badges"
 import { cn } from "@/lib/utils"
 
@@ -27,6 +28,7 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
   const kind = result.kind ?? result.result_type ?? "result"
   const semanticTypes = result.semantic_types ?? []
   const qcWarnings = result.qc_warnings ?? []
+  const hierarchyBadges = authorityBadges(result)
   const scoreParts = [
     ["exact", result.score_breakdown?.exact],
     ["text", result.fulltext_score ?? result.score_breakdown?.keyword],
@@ -76,6 +78,9 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
             )}
             <StatusBadge status={result.status as any} />
             {result.source_backed && <SourceBadge />}
+            {hierarchyBadges.map((badge) => (
+              <AuthorityBadge key={badge} label={badge} />
+            ))}
           </div>
 
           {semanticTypes.length > 0 && (
@@ -98,6 +103,17 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
           )}
 
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+            {result.authority_level !== undefined && (
+              <span>
+                authority <span className="text-foreground">{result.authority_level}</span>
+              </span>
+            )}
+            {result.authority_tier && (
+              <span>{formatAuthorityTier(result.authority_tier)}</span>
+            )}
+            {result.source_role && (
+              <span title={authorityReason(result)}>{authorityReason(result)}</span>
+            )}
             {result.graph?.cited_by_count !== undefined && (
               <span className="inline-flex items-center gap-1">
                 <Scale className="h-3 w-3" />
@@ -178,6 +194,14 @@ function ScorePill({ label, value, strong = false }: { label: string; value?: nu
       )}
     >
       {label} <span className="text-foreground">{value.toFixed(2)}</span>
+    </span>
+  )
+}
+
+function AuthorityBadge({ label }: { label: string }) {
+  return (
+    <span className="rounded border border-primary/20 bg-primary/5 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-primary">
+      {label}
     </span>
   )
 }
