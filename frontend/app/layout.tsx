@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 import { Analytics } from "@vercel/analytics/next"
+import { AuthSessionProvider } from "@/components/auth-session-provider"
 import { ThemeProvider } from "@/components/theme-provider"
 import "./globals.css"
 
@@ -21,7 +22,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning className="bg-background">
       <body className="font-sans antialiased">
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
-          {children}
+          <AuthSessionProvider>{children}</AuthSessionProvider>
         </ThemeProvider>
         {enableVercelAnalytics && <Analytics />}
       </body>

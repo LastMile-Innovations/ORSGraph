@@ -1,3 +1,5 @@
+import { orsApiBaseUrl } from "./ors-api-url"
+
 export type AdminJobKind =
   | "crawl"
   | "parse"
@@ -186,8 +188,7 @@ export interface AdminSourceDetail {
   }>
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_ORS_API_BASE_URL || "http://localhost:8080/api/v1"
-const API_KEY = process.env.NEXT_PUBLIC_ORS_API_KEY
+const API_BASE_URL = orsApiBaseUrl()
 const API_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_ORS_API_TIMEOUT_MS || 5000)
 
 async function fetchAdmin<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -195,10 +196,6 @@ async function fetchAdmin<T>(endpoint: string, options: RequestInit = {}): Promi
   if (!headers.has("Content-Type") && typeof options.body === "string") {
     headers.set("Content-Type", "application/json")
   }
-  if (API_KEY && !headers.has("x-api-key")) {
-    headers.set("x-api-key", API_KEY)
-  }
-
   const controller = new AbortController()
   let timedOut = false
   const timeout = setTimeout(() => {

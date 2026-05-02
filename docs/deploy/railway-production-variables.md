@@ -6,10 +6,16 @@ This manifest lists required Railway variables by service without secret values.
 
 ### frontend
 
-- `NEXT_PUBLIC_ORS_API_BASE_URL`: canonical browser-visible API base URL, for example `https://orsgraph-api-production.up.railway.app/api/v1`.
-- Do not set backend-only flags here, including `ORS_ADMIN_ENABLED`.
+- `NEXTAUTH_URL`: public frontend URL, currently `https://frontend-production-090c.up.railway.app`.
+- `NEXTAUTH_SECRET`: sealed random secret for encrypted session/JWT state.
+- `ZITADEL_ISSUER`: public Zitadel issuer URL, currently `https://zitadel-production-ff6c.up.railway.app`.
+- `ZITADEL_PROJECT_ID`: optional Zitadel project id when the API audience is the project id instead of the client id.
+- `ZITADEL_CLIENT_ID`: sealed Zitadel OIDC application client id.
+- `ZITADEL_CLIENT_SECRET`: sealed Zitadel OIDC application client secret.
+- `ORS_API_BASE_URL`: server-only API base URL used by the same-origin `/api/ors/*` proxy, for example `https://orsgraph-api-production.up.railway.app/api/v1`.
+- Do not set backend-only flags here, including `ORS_ADMIN_ENABLED`, `ORS_AUTH_ENABLED`, or `ORS_API_KEY` unless a server-only Route Handler explicitly needs service bypass behavior.
 - Do not expose secrets through `NEXT_PUBLIC_*`.
-- `NEXT_PUBLIC_API_URL` is deprecated; use `NEXT_PUBLIC_ORS_API_BASE_URL`.
+- `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_ORS_API_BASE_URL` are deprecated for app calls; use the same-origin `/api/ors/*` proxy.
 
 ### orsgraph-api
 
@@ -19,6 +25,10 @@ This manifest lists required Railway variables by service without secret values.
 - `NEO4J_USER`: Neo4j user.
 - `NEO4J_PASSWORD`: sealed Neo4j password.
 - `ORS_API_KEY`: optional sealed API key.
+- `ORS_AUTH_ENABLED`: set to `true` after the Zitadel OIDC app exists.
+- `ORS_AUTH_ISSUER`: public Zitadel issuer URL, currently `https://zitadel-production-ff6c.up.railway.app`.
+- `ORS_AUTH_AUDIENCE`: Zitadel client id or configured API audience accepted by `orsgraph-api`.
+- `ORS_AUTH_ADMIN_ROLE`: admin role name, currently `orsgraph_admin`.
 - `ORS_ADMIN_ENABLED`: backend-only admin feature flag.
 - `ORS_ADMIN_ALLOW_KILL`: backend-only dangerous-operation flag; keep false unless intentionally running admin jobs.
 - `VOYAGE_API_KEY`: sealed key, required only when rerank/vector features are enabled.
@@ -55,6 +65,23 @@ This manifest lists required Railway variables by service without secret values.
 - `SEED_EDGE_BATCH_SIZE`: default `1000`.
 - `SEED_RELATIONSHIP_BATCH_SIZE`: default `500`.
 - `REBUILD_GRAPH`: only used when `ORS_RUN_STARTUP_CRAWLER=true`; default `false`; set true only when rebuilding graph JSONL from cached official HTML.
+
+### zitadel
+
+- Public Railway domain is attached on port `8080`.
+- `ZITADEL_EXTERNALDOMAIN`: current Railway-generated public host without scheme.
+- `ZITADEL_EXTERNALPORT`: `443`.
+- `ZITADEL_EXTERNALSECURE`: `true`.
+- Create an OIDC web application with redirects:
+  - `https://frontend-production-090c.up.railway.app/api/auth/callback/zitadel`
+  - `http://localhost:3000/api/auth/callback/zitadel`
+- Use authorization code with PKCE, a generated client secret, and JWT access tokens so `orsgraph-api` can verify bearer tokens locally against JWKS.
+- Enable role assertion for authentication or include role claims in the requested scopes; the frontend requests `urn:iam:org:project:roles` and `urn:zitadel:iam:org:projects:roles`.
+- If the API should validate a project audience, set `ZITADEL_PROJECT_ID` on `frontend` and `ORS_AUTH_AUDIENCE` on `orsgraph-api` to the same project id.
+- Configure post-logout redirects:
+  - `https://frontend-production-090c.up.railway.app`
+  - `http://localhost:3000`
+- Create the project role `orsgraph_admin`; only that role should unlock `/admin` and backend admin operations.
 
 ### 2026-05-02 crawler startup audit
 

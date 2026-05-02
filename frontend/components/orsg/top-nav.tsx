@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { signIn, signOut, useSession } from "next-auth/react"
 import { usePathname, useRouter } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import type { FormEvent } from "react"
@@ -14,11 +15,14 @@ import {
   CircleDashed,
   Database,
   GitGraphIcon,
+  LogIn,
+  LogOut,
   Menu,
   MessageSquare,
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  UserCircle,
   WifiOff,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -169,6 +173,7 @@ export function TopNav() {
   const [query, setQuery] = useState("")
   const [mobileOpen, setMobileOpen] = useState(false)
   const status = useRuntimeStatus()
+  const session = useSession()
   const activeLabel = useMemo(
     () => NAV_ITEMS.find((item) => isActiveItem(item, pathname))?.label ?? "Home",
     [pathname],
@@ -290,9 +295,59 @@ export function TopNav() {
 
       <div className="flex shrink-0 items-center gap-1.5">
         <RuntimeStatusMenu status={status} />
+        <AccountMenu status={session.status} user={session.data?.user} roles={session.data?.roles ?? []} />
         <ThemeToggle />
       </div>
     </header>
+  )
+}
+
+function AccountMenu({
+  status,
+  user,
+  roles,
+}: {
+  status: "authenticated" | "loading" | "unauthenticated"
+  user?: { name?: string | null; email?: string | null; image?: string | null }
+  roles: string[]
+}) {
+  const label = status === "authenticated" ? user?.name || user?.email || "Account" : "Sign in"
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-8 gap-2 px-2" aria-label={label}>
+          <UserCircle className="h-4 w-4" />
+          <span className="hidden max-w-32 truncate text-xs lg:inline">{label}</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuLabel className="min-w-0 text-xs">
+          <div className="truncate">{label}</div>
+          {user?.email && <div className="truncate font-normal text-muted-foreground">{user.email}</div>}
+        </DropdownMenuLabel>
+        {roles.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <div className="px-2 py-1.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+              {roles.join(", ")}
+            </div>
+          </>
+        )}
+        <DropdownMenuSeparator />
+        {status === "authenticated" ? (
+          <DropdownMenuItem className="cursor-pointer" onClick={() => signOut({ callbackUrl: "/" })}>
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </DropdownMenuItem>
+        ) : (
+          <DropdownMenuItem className="cursor-pointer" onClick={() => signIn("zitadel")}>
+            <LogIn className="h-4 w-4" />
+            Sign in
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 

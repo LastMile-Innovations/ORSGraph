@@ -17,6 +17,14 @@ pub struct ApiConfig {
     pub neo4j_password: String,
     #[serde(default)]
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub auth_enabled: bool,
+    #[serde(default)]
+    pub auth_issuer: Option<String>,
+    #[serde(default)]
+    pub auth_audience: Option<String>,
+    #[serde(default = "default_auth_admin_role")]
+    pub auth_admin_role: String,
     #[serde(default = "default_casebuilder_storage_dir")]
     pub casebuilder_storage_dir: String,
     #[serde(default = "default_storage_backend")]
@@ -117,6 +125,10 @@ fn default_log_level() -> String {
 
 fn default_casebuilder_storage_dir() -> String {
     "data/casebuilder/uploads".to_string()
+}
+
+fn default_auth_admin_role() -> String {
+    "orsgraph_admin".to_string()
 }
 
 fn default_storage_backend() -> String {
@@ -287,6 +299,18 @@ impl ApiConfig {
         if let Some(value) = read_string("ORS_API_KEY") {
             self.api_key = Some(value);
         }
+        if let Some(value) = read_bool("ORS_AUTH_ENABLED") {
+            self.auth_enabled = value;
+        }
+        if let Some(value) = read_string("ORS_AUTH_ISSUER") {
+            self.auth_issuer = Some(value);
+        }
+        if let Some(value) = read_string("ORS_AUTH_AUDIENCE") {
+            self.auth_audience = Some(value);
+        }
+        if let Some(value) = read_string("ORS_AUTH_ADMIN_ROLE") {
+            self.auth_admin_role = value;
+        }
         if let Some(value) = read_string("ORS_CASEBUILDER_STORAGE_DIR") {
             self.casebuilder_storage_dir = value;
         }
@@ -417,6 +441,30 @@ impl ApiConfig {
     }
 
     fn normalize_and_validate(&mut self) -> Result<(), ConfigError> {
+        self.auth_issuer = self
+            .auth_issuer
+            .as_ref()
+            .map(|value| value.trim().trim_end_matches('/').to_string())
+            .filter(|value| !value.is_empty());
+        self.auth_audience = self
+            .auth_audience
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        self.auth_admin_role = self.auth_admin_role.trim().to_string();
+        if self.auth_admin_role.is_empty() {
+            self.auth_admin_role = default_auth_admin_role();
+        }
+        if self.auth_enabled && self.auth_issuer.is_none() {
+            return Err(ConfigError::Message(
+                "ORS_AUTH_ISSUER is required when ORS_AUTH_ENABLED=true".to_string(),
+            ));
+        }
+        if self.auth_enabled && self.auth_audience.is_none() {
+            return Err(ConfigError::Message(
+                "ORS_AUTH_AUDIENCE is required when ORS_AUTH_ENABLED=true".to_string(),
+            ));
+        }
         self.storage_backend = self.storage_backend.trim().to_ascii_lowercase();
         if !matches!(self.storage_backend.as_str(), "local" | "r2") {
             return Err(ConfigError::Message(format!(
@@ -549,6 +597,10 @@ mod tests {
             neo4j_user: "neo4j".to_string(),
             neo4j_password: "neo4j".to_string(),
             api_key: None,
+            auth_enabled: false,
+            auth_issuer: None,
+            auth_audience: None,
+            auth_admin_role: "orsgraph_admin".to_string(),
             casebuilder_storage_dir: "data/casebuilder/uploads".to_string(),
             storage_backend: "LOCAL".to_string(),
             r2_account_id: None,
@@ -607,6 +659,10 @@ mod tests {
             neo4j_user: "neo4j".to_string(),
             neo4j_password: "neo4j".to_string(),
             api_key: None,
+            auth_enabled: false,
+            auth_issuer: None,
+            auth_audience: None,
+            auth_admin_role: "orsgraph_admin".to_string(),
             casebuilder_storage_dir: "data/casebuilder/uploads".to_string(),
             storage_backend: "r2".to_string(),
             r2_account_id: None,

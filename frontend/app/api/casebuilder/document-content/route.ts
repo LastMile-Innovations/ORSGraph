@@ -1,9 +1,16 @@
+import { getServerSession } from "next-auth"
 import { NextRequest } from "next/server"
+import { authOptions } from "@/lib/auth"
+import { orsBackendApiBaseUrl } from "@/lib/ors-api-url"
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_ORS_API_BASE_URL || "http://localhost:8080/api/v1"
-const API_KEY = process.env.ORS_API_KEY || process.env.NEXT_PUBLIC_ORS_API_KEY
+const API_KEY = process.env.ORS_API_KEY
 
 export async function GET(request: NextRequest) {
+  const session = await getServerSession(authOptions)
+  if (!session?.accessToken && !API_KEY) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
   const matterId = request.nextUrl.searchParams.get("matterId")
   const documentId = request.nextUrl.searchParams.get("documentId")
   if (!matterId || !documentId) {
@@ -11,10 +18,14 @@ export async function GET(request: NextRequest) {
   }
 
   const headers = new Headers()
-  if (API_KEY) headers.set("x-api-key", API_KEY)
+  if (session?.accessToken) {
+    headers.set("Authorization", `Bearer ${session.accessToken}`)
+  } else if (API_KEY) {
+    headers.set("x-api-key", API_KEY)
+  }
 
   const upstream = await fetch(
-    `${API_BASE_URL}/matters/${encodeURIComponent(matterId)}/documents/${encodeURIComponent(documentId)}/content`,
+    `${orsBackendApiBaseUrl()}/matters/${encodeURIComponent(matterId)}/documents/${encodeURIComponent(documentId)}/content`,
     {
       cache: "no-store",
       headers,

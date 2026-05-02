@@ -1,8 +1,12 @@
+use crate::auth::{
+    bearer_token, header_value, is_admin_operation, is_public_path, matter_id_from_path,
+    AuthContext,
+};
 use crate::error::ApiError;
 use crate::state::AppState;
 use axum::{
     extract::{Request, State},
-    http::{header, HeaderMap},
+    http::HeaderMap,
     middleware::Next,
     response::Response,
 };
@@ -15,19 +19,57 @@ const ASSEMBLYAI_WEBHOOK_PATHS: &[&str] = &[
 
 pub async fn optional_api_key_middleware(
     State(state): State<AppState>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
     let expected_key = state.config.api_key.as_deref();
     let webhook_secret = state.config.assemblyai_webhook_secret.as_deref();
+    let path = req.uri().path().to_string();
+    let method = req.method().clone();
 
-    if is_authorized(req.headers(), expected_key)
-        || is_assemblyai_webhook_authorized(req.uri().path(), req.headers(), webhook_secret)
+    let auth = if method == axum::http::Method::OPTIONS || is_public_path(&path) {
+        AuthContext::anonymous()
+    } else if expected_key.is_some_and(|key| !key.trim().is_empty())
+        && is_authorized(req.headers(), expected_key)
     {
-        Ok(next.run(req).await)
+        AuthContext::service()
+    } else if is_assemblyai_webhook_authorized(&path, req.headers(), webhook_secret) {
+        AuthContext::service()
+    } else if let Some(verifier) = state.auth_verifier.as_ref() {
+        let token = bearer_token(req.headers()).ok_or(ApiError::Unauthorized)?;
+        verifier.verify_bearer(token).await?
+    } else if expected_key.is_some_and(|key| !key.trim().is_empty()) {
+        return Err(ApiError::Unauthorized);
     } else {
-        Err(ApiError::Unauthorized)
+        AuthContext::anonymous()
+    };
+
+    if method != axum::http::Method::OPTIONS
+        && !is_public_path(&path)
+        && state.config.auth_enabled
+        && !auth.is_authenticated()
+    {
+        return Err(ApiError::Unauthorized);
     }
+
+    if method != axum::http::Method::OPTIONS
+        && is_admin_operation(&method, &path)
+        && !auth.is_admin(&state.config.auth_admin_role)
+    {
+        return Err(ApiError::Forbidden("Admin role required".to_string()));
+    }
+
+    if method != axum::http::Method::OPTIONS {
+        if let Some(matter_id) = matter_id_from_path(&path) {
+            state
+                .casebuilder_service
+                .authorize_matter_access(&matter_id, &auth, &state.config.auth_admin_role)
+                .await?;
+        }
+    }
+
+    req.extensions_mut().insert(auth);
+    Ok(next.run(req).await)
 }
 
 pub(crate) fn is_authorized(headers: &HeaderMap, expected_key: Option<&str>) -> bool {
@@ -50,17 +92,6 @@ pub(crate) fn is_assemblyai_webhook_authorized(
     ASSEMBLYAI_WEBHOOK_PATHS.contains(&path)
         && header_value(headers, ASSEMBLYAI_WEBHOOK_SECRET_HEADER)
             .is_some_and(|provided| provided == expected_secret)
-}
-
-fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
-    headers.get(name).and_then(|value| value.to_str().ok())
-}
-
-fn bearer_token(headers: &HeaderMap) -> Option<&str> {
-    header_value(headers, header::AUTHORIZATION.as_str())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
 }
 
 #[cfg(test)]

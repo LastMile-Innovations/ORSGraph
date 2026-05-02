@@ -12,6 +12,14 @@ pub struct MatterSummary {
     pub jurisdiction: String,
     pub court: String,
     pub case_number: Option<String>,
+    #[serde(default)]
+    pub owner_subject: Option<String>,
+    #[serde(default)]
+    pub owner_email: Option<String>,
+    #[serde(default)]
+    pub owner_name: Option<String>,
+    #[serde(default)]
+    pub created_by_subject: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub document_count: u64,
@@ -236,6 +244,14 @@ pub struct CreateMatterRequest {
     pub jurisdiction: Option<String>,
     pub court: Option<String>,
     pub case_number: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClaimOwnerlessMattersRequest {
+    pub owner_subject: String,
+    pub owner_email: Option<String>,
+    pub owner_name: Option<String>,
+    pub limit: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

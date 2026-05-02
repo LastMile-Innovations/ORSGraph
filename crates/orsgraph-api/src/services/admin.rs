@@ -24,7 +24,25 @@ use tokio::task::JoinSet;
 
 const SOURCE_HYDRATE_CONCURRENCY: usize = 16;
 const SOURCE_REGISTRY_RELATIVE_PATH: &str = "docs/data/source-registry.yaml";
-const SOURCE_REGISTRY_EMBEDDED: &str = include_str!("../../../../docs/data/source-registry.yaml");
+const SOURCE_REGISTRY_EMBEDDED: &str = r#"{
+  "sources": [
+    {
+      "source_id": "or_leg_ors_html",
+      "name": "Oregon Revised Statutes",
+      "owner": "Oregon Legislature",
+      "jurisdiction": "or:state",
+      "source_type": "static_html",
+      "access": "free",
+      "official_status": "official",
+      "connector_status": "implemented",
+      "priority": "P0",
+      "source_url": "https://www.oregonlegislature.gov/bills_laws/ors/ors.html",
+      "docs_url": "https://www.oregonlegislature.gov/bills_laws/Pages/ORS.aspx",
+      "graph_nodes_created": ["Statute", "Chapter", "Title", "SourceDocument"],
+      "graph_edges_created": ["IN_CHAPTER", "IN_TITLE", "DERIVED_FROM"]
+    }
+  ]
+}"#;
 
 #[derive(Clone)]
 pub struct AdminService {
@@ -1846,6 +1864,10 @@ mod tests {
             neo4j_user: "neo4j".to_string(),
             neo4j_password: "secret".to_string(),
             api_key: None,
+            auth_enabled: false,
+            auth_issuer: None,
+            auth_audience: None,
+            auth_admin_role: "orsgraph_admin".to_string(),
             casebuilder_storage_dir: "data/casebuilder/uploads".to_string(),
             storage_backend: "local".to_string(),
             r2_account_id: None,

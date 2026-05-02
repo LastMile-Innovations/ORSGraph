@@ -60,6 +60,10 @@ export interface MatterSummary {
   jurisdiction: string
   court: string
   case_number: string | null
+  owner_subject?: string | null
+  owner_email?: string | null
+  owner_name?: string | null
+  created_by_subject?: string | null
   created_at: string
   updated_at: string
   document_count: number

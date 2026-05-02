@@ -23,6 +23,7 @@ import {
   askAnswer as mockAskAnswer,
 } from './mock-data';
 import { getSourceById as getDemoSourceById, sourceIndex as demoSourceIndex } from "./mock-sources";
+import { orsApiBaseUrl } from "./ors-api-url";
 import type { GraphFullParams, GraphNeighborhoodParams, GraphViewerResponse } from '@/components/graph/types';
 import {
   classifyApiFailureSource,
@@ -33,7 +34,7 @@ import {
   type DataState,
 } from "./data-state";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_ORS_API_BASE_URL || 'http://localhost:8080/api/v1';
+const API_BASE_URL = orsApiBaseUrl();
 const API_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_ORS_API_TIMEOUT_MS || 5000);
 const reportedFallbacks = new Set<string>();
 

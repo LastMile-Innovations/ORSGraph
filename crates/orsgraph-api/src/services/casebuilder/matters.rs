@@ -1,4 +1,5 @@
 use super::*;
+use crate::auth::AuthContext;
 
 impl CaseBuilderService {
     pub async fn list_matters(&self) -> ApiResult<Vec<MatterSummary>> {
@@ -42,9 +43,62 @@ impl CaseBuilderService {
             .collect()
     }
 
-    pub async fn create_matter(&self, request: CreateMatterRequest) -> ApiResult<MatterBundle> {
+    pub async fn list_matters_for_auth(&self, auth: &AuthContext) -> ApiResult<Vec<MatterSummary>> {
+        if auth.is_service() {
+            return self.list_matters().await;
+        }
+        let subject = auth.subject()?;
+        let rows = self
+            .neo4j
+            .run_rows(
+                query(
+                    "MATCH (m:Matter {owner_subject: $owner_subject})
+                     OPTIONAL MATCH (m)-[:HAS_DOCUMENT]->(doc:CaseDocument)
+                     WITH m, count(DISTINCT doc) AS document_count
+                     OPTIONAL MATCH (m)-[:HAS_FACT]->(fact:Fact)
+                     WITH m, document_count, count(DISTINCT fact) AS fact_count
+                     OPTIONAL MATCH (m)-[:HAS_EVIDENCE]->(evidence:Evidence)
+                     WITH m, document_count, fact_count, count(DISTINCT evidence) AS evidence_count
+                     OPTIONAL MATCH (m)-[:HAS_CLAIM]->(claim:Claim)
+                     WITH m, document_count, fact_count, evidence_count, count(DISTINCT claim) AS claim_count
+                     OPTIONAL MATCH (m)-[:HAS_DRAFT]->(draft:Draft)
+                     WITH m, document_count, fact_count, evidence_count, claim_count, count(DISTINCT draft) AS draft_count
+                     OPTIONAL MATCH (m)-[:HAS_TASK]->(task:Task)
+                     WITH m, document_count, fact_count, evidence_count, claim_count, draft_count,
+                          count(DISTINCT CASE WHEN task.status <> 'done' THEN task END) AS open_task_count
+                     RETURN m.payload AS payload,
+                            document_count, fact_count, evidence_count, claim_count, draft_count, open_task_count
+                     ORDER BY m.updated_at DESC",
+                )
+                .param("owner_subject", subject),
+            )
+            .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                let payload = row
+                    .get::<String>("payload")
+                    .map_err(|error| ApiError::Internal(error.to_string()))?;
+                let mut matter = from_payload::<MatterSummary>(&payload)?;
+                matter.document_count = row_u64(&row, "document_count");
+                matter.fact_count = row_u64(&row, "fact_count");
+                matter.evidence_count = row_u64(&row, "evidence_count");
+                matter.claim_count = row_u64(&row, "claim_count");
+                matter.draft_count = row_u64(&row, "draft_count");
+                matter.open_task_count = row_u64(&row, "open_task_count");
+                Ok(matter)
+            })
+            .collect()
+    }
+
+    pub async fn create_matter(
+        &self,
+        request: CreateMatterRequest,
+        auth: &AuthContext,
+    ) -> ApiResult<MatterBundle> {
         let now = now_string();
         let matter_id = generate_id("matter", &request.name);
+        let owner_subject = auth.subject()?.to_string();
         let matter = MatterSummary {
             matter_id: matter_id.clone(),
             short_name: Some(short_name(&request.name)),
@@ -55,6 +109,10 @@ impl CaseBuilderService {
             jurisdiction: request.jurisdiction.unwrap_or_else(|| "Oregon".to_string()),
             court: request.court.unwrap_or_else(|| "Unassigned".to_string()),
             case_number: request.case_number,
+            owner_subject: Some(owner_subject.clone()),
+            owner_email: auth.email.clone(),
+            owner_name: auth.name.clone(),
+            created_by_subject: Some(owner_subject),
             created_at: now.clone(),
             updated_at: now,
             document_count: 0,
@@ -68,6 +126,69 @@ impl CaseBuilderService {
 
         self.merge_matter(&matter).await?;
         self.get_matter(&matter_id).await
+    }
+
+    pub async fn authorize_matter_access(
+        &self,
+        matter_id: &str,
+        auth: &AuthContext,
+        admin_role: &str,
+    ) -> ApiResult<()> {
+        if auth.is_service() {
+            return Ok(());
+        }
+        let matter = self.get_matter_summary(matter_id).await?;
+        if auth.is_admin(admin_role) {
+            return Ok(());
+        }
+        let subject = auth.subject()?;
+        match matter.owner_subject.as_deref() {
+            Some(owner) if owner == subject => Ok(()),
+            Some(_) => Err(ApiError::Forbidden("Matter access denied".to_string())),
+            None => Err(ApiError::NotFound(format!("Matter {matter_id} not found"))),
+        }
+    }
+
+    pub async fn claim_ownerless_matters(
+        &self,
+        request: ClaimOwnerlessMattersRequest,
+    ) -> ApiResult<Vec<MatterSummary>> {
+        let owner_subject = request.owner_subject.trim();
+        if owner_subject.is_empty() {
+            return Err(ApiError::BadRequest(
+                "owner_subject must not be empty".to_string(),
+            ));
+        }
+        let limit = request.limit.unwrap_or(50).clamp(1, 500) as i64;
+        let rows = self
+            .neo4j
+            .run_rows(
+                query(
+                    "MATCH (m:Matter)
+                     WHERE m.owner_subject IS NULL
+                     RETURN m.payload AS payload
+                     ORDER BY m.updated_at DESC
+                     LIMIT $limit",
+                )
+                .param("limit", limit),
+            )
+            .await?;
+        let mut claimed = Vec::new();
+        for row in rows {
+            let payload = row
+                .get::<String>("payload")
+                .map_err(|error| ApiError::Internal(error.to_string()))?;
+            let mut matter = from_payload::<MatterSummary>(&payload)?;
+            matter.owner_subject = Some(owner_subject.to_string());
+            matter.owner_email = request.owner_email.clone();
+            matter.owner_name = request.owner_name.clone();
+            if matter.created_by_subject.is_none() {
+                matter.created_by_subject = Some(owner_subject.to_string());
+            }
+            matter.updated_at = now_string();
+            claimed.push(self.merge_matter(&matter).await?);
+        }
+        Ok(claimed)
     }
 
     pub async fn get_matter(&self, matter_id: &str) -> ApiResult<MatterBundle> {

@@ -91,10 +91,10 @@ import type {
   VersionTextDiff,
 } from "./types"
 import { getMatterById as getDemoMatterById, matters as demoMatters } from "./mock-matters"
+import { orsApiBaseUrl } from "../ors-api-url"
 import { decodeMatterRouteId } from "./routes"
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_ORS_API_BASE_URL || "http://localhost:8080/api/v1"
-const API_KEY = process.env.NEXT_PUBLIC_ORS_API_KEY
+const API_BASE_URL = orsApiBaseUrl()
 const DEMO_MODE = process.env.NEXT_PUBLIC_ORS_DEMO_MODE === "true"
 const API_TIMEOUT_MS = Number(
   process.env.NEXT_PUBLIC_ORS_CASEBUILDER_API_TIMEOUT_MS ||
@@ -2211,9 +2211,6 @@ async function fetchCaseBuilder<T>(endpoint: string, options: RequestInit = {}):
   if (!headers.has("Content-Type") && typeof options.body === "string") {
     headers.set("Content-Type", "application/json")
   }
-  if (API_KEY && !headers.has("x-api-key")) {
-    headers.set("x-api-key", API_KEY)
-  }
   const controller = new AbortController()
   let timedOut = false
   const timeout = setTimeout(() => {
@@ -2659,6 +2656,10 @@ function normalizeMatterSummary(input: any): MatterSummary {
     jurisdiction: string(input.jurisdiction, "Oregon"),
     court: string(input.court, "Unassigned"),
     case_number: optionalString(input.case_number) ?? null,
+    owner_subject: optionalString(input.owner_subject) ?? null,
+    owner_email: optionalString(input.owner_email) ?? null,
+    owner_name: optionalString(input.owner_name) ?? null,
+    created_by_subject: optionalString(input.created_by_subject) ?? null,
     created_at: string(input.created_at, input.createdAt, ""),
     updated_at: string(input.updated_at, input.updatedAt, ""),
     document_count: number(input.document_count),
@@ -3240,10 +3241,15 @@ function normalizeAssemblyAiTranscriptListResponse(input: any): AssemblyAiTransc
 
 function normalizeAssemblyAiTranscriptDeleteResponse(input: any): AssemblyAiTranscriptDeleteResponse {
   const providerResponse = input.provider_response ?? input.providerResponse ?? {}
+  const deleted =
+    input.deleted != null
+      ? Boolean(input.deleted)
+      : (input.status ?? providerResponse.status) === "deleted"
+
   return {
     id: string(input.id, providerResponse.id),
     status: string(input.status, providerResponse.status, "deleted"),
-    deleted: Boolean(input.deleted ?? input.status === "deleted" ?? providerResponse.status === "deleted"),
+    deleted,
     provider_response: providerResponse,
   }
 }

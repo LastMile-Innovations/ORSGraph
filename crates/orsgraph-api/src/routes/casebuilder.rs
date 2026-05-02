@@ -1,3 +1,4 @@
+use crate::auth::AuthContext;
 use crate::error::{ApiError, ApiResult};
 use crate::models::casebuilder::*;
 use crate::models::search::{SearchMode, SearchQuery};
@@ -6,7 +7,7 @@ use crate::state::AppState;
 use axum::{
     body::Bytes,
     extract::DefaultBodyLimit,
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::{header, HeaderMap, HeaderValue},
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
@@ -29,6 +30,7 @@ struct ListWorkProductsParams {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/matters", get(list_matters).post(create_matter))
+        .route("/admin/matters/claim-ownerless", post(claim_ownerless_matters))
         .route(
             "/matters/:matter_id",
             get(get_matter).patch(patch_matter).delete(delete_matter),
@@ -450,16 +452,40 @@ pub fn routes() -> Router<AppState> {
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
 }
 
-async fn list_matters(State(state): State<AppState>) -> ApiResult<Json<Vec<MatterSummary>>> {
-    Ok(Json(state.casebuilder_service.list_matters().await?))
+async fn list_matters(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+) -> ApiResult<Json<Vec<MatterSummary>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .list_matters_for_auth(&auth)
+            .await?,
+    ))
 }
 
 async fn create_matter(
     State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
     Json(request): Json<CreateMatterRequest>,
 ) -> ApiResult<Json<MatterBundle>> {
     Ok(Json(
-        state.casebuilder_service.create_matter(request).await?,
+        state
+            .casebuilder_service
+            .create_matter(request, &auth)
+            .await?,
+    ))
+}
+
+async fn claim_ownerless_matters(
+    State(state): State<AppState>,
+    Json(request): Json<ClaimOwnerlessMattersRequest>,
+) -> ApiResult<Json<Vec<MatterSummary>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .claim_ownerless_matters(request)
+            .await?,
     ))
 }
 

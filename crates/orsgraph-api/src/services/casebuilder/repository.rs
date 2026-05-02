@@ -11,6 +11,10 @@ impl CaseBuilderService {
                          m.name = $name,
                          m.status = $status,
                          m.matter_type = $matter_type,
+                         m.owner_subject = $owner_subject,
+                         m.owner_email = $owner_email,
+                         m.owner_name = $owner_name,
+                         m.created_by_subject = $created_by_subject,
                          m.updated_at = $updated_at
                      RETURN m.payload AS payload",
                 )
@@ -19,6 +23,10 @@ impl CaseBuilderService {
                 .param("name", matter.name.clone())
                 .param("status", matter.status.clone())
                 .param("matter_type", matter.matter_type.clone())
+                .param("owner_subject", matter.owner_subject.clone())
+                .param("owner_email", matter.owner_email.clone())
+                .param("owner_name", matter.owner_name.clone())
+                .param("created_by_subject", matter.created_by_subject.clone())
                 .param("updated_at", matter.updated_at.clone()),
             )
             .await?;

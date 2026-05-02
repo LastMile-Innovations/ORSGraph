@@ -1,3 +1,5 @@
+import { orsApiBaseUrl } from "./ors-api-url"
+
 export type RuntimeState = "checking" | "connected" | "degraded" | "offline"
 
 export interface RuntimeStatus {
@@ -16,7 +18,7 @@ interface HealthResponse {
   version?: string
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_ORS_API_BASE_URL || "http://localhost:8080/api/v1"
+const API_BASE_URL = orsApiBaseUrl()
 const HEALTH_TIMEOUT_MS = 3500
 
 export const INITIAL_RUNTIME_STATUS: RuntimeStatus = {

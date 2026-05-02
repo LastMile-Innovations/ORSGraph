@@ -1,3 +1,4 @@
+use crate::auth::AuthVerifier;
 use crate::config::ApiConfig;
 use crate::services::admin::AdminService;
 use crate::services::analytics::AnalyticsService;
@@ -34,6 +35,7 @@ pub struct AppState {
     pub home_service: Arc<HomeService>,
     pub casebuilder_service: Arc<CaseBuilderService>,
     pub rule_applicability_resolver: Arc<RuleApplicabilityResolver>,
+    pub auth_verifier: Option<Arc<AuthVerifier>>,
     pub config: Arc<ApiConfig>,
 }
 
@@ -103,6 +105,7 @@ impl AppState {
 
         let stats_service = Arc::new(StatsService::new(neo4j_service.clone()));
         let health_service = Arc::new(HealthService::new(neo4j_service.clone()));
+        let auth_verifier = AuthVerifier::from_config(&config)?.map(Arc::new);
         let config = Arc::new(config);
         let admin_service = Arc::new(AdminService::new(config.clone()).await?);
         let analytics_service = Arc::new(AnalyticsService::new(neo4j_service.clone()));
@@ -152,6 +155,7 @@ impl AppState {
             casebuilder_service,
             rule_applicability_resolver,
             admin_service,
+            auth_verifier,
             config,
         })
     }

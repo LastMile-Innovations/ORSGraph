@@ -4,6 +4,7 @@ impl CaseBuilderService {
     pub async fn ensure_indexes(&self) -> ApiResult<()> {
         let statements = [
             "CREATE CONSTRAINT casebuilder_matter_id IF NOT EXISTS FOR (n:Matter) REQUIRE n.matter_id IS UNIQUE",
+            "CREATE INDEX casebuilder_matter_owner IF NOT EXISTS FOR (n:Matter) ON (n.owner_subject)",
             "CREATE CONSTRAINT casebuilder_party_id IF NOT EXISTS FOR (n:Party) REQUIRE n.party_id IS UNIQUE",
             "CREATE CONSTRAINT casebuilder_document_id IF NOT EXISTS FOR (n:CaseDocument) REQUIRE n.document_id IS UNIQUE",
             "CREATE CONSTRAINT casebuilder_fact_id IF NOT EXISTS FOR (n:Fact) REQUIRE n.fact_id IS UNIQUE",

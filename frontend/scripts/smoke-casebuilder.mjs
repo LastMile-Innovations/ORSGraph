@@ -1,5 +1,5 @@
-const API_BASE = process.env.NEXT_PUBLIC_ORS_API_BASE_URL || process.env.ORS_API_BASE_URL || "http://localhost:8080/api/v1"
-const API_KEY = process.env.NEXT_PUBLIC_ORS_API_KEY || process.env.ORS_API_KEY
+const API_BASE = process.env.ORS_API_BASE_URL || "http://localhost:8080/api/v1"
+const API_KEY = process.env.ORS_API_KEY
 
 const headers = API_KEY ? { "x-api-key": API_KEY } : {}
 let matterId = null
