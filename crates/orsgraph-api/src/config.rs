@@ -272,18 +272,16 @@ impl ApiConfig {
         if let Some(value) = read_string("ORS_API_HOST") {
             self.api_host = value;
         }
-        if let Some(value) = read_u16("ORS_API_PORT") {
+        if let Some(value) = read_u16("ORS_API_PORT").or_else(|| read_u16("PORT")) {
             self.api_port = value;
         }
-        if let Some(value) = read_string("NEO4J_URI").or_else(|| read_string("ORS_NEO4J_URI")) {
+        if let Some(value) = read_string("NEO4J_URI") {
             self.neo4j_uri = value;
         }
-        if let Some(value) = read_string("NEO4J_USER").or_else(|| read_string("ORS_NEO4J_USER")) {
+        if let Some(value) = read_string("NEO4J_USER") {
             self.neo4j_user = value;
         }
-        if let Some(value) =
-            read_string("NEO4J_PASSWORD").or_else(|| read_string("ORS_NEO4J_PASSWORD"))
-        {
+        if let Some(value) = read_string("NEO4J_PASSWORD") {
             self.neo4j_password = value;
         }
         if let Some(value) = read_string("ORS_API_KEY") {

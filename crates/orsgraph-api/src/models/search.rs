@@ -5,6 +5,9 @@ pub struct SearchQuery {
     pub q: String,
     pub r#type: Option<String>,
     pub authority_family: Option<String>,
+    pub authority_tier: Option<String>,
+    pub jurisdiction: Option<String>,
+    pub source_role: Option<String>,
     pub chapter: Option<String>,
     pub status: Option<String>,
     pub mode: Option<SearchMode>,
@@ -18,12 +21,17 @@ pub struct SearchQuery {
     pub has_deadlines: Option<bool>,
     pub has_penalties: Option<bool>,
     pub needs_review: Option<bool>,
+    pub primary_law: Option<bool>,
+    pub official_commentary: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct SearchRetrievalFilters {
     pub result_type: Option<String>,
     pub authority_family: Option<String>,
+    pub authority_tier: Option<String>,
+    pub jurisdiction: Option<String>,
+    pub source_role: Option<String>,
     pub chapter: Option<String>,
     pub status: Option<String>,
     pub semantic_type: Option<String>,
@@ -33,6 +41,8 @@ pub struct SearchRetrievalFilters {
     pub has_deadlines: bool,
     pub has_penalties: bool,
     pub needs_review: bool,
+    pub primary_law: bool,
+    pub official_commentary: bool,
 }
 
 impl SearchRetrievalFilters {
@@ -40,6 +50,9 @@ impl SearchRetrievalFilters {
         Self {
             result_type: normalized_filter(query.r#type.as_deref()),
             authority_family: normalized_authority_filter(query.authority_family.as_deref()),
+            authority_tier: normalized_filter(query.authority_tier.as_deref()),
+            jurisdiction: normalized_filter(query.jurisdiction.as_deref()),
+            source_role: normalized_filter(query.source_role.as_deref()),
             chapter: query
                 .chapter
                 .as_deref()
@@ -54,6 +67,8 @@ impl SearchRetrievalFilters {
             has_deadlines: query.has_deadlines.unwrap_or(false),
             has_penalties: query.has_penalties.unwrap_or(false),
             needs_review: query.needs_review.unwrap_or(false),
+            primary_law: query.primary_law.unwrap_or(false),
+            official_commentary: query.official_commentary.unwrap_or(false),
         }
     }
 
@@ -64,6 +79,15 @@ impl SearchRetrievalFilters {
         }
         if self.authority_family.is_some() {
             names.push("authority_family".to_string());
+        }
+        if self.authority_tier.is_some() {
+            names.push("authority_tier".to_string());
+        }
+        if self.jurisdiction.is_some() {
+            names.push("jurisdiction".to_string());
+        }
+        if self.source_role.is_some() {
+            names.push("source_role".to_string());
         }
         if self.chapter.is_some() {
             names.push("chapter".to_string());
@@ -91,6 +115,12 @@ impl SearchRetrievalFilters {
         }
         if self.needs_review {
             names.push("needs_review".to_string());
+        }
+        if self.primary_law {
+            names.push("primary_law".to_string());
+        }
+        if self.official_commentary {
+            names.push("official_commentary".to_string());
         }
         names
     }
@@ -144,6 +174,11 @@ pub fn normalized_authority_filter(value: Option<&str>) -> Option<String> {
         .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("all"))
         .and_then(|value| match value.to_ascii_lowercase().as_str() {
             "ors" | "or:ors" | "statute" | "statutes" => Some("ORS".to_string()),
+            "usconst" | "us_const" | "us:constitution" | "constitution" | "u.s. constitution"
+            | "us constitution" => Some("USCONST".to_string()),
+            "conan" | "constitution_annotated" | "constitution annotated" | "official_commentary" => {
+                Some("CONAN".to_string())
+            }
             "utcr" | "or:utcr" | "court_rule" | "court_rules" | "rule" | "rules" => {
                 Some("UTCR".to_string())
             }
@@ -271,6 +306,13 @@ pub struct SearchResult {
     pub kind: String,
     pub authority_family: Option<String>,
     pub authority_type: Option<String>,
+    pub authority_level: Option<i32>,
+    pub authority_tier: Option<String>,
+    pub jurisdiction_id: Option<String>,
+    pub source_role: Option<String>,
+    pub primary_law: Option<bool>,
+    pub official_commentary: Option<bool>,
+    pub controlling_weight: Option<f32>,
     pub corpus_id: Option<String>,
     pub citation: Option<String>,
     pub title: Option<String>,

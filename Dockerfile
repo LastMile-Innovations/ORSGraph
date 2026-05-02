@@ -58,9 +58,9 @@ ENV NEO4J_USER=neo4j
 ENV ORS_API_HOST=0.0.0.0
 ENV ORS_API_PORT=8080
 
-# Copy startup script
-COPY docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod +x /app/docker-entrypoint.sh
+# Copy startup scripts
+COPY docker-entrypoint.sh docker-api-entrypoint.sh docker-crawler-entrypoint.sh /app/
+RUN chmod +x /app/docker-entrypoint.sh /app/docker-api-entrypoint.sh /app/docker-crawler-entrypoint.sh
 
 # Command to run
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

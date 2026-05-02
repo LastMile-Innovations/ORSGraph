@@ -377,6 +377,8 @@ pub(crate) enum Command {
         neo4j_password: Option<String>,
         #[arg(long, default_value = "NEO4J_PASSWORD")]
         neo4j_password_env: String,
+        #[arg(long, default_value_t = 100)]
+        batch_size: usize,
         #[arg(long, default_value_t = false)]
         yes: bool,
     },

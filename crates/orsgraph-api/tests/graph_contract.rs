@@ -61,10 +61,19 @@ fn api_queries_use_loader_relationship_vocabulary() {
 fn container_runs_api_by_default_and_keeps_crawler_escape_hatch() {
     let dockerfile = include_str!("../../../Dockerfile");
     let entrypoint = include_str!("../../../docker-entrypoint.sh");
+    let api_entrypoint = include_str!("../../../docker-api-entrypoint.sh");
+    let crawler_entrypoint = include_str!("../../../docker-crawler-entrypoint.sh");
 
     assert!(dockerfile.contains("/app/target/release/orsgraph-api /app/orsgraph-api"));
+    assert!(dockerfile.contains("docker-api-entrypoint.sh"));
+    assert!(dockerfile.contains("docker-crawler-entrypoint.sh"));
     assert!(entrypoint.contains("RUN_CRAWLER_ONLY"));
-    assert!(entrypoint.contains("exec /app/orsgraph-api"));
+    assert!(entrypoint.contains("ORS_CONTAINER_ROLE"));
+    assert!(entrypoint.contains("exec /app/docker-api-entrypoint.sh"));
+    assert!(entrypoint.contains("exec /app/docker-crawler-entrypoint.sh"));
+    assert!(api_entrypoint.contains("exec /app/orsgraph-api"));
+    assert!(crawler_entrypoint.contains("exec /app/ors-crawler-v0"));
+    assert!(crawler_entrypoint.contains("ORS_ALLOW_PRODUCTION_REPLACE"));
 }
 
 #[test]
@@ -106,7 +115,10 @@ fn statute_sidebar_routes_use_live_api_contracts_without_mock_fallbacks() {
         "/statutes/:citation/history",
         "/statutes/:citation/chunks",
     ] {
-        assert!(routes.contains(expected), "missing statute route {expected}");
+        assert!(
+            routes.contains(expected),
+            "missing statute route {expected}"
+        );
     }
 
     for expected in [
@@ -127,7 +139,8 @@ fn statute_sidebar_routes_use_live_api_contracts_without_mock_fallbacks() {
     );
     assert!(frontend_api.contains("fetchApi<StatuteIndexApiResponse>(`/statutes?${params}`)"));
     assert!(frontend_api.contains("fetchApi<SidebarData>(\"/sidebar\")"));
-    assert!(frontend_api.contains("fetchApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)"));
+    assert!(frontend_api
+        .contains("fetchApi<any>(`/statutes/${encodeURIComponent(citationOrCanonicalId)}/page`)"));
     assert!(frontend_api.contains("apiFailureState(\"/statutes\""));
     assert!(frontend_api.contains("apiFailureState(\"/sidebar\", null"));
     assert!(statute_page.contains("state.source === \"empty\""));

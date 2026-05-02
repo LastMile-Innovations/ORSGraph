@@ -839,6 +839,7 @@ async fn main() -> Result<()> {
             neo4j_user,
             neo4j_password,
             neo4j_password_env,
+            batch_size,
             yes,
         } => {
             if !yes {
@@ -858,8 +859,11 @@ async fn main() -> Result<()> {
                 version, is_community
             );
 
-            loader.clear_database().await?;
-            info!("Neo4j database cleared");
+            loader.clear_database(batch_size).await?;
+            info!(
+                "Neo4j database cleared with batch size {}",
+                batch_size.max(1)
+            );
             Ok(())
         }
     }

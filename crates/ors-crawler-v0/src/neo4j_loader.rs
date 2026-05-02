@@ -142,6 +142,14 @@ impl Neo4jLoader {
             )
     }
 
+    fn clear_relationships_query() -> &'static str {
+        "MATCH ()-[r]->() WITH r LIMIT $batchSize DELETE r RETURN count(r) as deleted"
+    }
+
+    fn clear_nodes_query() -> &'static str {
+        "MATCH (n) WITH n LIMIT $batchSize DELETE n RETURN count(n) as deleted"
+    }
+
     /// Deduplicates a vector of items by a key extractor function.
     /// Keeps the first occurrence of each unique key.
     ///
@@ -354,26 +362,59 @@ impl Neo4jLoader {
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if the operation fails
-    pub async fn clear_database(&self) -> Result<()> {
-        // Delete in batches to avoid memory issues
-        let batch_size = 1000;
+    pub async fn clear_database(&self, batch_size: usize) -> Result<()> {
+        let batch_size = batch_size.max(1) as i64;
+        let relationships_deleted = self
+            .delete_in_batches(
+                "relationships",
+                Self::clear_relationships_query(),
+                batch_size,
+            )
+            .await?;
+        let nodes_deleted = self
+            .delete_in_batches("nodes", Self::clear_nodes_query(), batch_size)
+            .await?;
+        info!(
+            "Neo4j clear complete: deleted {} relationships and {} nodes",
+            relationships_deleted, nodes_deleted
+        );
+        Ok(())
+    }
+
+    async fn delete_in_batches(
+        &self,
+        label: &str,
+        query_text: &str,
+        batch_size: i64,
+    ) -> Result<i64> {
+        let mut total_deleted = 0;
+        let mut batches = 0;
+
         loop {
             let mut result = self
                 .graph
-                .execute(query("MATCH (n) WITH n LIMIT $batchSize DETACH DELETE n RETURN count(n) as deleted").param("batchSize", batch_size))
+                .execute(query(query_text).param("batchSize", batch_size))
                 .await?;
-            let row = result.next().await?;
-            match row {
-                Some(r) => {
-                    let deleted: i64 = r.get("deleted").unwrap_or(0);
-                    if deleted == 0 {
-                        break;
-                    }
-                }
-                None => break,
+            let deleted = match result.next().await? {
+                Some(row) => row.get("deleted").unwrap_or(0),
+                None => 0,
+            };
+
+            if deleted == 0 {
+                break;
+            }
+
+            total_deleted += deleted;
+            batches += 1;
+            if batches == 1 || batches % 25 == 0 {
+                info!(
+                    "Deleted {} {} in {} batch(es)",
+                    total_deleted, label, batches
+                );
             }
         }
-        Ok(())
+
+        Ok(total_deleted)
     }
 
     /// Loads jurisdiction nodes into the graph (US and Oregon state).
@@ -2355,6 +2396,19 @@ mod tests {
         let result = Neo4jLoader::with_transaction_batch(query, 5000);
         assert!(result.contains("CALL { WITH row"));
         assert!(result.contains("} IN TRANSACTIONS OF 5000 ROWS"));
+    }
+
+    #[test]
+    fn clear_database_queries_delete_relationships_before_nodes() {
+        let relationships = Neo4jLoader::clear_relationships_query();
+        let nodes = Neo4jLoader::clear_nodes_query();
+
+        assert!(relationships.starts_with("MATCH ()-[r]->()"));
+        assert!(relationships.contains("DELETE r"));
+        assert!(nodes.starts_with("MATCH (n)"));
+        assert!(nodes.contains("DELETE n"));
+        assert!(!relationships.contains("DETACH DELETE"));
+        assert!(!nodes.contains("DETACH DELETE"));
     }
 
     #[test]

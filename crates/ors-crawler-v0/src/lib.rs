@@ -10,6 +10,7 @@ pub mod graph_batch;
 pub mod hash;
 pub mod ingest_runner;
 pub mod io_jsonl;
+pub mod authority_taxonomy;
 pub mod local_rule_pdf_parser;
 pub mod models;
 pub mod neo4j_loader;

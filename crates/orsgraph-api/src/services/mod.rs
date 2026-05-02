@@ -4,6 +4,7 @@ pub mod casebuilder;
 pub mod embedding;
 pub mod graph_expand;
 pub mod health;
+pub mod legal_hierarchy;
 pub mod home;
 pub mod neo4j;
 pub mod object_store;
