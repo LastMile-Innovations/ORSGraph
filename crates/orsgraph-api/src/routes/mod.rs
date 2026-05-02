@@ -2,6 +2,7 @@ pub mod admin;
 pub mod analytics;
 pub mod ask;
 pub mod auth_access;
+pub mod authority;
 pub mod casebuilder;
 pub mod graph;
 pub mod health;

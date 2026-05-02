@@ -434,12 +434,19 @@ export function AdminDashboardClient() {
               <MiniStat label="cache cap" value={performance?.authority_cache_max_capacity ?? 0} />
               <MiniStat label="embed ttl sec" value={performance?.query_embedding_cache_ttl_seconds ?? 0} />
               <MiniStat label="embed cap" value={performance?.query_embedding_cache_max_capacity ?? 0} />
+              <MiniStat label="hotset objs" value={performance?.hotset_object_count ?? 0} />
+              <MiniStat label="hotset bytes" value={performance?.hotset_bytes ?? 0} />
             </div>
             <div className="grid gap-2 text-xs sm:grid-cols-2">
               <PathRow label="manifest" value={performance?.corpus_release_manifest_path ?? "data/graph/corpus_release.json"} />
               <PathRow label="rerank" value={performance?.rerank_policy ?? "low_confidence"} />
               <PathRow label="model spend" value={performance?.model_spend_policy ?? "delta_only_by_embedding_input_hash"} />
               <PathRow label="edge" value={performance?.edge_authority_base_url ?? "route cache"} />
+              <PathRow label="hotset manifest" value={performance?.hotset_manifest_path ?? "not built locally"} />
+              <PathRow label="r2 hit" value={formatRatio(performance?.r2_hit_ratio)} />
+              <PathRow label="cache hit" value={formatRatio(performance?.cache_hit_ratio)} />
+              <PathRow label="fallbacks" value={performance?.railway_fallback_count == null ? "pending telemetry" : formatNumber(performance.railway_fallback_count)} />
+              <PathRow label="metrics" value={performance?.edge_metrics_source ?? "response headers"} />
               <PathRow label="graph gb" value={formatGb(performance?.estimated_graph_storage_gb)} />
               <PathRow label="r2 gb" value={formatGb(performance?.estimated_r2_storage_gb)} />
             </div>
@@ -1093,6 +1100,11 @@ function formatNumber(value?: number) {
 
 function formatGb(value?: number) {
   return `${(value ?? 0).toLocaleString(undefined, { maximumFractionDigits: 3 })} GB`
+}
+
+function formatRatio(value?: number | null) {
+  if (value == null) return "pending telemetry"
+  return `${(value * 100).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`
 }
 
 function formatDateTime(value: string) {

@@ -5,7 +5,7 @@ import { StatuteHeader } from "@/components/orsg/statute/statute-header"
 import { StatuteTabs } from "@/components/orsg/statute/statute-tabs"
 import { StatuteInspectorDrawer, StatuteRightInspector } from "@/components/orsg/statute/statute-right-inspector"
 import { DataStateBanner } from "@/components/orsg/data-state-banner"
-import { getStatutePageDataState } from "@/lib/api"
+import { getCachedStatutePageDataState } from "@/lib/authority-server-cache"
 import type { DataSource } from "@/lib/data-state"
 
 type StatuteDetailParams = {
@@ -22,7 +22,7 @@ export default async function StatutePage({
   const { id } = await params
   const query = await searchParams
   const decoded = decodeURIComponent(id)
-  const state = await getStatutePageDataState(decoded)
+  const state = await getCachedStatutePageDataState(decoded)
   const data = state.data
   if (!data && state.source === "empty") notFound()
   if (!data) {

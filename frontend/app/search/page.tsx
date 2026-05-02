@@ -1,6 +1,6 @@
 import { Shell } from "@/components/orsg/shell"
 import { SearchClient } from "@/components/orsg/search/search-client"
-import { searchWithParamsState } from "@/lib/api"
+import { getCachedSearchWithParamsState } from "@/lib/authority-server-cache"
 
 type SearchPageParams = {
   q?: string
@@ -64,7 +64,7 @@ export default async function SearchPage({
   }
 
   const responseState = q
-    ? await searchWithParamsState({
+    ? await getCachedSearchWithParamsState({
         q,
         type: initialType,
         mode: initialMode,

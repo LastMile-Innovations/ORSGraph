@@ -1,14 +1,6 @@
 import type { NextAuthOptions } from "next-auth"
+import ZitadelProvider, { type ZitadelProfile } from "next-auth/providers/zitadel"
 import { orsBackendApiBaseUrl } from "./ors-api-url"
-
-type ZitadelProfile = {
-  sub: string
-  email?: string
-  name?: string
-  preferred_username?: string
-  picture?: string
-  [key: string]: unknown
-}
 
 type AccessStatus = "active" | "pending" | "blocked" | "unknown"
 
@@ -24,13 +16,13 @@ const scopes = [
   "profile",
   "email",
   "offline_access",
-  "urn:iam:org:project:roles",
-  "urn:zitadel:iam:org:projects:roles",
 ]
 
 if (process.env.ZITADEL_PROJECT_ID) {
   scopes.push(`urn:zitadel:iam:org:project:id:${process.env.ZITADEL_PROJECT_ID}:aud`)
+  scopes.push("urn:zitadel:iam:org:projects:roles")
 }
+scopes.push("urn:iam:org:project:roles")
 
 export const authOptions: NextAuthOptions = {
   pages: {
@@ -41,20 +33,15 @@ export const authOptions: NextAuthOptions = {
     strategy: "jwt",
   },
   providers: [
-    {
-      id: "zitadel",
-      name: "Zitadel",
-      type: "oauth",
-      wellKnown: issuer ? `${issuer}/.well-known/openid-configuration` : undefined,
+    ZitadelProvider({
+      issuer: issuer ?? "",
       authorization: {
         params: {
-          scope: scopes.join(" "),
+          scope: Array.from(new Set(scopes)).join(" "),
         },
       },
-      idToken: true,
-      checks: ["pkce", "state"],
-      clientId: process.env.ZITADEL_CLIENT_ID,
-      clientSecret: process.env.ZITADEL_CLIENT_SECRET,
+      clientId: process.env.ZITADEL_CLIENT_ID ?? "",
+      clientSecret: process.env.ZITADEL_CLIENT_SECRET ?? "",
       profile(profile: ZitadelProfile) {
         return {
           id: profile.sub,
@@ -63,20 +50,24 @@ export const authOptions: NextAuthOptions = {
           image: profile.picture,
         }
       },
-    },
+    }),
   ],
   callbacks: {
     async jwt({ token, account, profile, trigger }) {
+      const roles = new Set(Array.isArray(token.roles) ? token.roles.filter(isString) : [])
       if (account) {
         token.accessToken = account.access_token
         token.idToken = account.id_token
         token.accessCheckedAt = 0
+        addRolesFromClaims(decodeJwtPayload(account.access_token), roles)
+        addRolesFromClaims(decodeJwtPayload(account.id_token), roles)
       }
       if (profile) {
         const zitadelProfile = profile as ZitadelProfile
         token.sub = zitadelProfile.sub || token.sub
-        token.roles = rolesFromProfile(zitadelProfile)
+        addRolesFromClaims(zitadelProfile, roles)
       }
+      token.roles = Array.from(roles).sort()
       if (shouldRefreshAccess(token.accessCheckedAt, trigger) && typeof token.accessToken === "string") {
         const access = await fetchAccessState(token.accessToken)
         token.accessStatus = access.accessStatus
@@ -137,14 +128,27 @@ function normalizeAccessStatus(value: unknown): AccessStatus {
   return value === "active" || value === "pending" || value === "blocked" ? value : "unknown"
 }
 
-function rolesFromProfile(profile: ZitadelProfile) {
+export function rolesFromZitadelClaims(claims: Record<string, unknown> | null | undefined) {
   const roles = new Set<string>()
-  for (const [key, value] of Object.entries(profile)) {
-    if (key === "roles" || key === "role" || key.endsWith(":roles") || key.includes("project:roles")) {
-      collectRoles(value, roles)
-    }
-  }
+  addRolesFromClaims(claims, roles)
   return Array.from(roles).sort()
+}
+
+function addRolesFromClaims(claims: Record<string, unknown> | null | undefined, roles: Set<string>) {
+  if (!claims) return
+  for (const [key, value] of Object.entries(claims)) {
+    if (isRoleClaimKey(key)) collectRoles(value, roles)
+  }
+}
+
+function isRoleClaimKey(key: string) {
+  return (
+    key === "roles" ||
+    key === "role" ||
+    key === "urn:iam:org:project:roles" ||
+    key === "urn:zitadel:iam:org:project:roles" ||
+    /^urn:zitadel:iam:org:project:[^:]+:roles$/.test(key)
+  )
 }
 
 function collectRoles(value: unknown, roles: Set<string>) {
@@ -157,9 +161,25 @@ function collectRoles(value: unknown, roles: Set<string>) {
     return
   }
   if (value && typeof value === "object") {
-    for (const [key, nested] of Object.entries(value)) {
+    for (const key of Object.keys(value)) {
       if (key.trim()) roles.add(key.trim())
-      collectRoles(nested, roles)
     }
   }
+}
+
+function decodeJwtPayload(token: unknown): Record<string, unknown> | null {
+  if (typeof token !== "string") return null
+  const [, payload] = token.split(".")
+  if (!payload) return null
+  try {
+    const decoded = Buffer.from(payload, "base64url").toString("utf8")
+    const parsed = JSON.parse(decoded) as unknown
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string"
 }

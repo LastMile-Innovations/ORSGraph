@@ -1,10 +1,10 @@
 use crate::error::ApiResult;
 use crate::models::search::*;
+use crate::routes::authority::authority_headers_for_state;
 use crate::state::AppState;
 use axum::{
     Json,
     extract::{Query, State},
-    http::{HeaderMap, HeaderValue},
     response::IntoResponse,
 };
 
@@ -14,7 +14,7 @@ pub async fn search(
 ) -> ApiResult<impl IntoResponse> {
     let response = state.search_service.search(query).await?;
     Ok((
-        authority_headers(&response.cache_status, &response.corpus_release_id),
+        authority_headers_for_state(&state, &response.cache_status),
         Json(response),
     ))
 }
@@ -28,7 +28,7 @@ pub async fn open(
         .direct_open(&params.q, params.authority_family.as_deref())
         .await?;
     Ok((
-        authority_headers(&response.cache_status, &response.corpus_release_id),
+        authority_headers_for_state(&state, &response.cache_status),
         Json(response),
     ))
 }
@@ -54,15 +54,4 @@ pub struct OpenParams {
 pub struct SuggestParams {
     pub q: String,
     pub limit: Option<u32>,
-}
-
-fn authority_headers(cache_status: &str, release_id: &str) -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    if let Ok(value) = HeaderValue::from_str(cache_status) {
-        headers.insert("x-ors-cache", value);
-    }
-    if let Ok(value) = HeaderValue::from_str(release_id) {
-        headers.insert("x-ors-corpus-release", value);
-    }
-    headers
 }

@@ -13,8 +13,7 @@ This manifest lists required Railway variables by service without secret values.
 - `ZITADEL_CLIENT_ID`: sealed Zitadel OIDC application client id.
 - `ZITADEL_CLIENT_SECRET`: sealed Zitadel OIDC application client secret.
 - `ORS_API_BASE_URL`: server-only API base URL used by the same-origin `/api/ors/*` proxy, for example `https://orsgraph-api-production.up.railway.app/api/v1`.
-- `ORS_AUTHORITY_HOTSET_BASE_URL`: optional R2/custom-domain JSON hotset base used by `/api/authority/*` before API fallback.
-- `ORS_AUTHORITY_ROUTE_CACHE_SECONDS`, `ORS_AUTHORITY_ROUTE_SWR_SECONDS`: optional same-origin authority route cache controls.
+- `ORS_AUTHORITY_HOTSET_BASE_URL`: optional full R2/custom-domain release prefix used by `/api/authority/*` before API fallback, for example `https://authority.example.com/authority-hotset/release%3A2026-05-02`.
 - Do not set backend-only flags here, including `ORS_ADMIN_ENABLED`, `ORS_AUTH_ENABLED`, or `ORS_API_KEY` unless a server-only Route Handler explicitly needs service bypass behavior.
 - Do not expose secrets through `NEXT_PUBLIC_*`.
 - `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_ORS_API_BASE_URL` are deprecated for app calls; use the same-origin `/api/ors/*` proxy.
@@ -39,7 +38,6 @@ This manifest lists required Railway variables by service without secret values.
 - `ORS_AUTHORITY_CACHE_TTL_SECONDS`, `ORS_AUTHORITY_CACHE_MAX_CAPACITY`: API-side authority response cache controls.
 - `ORS_QUERY_EMBEDDING_CACHE_TTL_SECONDS`, `ORS_QUERY_EMBEDDING_CACHE_MAX_CAPACITY`: query embedding cache controls.
 - `ORS_RERANK_POLICY`: `explicit`, `low_confidence`, or `always`; use `explicit` or `low_confidence` to keep runtime model calls off the default path.
-- `ORS_AUTHORITY_EDGE_BASE_URL`: optional public edge/R2 authority base URL surfaced in admin cost/cache reporting.
 - `ORS_STORAGE_BACKEND`: `local` or `r2`.
 - `ORS_R2_ACCOUNT_ID`, `ORS_R2_BUCKET`, `ORS_R2_ACCESS_KEY_ID`, `ORS_R2_SECRET_ACCESS_KEY`, `ORS_R2_ENDPOINT`: sealed R2 settings, required only when `ORS_STORAGE_BACKEND=r2`.
 - `ORS_ASSEMBLYAI_ENABLED`, `ASSEMBLYAI_API_KEY`, `ORS_ASSEMBLYAI_WEBHOOK_URL`, `ORS_ASSEMBLYAI_WEBHOOK_SECRET`: optional transcription settings.
@@ -83,8 +81,8 @@ This manifest lists required Railway variables by service without secret values.
   - `https://frontend-production-090c.up.railway.app/api/auth/callback/zitadel`
   - `http://localhost:3000/api/auth/callback/zitadel`
 - Use authorization code with PKCE, a generated client secret, and JWT access tokens so `orsgraph-api` can verify bearer tokens locally against JWKS.
-- Enable role assertion for authentication or include role claims in the requested scopes; the frontend requests `urn:iam:org:project:roles` and `urn:zitadel:iam:org:projects:roles`.
-- If the API should validate a project audience, set `ZITADEL_PROJECT_ID` on `frontend` and `ORS_AUTH_AUDIENCE` on `orsgraph-api` to the same project id.
+- Enable role assertion for authentication or include role claims in the requested scopes. The frontend uses the NextAuth Zitadel provider and, when `ZITADEL_PROJECT_ID` is set, requests `urn:zitadel:iam:org:project:id:{projectId}:aud` plus `urn:zitadel:iam:org:projects:roles` so tokens can carry the current project-scoped claim `urn:zitadel:iam:org:project:{projectId}:roles`. It also keeps `urn:iam:org:project:roles` for backwards-compatible claims.
+- Set `ZITADEL_PROJECT_ID` on `frontend` and `ORS_AUTH_AUDIENCE` on `orsgraph-api` to the same project id so the API validates the intended audience and both frontend/backend parse the same role claim shape.
 - Configure post-logout redirects:
   - `https://frontend-production-090c.up.railway.app`
   - `http://localhost:3000`
@@ -106,3 +104,6 @@ Railway MCP resources/templates were not registered in this Codex session when t
 - Railway volumes: https://docs.railway.com/volumes/reference
 - Railway config as code: https://docs.railway.com/reference/config-as-code
 - Railway MCP server: https://docs.railway.com/ai/mcp-server
+- NextAuth Zitadel provider: https://next-auth.js.org/providers/zitadel
+- ZITADEL scopes: https://zitadel.com/docs/apis/openidoauth/scopes
+- ZITADEL roles and role claims: https://zitadel.com/docs/guides/integrate/retrieve-user-roles

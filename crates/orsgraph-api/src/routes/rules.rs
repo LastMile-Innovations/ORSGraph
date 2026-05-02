@@ -1,8 +1,10 @@
 use crate::error::ApiResult;
+use crate::routes::authority::authority_headers_for_state;
 use crate::state::AppState;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    response::IntoResponse,
     routing::get,
 };
 use serde::Deserialize;
@@ -32,71 +34,89 @@ pub fn routes() -> Router<AppState> {
         .route("/rules/slr/{jurisdiction_id}/{year}", get(get_slr_edition))
 }
 
-async fn get_registry(State(state): State<AppState>) -> ApiResult<Json<impl serde::Serialize>> {
-    Ok(Json(state.rule_applicability_resolver.registry().await?))
+async fn get_registry(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    Ok((
+        authority_headers_for_state(&state, "origin"),
+        Json(state.rule_applicability_resolver.registry().await?),
+    ))
 }
 
 async fn get_current_for_jurisdiction(
     State(state): State<AppState>,
     Path(jurisdiction_id): Path<String>,
-) -> ApiResult<Json<impl serde::Serialize>> {
-    Ok(Json(
-        state
-            .rule_applicability_resolver
-            .current_for_jurisdiction(&jurisdiction_id)
-            .await?,
+) -> ApiResult<impl IntoResponse> {
+    Ok((
+        authority_headers_for_state(&state, "origin"),
+        Json(
+            state
+                .rule_applicability_resolver
+                .current_for_jurisdiction(&jurisdiction_id)
+                .await?,
+        ),
     ))
 }
 
 async fn get_history_for_jurisdiction(
     State(state): State<AppState>,
     Path(jurisdiction_id): Path<String>,
-) -> ApiResult<Json<impl serde::Serialize>> {
-    Ok(Json(
-        state
-            .rule_applicability_resolver
-            .history_for_jurisdiction(&jurisdiction_id)
-            .await?,
+) -> ApiResult<impl IntoResponse> {
+    Ok((
+        authority_headers_for_state(&state, "origin"),
+        Json(
+            state
+                .rule_applicability_resolver
+                .history_for_jurisdiction(&jurisdiction_id)
+                .await?,
+        ),
     ))
 }
 
 async fn get_applicable_rules(
     State(state): State<AppState>,
     Query(params): Query<ApplicableRulesQuery>,
-) -> ApiResult<Json<impl serde::Serialize>> {
-    Ok(Json(
-        state
-            .rule_applicability_resolver
-            .applicable(
-                &params.jurisdiction,
-                params.court.as_deref(),
-                params.work_product_type.as_deref().unwrap_or("complaint"),
-                &params.date,
-            )
-            .await?,
+) -> ApiResult<impl IntoResponse> {
+    Ok((
+        authority_headers_for_state(&state, "origin"),
+        Json(
+            state
+                .rule_applicability_resolver
+                .applicable(
+                    &params.jurisdiction,
+                    params.court.as_deref(),
+                    params.work_product_type.as_deref().unwrap_or("complaint"),
+                    &params.date,
+                )
+                .await?,
+        ),
     ))
 }
 
 async fn get_order(
     State(state): State<AppState>,
     Path(authority_document_id): Path<String>,
-) -> ApiResult<Json<impl serde::Serialize>> {
-    Ok(Json(
-        state
-            .rule_applicability_resolver
-            .order(&authority_document_id)
-            .await?,
+) -> ApiResult<impl IntoResponse> {
+    Ok((
+        authority_headers_for_state(&state, "origin"),
+        Json(
+            state
+                .rule_applicability_resolver
+                .order(&authority_document_id)
+                .await?,
+        ),
     ))
 }
 
 async fn get_slr_edition(
     State(state): State<AppState>,
     Path((jurisdiction_id, year)): Path<(String, i64)>,
-) -> ApiResult<Json<impl serde::Serialize>> {
-    Ok(Json(
-        state
-            .rule_applicability_resolver
-            .slr_edition(&jurisdiction_id, year)
-            .await?,
+) -> ApiResult<impl IntoResponse> {
+    Ok((
+        authority_headers_for_state(&state, "origin"),
+        Json(
+            state
+                .rule_applicability_resolver
+                .slr_edition(&jurisdiction_id, year)
+                .await?,
+        ),
     ))
 }

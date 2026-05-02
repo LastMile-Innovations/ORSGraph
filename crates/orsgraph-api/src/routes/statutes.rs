@@ -1,8 +1,9 @@
 use crate::error::ApiResult;
-use crate::models::api::*;
+use crate::routes::authority::authority_headers_for_state;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::response::IntoResponse;
 
 #[derive(serde::Deserialize)]
 pub struct StatuteListParams {
@@ -16,7 +17,7 @@ pub struct StatuteListParams {
 pub async fn list_statutes(
     Query(params): Query<StatuteListParams>,
     State(state): State<AppState>,
-) -> ApiResult<Json<StatuteIndexResponse>> {
+) -> ApiResult<impl IntoResponse> {
     let statutes = state
         .neo4j_service
         .list_statutes(
@@ -27,69 +28,84 @@ pub async fn list_statutes(
             params.status.as_deref(),
         )
         .await?;
-    Ok(Json(statutes))
+    Ok((
+        authority_headers_for_state(&state, "origin"),
+        Json(statutes),
+    ))
 }
 
 pub async fn get_statute_page(
     Path(citation): Path<String>,
     State(state): State<AppState>,
-) -> ApiResult<Json<StatutePageResponse>> {
+) -> ApiResult<impl IntoResponse> {
     let statute = state.neo4j_service.get_statute_page(&citation).await?;
-    Ok(Json(statute))
+    Ok((authority_headers_for_state(&state, "origin"), Json(statute)))
 }
 
 pub async fn get_statute(
     Path(citation): Path<String>,
     State(state): State<AppState>,
-) -> ApiResult<Json<StatuteDetailResponse>> {
+) -> ApiResult<impl IntoResponse> {
     let statute = state.neo4j_service.get_statute(&citation).await?;
-    Ok(Json(statute))
+    Ok((authority_headers_for_state(&state, "origin"), Json(statute)))
 }
 
 pub async fn get_provisions(
     Path(citation): Path<String>,
     State(state): State<AppState>,
-) -> ApiResult<Json<ProvisionsResponse>> {
+) -> ApiResult<impl IntoResponse> {
     let provisions = state.neo4j_service.get_provisions(&citation).await?;
-    Ok(Json(provisions))
+    Ok((
+        authority_headers_for_state(&state, "origin"),
+        Json(provisions),
+    ))
 }
 
 pub async fn get_citations(
     Path(citation): Path<String>,
     State(state): State<AppState>,
-) -> ApiResult<Json<CitationsResponse>> {
+) -> ApiResult<impl IntoResponse> {
     let citations = state.neo4j_service.get_citations(&citation).await?;
-    Ok(Json(citations))
+    Ok((
+        authority_headers_for_state(&state, "origin"),
+        Json(citations),
+    ))
 }
 
 pub async fn get_semantics(
     Path(citation): Path<String>,
     State(state): State<AppState>,
-) -> ApiResult<Json<SemanticsResponse>> {
+) -> ApiResult<impl IntoResponse> {
     let semantics = state.neo4j_service.get_semantics(&citation).await?;
-    Ok(Json(semantics))
+    Ok((
+        authority_headers_for_state(&state, "origin"),
+        Json(semantics),
+    ))
 }
 
 pub async fn get_history(
     Path(citation): Path<String>,
     State(state): State<AppState>,
-) -> ApiResult<Json<HistoryResponse>> {
+) -> ApiResult<impl IntoResponse> {
     let history = state.neo4j_service.get_history(&citation).await?;
-    Ok(Json(history))
+    Ok((authority_headers_for_state(&state, "origin"), Json(history)))
 }
 
 pub async fn get_chunks(
     Path(citation): Path<String>,
     State(state): State<AppState>,
-) -> ApiResult<Json<StatuteChunksResponse>> {
+) -> ApiResult<impl IntoResponse> {
     let chunks = state.neo4j_service.get_chunks(&citation).await?;
-    Ok(Json(chunks))
+    Ok((authority_headers_for_state(&state, "origin"), Json(chunks)))
 }
 
 pub async fn get_provision(
     Path(id): Path<String>,
     State(state): State<AppState>,
-) -> ApiResult<Json<ProvisionDetailResponse>> {
+) -> ApiResult<impl IntoResponse> {
     let provision = state.neo4j_service.get_provision_detail(&id).await?;
-    Ok(Json(provision))
+    Ok((
+        authority_headers_for_state(&state, "origin"),
+        Json(provision),
+    ))
 }

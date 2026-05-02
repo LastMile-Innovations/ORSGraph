@@ -1,6 +1,6 @@
 import { Shell } from "@/components/orsg/shell"
 import { StatuteIndexClient } from "@/components/orsg/statute/statute-index-client"
-import { getStatuteIndexState } from "@/lib/api"
+import { getCachedStatuteIndexState } from "@/lib/authority-server-cache"
 
 type StatuteIndexPageParams = {
   q?: string
@@ -27,7 +27,7 @@ export default async function StatuteIndexPage({
   const status = params.status?.trim() || "all"
   const limit = numberParam(params.limit, 60, 120)
   const offset = Math.max(0, Number(params.offset || 0) || 0)
-  const state = await getStatuteIndexState({ q, chapter, status, limit, offset })
+  const state = await getCachedStatuteIndexState({ q, chapter, status, limit, offset })
 
   return (
     <Shell>

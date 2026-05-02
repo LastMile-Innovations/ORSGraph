@@ -1,4 +1,4 @@
-import { getHomePageState } from "@/lib/api"
+import { getCachedHomePageState } from "@/lib/authority-server-cache"
 import Link from "next/link"
 import { HomeHero } from "@/components/home/HomeHero"
 import { CorpusStatusPanel } from "@/components/home/CorpusStatusPanel"
@@ -14,7 +14,7 @@ import { newMatterHref } from "@/lib/casebuilder/routes"
 import { ArrowRight, Briefcase } from "lucide-react"
 
 export default async function DashboardPage() {
-  const [state, matterState] = await Promise.all([getHomePageState(), getMatterSummariesState()])
+  const [state, matterState] = await Promise.all([getCachedHomePageState(), getMatterSummariesState()])
   const data = state.data
 
   return (

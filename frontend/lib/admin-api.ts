@@ -131,6 +131,13 @@ export interface AdminOverview {
     query_embedding_cache_max_capacity: number
     rerank_policy: string
     edge_authority_base_url?: string | null
+    hotset_object_count: number
+    hotset_bytes: number
+    hotset_manifest_path?: string | null
+    r2_hit_ratio?: number | null
+    railway_fallback_count?: number | null
+    cache_hit_ratio?: number | null
+    edge_metrics_source: string
     estimated_graph_storage_gb: number
     estimated_r2_storage_gb: number
     model_spend_policy: string

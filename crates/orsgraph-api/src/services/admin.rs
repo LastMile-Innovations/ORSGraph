@@ -125,6 +125,7 @@ impl AdminService {
         let corpus_release_id = read_corpus_release_id(&corpus_release_manifest_path)
             .await
             .unwrap_or_else(|| "release:unversioned".to_string());
+        let hotset = summarize_authority_hotset(&data_dir, &corpus_release_id).await;
 
         Ok(AdminOverview {
             enabled: self.enabled(),
@@ -148,7 +149,7 @@ impl AdminService {
                 embedding_model: self.inner.config.embedding_model.clone(),
             },
             performance: AdminPerformanceSummary {
-                corpus_release_id,
+                corpus_release_id: corpus_release_id.clone(),
                 corpus_release_manifest_path: corpus_release_manifest_path.display().to_string(),
                 authority_cache_ttl_seconds: self.inner.config.authority_cache_ttl_seconds,
                 authority_cache_max_capacity: self.inner.config.authority_cache_max_capacity,
@@ -162,8 +163,15 @@ impl AdminService {
                     .query_embedding_cache_max_capacity,
                 rerank_policy: self.inner.config.rerank_policy.clone(),
                 edge_authority_base_url: self.inner.config.authority_edge_base_url.clone(),
+                hotset_object_count: hotset.object_count,
+                hotset_bytes: hotset.bytes,
+                hotset_manifest_path: hotset.manifest_path,
+                r2_hit_ratio: None,
+                railway_fallback_count: None,
+                cache_hit_ratio: None,
+                edge_metrics_source: "response_headers_and_cloudflare_analytics".to_string(),
                 estimated_graph_storage_gb: bytes_to_gb(graph.bytes),
-                estimated_r2_storage_gb: bytes_to_gb(graph.bytes),
+                estimated_r2_storage_gb: bytes_to_gb(graph.bytes + hotset.bytes),
                 model_spend_policy: "delta_only_by_embedding_input_hash_and_release".to_string(),
             },
             health: AdminHealthSummary {
@@ -1790,6 +1798,39 @@ async fn read_corpus_release_id(path: &Path) -> Option<String> {
 
 fn bytes_to_gb(bytes: u64) -> f64 {
     ((bytes as f64 / 1_073_741_824.0) * 1000.0).round() / 1000.0
+}
+
+struct AuthorityHotsetSummary {
+    object_count: usize,
+    bytes: u64,
+    manifest_path: Option<String>,
+}
+
+async fn summarize_authority_hotset(data_dir: &Path, release_id: &str) -> AuthorityHotsetSummary {
+    let root = data_dir.join("authority-hotset");
+    let release_dir = root.join(percent_encode_path_segment(release_id));
+    let manifest_path = release_dir.join("manifest.json");
+    let (_, files, bytes) = summarize_dir(&release_dir).await;
+    AuthorityHotsetSummary {
+        object_count: files,
+        bytes,
+        manifest_path: manifest_path
+            .exists()
+            .then(|| manifest_path.display().to_string()),
+    }
+}
+
+fn percent_encode_path_segment(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
 }
 
 async fn summarize_graph(path: &Path) -> AdminGraphSummary {

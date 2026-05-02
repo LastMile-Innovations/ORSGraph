@@ -305,15 +305,19 @@ fn decoding_key(jwk: &Jwk) -> ApiResult<DecodingKey> {
 fn roles_from_claims(extra: &BTreeMap<String, Value>) -> BTreeSet<String> {
     let mut roles = BTreeSet::new();
     for (key, value) in extra {
-        if key == "roles"
-            || key == "role"
-            || key.ends_with(":roles")
-            || key.contains("project:roles")
-        {
+        if is_role_claim_key(key) {
             collect_roles(value, &mut roles);
         }
     }
     roles
+}
+
+fn is_role_claim_key(key: &str) -> bool {
+    key == "roles"
+        || key == "role"
+        || key == "urn:iam:org:project:roles"
+        || key == "urn:zitadel:iam:org:project:roles"
+        || (key.starts_with("urn:zitadel:iam:org:project:") && key.ends_with(":roles"))
 }
 
 fn collect_roles(value: &Value, roles: &mut BTreeSet<String>) {
@@ -329,11 +333,10 @@ fn collect_roles(value: &Value, roles: &mut BTreeSet<String>) {
             }
         }
         Value::Object(values) => {
-            for (key, value) in values {
+            for key in values.keys() {
                 if !key.trim().is_empty() {
                     roles.insert(key.trim().to_string());
                 }
-                collect_roles(value, roles);
             }
         }
         _ => {}
@@ -353,8 +356,10 @@ impl UnauthorizedLog for ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_auth_access_bootstrap_path, is_public_path};
+    use super::{is_auth_access_bootstrap_path, is_public_path, roles_from_claims};
     use axum::http::Method;
+    use serde_json::json;
+    use std::collections::{BTreeMap, BTreeSet};
 
     #[test]
     fn auth_access_public_paths_are_method_scoped() {
@@ -381,5 +386,59 @@ mod tests {
             &Method::GET,
             "/api/v1/matters"
         ));
+    }
+
+    #[test]
+    fn zitadel_project_scoped_role_claims_return_only_role_keys() {
+        let mut claims = BTreeMap::new();
+        claims.insert(
+            "urn:zitadel:iam:org:project:371183997394536814:roles".to_string(),
+            json!({
+                "orsgraph_admin": {
+                    "371183997394471278": "lastmile.example"
+                },
+                "reviewer": {
+                    "371183997394471278": "lastmile.example"
+                }
+            }),
+        );
+
+        assert_eq!(
+            roles_from_claims(&claims),
+            BTreeSet::from(["orsgraph_admin".to_string(), "reviewer".to_string()])
+        );
+    }
+
+    #[test]
+    fn auth_role_claims_keep_legacy_shapes() {
+        let mut claims = BTreeMap::new();
+        claims.insert("role".to_string(), json!("owner"));
+        claims.insert("roles".to_string(), json!(["editor"]));
+        claims.insert(
+            "urn:iam:org:project:roles".to_string(),
+            json!({
+                "legacy_admin": {
+                    "371183997394471278": "lastmile.example"
+                }
+            }),
+        );
+        claims.insert(
+            "urn:zitadel:iam:org:project:roles".to_string(),
+            json!({
+                "project_admin": {
+                    "371183997394471278": "lastmile.example"
+                }
+            }),
+        );
+
+        assert_eq!(
+            roles_from_claims(&claims),
+            BTreeSet::from([
+                "editor".to_string(),
+                "legacy_admin".to_string(),
+                "owner".to_string(),
+                "project_admin".to_string(),
+            ])
+        );
     }
 }
