@@ -71,7 +71,10 @@ After the repair:
 
 - Keep watching for `login_v2` projection regressions after ZITADEL redeploys or
   upgrades.
-- Finish ZITADEL application bootstrap for ORSGraph before enabling API audience
-  validation in production.
-- Do not enable `ORS_AUTH_ENABLED=true` until `frontend` has a real ZITADEL OIDC
-  client ID/secret and `orsgraph-api` has the matching `ORS_AUTH_AUDIENCE`.
+- Login V2 was disabled after the repair because the production deployment does
+  not include the separate self-hosted Login V2 UI container; otherwise
+  interactive login redirects to `/ui/v2/login` and returns HTTP 404.
+- ORSGraph application bootstrap was completed with a production-only OIDC app,
+  the `orsgraph_admin` project role, and a first-admin user grant.
+- API audience validation is enabled in production after setting the matching
+  `ZITADEL_PROJECT_ID` and `ORS_AUTH_AUDIENCE`.

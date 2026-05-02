@@ -77,16 +77,24 @@ This manifest lists required Railway variables by service without secret values.
 - `ZITADEL_EXTERNALDOMAIN`: current Railway-generated public host without scheme.
 - `ZITADEL_EXTERNALPORT`: `443`.
 - `ZITADEL_EXTERNALSECURE`: `true`.
-- Create an OIDC web application with redirects:
+- Production has an `ORSGraph` project and an `ORSGraph Frontend` OIDC web application.
+- Production redirects:
   - `https://frontend-production-090c.up.railway.app/api/auth/callback/zitadel`
-  - `http://localhost:3000/api/auth/callback/zitadel`
+- Keep localhost redirects out of the production OIDC app. Use a separate local/dev app if needed.
 - Use authorization code with PKCE, a generated client secret, and JWT access tokens so `orsgraph-api` can verify bearer tokens locally against JWKS.
 - Enable role assertion for authentication or include role claims in the requested scopes. The frontend uses the NextAuth Zitadel provider and, when `ZITADEL_PROJECT_ID` is set, requests `urn:zitadel:iam:org:project:id:{projectId}:aud` plus `urn:zitadel:iam:org:projects:roles` so tokens can carry the current project-scoped claim `urn:zitadel:iam:org:project:{projectId}:roles`. It also keeps `urn:iam:org:project:roles` for backwards-compatible claims.
 - Set `ZITADEL_PROJECT_ID` on `frontend` and `ORS_AUTH_AUDIENCE` on `orsgraph-api` to the same project id so the API validates the intended audience and both frontend/backend parse the same role claim shape.
 - Configure post-logout redirects:
   - `https://frontend-production-090c.up.railway.app`
-  - `http://localhost:3000`
+- Keep localhost post-logout redirects out of the production OIDC app.
 - Create the project role `orsgraph_admin`; only that role should unlock `/admin` and backend admin operations.
+
+### 2026-05-02 auth bootstrap
+
+- The initial human admin password was rotated and stored in macOS Keychain under `ORSGraph ZITADEL Production Admin`.
+- Login V2 was disabled at the instance feature projection because the production ZITADEL service does not deploy the separate self-hosted Login V2 UI container. Without this, interactive login redirects to `/ui/v2/login` and returns HTTP 404.
+- `frontend` has `ZITADEL_CLIENT_ID`, `ZITADEL_CLIENT_SECRET`, and `ZITADEL_PROJECT_ID` set in Railway.
+- `orsgraph-api` has `ORS_AUTH_ENABLED=true` and `ORS_AUTH_AUDIENCE` set to the same ZITADEL project id.
 
 ### 2026-05-02 crawler startup audit
 
