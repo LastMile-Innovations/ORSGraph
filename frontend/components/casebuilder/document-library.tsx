@@ -13,14 +13,23 @@ import {
   FolderUp,
   Grid2x2,
   List,
+  Mic,
   RefreshCcw,
   Search,
   Sparkles,
   Upload,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { CaseDocument, DocumentType, MatterIndexSummary, MatterSummary } from "@/lib/casebuilder/types"
-import { getMatterIndexSummary, importDocumentComplaint, runMatterIndex, uploadBinaryFile } from "@/lib/casebuilder/api"
+import type { CaseDocument, DocumentType, MatterIndexSummary, MatterSummary, TranscriptionJobResponse } from "@/lib/casebuilder/types"
+import {
+  createTranscription,
+  getMatterIndexSummary,
+  importDocumentComplaint,
+  listTranscriptions,
+  runMatterIndex,
+  syncTranscription,
+  uploadBinaryFile,
+} from "@/lib/casebuilder/api"
 import { matterComplaintHref, matterDocumentHref } from "@/lib/casebuilder/routes"
 import {
   createUploadBatchId,
@@ -102,6 +111,9 @@ export function DocumentLibrary({ matter, documents }: Props) {
   const [indexSummary, setIndexSummary] = useState<MatterIndexSummary | null>(null)
   const [indexMessage, setIndexMessage] = useState<string | null>(null)
   const [indexBusy, setIndexBusy] = useState(false)
+  const [mediaTranscriptions, setMediaTranscriptions] = useState<Record<string, TranscriptionJobResponse[]>>({})
+  const [mediaActionBusy, setMediaActionBusy] = useState<string | null>(null)
+  const [mediaMessage, setMediaMessage] = useState<string | null>(null)
 
   const folderCounts = useMemo(() => {
     const map: Record<string, number> = { All: documents.length }
@@ -167,6 +179,28 @@ export function DocumentLibrary({ matter, documents }: Props) {
       return true
     })
   }, [batchFilter, documents, duplicateHashes, duplicateOnly, folder, processingFilter, query, storageFilter])
+
+  const mediaDocuments = useMemo(() => documents.filter(isMediaDocument), [documents])
+
+  useEffect(() => {
+    if (folder !== "Media queue" || mediaDocuments.length === 0) return
+    let cancelled = false
+    async function loadMediaTranscriptions() {
+      const pairs = await Promise.all(
+        mediaDocuments.map(async (document) => {
+          const result = await listTranscriptions(matter.matter_id, document.document_id)
+          return [document.document_id, result.data ?? []] as const
+        }),
+      )
+      if (!cancelled) {
+        setMediaTranscriptions(Object.fromEntries(pairs))
+      }
+    }
+    void loadMediaTranscriptions()
+    return () => {
+      cancelled = true
+    }
+  }, [folder, matter.matter_id, mediaDocuments])
 
   async function refreshIndexSummary() {
     const result = await getMatterIndexSummary(matter.matter_id)
@@ -320,6 +354,47 @@ export function DocumentLibrary({ matter, documents }: Props) {
 
   async function retryUpload(row: UploadQueueRow) {
     await uploadCandidates([row.candidate])
+  }
+
+  async function startMediaTranscription(document: CaseDocument, force = false) {
+    setMediaActionBusy(`${document.document_id}:transcribe`)
+    setMediaMessage(null)
+    const result = await createTranscription(matter.matter_id, document.document_id, {
+      force,
+      redact_pii: true,
+      speaker_labels: true,
+      remove_audio_tags: "all",
+    })
+    setMediaActionBusy(null)
+    if (!result.data) {
+      setMediaMessage(result.error || "Transcription request failed.")
+      return
+    }
+    const transcription = result.data
+    setMediaTranscriptions((current) => ({
+      ...current,
+      [document.document_id]: replaceLatestTranscription(current[document.document_id] ?? [], transcription),
+    }))
+    setMediaMessage(transcription.warnings[0] ?? "Transcript job updated.")
+    router.refresh()
+  }
+
+  async function syncMediaTranscription(document: CaseDocument, transcription: TranscriptionJobResponse) {
+    setMediaActionBusy(`${document.document_id}:sync`)
+    setMediaMessage(null)
+    const result = await syncTranscription(matter.matter_id, document.document_id, transcription.job.transcription_job_id)
+    setMediaActionBusy(null)
+    if (!result.data) {
+      setMediaMessage(result.error || "Transcript sync failed.")
+      return
+    }
+    const synced = result.data
+    setMediaTranscriptions((current) => ({
+      ...current,
+      [document.document_id]: replaceLatestTranscription(current[document.document_id] ?? [], synced),
+    }))
+    setMediaMessage(synced.warnings[0] ?? "Transcript status refreshed.")
+    router.refresh()
   }
 
   return (
@@ -611,7 +686,17 @@ export function DocumentLibrary({ matter, documents }: Props) {
             void dataTransferToUploadCandidates(event.dataTransfer).then(uploadCandidates)
           }}
         >
-          {filtered.length === 0 ? (
+          {folder === "Media queue" ? (
+            <MediaQueue
+              busy={mediaActionBusy}
+              documents={filtered}
+              matter={matter}
+              message={mediaMessage}
+              transcriptions={mediaTranscriptions}
+              onStart={startMediaTranscription}
+              onSync={syncMediaTranscription}
+            />
+          ) : filtered.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
               <Filter className="h-8 w-8 text-muted-foreground" />
               <div className="text-sm font-medium">No documents match</div>
@@ -692,6 +777,159 @@ function uploadStatusClass(status: UploadQueueStatus) {
   if (status === "failed") return "bg-destructive"
   if (status === "uploading" || status === "indexing") return "bg-primary"
   return "bg-muted-foreground"
+}
+
+function MediaQueue({
+  busy,
+  documents,
+  matter,
+  message,
+  transcriptions,
+  onStart,
+  onSync,
+}: {
+  busy: string | null
+  documents: CaseDocument[]
+  matter: MatterSummary
+  message: string | null
+  transcriptions: Record<string, TranscriptionJobResponse[]>
+  onStart: (document: CaseDocument, force?: boolean) => void
+  onSync: (document: CaseDocument, transcription: TranscriptionJobResponse) => void
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="rounded border border-border bg-card p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">media operations queue</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {documents.length} media file{documents.length === 1 ? "" : "s"} awaiting transcription, sync, or redacted review.
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled
+              className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground opacity-50"
+            >
+              <RefreshCcw className="h-3 w-3" />
+              bulk sync pending
+            </button>
+            <button
+              type="button"
+              disabled
+              className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground opacity-50"
+            >
+              <Mic className="h-3 w-3" />
+              bulk retry pending
+            </button>
+          </div>
+        </div>
+        {message && <div className="mt-2 rounded border border-border bg-background px-3 py-2 text-xs text-muted-foreground">{message}</div>}
+      </div>
+
+      {documents.length === 0 ? (
+        <div className="flex min-h-[320px] flex-col items-center justify-center rounded border border-dashed text-center text-sm text-muted-foreground">
+          <Mic className="mb-3 h-8 w-8" />
+          <div className="font-medium text-foreground">No media files match</div>
+          <p className="mt-2 max-w-md text-xs">Upload audio or video, or clear filters to see transcript operations.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded border border-border bg-card">
+          <table className="w-full text-xs">
+            <thead className="border-b border-border bg-muted/40 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 text-left">media</th>
+                <th className="px-3 py-2 text-left">document status</th>
+                <th className="px-3 py-2 text-left">latest transcript</th>
+                <th className="px-3 py-2 text-left">provider</th>
+                <th className="px-3 py-2 text-right">actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {documents.map((document) => {
+                const latest = latestTranscription(transcriptions[document.document_id] ?? [])
+                const status = latest?.job.status ?? "not_started"
+                const failed = latest?.job.status === "failed" || latest?.job.status === "provider_disabled"
+                const canStart = !latest
+                const canRetry = Boolean(latest && (latest.job.retryable || latest.job.status === "failed" || latest.job.status === "provider_disabled"))
+                const canReview = Boolean(latest && latest.segments.length > 0)
+                const documentHref = matterDocumentHref(matter.matter_id, document.document_id)
+                return (
+                  <tr key={document.document_id} className="border-b border-border hover:bg-muted/20">
+                    <td className="px-3 py-2">
+                      <Link href={documentHref} className="block font-mono text-foreground hover:text-primary">
+                        <span className="block truncate">{document.filename}</span>
+                        {document.original_relative_path && document.original_relative_path !== document.filename && (
+                          <span className="block truncate text-[10px] text-muted-foreground">{document.original_relative_path}</span>
+                        )}
+                      </Link>
+                    </td>
+                    <td className="px-3 py-2">
+                      <ProcessingBadge status={document.processing_status} />
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <TranscriptStatusPill status={status} />
+                        {latest && <span className="font-mono text-[10px] text-muted-foreground">{latest.job.segment_count || latest.segments.length} seg</span>}
+                      </div>
+                      {failed && (
+                        <div className="mt-1 max-w-md truncate text-[10px] text-destructive">
+                          {latest?.job.error_message || (latest?.job.status === "provider_disabled" ? "provider disabled" : "provider error")}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                      {latest ? `${latest.job.provider_mode}${latest.job.provider_status ? ` / ${latest.job.provider_status}` : ""}` : "none"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => void onStart(document, canRetry)}
+                          disabled={!(canStart || canRetry) || busy === `${document.document_id}:transcribe`}
+                          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <Mic className="h-3 w-3" />
+                          {latest ? "retry" : "transcribe"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => latest && void onSync(document, latest)}
+                          disabled={!latest || busy === `${document.document_id}:sync`}
+                          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <RefreshCcw className="h-3 w-3" />
+                          sync
+                        </button>
+                        <Link
+                          href={documentHref}
+                          aria-disabled={!canReview}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:bg-muted",
+                            !canReview && "pointer-events-none opacity-50",
+                          )}
+                        >
+                          <CheckCircle2 className="h-3 w-3" />
+                          review
+                        </Link>
+                        <Link
+                          href={documentHref}
+                          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:bg-muted"
+                        >
+                          open
+                        </Link>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function DocCard({ doc, matter }: { doc: CaseDocument; matter: MatterSummary }) {
@@ -867,6 +1105,24 @@ function StoragePill({ status }: { status?: CaseDocument["storage_status"] }) {
   )
 }
 
+function TranscriptStatusPill({ status }: { status: string }) {
+  const cls =
+    status === "processed"
+      ? "bg-success/15 text-success"
+      : status === "review_ready"
+        ? "bg-primary/15 text-primary"
+        : status === "failed" || status === "provider_disabled"
+          ? "bg-destructive/15 text-destructive"
+          : status === "not_started"
+            ? "bg-muted text-muted-foreground"
+            : "bg-warning/15 text-warning"
+  return (
+    <span className={cn("rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider", cls)}>
+      {status === "provider_disabled" ? "disabled" : status === "not_started" ? "not started" : status}
+    </span>
+  )
+}
+
 function guessMimeType(filename: string) {
   if (/\.csv$/i.test(filename)) return "text/csv"
   if (/\.html?$/i.test(filename)) return "text/html"
@@ -910,4 +1166,19 @@ function isMediaDocument(document: { filename: string; mime_type?: string; proce
 
 function shouldImportAsComplaint(filename: string, documentType: DocumentType) {
   return documentType === "complaint" || /complaint|pleading|petition/i.test(filename)
+}
+
+function latestTranscription(transcriptions: TranscriptionJobResponse[]) {
+  if (!transcriptions.length) return null
+  return [...transcriptions].sort((a, b) => b.job.created_at.localeCompare(a.job.created_at))[0]
+}
+
+function replaceLatestTranscription(
+  transcriptions: TranscriptionJobResponse[],
+  transcription: TranscriptionJobResponse,
+) {
+  return [
+    ...transcriptions.filter((item) => item.job.transcription_job_id !== transcription.job.transcription_job_id),
+    transcription,
+  ].sort((a, b) => a.job.created_at.localeCompare(b.job.created_at))
 }

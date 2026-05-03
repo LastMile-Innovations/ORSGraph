@@ -136,6 +136,7 @@ const ASSEMBLYAI_KEYTERMS_MAX_WORDS_TOTAL: usize = 1000;
 const ASSEMBLYAI_KEYTERM_MAX_WORDS: usize = 6;
 const ASSEMBLYAI_PROMPT_MAX_WORDS: usize = 1500;
 const ASSEMBLYAI_REMOVE_AUDIO_TAGS_ALL: &str = "all";
+const ASSEMBLYAI_R2_AUDIO_URL_TTL_SECS: u64 = 6 * 60 * 60;
 const ASSEMBLYAI_PROMPT_PRESETS: &[&str] = &[
     "verbatim_multilingual",
     "unclear_masked",
@@ -9300,6 +9301,7 @@ fn transcript_source_spans(
     object_blob_id: Option<String>,
     review_status: &str,
     extraction_method: &str,
+    redacted_quote: bool,
 ) -> Vec<SourceSpan> {
     segments
         .iter()
@@ -9326,13 +9328,13 @@ fn transcript_source_spans(
                 time_start_ms: Some(segment.time_start_ms),
                 time_end_ms: Some(segment.time_end_ms),
                 speaker_label: segment.speaker_label.clone(),
-                quote: Some(if review_status == "approved" {
-                    segment.text.clone()
-                } else {
+                quote: Some(if redacted_quote {
                     segment
                         .redacted_text
                         .clone()
                         .unwrap_or_else(|| redact_transcript_text(&segment.text))
+                } else {
+                    segment.text.clone()
                 }),
                 extraction_method: extraction_method.to_string(),
                 confidence: segment.confidence,
@@ -9375,6 +9377,21 @@ fn transcript_segments_to_text(segments: &[TranscriptSegment], redacted: bool) -
         paragraphs.push(current_lines.join("\n"));
     }
     paragraphs.join("\n\n")
+}
+
+fn normalize_transcript_review_surface(value: Option<&str>) -> ApiResult<String> {
+    match value
+        .unwrap_or("redacted")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "" | "redacted" => Ok("redacted".to_string()),
+        "raw" => Ok("raw".to_string()),
+        _ => Err(ApiError::BadRequest(
+            "Transcript review surface must be redacted or raw.".to_string(),
+        )),
+    }
 }
 
 fn transcript_segments_to_vtt(segments: &[TranscriptSegment], redacted: bool) -> String {
@@ -11704,10 +11721,11 @@ mod tests {
         failed_ingestion_run, generate_opaque_id, looks_like_complaint,
         normalize_assemblyai_prompt_preset, normalize_assemblyai_remove_audio_tags,
         normalize_assemblyai_transcript_id, normalize_assemblyai_transcript_list_query,
-        normalize_compare_layers, object_blob_id_for_hash, oregon_civil_complaint_rule_pack,
-        parse_complaint_structure, parse_document_bytes, propose_facts, prosemirror_doc_for_text,
-        provider_subtitle_or_local, rebuild_work_product_ast_from_projection,
-        redact_transcript_text, refresh_work_product_state, restore_work_product_scope,
+        normalize_compare_layers, normalize_transcript_review_surface, object_blob_id_for_hash,
+        oregon_civil_complaint_rule_pack, parse_complaint_structure, parse_document_bytes,
+        propose_facts, prosemirror_doc_for_text, provider_subtitle_or_local,
+        rebuild_work_product_ast_from_projection, redact_transcript_text,
+        refresh_work_product_state, restore_work_product_scope,
         safe_work_product_download_filename, sanitize_assemblyai_keyterms,
         sanitize_assemblyai_prompt, sanitize_assemblyai_word_search_terms, sanitize_filename,
         sanitized_external_error, sha256_hex, should_inline_payload,
@@ -11716,9 +11734,10 @@ mod tests {
         summarize_version_snapshot_for_list, summarize_work_product_for_list,
         timeline_suggestions_from_facts, timeline_suggestions_from_text,
         transcript_segments_from_provider, transcript_segments_to_srt, transcript_segments_to_vtt,
-        validate_assemblyai_transcription_request, validate_ast_patch_concurrency,
-        version_change_state_summary, work_product_block_graph_payload, work_product_export_key,
-        work_product_hashes, work_product_profile,
+        transcript_source_spans, validate_assemblyai_transcription_request,
+        validate_ast_patch_concurrency, version_change_state_summary,
+        work_product_block_graph_payload, work_product_export_key, work_product_hashes,
+        work_product_profile,
     };
     use crate::error::ApiError;
     use crate::models::casebuilder::{
@@ -14418,6 +14437,64 @@ mod tests {
         let srt = transcript_segments_to_srt(&[segment], true);
         assert!(vtt.contains("00:00:01.000 --> 00:00:02.500"));
         assert!(srt.contains("00:00:01,000 --> 00:00:02,500"));
+    }
+
+    #[test]
+    fn reviewed_transcript_source_spans_follow_review_surface() {
+        assert_eq!(
+            normalize_transcript_review_surface(None).unwrap(),
+            "redacted"
+        );
+        assert!(normalize_transcript_review_surface(Some("public")).is_err());
+        let segment = crate::models::casebuilder::TranscriptSegment {
+            segment_id: "segment:1".to_string(),
+            id: "segment:1".to_string(),
+            matter_id: "matter:test".to_string(),
+            document_id: "doc:test".to_string(),
+            transcription_job_id: "transcription:1".to_string(),
+            source_span_id: Some("span:1".to_string()),
+            ordinal: 1,
+            paragraph_ordinal: Some(1),
+            speaker_label: Some("A".to_string()),
+            speaker_name: None,
+            channel: None,
+            text: "Mary called 503-555-1212.".to_string(),
+            redacted_text: Some("Mary called [redacted phone].".to_string()),
+            time_start_ms: 1_000,
+            time_end_ms: 2_500,
+            confidence: 0.9,
+            review_status: "approved".to_string(),
+            edited: false,
+            created_at: "1".to_string(),
+            updated_at: "1".to_string(),
+        };
+        let redacted = transcript_source_spans(
+            "matter:test",
+            "doc:test",
+            "transcription:1",
+            &[segment.clone()],
+            Some("version:original".to_string()),
+            Some("blob:original".to_string()),
+            "approved",
+            "assemblyai_transcript_reviewed_segment",
+            true,
+        );
+        let raw = transcript_source_spans(
+            "matter:test",
+            "doc:test",
+            "transcription:1",
+            &[segment],
+            Some("version:original".to_string()),
+            Some("blob:original".to_string()),
+            "approved",
+            "assemblyai_transcript_reviewed_segment",
+            false,
+        );
+        assert_eq!(
+            redacted[0].quote.as_deref(),
+            Some("Mary called [redacted phone].")
+        );
+        assert_eq!(raw[0].quote.as_deref(), Some("Mary called 503-555-1212."));
     }
 
     #[test]

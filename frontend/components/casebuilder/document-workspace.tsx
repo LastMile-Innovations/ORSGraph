@@ -73,6 +73,7 @@ interface DocumentWorkspaceProps {
 type WorkspaceTab = "links" | "annotations" | "provenance" | "speakers" | "privacy"
 type SelectedTextRange = { start: number; end: number; quote: string }
 type TranscriptView = "redacted" | "raw"
+type TranscriptSegmentDrafts = Record<string, Partial<Record<TranscriptView, string>>>
 type SpeakerMode = "auto" | "exact" | "range"
 type PromptMode = "default" | "preset" | "custom" | "keyterms"
 
@@ -133,9 +134,13 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
   const [selectedTextRange, setSelectedTextRange] = useState<SelectedTextRange | null>(null)
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null)
   const [transcriptView, setTranscriptView] = useState<TranscriptView>("redacted")
+  const [transcriptSegmentDrafts, setTranscriptSegmentDrafts] = useState<TranscriptSegmentDrafts>({})
+  const [timelineDateDrafts, setTimelineDateDrafts] = useState<Record<string, string>>({})
   const [transcriptionSettings, setTranscriptionSettings] = useState<TranscriptionSettings>(
     defaultTranscriptionSettings,
   )
+  const reviewInFlightRef = useRef(false)
+  const reviewGenerationRef = useRef(0)
 
   const document = workspace.document
   const filename = document.filename.toLowerCase()
@@ -180,6 +185,50 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
       return
     }
     onSuccess(result.data)
+  }
+
+  function onSegmentDraftChange(segmentId: string, view: TranscriptView, text: string) {
+    setTranscriptSegmentDrafts((current) => ({
+      ...current,
+      [segmentId]: {
+        ...current[segmentId],
+        [view]: text,
+      },
+    }))
+  }
+
+  function clearSegmentDraft(segmentId: string, view: TranscriptView) {
+    setTranscriptSegmentDrafts((current) => {
+      const segmentDraft = current[segmentId]
+      if (!segmentDraft || segmentDraft[view] === undefined) return current
+      const nextSegmentDraft = { ...segmentDraft }
+      delete nextSegmentDraft[view]
+      const next = { ...current }
+      if (Object.keys(nextSegmentDraft).length) {
+        next[segmentId] = nextSegmentDraft
+      } else {
+        delete next[segmentId]
+      }
+      return next
+    })
+  }
+
+  function clearFlushedSegmentDrafts(drafts: TranscriptSegmentDrafts) {
+    setTranscriptSegmentDrafts((current) => {
+      const next = { ...current }
+      for (const [segmentId, segmentDraft] of Object.entries(drafts)) {
+        const nextSegmentDraft = { ...next[segmentId] }
+        for (const view of Object.keys(segmentDraft) as TranscriptView[]) {
+          delete nextSegmentDraft[view]
+        }
+        if (Object.keys(nextSegmentDraft).length) {
+          next[segmentId] = nextSegmentDraft
+        } else {
+          delete next[segmentId]
+        }
+      }
+      return next
+    })
   }
 
   async function onDownload() {
@@ -277,17 +326,97 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
     )
   }
 
-  async function onPatchSegment(segment: TranscriptSegment, text: string) {
-    if (!activeTranscription || text === segment.text) return
-    await runAction(
-      "segment",
-      () =>
-        patchTranscriptSegment(matter.id, document.document_id, activeTranscription.job.transcription_job_id, segment.segment_id, {
-          text,
-          review_status: "edited",
-        }),
-      replaceTranscription,
+  async function flushTranscriptSegmentDrafts(
+    transcription: TranscriptionJobResponse,
+    drafts: TranscriptSegmentDrafts,
+  ): Promise<TranscriptionJobResponse | null> {
+    const patches: Array<{
+      segment: TranscriptSegment
+      view: TranscriptView
+      text: string
+      patch: { text?: string; redacted_text?: string; review_status: "edited" }
+    }> = []
+
+    for (const segment of transcription.segments) {
+      const draft = drafts[segment.segment_id]
+      if (!draft) continue
+      if (draft.redacted !== undefined && draft.redacted !== segmentText(segment, "redacted")) {
+        patches.push({
+          segment,
+          view: "redacted",
+          text: draft.redacted,
+          patch: { redacted_text: draft.redacted, review_status: "edited" },
+        })
+      }
+      if (draft.raw !== undefined && draft.raw !== segmentText(segment, "raw")) {
+        patches.push({
+          segment,
+          view: "raw",
+          text: draft.raw,
+          patch: { text: draft.raw, review_status: "edited" },
+        })
+      }
+    }
+
+    if (!patches.length) {
+      clearFlushedSegmentDrafts(drafts)
+      return transcription
+    }
+
+    let latest = transcription
+    const flushedDrafts: TranscriptSegmentDrafts = {}
+    for (const item of patches) {
+      const result = await patchTranscriptSegment(
+        matter.id,
+        document.document_id,
+        transcription.job.transcription_job_id,
+        item.segment.segment_id,
+        item.patch,
+      )
+      if (!result.data) {
+        setError(result.error || "Transcript segment save failed.")
+        return null
+      }
+      latest = result.data
+      flushedDrafts[item.segment.segment_id] = {
+        ...flushedDrafts[item.segment.segment_id],
+        [item.view]: item.text,
+      }
+    }
+    replaceTranscription(latest)
+    clearFlushedSegmentDrafts(flushedDrafts)
+    return latest
+  }
+
+  async function onPatchSegment(segment: TranscriptSegment, text: string, view: TranscriptView) {
+    if (!activeTranscription || text === segmentText(segment, view)) {
+      clearSegmentDraft(segment.segment_id, view)
+      return
+    }
+    const patch =
+      view === "redacted"
+        ? { redacted_text: text, review_status: "edited" }
+        : { text, review_status: "edited" }
+    const startedReviewGeneration = reviewGenerationRef.current
+    setBusy("segment")
+    setMessage(null)
+    setError(null)
+    const result = await patchTranscriptSegment(
+      matter.id,
+      document.document_id,
+      activeTranscription.job.transcription_job_id,
+      segment.segment_id,
+      patch,
     )
+    setBusy((current) => (current === "segment" ? null : current))
+    if (!result.data) {
+      setError(result.error || "Transcript segment save failed.")
+      return
+    }
+    if (!reviewInFlightRef.current && startedReviewGeneration === reviewGenerationRef.current) {
+      replaceTranscription(result.data)
+    }
+    clearSegmentDraft(segment.segment_id, view)
   }
 
   async function onPatchSpeaker(speakerId: string, displayName: string) {
@@ -304,35 +433,60 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
 
   async function onReviewTranscript() {
     if (!activeTranscription) return
-    await runAction(
-      "review transcript",
-      () =>
-        reviewTranscription(matter.id, document.document_id, activeTranscription.job.transcription_job_id, {
-          reviewed_text: transcriptText(activeTranscription.segments, false),
-          status: "approved",
-        }),
-      (data) => {
-        replaceTranscription(data)
-        setWorkspace((current) => ({ ...current, document: { ...current.document, processing_status: "processed", status: "processed" } }))
-        setMessage("Transcript reviewed and committed.")
-        router.refresh()
-      },
-    )
+    if (
+      transcriptView === "raw" &&
+      !window.confirm("Commit the raw transcript for review/export? Redacted review is the default case-use surface.")
+    ) {
+      setTranscriptView("redacted")
+      setMessage("Raw review skipped. Redacted transcript remains the default review surface.")
+      return
+    }
+    const reviewView: TranscriptView = transcriptView === "raw" ? "raw" : "redacted"
+    const draftsSnapshot = transcriptSegmentDrafts
+    const reviewedText = transcriptText(activeTranscription.segments, reviewView, draftsSnapshot)
+    reviewGenerationRef.current += 1
+    reviewInFlightRef.current = true
+    setBusy("review transcript")
+    setMessage(null)
+    setError(null)
+    try {
+      const syncedTranscription = await flushTranscriptSegmentDrafts(activeTranscription, draftsSnapshot)
+      if (!syncedTranscription) {
+        return
+      }
+      const result = await reviewTranscription(matter.id, document.document_id, syncedTranscription.job.transcription_job_id, {
+        reviewed_text: reviewedText,
+        review_surface: reviewView,
+        status: "approved",
+      })
+      if (!result.data) {
+        setError(result.error || "review transcript failed.")
+        return
+      }
+      replaceTranscription(result.data)
+      setWorkspace((current) => ({ ...current, document: { ...current.document, processing_status: "processed", status: "processed" } }))
+      setMessage("Transcript reviewed and committed.")
+      router.refresh()
+    } finally {
+      reviewInFlightRef.current = false
+      setBusy((current) => (current === "review transcript" ? null : current))
+    }
   }
 
   async function onCreateSegmentAnnotation(segment: TranscriptSegment) {
+    const quote = segmentDraftText(segment, transcriptView, transcriptSegmentDrafts)
     await runAction(
       "annotation",
       () =>
         createDocumentAnnotation(matter.id, document.document_id, {
           annotation_type: "note",
           label: `Transcript ${segment.ordinal}`,
-          note: segmentText(segment, transcriptView),
+          note: quote,
           text_range: {
             time_start_ms: segment.time_start_ms,
             time_end_ms: segment.time_end_ms,
             speaker_label: segment.speaker_label,
-            quote: segmentText(segment, transcriptView),
+            quote,
           },
         }),
       (annotation) => {
@@ -345,14 +499,16 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
 
   async function onCreateSegmentFact(segment: TranscriptSegment) {
     if (!(activeTranscription?.job.status === "processed" || segment.review_status === "approved")) return
+    const quote = segmentDraftText(segment, transcriptView, transcriptSegmentDrafts)
     await runAction(
       "fact",
       () =>
         createFact(matter.id, {
-          statement: segment.text,
+          statement: quote,
           status: "alleged",
           confidence: segment.confidence,
           source_document_ids: [document.document_id],
+          source_span_ids: segment.source_span_id ? [segment.source_span_id] : [],
           notes: `Transcript segment ${segment.ordinal} (${formatMs(segment.time_start_ms)}-${formatMs(segment.time_end_ms)}).`,
         }),
       () => {
@@ -364,13 +520,14 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
 
   async function onCreateSegmentEvidence(segment: TranscriptSegment) {
     if (!(activeTranscription?.job.status === "processed" || segment.review_status === "approved")) return
+    const quote = segmentDraftText(segment, transcriptView, transcriptSegmentDrafts)
     await runAction(
       "evidence",
       () =>
         createEvidence(matter.id, {
           document_id: document.document_id,
           source_span: segment.source_span_id ?? undefined,
-          quote: segment.text,
+          quote,
           evidence_type: "audio_transcript",
           confidence: segment.confidence,
           strength: "medium",
@@ -382,17 +539,24 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
     )
   }
 
-  async function onCreateSegmentTimeline(segment: TranscriptSegment) {
+  async function onCreateSegmentTimeline(segment: TranscriptSegment, suppliedDate?: string) {
     if (!(activeTranscription?.job.status === "processed" || segment.review_status === "approved")) return
+    const eventDate = (suppliedDate || document.date_observed || "").trim()
+    if (!eventDate) {
+      setMessage("Add an event date for this transcript segment before creating a timeline event.")
+      return
+    }
+    const description = segmentDraftText(segment, transcriptView, transcriptSegmentDrafts)
     await runAction(
       "timeline",
       () =>
         createTimelineEvent(matter.id, {
-          date: document.date_observed ?? new Date().toISOString().slice(0, 10),
+          date: eventDate,
           title: `Transcript segment ${segment.ordinal}`,
-          description: segment.text,
-          kind: "discovery",
+          description,
+          kind: "other",
           source_document_id: document.document_id,
+          source_span_ids: segment.source_span_id ? [segment.source_span_id] : [],
         }),
       () => {
         setMessage("Timeline event created from reviewed transcript segment.")
@@ -490,9 +654,27 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
               <IconButton label="Download source" onClick={onDownload} disabled={busy === "download"}>
                 <Download className="h-4 w-4" />
               </IconButton>
-              <IconButton label="Extract text" onClick={onExtract} disabled={busy === "extract"}>
-                <Sparkles className="h-4 w-4" />
-              </IconButton>
+              {isMedia ? (
+                <>
+                  <IconButton label="Transcribe media" onClick={onStartTranscription} disabled={busy === "transcribe"}>
+                    <Mic className="h-4 w-4" />
+                  </IconButton>
+                  <IconButton label="Sync transcript" onClick={onSyncTranscription} disabled={!activeTranscription || busy === "sync transcript"}>
+                    <RefreshCw className="h-4 w-4" />
+                  </IconButton>
+                  <IconButton
+                    label={transcriptView === "raw" ? "Review raw transcript" : "Review redacted transcript"}
+                    onClick={onReviewTranscript}
+                    disabled={!activeTranscription || activeTranscription.segments.length === 0 || busy === "review transcript"}
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                  </IconButton>
+                </>
+              ) : (
+                <IconButton label="Extract text" onClick={onExtract} disabled={busy === "extract"}>
+                  <Sparkles className="h-4 w-4" />
+                </IconButton>
+              )}
               <IconButton label="Suggest timeline" onClick={onSuggestTimeline} disabled={busy === "timeline suggestions"}>
                 <CalendarClock className="h-4 w-4" />
               </IconButton>
@@ -532,6 +714,8 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
               activeTranscription={activeTranscription}
               busy={busy}
               selectedSegmentId={selectedSegmentId}
+              timelineDateDrafts={timelineDateDrafts}
+              transcriptSegmentDrafts={transcriptSegmentDrafts}
               transcriptReviewed={Boolean(activeTranscription?.job.status === "processed")}
               transcriptionSettings={transcriptionSettings}
               transcriptView={transcriptView}
@@ -541,10 +725,14 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
               onCreateEvidence={onCreateSegmentEvidence}
               onCreateFact={onCreateSegmentFact}
               onCreateTimeline={onCreateSegmentTimeline}
+              onSegmentDraftChange={onSegmentDraftChange}
               onPatchSegment={onPatchSegment}
               onReviewTranscription={onReviewTranscript}
               onSelectSegment={setSelectedSegmentId}
               onStartTranscription={onStartTranscription}
+              onTimelineDateDraftChange={(segmentId, value) => {
+                setTimelineDateDrafts((current) => ({ ...current, [segmentId]: value }))
+              }}
               onTranscriptionSettingsChange={setTranscriptionSettings}
               onSyncTranscription={onSyncTranscription}
               onTextChange={setTextDraft}
@@ -557,11 +745,11 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
             <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as WorkspaceTab)} className="flex h-full flex-col">
               <div className="border-b px-3 pt-3">
                 <TabsList className={cn("grid w-full", isMedia ? "grid-cols-5" : "grid-cols-3")}>
-                  <TabsTrigger value="links"><Link2 className="h-3.5 w-3.5" /></TabsTrigger>
-                  <TabsTrigger value="annotations"><Highlighter className="h-3.5 w-3.5" /></TabsTrigger>
-                  <TabsTrigger value="provenance"><PanelRight className="h-3.5 w-3.5" /></TabsTrigger>
-                  {isMedia && <TabsTrigger value="speakers"><Users className="h-3.5 w-3.5" /></TabsTrigger>}
-                  {isMedia && <TabsTrigger value="privacy"><Shield className="h-3.5 w-3.5" /></TabsTrigger>}
+                  <TabsTrigger value="links" aria-label="Links"><Link2 className="h-3.5 w-3.5" /></TabsTrigger>
+                  <TabsTrigger value="annotations" aria-label="Annotations"><Highlighter className="h-3.5 w-3.5" /></TabsTrigger>
+                  <TabsTrigger value="provenance" aria-label="Provenance"><PanelRight className="h-3.5 w-3.5" /></TabsTrigger>
+                  {isMedia && <TabsTrigger value="speakers" aria-label="Speakers"><Users className="h-3.5 w-3.5" /></TabsTrigger>}
+                  {isMedia && <TabsTrigger value="privacy" aria-label="Privacy"><Shield className="h-3.5 w-3.5" /></TabsTrigger>}
                 </TabsList>
               </div>
               <ScrollArea className="min-h-0 flex-1">
@@ -736,6 +924,8 @@ function DocumentCenterPane({
   isMedia,
   isPdf,
   selectedSegmentId,
+  timelineDateDrafts,
+  transcriptSegmentDrafts,
   transcriptReviewed,
   transcriptionSettings,
   transcriptView,
@@ -745,10 +935,12 @@ function DocumentCenterPane({
   onCreateEvidence,
   onCreateFact,
   onCreateTimeline,
+  onSegmentDraftChange,
   onPatchSegment,
   onReviewTranscription,
   onSelectSegment,
   onStartTranscription,
+  onTimelineDateDraftChange,
   onTranscriptionSettingsChange,
   onSyncTranscription,
   onTextChange,
@@ -766,6 +958,8 @@ function DocumentCenterPane({
   isMedia: boolean
   isPdf: boolean
   selectedSegmentId: string | null
+  timelineDateDrafts: Record<string, string>
+  transcriptSegmentDrafts: TranscriptSegmentDrafts
   transcriptReviewed: boolean
   transcriptionSettings: TranscriptionSettings
   transcriptView: TranscriptView
@@ -774,11 +968,13 @@ function DocumentCenterPane({
   onCreateAnnotation: (segment: TranscriptSegment) => void
   onCreateEvidence: (segment: TranscriptSegment) => void
   onCreateFact: (segment: TranscriptSegment) => void
-  onCreateTimeline: (segment: TranscriptSegment) => void
-  onPatchSegment: (segment: TranscriptSegment, text: string) => void
+  onCreateTimeline: (segment: TranscriptSegment, eventDate?: string) => void
+  onSegmentDraftChange: (segmentId: string, view: TranscriptView, text: string) => void
+  onPatchSegment: (segment: TranscriptSegment, text: string, view: TranscriptView) => void
   onReviewTranscription: () => void
   onSelectSegment: (segmentId: string | null) => void
   onStartTranscription: () => void
+  onTimelineDateDraftChange: (segmentId: string, value: string) => void
   onTranscriptionSettingsChange: Dispatch<SetStateAction<TranscriptionSettings>>
   onSyncTranscription: () => void
   onTextChange: (value: string) => void
@@ -805,6 +1001,8 @@ function DocumentCenterPane({
         contentUrl={contentUrl}
         documentTitle={documentTitle}
         selectedSegmentId={selectedSegmentId}
+        timelineDateDrafts={timelineDateDrafts}
+        transcriptSegmentDrafts={transcriptSegmentDrafts}
         transcriptReviewed={transcriptReviewed}
         transcriptionSettings={transcriptionSettings}
         transcriptView={transcriptView}
@@ -813,10 +1011,12 @@ function DocumentCenterPane({
         onCreateEvidence={onCreateEvidence}
         onCreateFact={onCreateFact}
         onCreateTimeline={onCreateTimeline}
+        onSegmentDraftChange={onSegmentDraftChange}
         onPatchSegment={onPatchSegment}
         onReviewTranscription={onReviewTranscription}
         onSelectSegment={onSelectSegment}
         onStartTranscription={onStartTranscription}
+        onTimelineDateDraftChange={onTimelineDateDraftChange}
         onTranscriptionSettingsChange={onTranscriptionSettingsChange}
         onSyncTranscription={onSyncTranscription}
       />
@@ -867,6 +1067,8 @@ function MediaTranscriptPane({
   contentUrl,
   documentTitle,
   selectedSegmentId,
+  timelineDateDrafts,
+  transcriptSegmentDrafts,
   transcriptReviewed,
   transcriptionSettings,
   transcriptView,
@@ -875,10 +1077,12 @@ function MediaTranscriptPane({
   onCreateEvidence,
   onCreateFact,
   onCreateTimeline,
+  onSegmentDraftChange,
   onPatchSegment,
   onReviewTranscription,
   onSelectSegment,
   onStartTranscription,
+  onTimelineDateDraftChange,
   onTranscriptionSettingsChange,
   onSyncTranscription,
 }: {
@@ -887,6 +1091,8 @@ function MediaTranscriptPane({
   contentUrl: string
   documentTitle: string
   selectedSegmentId: string | null
+  timelineDateDrafts: Record<string, string>
+  transcriptSegmentDrafts: TranscriptSegmentDrafts
   transcriptReviewed: boolean
   transcriptionSettings: TranscriptionSettings
   transcriptView: TranscriptView
@@ -894,11 +1100,13 @@ function MediaTranscriptPane({
   onCreateAnnotation: (segment: TranscriptSegment) => void
   onCreateEvidence: (segment: TranscriptSegment) => void
   onCreateFact: (segment: TranscriptSegment) => void
-  onCreateTimeline: (segment: TranscriptSegment) => void
-  onPatchSegment: (segment: TranscriptSegment, text: string) => void
+  onCreateTimeline: (segment: TranscriptSegment, eventDate?: string) => void
+  onSegmentDraftChange: (segmentId: string, view: TranscriptView, text: string) => void
+  onPatchSegment: (segment: TranscriptSegment, text: string, view: TranscriptView) => void
   onReviewTranscription: () => void
   onSelectSegment: (segmentId: string | null) => void
   onStartTranscription: () => void
+  onTimelineDateDraftChange: (segmentId: string, value: string) => void
   onTranscriptionSettingsChange: Dispatch<SetStateAction<TranscriptionSettings>>
   onSyncTranscription: () => void
 }) {
@@ -939,7 +1147,7 @@ function MediaTranscriptPane({
             </Button>
             <Button size="sm" variant="outline" onClick={onReviewTranscription} disabled={!activeTranscription || segments.length === 0 || busy === "review transcript"}>
               <CheckCircle2 className="mr-2 h-4 w-4" />
-              Review
+              {transcriptView === "raw" ? "Review raw" : "Review redacted"}
             </Button>
             <Button
               size="sm"
@@ -993,9 +1201,16 @@ function MediaTranscriptPane({
               AssemblyAI is disabled or missing an API key on the API server.
             </div>
           )}
+          {activeTranscription?.job.status === "failed" && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              {activeTranscription.job.error_message || "Transcript provider failed. Retry transcription after checking provider settings."}
+            </div>
+          )}
           {segments.map((segment) => {
             const selected = segment.segment_id === selectedSegmentId
             const segmentReviewed = canCreateCaseItems || segment.review_status === "approved" || transcriptReviewed
+            const timelineDate = timelineDateDrafts[segment.segment_id] ?? workspace.document.date_observed ?? ""
+            const draftText = segmentDraftText(segment, transcriptView, transcriptSegmentDrafts)
             return (
               <section key={segment.segment_id} className={cn("rounded-md border bg-card p-3", selected && "border-primary ring-1 ring-primary")}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1014,18 +1229,28 @@ function MediaTranscriptPane({
                     <IconButton label="Create evidence" onClick={() => onCreateEvidence(segment)} disabled={!segmentReviewed}>
                       <Link2 className="h-4 w-4" />
                     </IconButton>
-                    <IconButton label="Create timeline event" onClick={() => onCreateTimeline(segment)} disabled={!segmentReviewed}>
-                      <ScrollText className="h-4 w-4" />
-                    </IconButton>
+                    <div className="flex items-center gap-1">
+                      <Input
+                        aria-label={`Timeline date for segment ${segment.ordinal}`}
+                        type="date"
+                        value={timelineDate}
+                        onChange={(event) => onTimelineDateDraftChange(segment.segment_id, event.target.value)}
+                        disabled={!segmentReviewed}
+                        className="h-8 w-[9.25rem] font-mono text-[11px]"
+                      />
+                      <IconButton label="Create timeline event" onClick={() => onCreateTimeline(segment, timelineDate)} disabled={!segmentReviewed}>
+                        <ScrollText className="h-4 w-4" />
+                      </IconButton>
+                    </div>
                   </div>
                 </div>
                 <Textarea
-                  key={`${segment.segment_id}:${transcriptView}`}
-                  defaultValue={segmentText(segment, transcriptView)}
-                  readOnly={transcriptView === "redacted"}
+                  aria-label={`Transcript segment ${segment.ordinal}`}
+                  value={draftText}
+                  onChange={(event) => onSegmentDraftChange(segment.segment_id, transcriptView, event.target.value)}
                   onFocus={() => onSelectSegment(segment.segment_id)}
                   onBlur={(event) => {
-                    if (transcriptView === "raw") onPatchSegment(segment, event.currentTarget.value)
+                    onPatchSegment(segment, event.currentTarget.value, transcriptView)
                   }}
                   rows={3}
                   className="mt-3 resize-y text-sm leading-6"
@@ -1235,7 +1460,7 @@ function IconButton({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button variant="outline" size="icon" disabled={disabled} onClick={onClick}>
+        <Button aria-label={label} variant="outline" size="icon" disabled={disabled} onClick={onClick}>
           {children}
         </Button>
       </TooltipTrigger>
@@ -1304,11 +1529,15 @@ function segmentText(segment: TranscriptSegment, view: TranscriptView) {
   return segment.text
 }
 
+function segmentDraftText(segment: TranscriptSegment, view: TranscriptView, drafts: TranscriptSegmentDrafts) {
+  return drafts[segment.segment_id]?.[view] ?? segmentText(segment, view)
+}
+
 function segmentSpeaker(segment: TranscriptSegment) {
   return segment.speaker_name || segment.speaker_label || (segment.channel ? `Channel ${segment.channel}` : "Speaker")
 }
 
-function transcriptText(segments: TranscriptSegment[], redacted: boolean) {
+function transcriptText(segments: TranscriptSegment[], view: TranscriptView, drafts: TranscriptSegmentDrafts = {}) {
   const paragraphs: string[] = []
   let currentParagraph: number | null | undefined = null
   let currentLines: string[] = []
@@ -1318,7 +1547,7 @@ function transcriptText(segments: TranscriptSegment[], redacted: boolean) {
       currentLines = []
     }
     currentParagraph = segment.paragraph_ordinal
-    currentLines.push(`${segmentSpeaker(segment)}: ${redacted ? segment.redacted_text || segment.text : segment.text}`)
+    currentLines.push(`${segmentSpeaker(segment)}: ${segmentDraftText(segment, view, drafts)}`)
   }
   if (currentLines.length) paragraphs.push(currentLines.join("\n"))
   return paragraphs.join("\n\n")

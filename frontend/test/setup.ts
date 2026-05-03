@@ -2,6 +2,14 @@ import "@testing-library/jest-dom/vitest"
 import React from "react"
 import { vi } from "vitest"
 
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+globalThis.ResizeObserver = globalThis.ResizeObserver ?? ResizeObserverMock
+
 vi.mock("next/link", () => ({
   default: ({
     href,

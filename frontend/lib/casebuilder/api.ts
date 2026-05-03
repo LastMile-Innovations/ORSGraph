@@ -291,6 +291,7 @@ export interface PatchTranscriptSpeakerInput {
 export interface ReviewTranscriptionInput {
   reviewed_text?: string
   status?: string
+  review_surface?: "redacted" | "raw"
 }
 
 export interface CreatePartyInput {
@@ -311,6 +312,7 @@ export interface CreateFactInput {
   party_id?: string | null
   source_document_ids?: string[]
   source_evidence_ids?: string[]
+  source_span_ids?: string[]
   notes?: string | null
 }
 

@@ -361,6 +361,14 @@ impl CaseBuilderService {
         request: CreateFactRequest,
     ) -> ApiResult<CaseFact> {
         self.require_matter(matter_id).await?;
+        let mut source_spans = Vec::new();
+        for source_span_id in request.source_span_ids.unwrap_or_default() {
+            source_spans.push(
+                self.get_node::<SourceSpan>(matter_id, source_span_spec(), &source_span_id)
+                    .await
+                    .map_err(|error| matter_reference_error(error, "source_span"))?,
+            );
+        }
         let id = generate_id("fact", &request.statement);
         let fact = CaseFact {
             id: id.clone(),
@@ -379,7 +387,7 @@ impl CaseBuilderService {
             supports_defense_ids: Vec::new(),
             used_in_draft_ids: Vec::new(),
             needs_verification: true,
-            source_spans: Vec::new(),
+            source_spans,
             notes: request.notes,
         };
         let fact = self

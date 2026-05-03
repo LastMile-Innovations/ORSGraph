@@ -889,6 +889,8 @@ pub struct ReviewTranscriptionRequest {
     pub reviewed_text: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
+    #[serde(default)]
+    pub review_surface: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1260,6 +1262,8 @@ pub struct CreateFactRequest {
     pub party_id: Option<String>,
     pub source_document_ids: Option<Vec<String>>,
     pub source_evidence_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub source_span_ids: Option<Vec<String>>,
     pub notes: Option<String>,
 }
 

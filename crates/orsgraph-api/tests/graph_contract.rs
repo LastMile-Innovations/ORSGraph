@@ -233,11 +233,13 @@ fn statute_sidebar_routes_use_live_api_contracts_without_mock_fallbacks() {
         "statute index API should return an empty live result set instead of 404 for no matches"
     );
     assert!(
-        service.contains("ORDER BY chapter_number, chapter_suffix, chapter, section_number, citation"),
+        service
+            .contains("ORDER BY chapter_number, chapter_suffix, chapter, section_number, citation"),
         "statute index should use natural statutory ordering rather than raw string sorting"
     );
     assert!(
-        sidebar_routes.contains("ORDER BY chapter_number, chapter_suffix, chapter, section_number, citation"),
+        sidebar_routes
+            .contains("ORDER BY chapter_number, chapter_suffix, chapter, section_number, citation"),
         "sidebar corpus should use natural statutory ordering rather than raw string sorting"
     );
     assert!(

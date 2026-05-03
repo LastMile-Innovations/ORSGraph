@@ -121,7 +121,6 @@ impl CaseBuilderService {
             return self.transcription_response(matter_id, &job).await;
         }
 
-        let media_bytes = self.document_bytes(&document).await?;
         document.processing_status = "processing".to_string();
         document.summary = "Transcription submitted to AssemblyAI; review is required before transcript-derived facts or evidence are created.".to_string();
         self.merge_node(matter_id, document_spec(), document_id, &document)
@@ -132,10 +131,21 @@ impl CaseBuilderService {
         let job = self.merge_transcription_job(matter_id, &job).await?;
 
         let submit_result = async {
-            let upload_url = self
-                .assemblyai_upload_bytes(document.mime_type.clone(), media_bytes)
-                .await?;
-            self.assemblyai_submit_transcript(&upload_url, &request, &job)
+            let audio_url = match self
+                .document_presigned_get_url(
+                    &document,
+                    Duration::from_secs(ASSEMBLYAI_R2_AUDIO_URL_TTL_SECS),
+                )
+                .await?
+            {
+                Some(url) => url,
+                None => {
+                    let media_bytes = self.document_bytes(&document).await?;
+                    self.assemblyai_upload_bytes(document.mime_type.clone(), media_bytes)
+                        .await?
+                }
+            };
+            self.assemblyai_submit_transcript(&audio_url, &request, &job)
                 .await
         }
         .await;
@@ -320,8 +330,21 @@ impl CaseBuilderService {
             }
         }
         if let Some(redacted_text) = request.redacted_text {
-            segment.redacted_text = Some(redacted_text);
-            segment.edited = true;
+            if segment.redacted_text.as_deref() != Some(redacted_text.as_str()) {
+                self.record_transcript_review_change(
+                    matter_id,
+                    document_id,
+                    transcription_job_id,
+                    "segment",
+                    segment_id,
+                    "redacted_text",
+                    segment.redacted_text.clone(),
+                    Some(redacted_text.clone()),
+                )
+                .await?;
+                segment.redacted_text = Some(redacted_text);
+                segment.edited = true;
+            }
         }
         if let Some(speaker_label) = request.speaker_label {
             segment.speaker_label = Some(speaker_label);
@@ -407,10 +430,14 @@ impl CaseBuilderService {
                 "No transcript segments are available to review.".to_string(),
             ));
         }
+        let review_surface =
+            normalize_transcript_review_surface(request.review_surface.as_deref())?;
         let reviewed_text = request
             .reviewed_text
             .filter(|text| !text.trim().is_empty())
-            .unwrap_or_else(|| transcript_segments_to_text(&segments, false));
+            .unwrap_or_else(|| {
+                transcript_segments_to_text(&segments, review_surface == "redacted")
+            });
         let reviewed_version = self
             .store_document_artifact_version(
                 matter_id,
@@ -437,6 +464,7 @@ impl CaseBuilderService {
             job.object_blob_id.clone(),
             "approved",
             "assemblyai_transcript_reviewed_segment",
+            review_surface == "redacted",
         );
         let document = self
             .merge_node(matter_id, document_spec(), document_id, &document)
@@ -1043,6 +1071,7 @@ impl CaseBuilderService {
             job.object_blob_id.clone(),
             "unreviewed",
             segment_extraction_method,
+            true,
         );
         for (segment, span) in segments.iter_mut().zip(source_spans.iter()) {
             segment.source_span_id = Some(span.source_span_id.clone());
