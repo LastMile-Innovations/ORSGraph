@@ -181,6 +181,26 @@ API endpoints:
 - `GET /api/v1/rules/slr/:jurisdictionId/:year` - Supplementary Local Rule edition detail
 - `POST /api/v1/ask` - Ask endpoint (stub, returns 501)
 
+### MCP Server
+
+The `orsgraph-mcp` crate exposes read-only MCP tools over stdio or Streamable
+HTTP for AI clients. It proxies the existing API server and keeps stdio stdout
+reserved for MCP JSON-RPC messages.
+
+```bash
+export ORSGRAPH_API_BASE_URL=http://127.0.0.1:8080/api/v1
+cargo run -p orsgraph-mcp
+```
+
+Streamable HTTP:
+
+```bash
+cargo run -p orsgraph-mcp -- --http --bind 127.0.0.1:8090
+```
+
+See [ORSGraph MCP Server](docs/mcp-server.md) for tool names, client config,
+security defaults, and verification commands.
+
 ## Important legal/source note
 
 The Oregon Legislature online ORS database is not the official printed text. Store this warning on all ORS SourceDocument records and show it in legal answers.

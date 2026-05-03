@@ -17,8 +17,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY cypher ./cypher
 
-# Build the application
-RUN cargo build --release
+# Build only the runtime binaries this image ships.
+RUN cargo build --release -p orsgraph-api -p ors-crawler-v0
 
 # Stage 2: Runtime
 FROM debian:trixie-slim AS runtime
@@ -58,6 +58,10 @@ ENV RUST_LOG=info
 ENV NEO4J_USER=neo4j
 ENV ORS_API_HOST=0.0.0.0
 ENV ORS_API_PORT=8080
+ENV ORS_ADMIN_WORKDIR=/app
+ENV ORS_ADMIN_CRAWLER_BIN=/app/ors-crawler-v0
+ENV ORS_ADMIN_DATA_DIR=/app/data
+ENV ORS_ADMIN_JOBS_DIR=/app/data/admin/jobs
 
 # Copy startup scripts
 COPY docker-entrypoint.sh docker-api-entrypoint.sh docker-crawler-entrypoint.sh /app/

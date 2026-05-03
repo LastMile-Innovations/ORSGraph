@@ -12,7 +12,7 @@ import {
   Quote,
   Scale,
 } from "lucide-react"
-import type { SearchResult } from "@/lib/types"
+import type { LegalStatus, NullableNumber, SearchResult } from "@/lib/types"
 import { authorityBadges, authorityReason, formatAuthorityTier } from "@/lib/authority-taxonomy"
 import { StatusBadge, SemanticBadge, SourceBadge } from "@/components/orsg/badges"
 import { cn } from "@/lib/utils"
@@ -29,15 +29,22 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
   const semanticTypes = result.semantic_types ?? []
   const qcWarnings = result.qc_warnings ?? []
   const hierarchyBadges = authorityBadges(result)
+  const scoreBreakdown = result.score_breakdown
   const scoreParts = [
-    ["exact", result.score_breakdown?.exact],
-    ["text", result.fulltext_score ?? result.score_breakdown?.keyword],
-    ["vector", result.vector_score ?? result.score_breakdown?.vector],
-    ["graph", result.graph_score ?? result.score_breakdown?.graph],
-    ["expand", result.score_breakdown?.expansion],
-    ["rerank", result.rerank_score ?? result.score_breakdown?.rerank],
+    ["exact", scoreBreakdown?.exact],
+    ["text", result.fulltext_score ?? scoreBreakdown?.keyword],
+    ["vector", result.vector_score ?? scoreBreakdown?.vector],
+    ["graph", result.graph_score ?? scoreBreakdown?.graph],
+    ["expand", scoreBreakdown?.expansion],
+    ["rerank", result.rerank_score ?? scoreBreakdown?.rerank],
   ] as const
   const copyValue = result.citation ?? identity
+  const resultScore = finiteNumber(result.score)
+  const status = legalStatus(result.status)
+  const authorityExplanation = result.source_role ? authorityReason(result) : ""
+  const citedByCount = finiteNumber(result.graph?.cited_by_count)
+  const citationCount = finiteNumber(result.graph?.citation_count)
+  const connectedNodeCount = finiteNumber(result.graph?.connected_node_count)
 
   const copyCitation = async () => {
     try {
@@ -76,7 +83,7 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
                 Chapter {result.chapter}
               </span>
             )}
-            <StatusBadge status={result.status as any} />
+            {status && <StatusBadge status={status} />}
             {result.source_backed && <SourceBadge />}
             {hierarchyBadges.map((badge) => (
               <AuthorityBadge key={badge} label={badge} />
@@ -103,7 +110,7 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
           )}
 
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-            {result.authority_level !== undefined && (
+            {result.authority_level != null && (
               <span>
                 authority <span className="text-foreground">{result.authority_level}</span>
               </span>
@@ -111,25 +118,25 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
             {result.authority_tier && (
               <span>{formatAuthorityTier(result.authority_tier)}</span>
             )}
-            {result.source_role && (
-              <span title={authorityReason(result)}>{authorityReason(result)}</span>
+            {authorityExplanation && (
+              <span title={authorityExplanation}>{authorityExplanation}</span>
             )}
-            {result.graph?.cited_by_count !== undefined && (
+            {citedByCount !== undefined && (
               <span className="inline-flex items-center gap-1">
                 <Scale className="h-3 w-3" />
-                cited by <span className="text-accent">{result.graph.cited_by_count}</span>
+                cited by <span className="text-accent">{citedByCount}</span>
               </span>
             )}
-            {result.graph?.citation_count !== undefined && (
+            {citationCount !== undefined && (
               <span className="inline-flex items-center gap-1">
                 <Quote className="h-3 w-3" />
-                cites <span className="text-foreground">{result.graph.citation_count}</span>
+                cites <span className="text-foreground">{citationCount}</span>
               </span>
             )}
-            {result.graph?.connected_node_count !== undefined && (
+            {connectedNodeCount !== undefined && (
               <span className="inline-flex items-center gap-1">
                 <GitBranch className="h-3 w-3" />
-                graph nodes <span className="text-foreground">{result.graph.connected_node_count}</span>
+                graph nodes <span className="text-foreground">{connectedNodeCount}</span>
               </span>
             )}
             {result.source?.provision_id && (
@@ -145,7 +152,7 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <ScorePill label="final" value={result.score} strong />
+            <ScorePill label="final" value={resultScore} strong />
             {scoreParts.map(([label, value]) => (
               <ScorePill key={label} label={label} value={value} />
             ))}
@@ -176,7 +183,7 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
         <div className="hidden h-16 w-1 flex-none overflow-hidden rounded-full bg-muted lg:block">
           <div
             className="w-full bg-primary transition-all"
-            style={{ height: `${Math.min(100, Math.max(8, (result.score / 10) * 100))}%` }}
+            style={{ height: `${scoreBarHeight(resultScore)}%` }}
           />
         </div>
       </div>
@@ -184,8 +191,9 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
   )
 }
 
-function ScorePill({ label, value, strong = false }: { label: string; value?: number; strong?: boolean }) {
-  if (value === undefined || Number.isNaN(value)) return null
+function ScorePill({ label, value, strong = false }: { label: string; value?: NullableNumber; strong?: boolean }) {
+  const score = finiteNumber(value)
+  if (score === undefined) return null
   return (
     <span
       className={cn(
@@ -193,9 +201,24 @@ function ScorePill({ label, value, strong = false }: { label: string; value?: nu
         strong ? "border-primary/30 bg-primary/10 text-primary" : "border-border text-muted-foreground",
       )}
     >
-      {label} <span className="text-foreground">{value.toFixed(2)}</span>
+      {label} <span className="text-foreground">{score.toFixed(2)}</span>
     </span>
   )
+}
+
+function finiteNumber(value: NullableNumber | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+function scoreBarHeight(score: number | undefined) {
+  if (score === undefined) return 0
+  return Math.min(100, Math.max(8, (score / 10) * 100))
+}
+
+const LEGAL_STATUS_VALUES = new Set<string>(["active", "repealed", "renumbered", "amended"])
+
+function legalStatus(value: string | null | undefined): LegalStatus | null {
+  return value && LEGAL_STATUS_VALUES.has(value) ? (value as LegalStatus) : null
 }
 
 function AuthorityBadge({ label }: { label: string }) {

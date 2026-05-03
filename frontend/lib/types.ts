@@ -3,6 +3,7 @@
 export type QCStatus = "pass" | "warning" | "fail"
 export type LegalStatus = "active" | "repealed" | "renumbered" | "amended"
 export type AuthorityLevel = "constitution" | "statute" | "rule" | "regulation" | "official_commentary" | "case" | "agency_guidance" | "secondary"
+export type NullableNumber = number | null
 
 export type ChunkType =
   | "full_statute"
@@ -213,20 +214,20 @@ export interface GraphInfo {
   canonical_id?: string
   version_id?: string
   provision_id?: string
-  connected_node_count?: number
-  citation_count?: number
-  cited_by_count?: number
+  connected_node_count?: NullableNumber
+  citation_count?: NullableNumber
+  cited_by_count?: NullableNumber
 }
 
 export interface ScoreBreakdown {
-  exact?: number
-  keyword?: number
-  vector?: number
-  rerank?: number
-  graph?: number
-  authority?: number
-  expansion?: number
-  penalties?: number
+  exact?: NullableNumber
+  keyword?: NullableNumber
+  vector?: NullableNumber
+  rerank?: NullableNumber
+  graph?: NullableNumber
+  authority?: NullableNumber
+  expansion?: NullableNumber
+  penalties?: NullableNumber
 }
 
 export interface RerankInfo {
@@ -274,11 +275,11 @@ export interface SearchResult {
   status?: string
   snippet: string
   score: number
-  vector_score?: number
-  fulltext_score?: number
-  graph_score?: number
-  rerank_score?: number
-  pre_rerank_score?: number
+  vector_score?: NullableNumber
+  fulltext_score?: NullableNumber
+  graph_score?: NullableNumber
+  rerank_score?: NullableNumber
+  pre_rerank_score?: NullableNumber
   rank_source?: "exact" | "parent" | "keyword" | "keyword-fallback" | "graph-expanded" | "vector" | "graph" | "rerank"
   score_breakdown?: ScoreBreakdown
   semantic_types?: string[]

@@ -2,5 +2,6 @@
 members = [
     "crates/ors-crawler-v0",
     "crates/orsgraph-api",
+    "crates/orsgraph-mcp",
 ]
 resolver = "2"

@@ -132,6 +132,12 @@ Configuration is environment-first. Key operational variables:
 
 The admin service builds allowlisted crawler commands from typed job kinds. It writes job metadata and logs under `data/admin/jobs`, streams stdout/stderr, prevents concurrent mutating jobs, and records known output paths for the UI.
 
+Local development can leave `ORS_ADMIN_CRAWLER_BIN=cargo`, which expands to
+`cargo run -p ors-crawler-v0 --bin ors-crawler-v0 -- ...`. Production should
+run the API from the repo-root Docker image and set `ORS_ADMIN_CRAWLER_BIN` to
+`/app/ors-crawler-v0`, `ORS_ADMIN_WORKDIR` to `/app`, and admin data paths under
+`/app/data`. A crate-isolated API image has neither Cargo nor the crawler binary.
+
 Current job kinds:
 
 | Admin job kind | Crawler command |

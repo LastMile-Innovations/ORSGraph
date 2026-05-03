@@ -20,6 +20,13 @@ This manifest lists required Railway variables by service without secret values.
 
 ### orsgraph-api
 
+The production API service must build from the repository root Docker image
+(`source.rootDirectory=/`, `build.builder=DOCKERFILE`,
+`build.dockerfilePath=Dockerfile`). That image includes both `/app/orsgraph-api`
+and `/app/ors-crawler-v0`; isolated `/crates/orsgraph-api` Railpack builds do
+not include Cargo or the crawler binary, so admin source-ingest jobs cannot
+spawn.
+
 - `PORT`: Railway-provided listener port. `ORS_API_PORT` may override it when needed.
 - `ORS_API_HOST`: set to `0.0.0.0` on Railway.
 - `NEO4J_URI`: internal Neo4j URI, for example `bolt://neo4j.railway.internal:7687`.
@@ -32,6 +39,10 @@ This manifest lists required Railway variables by service without secret values.
 - `ORS_AUTH_ADMIN_ROLE`: admin role name, currently `orsgraph_admin`.
 - `ORS_ADMIN_ENABLED`: backend-only admin feature flag.
 - `ORS_ADMIN_ALLOW_KILL`: backend-only dangerous-operation flag; keep false unless intentionally running admin jobs.
+- `ORS_ADMIN_WORKDIR`: set to `/app` on Railway.
+- `ORS_ADMIN_CRAWLER_BIN`: set to `/app/ors-crawler-v0` on Railway.
+- `ORS_ADMIN_DATA_DIR`: set to `/app/data` on Railway.
+- `ORS_ADMIN_JOBS_DIR`: set to `/app/data/admin/jobs` on Railway.
 - `VOYAGE_API_KEY`: sealed key, required only when rerank/vector features are enabled.
 - `ORS_RERANK_ENABLED`, `ORS_VECTOR_SEARCH_ENABLED`, `ORS_EMBEDDING_MODEL`, `ORS_VECTOR_INDEX`: optional retrieval tuning flags.
 - `ORS_CORPUS_RELEASE_MANIFEST_PATH`: release manifest path; default `data/graph/corpus_release.json`.
@@ -107,7 +118,7 @@ The repo is a shared monorepo on Railway. Each deployable service should use
 Rust API/crawler services.
 
 - `frontend`: `frontend/**`
-- `orsgraph-api`: `Cargo.toml`, `Cargo.lock`, `crates/orsgraph-api/**`, `docs/data/**`
+- `orsgraph-api`: `Cargo.toml`, `Cargo.lock`, `Dockerfile`, `docker-*.sh`, `crates/orsgraph-api/**`, `crates/ors-crawler-v0/**`, `cypher/**`, `docs/data/**`
 - `ors-crawler`: `Cargo.toml`, `Cargo.lock`, `crates/ors-crawler-v0/**`, `cypher/**`, `docs/data/**`
 
 The first push that adds these config-as-code files may still redeploy the
