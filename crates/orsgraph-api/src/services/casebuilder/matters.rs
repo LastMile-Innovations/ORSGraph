@@ -96,6 +96,7 @@ impl CaseBuilderService {
         request: CreateMatterRequest,
         auth: &AuthContext,
     ) -> ApiResult<MatterBundle> {
+        let request = normalize_create_matter_request(request)?;
         let now = now_string();
         let matter_id = generate_id("matter", &request.name);
         let owner_subject = auth.subject()?.to_string();
@@ -103,11 +104,11 @@ impl CaseBuilderService {
             matter_id: matter_id.clone(),
             short_name: Some(short_name(&request.name)),
             name: request.name,
-            matter_type: request.matter_type.unwrap_or_else(|| "civil".to_string()),
+            matter_type: request.matter_type,
             status: "intake".to_string(),
-            user_role: request.user_role.unwrap_or_else(|| "neutral".to_string()),
-            jurisdiction: request.jurisdiction.unwrap_or_else(|| "Oregon".to_string()),
-            court: request.court.unwrap_or_else(|| "Unassigned".to_string()),
+            user_role: request.user_role,
+            jurisdiction: request.jurisdiction,
+            court: request.court,
             case_number: request.case_number,
             owner_subject: Some(owner_subject.clone()),
             owner_email: auth.email.clone(),
@@ -264,6 +265,7 @@ impl CaseBuilderService {
         matter_id: &str,
         request: PatchMatterRequest,
     ) -> ApiResult<MatterBundle> {
+        let request = normalize_patch_matter_request(request)?;
         let mut matter = self.get_matter_summary(matter_id).await?;
         if let Some(value) = request.name {
             matter.name = value;
@@ -284,8 +286,8 @@ impl CaseBuilderService {
         if let Some(value) = request.court {
             matter.court = value;
         }
-        if request.case_number.is_some() {
-            matter.case_number = request.case_number;
+        if let Some(value) = request.case_number {
+            matter.case_number = value;
         }
         matter.updated_at = now_string();
         self.merge_matter(&matter).await?;
@@ -864,5 +866,238 @@ impl CaseBuilderService {
         }
         self.merge_node(matter_id, task_spec(), task_id, &task)
             .await
+    }
+}
+
+struct NormalizedCreateMatterRequest {
+    name: String,
+    matter_type: String,
+    user_role: String,
+    jurisdiction: String,
+    court: String,
+    case_number: Option<String>,
+}
+
+struct NormalizedPatchMatterRequest {
+    name: Option<String>,
+    matter_type: Option<String>,
+    status: Option<String>,
+    user_role: Option<String>,
+    jurisdiction: Option<String>,
+    court: Option<String>,
+    case_number: Option<Option<String>>,
+}
+
+fn normalize_create_matter_request(
+    request: CreateMatterRequest,
+) -> ApiResult<NormalizedCreateMatterRequest> {
+    Ok(NormalizedCreateMatterRequest {
+        name: required_trimmed(request.name, "name")?,
+        matter_type: optional_choice(
+            request.matter_type,
+            "matter_type",
+            "civil",
+            ALLOWED_MATTER_TYPES,
+        )?,
+        user_role: optional_choice(
+            request.user_role,
+            "user_role",
+            "neutral",
+            ALLOWED_USER_ROLES,
+        )?,
+        jurisdiction: optional_text_or_default(request.jurisdiction, "Oregon"),
+        court: optional_text_or_default(request.court, "Unassigned"),
+        case_number: optional_trimmed(request.case_number),
+    })
+}
+
+fn normalize_patch_matter_request(
+    request: PatchMatterRequest,
+) -> ApiResult<NormalizedPatchMatterRequest> {
+    Ok(NormalizedPatchMatterRequest {
+        name: match request.name {
+            Some(value) => Some(required_trimmed(value, "name")?),
+            None => None,
+        },
+        matter_type: optional_choice_patch(
+            request.matter_type,
+            "matter_type",
+            ALLOWED_MATTER_TYPES,
+        )?,
+        status: optional_choice_patch(request.status, "status", ALLOWED_MATTER_STATUSES)?,
+        user_role: optional_choice_patch(request.user_role, "user_role", ALLOWED_USER_ROLES)?,
+        jurisdiction: request
+            .jurisdiction
+            .map(|value| optional_text_or_default(Some(value), "Oregon")),
+        court: request
+            .court
+            .map(|value| optional_text_or_default(Some(value), "Unassigned")),
+        case_number: request
+            .case_number
+            .map(|value| optional_trimmed(Some(value))),
+    })
+}
+
+const ALLOWED_MATTER_TYPES: &[&str] = &[
+    "civil",
+    "family",
+    "small_claims",
+    "admin",
+    "criminal",
+    "appeal",
+    "landlord_tenant",
+    "employment",
+    "fact_check",
+    "complaint_analysis",
+    "other",
+];
+
+const ALLOWED_USER_ROLES: &[&str] = &[
+    "plaintiff",
+    "defendant",
+    "petitioner",
+    "respondent",
+    "neutral",
+    "researcher",
+];
+
+const ALLOWED_MATTER_STATUSES: &[&str] = &["active", "intake", "stayed", "closed", "appeal"];
+
+fn required_trimmed(value: String, field: &str) -> ApiResult<String> {
+    optional_trimmed(Some(value))
+        .ok_or_else(|| ApiError::BadRequest(format!("Matter {field} must not be empty")))
+}
+
+fn optional_trimmed(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn optional_text_or_default(value: Option<String>, default: &str) -> String {
+    optional_trimmed(value).unwrap_or_else(|| default.to_string())
+}
+
+fn optional_choice(
+    value: Option<String>,
+    field: &str,
+    default: &str,
+    allowed: &[&str],
+) -> ApiResult<String> {
+    optional_choice_patch(value, field, allowed)
+        .map(|value| value.unwrap_or_else(|| default.to_string()))
+}
+
+fn optional_choice_patch(
+    value: Option<String>,
+    field: &str,
+    allowed: &[&str],
+) -> ApiResult<Option<String>> {
+    let Some(value) = optional_trimmed(value) else {
+        return Ok(None);
+    };
+    if allowed.contains(&value.as_str()) {
+        Ok(Some(value))
+    } else {
+        Err(ApiError::BadRequest(format!(
+            "Unsupported matter {field} {value}"
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn casebuilder_create_matter_validation_trims_and_defaults() {
+        let normalized = normalize_create_matter_request(CreateMatterRequest {
+            name: "  Smith v. ABC  ".to_string(),
+            matter_type: Some("landlord_tenant".to_string()),
+            user_role: Some(" plaintiff ".to_string()),
+            jurisdiction: Some("  ".to_string()),
+            court: Some("  Multnomah County Circuit Court  ".to_string()),
+            case_number: Some("  24CV12345  ".to_string()),
+        })
+        .expect("valid matter input");
+
+        assert_eq!(normalized.name, "Smith v. ABC");
+        assert_eq!(normalized.matter_type, "landlord_tenant");
+        assert_eq!(normalized.user_role, "plaintiff");
+        assert_eq!(normalized.jurisdiction, "Oregon");
+        assert_eq!(normalized.court, "Multnomah County Circuit Court");
+        assert_eq!(normalized.case_number.as_deref(), Some("24CV12345"));
+    }
+
+    #[test]
+    fn casebuilder_create_matter_validation_rejects_empty_or_unknown_values() {
+        assert!(
+            normalize_create_matter_request(CreateMatterRequest {
+                name: "  ".to_string(),
+                matter_type: None,
+                user_role: None,
+                jurisdiction: None,
+                court: None,
+                case_number: None,
+            })
+            .is_err()
+        );
+        assert!(
+            normalize_create_matter_request(CreateMatterRequest {
+                name: "Smith".to_string(),
+                matter_type: Some("space_law".to_string()),
+                user_role: None,
+                jurisdiction: None,
+                court: None,
+                case_number: None,
+            })
+            .is_err()
+        );
+        assert!(
+            normalize_create_matter_request(CreateMatterRequest {
+                name: "Smith".to_string(),
+                matter_type: None,
+                user_role: Some("spectator".to_string()),
+                jurisdiction: None,
+                court: None,
+                case_number: None,
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn casebuilder_patch_matter_validation_trims_and_rejects_invalid_choices() {
+        let normalized = normalize_patch_matter_request(PatchMatterRequest {
+            name: Some("  Updated Matter  ".to_string()),
+            matter_type: Some("civil".to_string()),
+            status: Some("active".to_string()),
+            user_role: Some("researcher".to_string()),
+            jurisdiction: Some(" ".to_string()),
+            court: Some(" Court  ".to_string()),
+            case_number: Some(" ".to_string()),
+        })
+        .expect("valid patch");
+
+        assert_eq!(normalized.name.as_deref(), Some("Updated Matter"));
+        assert_eq!(normalized.matter_type.as_deref(), Some("civil"));
+        assert_eq!(normalized.status.as_deref(), Some("active"));
+        assert_eq!(normalized.user_role.as_deref(), Some("researcher"));
+        assert_eq!(normalized.jurisdiction.as_deref(), Some("Oregon"));
+        assert_eq!(normalized.court.as_deref(), Some("Court"));
+        assert_eq!(normalized.case_number, Some(None));
+
+        assert!(
+            normalize_patch_matter_request(PatchMatterRequest {
+                name: None,
+                matter_type: None,
+                status: Some("archived".to_string()),
+                user_role: None,
+                jurisdiction: None,
+                court: None,
+                case_number: None,
+            })
+            .is_err()
+        );
     }
 }
