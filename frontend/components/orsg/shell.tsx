@@ -1,8 +1,9 @@
 import { TopNav } from "./top-nav"
 import { LeftRail } from "./left-rail"
+import { MobileLeftRailSheet } from "./mobile-left-rail-sheet"
 import { getSidebarState } from "@/lib/api"
-import { Suspense } from "react"
 import { headers } from "next/headers"
+import { Suspense, cache } from "react"
 
 interface ShellProps {
   children: React.ReactNode
@@ -13,7 +14,15 @@ interface ShellProps {
 export async function Shell({ children, rightPanel, hideLeftRail = false }: ShellProps) {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      <TopNav />
+      <TopNav
+        leftRailTrigger={
+          hideLeftRail ? null : (
+            <Suspense fallback={<div className="h-8 w-8 lg:hidden" aria-hidden="true" />}>
+              <MobileLeftRailSlot />
+            </Suspense>
+          )
+        }
+      />
       <div className="flex flex-1 overflow-hidden">
         {!hideLeftRail && (
           <div className="hidden shrink-0 lg:flex">
@@ -36,7 +45,20 @@ export async function Shell({ children, rightPanel, hideLeftRail = false }: Shel
 }
 
 async function LeftRailSlot() {
-  const cookie = (await headers()).get("cookie")
-  const sidebarState = await getSidebarState(cookie ? { headers: { cookie } } : undefined)
+  const sidebarState = await loadSidebarState()
   return <LeftRail initialState={sidebarState} />
+}
+
+async function MobileLeftRailSlot() {
+  const sidebarState = await loadSidebarState()
+  return <MobileLeftRailSheet initialState={sidebarState} />
+}
+
+const loadSidebarStateForCookie = cache((cookie: string | null) => {
+  return getSidebarState(cookie ? { headers: { cookie } } : undefined)
+})
+
+async function loadSidebarState() {
+  const cookie = (await headers()).get("cookie")
+  return loadSidebarStateForCookie(cookie)
 }

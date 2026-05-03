@@ -1294,8 +1294,26 @@ impl Neo4jService {
                          OR toLower(coalesce(i.canonical_id, '')) CONTAINS $q
                          OR toLower(coalesce(i.title, '')) CONTAINS $q
                        )
-                     WITH i
-                     ORDER BY coalesce(i.chapter, ''), coalesce(i.citation, '')
+                     WITH i,
+                          coalesce(i.chapter, '') AS chapter,
+                          coalesce(i.citation, '') AS citation,
+                          split(coalesce(i.citation, ''), '.') AS citation_parts
+                     WITH i, chapter, citation,
+                          CASE
+                            WHEN chapter =~ '^\\d+$' THEN toInteger(chapter)
+                            WHEN chapter =~ '^\\d+[A-Za-z]$' THEN toInteger(substring(chapter, 0, size(chapter) - 1))
+                            ELSE 2147483647
+                          END AS chapter_number,
+                          CASE
+                            WHEN chapter =~ '^\\d+[A-Za-z]$' THEN toUpper(substring(chapter, size(chapter) - 1, 1))
+                            ELSE ''
+                          END AS chapter_suffix,
+                          CASE
+                            WHEN size(citation_parts) > 1 AND split(citation_parts[1], '(')[0] =~ '^\\d+$'
+                              THEN toInteger(split(citation_parts[1], '(')[0])
+                            ELSE 2147483647
+                          END AS section_number
+                     ORDER BY chapter_number, chapter_suffix, chapter, section_number, citation
                      WITH collect({
                        canonical_id: i.canonical_id,
                        citation: i.citation,

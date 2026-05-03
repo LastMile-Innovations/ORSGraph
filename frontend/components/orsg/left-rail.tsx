@@ -48,9 +48,11 @@ const DEFAULT_OPEN: Record<string, boolean> = {
 
 interface LeftRailProps {
   initialState: DataState<SidebarData | null> | null
+  className?: string
+  onNavigate?: () => void
 }
 
-export function LeftRail({ initialState }: LeftRailProps) {
+export function LeftRail({ initialState, className, onNavigate }: LeftRailProps) {
   const pathname = usePathname() || "/"
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -62,6 +64,10 @@ export function LeftRail({ initialState }: LeftRailProps) {
   const currentStatuteId = useMemo(() => statuteIdFromPath(pathname), [pathname])
   const data = state?.data
   const canWrite = state?.source === "live"
+
+  useEffect(() => {
+    setState(initialState)
+  }, [initialState])
 
   useEffect(() => {
     try {
@@ -115,6 +121,7 @@ export function LeftRail({ initialState }: LeftRailProps) {
     const trimmed = railQuery.trim()
     if (!trimmed) return
     router.push(`/search?q=${encodeURIComponent(trimmed)}`)
+    onNavigate?.()
     setRailQuery("")
   }
 
@@ -176,7 +183,7 @@ export function LeftRail({ initialState }: LeftRailProps) {
 
   if (!data) {
     return (
-      <aside className="flex h-full w-64 flex-col border-r border-sidebar-border bg-sidebar p-3 text-sidebar-foreground">
+      <aside className={cn("flex h-full w-64 flex-col border-r border-sidebar-border bg-sidebar p-3 text-sidebar-foreground", className)}>
         <RailUnavailable />
       </aside>
     )
@@ -185,7 +192,7 @@ export function LeftRail({ initialState }: LeftRailProps) {
   const source = state?.source ?? "error"
 
   return (
-    <aside className="flex h-full w-64 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+    <aside className={cn("flex h-full w-64 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground", className)}>
       <div className="border-b border-sidebar-border p-3">
         <form onSubmit={submitRailSearch} className="flex items-center gap-2 rounded-md border border-sidebar-border bg-background px-2 focus-within:border-primary">
           <Search className="h-3.5 w-3.5 text-muted-foreground" />
@@ -223,6 +230,7 @@ export function LeftRail({ initialState }: LeftRailProps) {
                 chapter={chapter}
                 defaultOpen={chapterHasActiveStatute(chapter, currentStatuteId) || index === 0}
                 currentStatuteId={currentStatuteId}
+                onNavigate={onNavigate}
               />
             ))}
           </div>
@@ -251,7 +259,7 @@ export function LeftRail({ initialState }: LeftRailProps) {
           <div className="space-y-px px-1">
             {data.saved_searches.map((search) => (
               <div key={search.saved_search_id} className="group flex items-center gap-1 rounded-md px-2 py-1 hover:bg-sidebar-accent">
-                <Link href={`/search?q=${encodeURIComponent(search.query)}`} className="min-w-0 flex-1">
+                <Link href={`/search?q=${encodeURIComponent(search.query)}`} className="min-w-0 flex-1" onClick={onNavigate}>
                   <span className="block truncate text-xs text-foreground">{search.query}</span>
                 </Link>
                 {search.results > 0 && (
@@ -296,6 +304,7 @@ export function LeftRail({ initialState }: LeftRailProps) {
             pendingAction={pendingAction}
             canWrite={canWrite}
             onRemove={removeStatute}
+            onNavigate={onNavigate}
           />
         </Section>
 
@@ -308,7 +317,7 @@ export function LeftRail({ initialState }: LeftRailProps) {
           onToggle={toggleSection}
         >
           <SidebarListEmpty show={data.recent_statutes.length === 0} label="No recent statutes" />
-          <StatuteList statutes={data.recent_statutes} currentStatuteId={currentStatuteId} />
+          <StatuteList statutes={data.recent_statutes} currentStatuteId={currentStatuteId} onNavigate={onNavigate} />
         </Section>
       </div>
 
@@ -328,7 +337,7 @@ export function LeftRail({ initialState }: LeftRailProps) {
           <div className="flex items-center justify-between gap-3">
             <span>matter</span>
             {data.active_matter ? (
-              <Link href={matterHref(data.active_matter.matter_id)} className="flex min-w-0 items-center gap-1 text-foreground hover:text-primary">
+              <Link href={matterHref(data.active_matter.matter_id)} className="flex min-w-0 items-center gap-1 text-foreground hover:text-primary" onClick={onNavigate}>
                 <Briefcase className="h-3 w-3 shrink-0" />
                 <span className="truncate">{data.active_matter.name}</span>
               </Link>
@@ -388,10 +397,12 @@ function ChapterTree({
   chapter,
   defaultOpen,
   currentStatuteId,
+  onNavigate,
 }: {
   chapter: SidebarChapter
   defaultOpen: boolean
   currentStatuteId: string | null
+  onNavigate?: () => void
 }) {
   const [open, setOpen] = useState(defaultOpen)
 
@@ -413,11 +424,12 @@ function ChapterTree({
       {open && (
         <div className="ml-5 border-l border-sidebar-border">
           {chapter.items.map((statute) => (
-            <StatuteLink key={statute.canonical_id} statute={statute} active={statuteMatches(statute, currentStatuteId)} />
+            <StatuteLink key={statute.canonical_id} statute={statute} active={statuteMatches(statute, currentStatuteId)} onNavigate={onNavigate} />
           ))}
           {chapter.count > chapter.items.length && (
             <Link
-              href={`/search?q=${encodeURIComponent(`ORS chapter ${chapter.chapter}`)}&chapter=${encodeURIComponent(chapter.chapter)}`}
+              href={`/statutes?chapter=${encodeURIComponent(chapter.chapter)}`}
+              onClick={onNavigate}
               className="flex px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
             >
               {chapter.count - chapter.items.length} more
@@ -435,18 +447,20 @@ function StatuteList({
   pendingAction,
   canWrite,
   onRemove,
+  onNavigate,
 }: {
   statutes: SidebarStatute[]
   currentStatuteId: string | null
   pendingAction?: string | null
   canWrite?: boolean
   onRemove?: (statute: SidebarStatute) => void
+  onNavigate?: () => void
 }) {
   return (
     <div className="space-y-px px-1">
       {statutes.map((statute) => (
         <div key={statute.canonical_id} className="group flex items-center gap-1 rounded-md hover:bg-sidebar-accent">
-          <StatuteLink statute={statute} active={statuteMatches(statute, currentStatuteId)} className="min-w-0 flex-1" />
+          <StatuteLink statute={statute} active={statuteMatches(statute, currentStatuteId)} className="min-w-0 flex-1" onNavigate={onNavigate} />
           {onRemove && (
             <RailIconButton
               label="Remove saved statute"
@@ -463,11 +477,22 @@ function StatuteList({
   )
 }
 
-function StatuteLink({ statute, active, className }: { statute: SidebarStatute; active: boolean; className?: string }) {
+function StatuteLink({
+  statute,
+  active,
+  className,
+  onNavigate,
+}: {
+  statute: SidebarStatute
+  active: boolean
+  className?: string
+  onNavigate?: () => void
+}) {
   return (
     <Link
       href={`/statutes/${encodeURIComponent(statute.canonical_id)}`}
       aria-current={active ? "page" : undefined}
+      onClick={onNavigate}
       className={cn(
         "flex min-w-0 flex-col rounded px-2 py-1 transition-colors",
         active ? "bg-primary/10 text-primary" : "hover:bg-sidebar-accent",

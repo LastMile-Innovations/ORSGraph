@@ -3,6 +3,7 @@
 import { useState } from "react"
 import type { StatutePageResponse } from "@/lib/types"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { authorityBadges, authorityReason } from "@/lib/authority-taxonomy"
 import { StatusBadge, QCBadge } from "@/components/orsg/badges"
 import { Button } from "@/components/ui/button"
@@ -19,6 +20,7 @@ export function StatuteHeader({
   inspectorAction?: React.ReactNode
 }) {
   const { identity, current_version, qc, inbound_citations, outbound_citations } = data
+  const router = useRouter()
   const counts = data.summary_counts
   const authorityMeta = {
     ...identity,
@@ -38,6 +40,7 @@ export function StatuteHeader({
     setStatusMessage(null)
     try {
       await saveSidebarStatute(identity.canonical_id)
+      router.refresh()
       setStatusMessage("Saved.")
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Save failed.")

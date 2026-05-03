@@ -21,23 +21,14 @@ export async function getCachedHomePageState() {
 }
 
 export async function getCachedStatuteIndexState(params: StatuteIndexParams = {}) {
-  "use cache"
-  tagAuthorityRead("statutes:index")
-  cacheLife("hours")
   return getStatuteIndexState(params)
 }
 
 export async function getCachedStatutePageDataState(citationOrCanonicalId: string) {
-  "use cache"
-  tagAuthorityRead(`statute:${citationOrCanonicalId}`)
-  cacheLife("hours")
   return getStatutePageDataState(citationOrCanonicalId)
 }
 
 export async function getCachedSearchWithParamsState(params: SearchParams) {
-  "use cache"
-  tagAuthorityRead("search")
-  cacheLife("minutes")
   return searchWithParamsState(params)
 }
 

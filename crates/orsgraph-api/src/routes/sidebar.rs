@@ -1,3 +1,4 @@
+use crate::auth::{AuthContext, AuthKind};
 use crate::error::{ApiError, ApiResult};
 use crate::models::api::{
     SaveSidebarSearchRequest, SidebarChapter, SidebarCorpus, SidebarMatter, SidebarResponse,
@@ -5,9 +6,8 @@ use crate::models::api::{
 };
 use crate::state::AppState;
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{Path, State},
-    http::HeaderMap,
     routing::{delete, get, post},
 };
 use neo4rs::{Row, query};
@@ -36,9 +36,9 @@ pub fn routes() -> Router<AppState> {
 
 async fn get_sidebar(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth): Extension<AuthContext>,
 ) -> ApiResult<Json<SidebarResponse>> {
-    let scope = sidebar_scope(&headers);
+    let scope = sidebar_scope(&auth);
     let corpus = fetch_sidebar_corpus(&state).await?;
     let saved_searches = fetch_saved_searches(&state, &scope).await?;
     let saved_statutes = fetch_sidebar_statutes(&state, &scope, "SavedStatute", "saved_at").await?;
@@ -70,10 +70,10 @@ async fn get_sidebar(
 
 async fn save_sidebar_search(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth): Extension<AuthContext>,
     Json(request): Json<SaveSidebarSearchRequest>,
 ) -> ApiResult<Json<SidebarSavedSearch>> {
-    let scope = sidebar_scope(&headers);
+    let scope = sidebar_scope(&auth);
     let query_text = request.query.trim();
     if query_text.is_empty() {
         return Err(ApiError::BadRequest(
@@ -83,7 +83,7 @@ async fn save_sidebar_search(
 
     let query_key = query_text.to_ascii_lowercase();
     let now = now_string();
-    let saved_search_id = format!("saved-search:{}:{}", slug(&scope), slug(&query_key));
+    let saved_search_id = scoped_sidebar_id("saved-search", &scope, &query_key);
     let results = request.results.unwrap_or(0) as i64;
     let rows = state
         .neo4j_service
@@ -120,10 +120,10 @@ async fn save_sidebar_search(
 
 async fn delete_sidebar_search(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth): Extension<AuthContext>,
     Path(saved_search_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let scope = sidebar_scope(&headers);
+    let scope = sidebar_scope(&auth);
     let rows = state
         .neo4j_service
         .run_rows(
@@ -146,17 +146,13 @@ async fn delete_sidebar_search(
 
 async fn save_sidebar_statute(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth): Extension<AuthContext>,
     Json(request): Json<SidebarStatuteRequest>,
 ) -> ApiResult<Json<SidebarStatute>> {
-    let scope = sidebar_scope(&headers);
+    let scope = sidebar_scope(&auth);
     let statute = resolve_sidebar_statute(&state, &request.canonical_id).await?;
     let now = now_string();
-    let saved_statute_id = format!(
-        "saved-statute:{}:{}",
-        slug(&scope),
-        slug(&statute.canonical_id)
-    );
+    let saved_statute_id = scoped_sidebar_id("saved-statute", &scope, &statute.canonical_id);
     let rows = state
         .neo4j_service
         .run_rows(
@@ -201,10 +197,10 @@ async fn save_sidebar_statute(
 
 async fn delete_sidebar_statute(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth): Extension<AuthContext>,
     Path(statute_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    let scope = sidebar_scope(&headers);
+    let scope = sidebar_scope(&auth);
     let rows = state
         .neo4j_service
         .run_rows(
@@ -228,17 +224,13 @@ async fn delete_sidebar_statute(
 
 async fn record_recent_statute(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth): Extension<AuthContext>,
     Json(request): Json<SidebarStatuteRequest>,
 ) -> ApiResult<Json<SidebarStatute>> {
-    let scope = sidebar_scope(&headers);
+    let scope = sidebar_scope(&auth);
     let statute = resolve_sidebar_statute(&state, &request.canonical_id).await?;
     let now = now_string();
-    let recent_statute_id = format!(
-        "recent-statute:{}:{}",
-        slug(&scope),
-        slug(&statute.canonical_id)
-    );
+    let recent_statute_id = scoped_sidebar_id("recent-statute", &scope, &statute.canonical_id);
     let rows = state
         .neo4j_service
         .run_rows(
@@ -299,9 +291,29 @@ async fn fetch_sidebar_corpus(state: &AppState) -> ApiResult<SidebarCorpus> {
         .neo4j_service
         .run_rows(query(&format!(
             "MATCH (i:LegalTextIdentity)
-             WITH i
-             ORDER BY coalesce(i.chapter, ''), coalesce(i.citation, '')
-             WITH coalesce(i.chapter, 'unknown') AS chapter,
+             WITH i,
+                  coalesce(i.chapter, 'unknown') AS chapter,
+                  coalesce(i.citation, '') AS citation,
+                  split(coalesce(i.citation, ''), '.') AS citation_parts
+             WITH i, chapter, citation,
+                  CASE
+                    WHEN chapter =~ '^\\d+$' THEN toInteger(chapter)
+                    WHEN chapter =~ '^\\d+[A-Za-z]$' THEN toInteger(substring(chapter, 0, size(chapter) - 1))
+                    ELSE 2147483647
+                  END AS chapter_number,
+                  CASE
+                    WHEN chapter =~ '^\\d+[A-Za-z]$' THEN toUpper(substring(chapter, size(chapter) - 1, 1))
+                    ELSE ''
+                  END AS chapter_suffix,
+                  CASE
+                    WHEN size(citation_parts) > 1 AND split(citation_parts[1], '(')[0] =~ '^\\d+$'
+                      THEN toInteger(split(citation_parts[1], '(')[0])
+                    ELSE 2147483647
+                  END AS section_number
+             ORDER BY chapter_number, chapter_suffix, chapter, section_number, citation
+             WITH chapter,
+                  chapter_number,
+                  chapter_suffix,
                   count(i) AS item_count,
                   collect({{
                     canonical_id: i.canonical_id,
@@ -312,6 +324,7 @@ async fn fetch_sidebar_corpus(state: &AppState) -> ApiResult<SidebarCorpus> {
                     edition_year: coalesce(i.edition_year, 2025)
                   }})[0..{SIDEBAR_CHAPTER_ITEM_LIMIT}] AS items,
                   max(coalesce(i.edition_year, 2025)) AS edition_year
+             ORDER BY chapter_number, chapter_suffix, chapter
              WITH collect({{
                     chapter: chapter,
                     label: 'Chapter ' + chapter,
@@ -490,14 +503,22 @@ fn sidebar_statute_from_value(value: &Value) -> SidebarStatute {
     }
 }
 
-fn sidebar_scope(headers: &HeaderMap) -> String {
-    headers
-        .get("x-ors-user")
-        .or_else(|| headers.get("x-user-id"))
-        .and_then(|value| value.to_str().ok())
-        .map(clean_scope)
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "workspace".to_string())
+fn sidebar_scope(auth: &AuthContext) -> String {
+    match &auth.kind {
+        AuthKind::User => auth
+            .subject
+            .as_deref()
+            .map(clean_scope)
+            .filter(|value| !value.is_empty())
+            .map(|subject| format!("user:{subject}"))
+            .unwrap_or_else(|| "workspace".to_string()),
+        AuthKind::Service => "service:api-key".to_string(),
+        AuthKind::Anonymous => "workspace".to_string(),
+    }
+}
+
+fn scoped_sidebar_id(prefix: &str, scope: &str, key: &str) -> String {
+    format!("{}:{}:{}", prefix, slug(scope), slug(key))
 }
 
 fn clean_scope(value: &str) -> String {
@@ -582,4 +603,58 @@ fn value_i32(value: &Value, key: &str, fallback: i32) -> i32 {
         .and_then(Value::as_i64)
         .map(|value| value as i32)
         .unwrap_or(fallback)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn user_auth(subject: &str) -> AuthContext {
+        AuthContext {
+            kind: AuthKind::User,
+            subject: Some(subject.to_string()),
+            email: None,
+            name: None,
+            roles: BTreeSet::new(),
+        }
+    }
+
+    #[test]
+    fn sidebar_scope_is_derived_from_authenticated_subject() {
+        assert_eq!(sidebar_scope(&user_auth("user-a")), "user:user-a");
+        assert_eq!(
+            sidebar_scope(&user_auth("User A / Example")),
+            "user:UserAExample"
+        );
+        assert_eq!(sidebar_scope(&AuthContext::service()), "service:api-key");
+        assert_eq!(sidebar_scope(&AuthContext::anonymous()), "workspace");
+    }
+
+    #[test]
+    fn saved_search_ids_are_scoped_per_user() {
+        let user_a = sidebar_scope(&user_auth("user-a"));
+        let user_b = sidebar_scope(&user_auth("user-b"));
+
+        assert_ne!(
+            scoped_sidebar_id("saved-search", &user_a, "tenant"),
+            scoped_sidebar_id("saved-search", &user_b, "tenant")
+        );
+    }
+
+    #[test]
+    fn saved_and_recent_statute_ids_are_scoped_per_user() {
+        let user_a = sidebar_scope(&user_auth("user-a"));
+        let user_b = sidebar_scope(&user_auth("user-b"));
+        let statute_id = "or:ors:90.320";
+
+        assert_ne!(
+            scoped_sidebar_id("saved-statute", &user_a, statute_id),
+            scoped_sidebar_id("saved-statute", &user_b, statute_id)
+        );
+        assert_ne!(
+            scoped_sidebar_id("recent-statute", &user_a, statute_id),
+            scoped_sidebar_id("recent-statute", &user_b, statute_id)
+        );
+    }
 }

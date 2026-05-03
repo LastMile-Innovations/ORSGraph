@@ -4,7 +4,7 @@ import Link from "next/link"
 import { signIn, signOut, useSession } from "next-auth/react"
 import { usePathname, useRouter } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
-import type { FormEvent } from "react"
+import type { FormEvent, ReactNode } from "react"
 import type { LucideIcon } from "lucide-react"
 import {
   Activity,
@@ -170,7 +170,7 @@ function formatCheckedAt(value?: string) {
   }).format(new Date(value))
 }
 
-export function TopNav() {
+export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
   const pathname = usePathname() || "/"
   const router = useRouter()
   const [query, setQuery] = useState("")
@@ -261,6 +261,8 @@ export function TopNav() {
           </div>
         </SheetContent>
       </Sheet>
+
+      {leftRailTrigger}
 
       <Link href="/dashboard" className="group flex min-w-0 shrink-0 items-center gap-2 rounded-md pr-1 outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
         <BrandMark />
