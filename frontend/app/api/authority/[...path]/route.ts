@@ -17,6 +17,7 @@ type RouteContext = {
 }
 
 const HOP_BY_HOP_HEADERS = new Set([
+  "accept-encoding",
   "connection",
   "content-length",
   "cookie",
@@ -76,6 +77,7 @@ async function forwardAuthorityRead(request: NextRequest, context: RouteContext)
     }
   })
   headers.set("accept", request.headers.get("accept") || "application/json")
+  headers.set("Accept-Encoding", "identity")
   if (session?.accessToken) {
     headers.set("Authorization", `Bearer ${session.accessToken}`)
   } else if (API_KEY && !headers.has("x-api-key")) {

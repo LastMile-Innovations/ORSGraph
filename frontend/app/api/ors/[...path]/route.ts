@@ -10,6 +10,7 @@ type RouteContext = {
 }
 
 const HOP_BY_HOP_HEADERS = new Set([
+  "accept-encoding",
   "connection",
   "content-length",
   "cookie",
@@ -60,6 +61,7 @@ async function forwardRequest(request: NextRequest, context: RouteContext) {
       headers.set(key, value)
     }
   })
+  headers.set("Accept-Encoding", "identity")
   if (session?.accessToken) {
     headers.set("Authorization", `Bearer ${session.accessToken}`)
   }
