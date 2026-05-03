@@ -2,6 +2,7 @@ import { TopNav } from "./top-nav"
 import { LeftRail } from "./left-rail"
 import { getSidebarState } from "@/lib/api"
 import { Suspense } from "react"
+import { headers } from "next/headers"
 
 interface ShellProps {
   children: React.ReactNode
@@ -35,6 +36,7 @@ export async function Shell({ children, rightPanel, hideLeftRail = false }: Shel
 }
 
 async function LeftRailSlot() {
-  const sidebarState = await getSidebarState()
+  const cookie = (await headers()).get("cookie")
+  const sidebarState = await getSidebarState(cookie ? { headers: { cookie } } : undefined)
   return <LeftRail initialState={sidebarState} />
 }

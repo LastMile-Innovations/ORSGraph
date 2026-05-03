@@ -188,6 +188,32 @@ describe("statute and sidebar API adapters", () => {
     expect(state.data?.recent_statutes).toEqual([])
   })
 
+  it("forwards request headers when loading sidebar state", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      corpus: {
+        jurisdiction: "Oregon",
+        corpus: "ORS",
+        edition_year: 2025,
+        total_statutes: 0,
+        chapters: [],
+      },
+      saved_searches: [],
+      saved_statutes: [],
+      recent_statutes: [],
+      active_matter: null,
+      updated_at: "2026-05-01T00:00:00Z",
+    }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    const state = await getSidebarState({ headers: { cookie: "next-auth.session-token=abc" } })
+
+    expect(state.source).toBe("live")
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({
+      cookie: "next-auth.session-token=abc",
+    })
+  })
+
   it("returns no sidebar data when the live sidebar API is unavailable", async () => {
     vi.spyOn(console, "info").mockImplementation(() => undefined)
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("fetch failed")))

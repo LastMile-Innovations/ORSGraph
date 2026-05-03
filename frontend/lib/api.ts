@@ -481,9 +481,9 @@ function mapStatuteIndexItem(item: StatuteIndexApiItem): StatuteIdentity {
   }
 }
 
-export async function getSidebarState(): Promise<DataState<SidebarData | null>> {
+export async function getSidebarState(options: RequestInit = {}): Promise<DataState<SidebarData | null>> {
   try {
-    const response = await fetchApi<SidebarData>("/sidebar")
+    const response = await fetchApi<SidebarData>("/sidebar", options)
     return { source: "live", data: normalizeSidebarData(response) }
   } catch (error) {
     return apiFailureState("/sidebar", null, error)
