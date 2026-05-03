@@ -3,6 +3,14 @@ import { ChunkTypeBadge } from "@/components/orsg/badges"
 import { Check, X } from "lucide-react"
 
 export function ChunksTab({ data }: { data: StatutePageResponse }) {
+  if (data.chunks.length === 0) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-6 py-16 text-sm text-muted-foreground">
+        No retrieval chunks are attached to this statute.
+      </div>
+    )
+  }
+
   return (
     <div className="px-6 py-6">
       <div className="mb-3 flex items-baseline gap-4 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">

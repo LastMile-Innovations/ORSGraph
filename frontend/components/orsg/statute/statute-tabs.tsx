@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { useEffect, useMemo, useState, useTransition } from "react"
+import { useEffect, useMemo, useState, useTransition, type Dispatch, type SetStateAction } from "react"
 import type { Chunk, InboundCitation, OutboundCitation, Provision, StatutePageResponse } from "@/lib/types"
 import { getChunks, getCitations, getHistory, getSemantics } from "@/lib/api"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -36,24 +36,38 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"]
 
-export function StatuteTabs({ data, initialTab }: { data: StatutePageResponse; initialTab?: string }) {
+export function StatuteTabs({
+  data,
+  initialTab,
+  onDataChange,
+}: {
+  data: StatutePageResponse
+  initialTab?: string
+  onDataChange: Dispatch<SetStateAction<StatutePageResponse>>
+}) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const [isPending, startTransition] = useTransition()
   const [active, setActive] = useState<TabId>(isTabId(initialTab) ? initialTab : "text")
-  const [tabData, setTabData] = useState(data)
-  const [loaded, setLoaded] = useState({
-    citations: data.outbound_citations.length > 0 || data.inbound_citations.length > 0,
-    semantics: data.definitions.length > 0 || data.deadlines.length > 0 || data.exceptions.length > 0 || data.penalties.length > 0,
-    chunks: data.chunks.length > 0,
-    history: Boolean(data.source_notes?.length),
-  })
+  const [loaded, setLoaded] = useState(() => loadedStateFor(data))
   const [loadingTab, setLoadingTab] = useState<TabId | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const citationId = data.identity.canonical_id || data.identity.citation
-  const activeData = useMemo(() => tabData, [tabData])
+  const activeData = useMemo(() => data, [data])
+
+  useEffect(() => {
+    setActive(isTabId(initialTab) ? initialTab : "text")
+  }, [data.identity.canonical_id, initialTab])
+
+  useEffect(() => {
+    setLoaded(loadedStateFor(data))
+    setLoadingTab(null)
+    setLoadError(null)
+    // Reset only when the statute changes; empty successful lazy responses still count as loaded.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.identity.canonical_id])
 
   const handleTabChange = (value: string) => {
     if (!isTabId(value)) return
@@ -75,13 +89,13 @@ export function StatuteTabs({ data, initialTab }: { data: StatutePageResponse; i
       await loadCitations()
     }
     if ((tab === "definitions" || tab === "deadlines" || tab === "exceptions") && !loaded.semantics) {
-      await loadSemantics()
+      await loadSemantics(tab)
     }
     if (tab === "chunks" && !loaded.chunks) {
       await loadChunks()
     }
     if ((tab === "source" || tab === "versions" || tab === "qc") && !loaded.history) {
-      await loadHistory()
+      await loadHistory(tab)
     }
   }
 
@@ -90,10 +104,15 @@ export function StatuteTabs({ data, initialTab }: { data: StatutePageResponse; i
     setLoadError(null)
     try {
       const citations = await getCitations(citationId)
-      setTabData((current) => ({
+      const outbound = (citations.outbound ?? []).map(mapOutboundCitation)
+      const inbound = (citations.inbound ?? []).map(mapInboundCitation)
+      onDataChange((current) => ({
         ...current,
-        outbound_citations: (citations.outbound ?? []).map(mapOutboundCitation),
-        inbound_citations: (citations.inbound ?? []).map(mapInboundCitation),
+        outbound_citations: outbound,
+        inbound_citations: inbound,
+        summary_counts: updateSummaryCounts(current, {
+          citation_counts: { outbound: outbound.length, inbound: inbound.length },
+        }),
       }))
       setLoaded((current) => ({ ...current, citations: true }))
     } catch (error) {
@@ -103,39 +122,51 @@ export function StatuteTabs({ data, initialTab }: { data: StatutePageResponse; i
     }
   }
 
-  async function loadSemantics() {
-    setLoadingTab(active)
+  async function loadSemantics(tab: TabId) {
+    setLoadingTab(tab)
     setLoadError(null)
     try {
       const semantics = await getSemantics(citationId)
-      setTabData((current) => ({
+      const definitions = (semantics.definitions ?? []).map((item, index) => ({
+        definition_id: `definition:${index}`,
+        term: item.term,
+        text: item.text,
+        source_provision: item.source_provision,
+        scope: item.scope || data.identity.citation,
+      }))
+      const exceptions = (semantics.exceptions ?? []).map((item, index) => ({
+        exception_id: `exception:${index}`,
+        text: item.text,
+        applies_to_provision: item.source_provision,
+        source_provision: item.source_provision,
+      }))
+      const deadlines = (semantics.deadlines ?? []).map((item, index) => ({
+        deadline_id: `deadline:${index}`,
+        description: item.description,
+        duration: item.duration,
+        trigger: item.trigger,
+        source_provision: item.source_provision,
+      }))
+      const penalties = (semantics.penalties ?? []).map((item, index) => ({
+        penalty_id: `penalty:${index}`,
+        description: item.text,
+        category: "administrative" as const,
+        source_provision: item.source_provision,
+      }))
+      onDataChange((current) => ({
         ...current,
-        definitions: (semantics.definitions ?? []).map((item, index) => ({
-          definition_id: `definition:${index}`,
-          term: item.term,
-          text: item.text,
-          source_provision: item.source_provision,
-          scope: item.scope || current.identity.citation,
-        })),
-        exceptions: (semantics.exceptions ?? []).map((item, index) => ({
-          exception_id: `exception:${index}`,
-          text: item.text,
-          applies_to_provision: item.source_provision,
-          source_provision: item.source_provision,
-        })),
-        deadlines: (semantics.deadlines ?? []).map((item, index) => ({
-          deadline_id: `deadline:${index}`,
-          description: item.description,
-          duration: item.duration,
-          trigger: item.trigger,
-          source_provision: item.source_provision,
-        })),
-        penalties: (semantics.penalties ?? []).map((item, index) => ({
-          penalty_id: `penalty:${index}`,
-          description: item.text,
-          category: "administrative",
-          source_provision: item.source_provision,
-        })),
+        definitions,
+        exceptions,
+        deadlines,
+        penalties,
+        summary_counts: updateSummaryCounts(current, {
+          semantic_counts: {
+            definitions: definitions.length,
+            exceptions: exceptions.length,
+            deadlines: deadlines.length,
+            penalties: penalties.length,
+          },
+        }),
       }))
       setLoaded((current) => ({ ...current, semantics: true }))
     } catch (error) {
@@ -150,7 +181,7 @@ export function StatuteTabs({ data, initialTab }: { data: StatutePageResponse; i
     setLoadError(null)
     try {
       const response = await getChunks(citationId)
-      setTabData((current) => ({
+      onDataChange((current) => ({
         ...current,
         chunks: (response.chunks ?? []).map(mapChunk),
       }))
@@ -162,12 +193,12 @@ export function StatuteTabs({ data, initialTab }: { data: StatutePageResponse; i
     }
   }
 
-  async function loadHistory() {
-    setLoadingTab(active)
+  async function loadHistory(tab: TabId) {
+    setLoadingTab(tab)
     setLoadError(null)
     try {
       const history = await getHistory(citationId)
-      setTabData((current) => ({
+      onDataChange((current) => ({
         ...current,
         source_notes: history.source_notes ?? [],
         qc: {
@@ -234,11 +265,11 @@ export function StatuteTabs({ data, initialTab }: { data: StatutePageResponse; i
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin">
         <TabsContent value="text" className="m-0 h-full"><TextTab data={activeData} /></TabsContent>
         <TabsContent value="tree" className="m-0 h-full"><ProvisionTreeTab data={activeData} /></TabsContent>
-        <TabsContent value="citations" className="m-0 h-full"><CitationsTab data={activeData} /></TabsContent>
-        <TabsContent value="definitions" className="m-0 h-full"><DefinitionsTab data={activeData} /></TabsContent>
-        <TabsContent value="deadlines" className="m-0 h-full"><DeadlinesTab data={activeData} /></TabsContent>
-        <TabsContent value="exceptions" className="m-0 h-full"><ExceptionsTab data={activeData} /></TabsContent>
-        <TabsContent value="chunks" className="m-0 h-full"><ChunksTab data={activeData} /></TabsContent>
+        <TabsContent value="citations" className="m-0 h-full">{loadingTab === "citations" ? <TabPendingPlaceholder tab="citations" count={getTabCount("citations", activeData)} /> : <CitationsTab data={activeData} />}</TabsContent>
+        <TabsContent value="definitions" className="m-0 h-full">{loadingTab === "definitions" ? <TabPendingPlaceholder tab="definitions" count={getTabCount("definitions", activeData)} /> : <DefinitionsTab data={activeData} />}</TabsContent>
+        <TabsContent value="deadlines" className="m-0 h-full">{loadingTab === "deadlines" ? <TabPendingPlaceholder tab="deadlines" count={getTabCount("deadlines", activeData)} /> : <DeadlinesTab data={activeData} />}</TabsContent>
+        <TabsContent value="exceptions" className="m-0 h-full">{loadingTab === "exceptions" ? <TabPendingPlaceholder tab="exceptions" count={getTabCount("exceptions", activeData)} /> : <ExceptionsTab data={activeData} />}</TabsContent>
+        <TabsContent value="chunks" className="m-0 h-full">{loadingTab === "chunks" ? <TabPendingPlaceholder tab="chunks" count={getTabCount("chunks", activeData)} /> : <ChunksTab data={activeData} />}</TabsContent>
         <TabsContent value="versions" className="m-0 h-full"><VersionsTab data={activeData} /></TabsContent>
         <TabsContent value="source" className="m-0 h-full"><SourceTab data={activeData} /></TabsContent>
         <TabsContent value="graph" className="m-0 h-full"><GraphTab data={activeData} /></TabsContent>
@@ -250,6 +281,61 @@ export function StatuteTabs({ data, initialTab }: { data: StatutePageResponse; i
 
 function TabLoading() {
   return <div className="px-6 py-8 text-sm text-muted-foreground">Loading...</div>
+}
+
+function TabPendingPlaceholder({ tab, count }: { tab: TabId; count: number | null }) {
+  const rows = Math.max(2, Math.min(count ?? 3, 6))
+  return (
+    <div className="px-6 py-6" aria-live="polite">
+      <div className="mb-3 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+        Loading {tab} data{typeof count === "number" && count > 0 ? ` · ${count} expected` : ""}
+      </div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        {Array.from({ length: rows }).map((_, index) => (
+          <div key={index} className="rounded border border-border bg-card p-4">
+            <div className="h-3 w-20 rounded bg-muted" />
+            <div className="mt-3 h-4 w-2/3 rounded bg-muted" />
+            <div className="mt-2 h-3 w-full rounded bg-muted" />
+            <div className="mt-2 h-3 w-5/6 rounded bg-muted" />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function loadedStateFor(data: StatutePageResponse) {
+  return {
+    citations: data.outbound_citations.length > 0 || data.inbound_citations.length > 0,
+    semantics: data.definitions.length > 0 || data.deadlines.length > 0 || data.exceptions.length > 0 || data.penalties.length > 0,
+    chunks: data.chunks.length > 0,
+    history: Boolean(data.source_notes?.length),
+  }
+}
+
+function updateSummaryCounts(
+  current: StatutePageResponse,
+  next: {
+    citation_counts?: { outbound: number; inbound: number }
+    semantic_counts?: Partial<NonNullable<StatutePageResponse["summary_counts"]>["semantic_counts"]>
+  },
+): StatutePageResponse["summary_counts"] {
+  const previous = current.summary_counts
+  return {
+    provision_count: previous?.provision_count ?? countProvisions(current.provisions),
+    citation_counts: next.citation_counts ?? previous?.citation_counts ?? {
+      outbound: current.outbound_citations.length,
+      inbound: current.inbound_citations.length,
+    },
+    semantic_counts: {
+      obligations: previous?.semantic_counts.obligations ?? 0,
+      exceptions: previous?.semantic_counts.exceptions ?? current.exceptions.length,
+      deadlines: previous?.semantic_counts.deadlines ?? current.deadlines.length,
+      penalties: previous?.semantic_counts.penalties ?? current.penalties.length,
+      definitions: previous?.semantic_counts.definitions ?? current.definitions.length,
+      ...next.semantic_counts,
+    },
+  }
 }
 
 function getTabCount(id: TabId, data: StatutePageResponse): number | null {

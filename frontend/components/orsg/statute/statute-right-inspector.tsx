@@ -47,7 +47,11 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
         accent="text-chart-1"
       >
         {data.definitions.length === 0 ? (
-          <Empty>No definitions</Empty>
+          <CountAwareEmpty
+            count={counts?.semantic_counts.definitions ?? 0}
+            emptyLabel="No definitions"
+            pendingLabel="Open Definitions to load extracted terms."
+          />
         ) : (
           <ul className="space-y-2">
             {data.definitions.map((d) => (
@@ -70,7 +74,11 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
         accent="text-warning"
       >
         {data.exceptions.length === 0 ? (
-          <Empty>No exceptions</Empty>
+          <CountAwareEmpty
+            count={counts?.semantic_counts.exceptions ?? 0}
+            emptyLabel="No exceptions"
+            pendingLabel="Open Exceptions to load extracted exceptions."
+          />
         ) : (
           <ul className="space-y-2">
             {data.exceptions.map((e) => (
@@ -92,7 +100,11 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
         accent="text-chart-3"
       >
         {data.deadlines.length === 0 ? (
-          <Empty>No deadlines</Empty>
+          <CountAwareEmpty
+            count={counts?.semantic_counts.deadlines ?? 0}
+            emptyLabel="No deadlines"
+            pendingLabel="Open Deadlines to load extracted deadlines."
+          />
         ) : (
           <ul className="space-y-2">
             {data.deadlines.map((d) => (
@@ -113,7 +125,11 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
 
       <Panel title="Penalties" icon={Scale} count={counts?.semantic_counts.penalties ?? data.penalties.length} accent="text-destructive">
         {data.penalties.length === 0 ? (
-          <Empty>No penalties</Empty>
+          <CountAwareEmpty
+            count={counts?.semantic_counts.penalties ?? 0}
+            emptyLabel="No penalties"
+            pendingLabel="Open Exceptions to load penalties."
+          />
         ) : (
           <ul className="space-y-2">
             {data.penalties.map((p) => (
@@ -137,25 +153,33 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
         count={counts?.citation_counts.outbound ?? data.outbound_citations.length}
         accent="text-accent"
       >
-        <ul className="space-y-1">
-          {data.outbound_citations.slice(0, 6).map((c, i) => (
-            <li key={i} className="flex items-center gap-2 text-xs">
-              {c.target_canonical_id ? (
-                <Link
-                  href={`/statutes/${c.target_canonical_id}`}
-                  className="font-mono text-primary hover:underline"
-                >
-                  {c.target_citation}
-                </Link>
-              ) : (
-                <>
-                  <AlertTriangle className="h-3 w-3 text-warning" />
-                  <span className="font-mono text-warning">{c.target_citation}</span>
-                </>
-              )}
-            </li>
-          ))}
-        </ul>
+        {data.outbound_citations.length === 0 ? (
+          <CountAwareEmpty
+            count={counts?.citation_counts.outbound ?? 0}
+            emptyLabel="No outbound citations"
+            pendingLabel="Open Citations to load outbound edges."
+          />
+        ) : (
+          <ul className="space-y-1">
+            {data.outbound_citations.slice(0, 6).map((c, i) => (
+              <li key={i} className="flex items-center gap-2 text-xs">
+                {c.target_canonical_id ? (
+                  <Link
+                    href={`/statutes/${c.target_canonical_id}`}
+                    className="font-mono text-primary hover:underline"
+                  >
+                    {c.target_citation}
+                  </Link>
+                ) : (
+                  <>
+                    <AlertTriangle className="h-3 w-3 text-warning" />
+                    <span className="font-mono text-warning">{c.target_citation}</span>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </Panel>
 
       <Panel
@@ -164,19 +188,27 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
         count={counts?.citation_counts.inbound ?? data.inbound_citations.length}
         accent="text-accent"
       >
-        <ul className="space-y-1">
-          {data.inbound_citations.slice(0, 6).map((c, i) => (
-            <li key={i} className="text-xs">
-              <Link
-                href={`/statutes/${c.source_canonical_id}`}
-                className="font-mono text-primary hover:underline"
-              >
-                {c.source_citation}
-              </Link>
-              <p className="line-clamp-1 text-muted-foreground">{c.source_title}</p>
-            </li>
-          ))}
-        </ul>
+        {data.inbound_citations.length === 0 ? (
+          <CountAwareEmpty
+            count={counts?.citation_counts.inbound ?? 0}
+            emptyLabel="No inbound citations"
+            pendingLabel="Open Citations to load inbound edges."
+          />
+        ) : (
+          <ul className="space-y-1">
+            {data.inbound_citations.slice(0, 6).map((c, i) => (
+              <li key={i} className="text-xs">
+                <Link
+                  href={`/statutes/${c.source_canonical_id}`}
+                  className="font-mono text-primary hover:underline"
+                >
+                  {c.source_citation}
+                </Link>
+                <p className="line-clamp-1 text-muted-foreground">{c.source_title}</p>
+              </li>
+            ))}
+          </ul>
+        )}
       </Panel>
 
       <Panel title="Chunks" icon={FileText} count={data.chunks.length}>
@@ -250,4 +282,19 @@ function Panel({
 
 function Empty({ children }: { children: React.ReactNode }) {
   return <p className="text-xs text-muted-foreground">{children}</p>
+}
+
+function CountAwareEmpty({
+  count,
+  emptyLabel,
+  pendingLabel,
+}: {
+  count: number
+  emptyLabel: string
+  pendingLabel: string
+}) {
+  if (count > 0) {
+    return <p className="text-xs leading-5 text-muted-foreground">{pendingLabel}</p>
+  }
+  return <Empty>{emptyLabel}</Empty>
 }

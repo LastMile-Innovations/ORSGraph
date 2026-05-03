@@ -33,6 +33,7 @@ export function StatuteHeader({
       identity.primary_law ?? (identity.corpus === "us:constitution" || identity.corpus === "or:constitution" || identity.corpus === "or:ors"),
   }
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [statusTone, setStatusTone] = useState<"success" | "error" | "info">("info")
   const [matterState, setMatterState] = useState<LoadState<MatterSummary[]> | null>(null)
   const [selectedMatter, setSelectedMatter] = useState("")
 
@@ -41,8 +42,10 @@ export function StatuteHeader({
     try {
       await saveSidebarStatute(identity.canonical_id)
       router.refresh()
+      setStatusTone("success")
       setStatusMessage("Saved.")
     } catch (error) {
+      setStatusTone("error")
       setStatusMessage(error instanceof Error ? error.message : "Save failed.")
     }
   }
@@ -63,6 +66,7 @@ export function StatuteHeader({
       canonical_id: identity.canonical_id,
       reason: `Added from ${identity.citation}`,
     })
+    setStatusTone(result.data?.attached ? "success" : "error")
     setStatusMessage(result.data?.attached ? "Added to matter." : result.error || "Add to matter failed.")
   }
 
@@ -146,7 +150,20 @@ export function StatuteHeader({
                 </Button>
               </>
             )}
-            {statusMessage && <span className="text-muted-foreground">{statusMessage}</span>}
+            {statusMessage && (
+              <span
+                role="status"
+                className={`inline-flex min-h-8 items-center rounded border px-2.5 py-1 font-medium ${
+                  statusTone === "success"
+                    ? "border-success/30 bg-success/10 text-success"
+                    : statusTone === "error"
+                      ? "border-destructive/30 bg-destructive/10 text-destructive"
+                      : "border-border bg-muted text-muted-foreground"
+                }`}
+              >
+                {statusMessage}
+              </span>
+            )}
           </div>
         )}
 

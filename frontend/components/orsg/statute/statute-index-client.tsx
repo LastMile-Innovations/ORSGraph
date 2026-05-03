@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { BookOpen, ChevronLeft, ChevronRight, Search, X } from "lucide-react"
 import type { StatuteIdentity } from "@/lib/types"
 import type { DataSource } from "@/lib/data-state"
@@ -50,6 +50,13 @@ export function StatuteIndexClient({
   const [draftChapter, setDraftChapter] = useState(chapter)
   const [draftStatus, setDraftStatus] = useState(status)
   const [draftLimit, setDraftLimit] = useState(String(limit))
+
+  useEffect(() => {
+    setDraftQuery(query)
+    setDraftChapter(chapter)
+    setDraftStatus(status)
+    setDraftLimit(String(limit))
+  }, [chapter, limit, query, status])
 
   const pageStart = total === 0 ? 0 : offset + 1
   const pageEnd = Math.min(offset + statutes.length, total)
@@ -119,8 +126,9 @@ export function StatuteIndexClient({
               <Input
                 value={draftQuery}
                 onChange={(event) => setDraftQuery(event.target.value)}
-                placeholder="Citation, title, or canonical ID"
+                placeholder="Open ORS 90.320 or filter title"
                 className="pl-8"
+                aria-label="Citation, title, or canonical ID"
               />
             </div>
             <Input
@@ -160,7 +168,7 @@ export function StatuteIndexClient({
             </select>
             <Button type="submit" size="sm" className="h-9 gap-1.5">
               <Search className="h-3.5 w-3.5" />
-              Open
+              Open / filter
             </Button>
             <Button type="button" variant="outline" size="sm" className="h-9 gap-1.5" onClick={clearFilters}>
               <X className="h-3.5 w-3.5" />
@@ -208,6 +216,7 @@ export function StatuteIndexClient({
                 </ul>
               </section>
             ))}
+            <DirectoryGuidePanel />
           </div>
         )}
       </div>
@@ -232,6 +241,24 @@ export function StatuteIndexClient({
         </div>
       </footer>
     </div>
+  )
+}
+
+function DirectoryGuidePanel() {
+  return (
+    <section className="hidden min-h-[320px] bg-card px-5 py-5 text-sm text-muted-foreground md:block">
+      <div className="mb-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+        reader opens here
+      </div>
+      <h2 className="text-base font-semibold text-foreground">Select a statute to open the research view.</h2>
+      <p className="mt-2 leading-6">
+        Exact citations jump straight to the statute. Directory filters keep the URL as the source of truth, so back,
+        forward, and shared links preserve the same result set.
+      </p>
+      <div className="mt-4 rounded border border-border bg-background/60 p-3 font-mono text-[11px] text-muted-foreground">
+        Try ORS 90.320, a title phrase, or a chapter number.
+      </div>
+    </section>
   )
 }
 

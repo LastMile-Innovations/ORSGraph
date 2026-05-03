@@ -11,11 +11,13 @@ export function GraphTab({ data }: { data: StatutePageResponse }) {
   const [nodes, setNodes] = useState<GraphNode[]>([])
   const [edges, setEdges] = useState<GraphEdge[]>([])
   const [centerId, setCenterId] = useState(data.identity.canonical_id)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setError(null)
+    setLoading(true)
     getGraphNeighborhood({
       citation: data.identity.citation,
       depth: 1,
@@ -27,12 +29,14 @@ export function GraphTab({ data }: { data: StatutePageResponse }) {
         setNodes((graph.nodes ?? []).map(toMiniNode))
         setEdges((graph.edges ?? []).map(toMiniEdge))
         setCenterId(graph.center?.id ?? data.identity.canonical_id)
+        setLoading(false)
       })
       .catch((reason) => {
         if (cancelled) return
         setNodes([])
         setEdges([])
         setError(reason instanceof Error ? reason.message : "Graph data unavailable.")
+        setLoading(false)
       })
     return () => {
       cancelled = true
@@ -46,20 +50,45 @@ export function GraphTab({ data }: { data: StatutePageResponse }) {
           1-hop subgraph · centered on {data.identity.citation}
         </div>
         <Link
-          href="/graph"
+          href={`/graph?focus=${encodeURIComponent(data.identity.canonical_id)}`}
           className="font-mono text-xs text-primary hover:underline"
         >
           open in graph explorer →
         </Link>
       </div>
+      <div className="border-b border-border bg-background px-4 py-2 text-xs text-muted-foreground">
+        Arrows point from the citing authority toward the referenced authority. Edge colors show the relationship type.
+      </div>
       <div className="relative flex-1 bg-background">
-        {nodes.length > 0 ? (
+        {loading ? (
+          <GraphLoadingState />
+        ) : nodes.length > 0 ? (
           <GraphMiniCanvas nodes={nodes} edges={edges} centerId={centerId} />
         ) : (
           <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
             {error ? `Graph data unavailable: ${error}` : "No live graph data returned for this statute."}
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function GraphLoadingState() {
+  return (
+    <div className="flex h-full min-h-[360px] items-center justify-center p-6" aria-live="polite">
+      <div className="w-full max-w-xl">
+        <div className="mb-4 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+          Loading graph neighborhood
+        </div>
+        <div className="h-72 rounded border border-border bg-card p-6">
+          <div className="mx-auto mt-20 h-4 w-32 rounded bg-muted" />
+          <div className="mt-6 flex items-center justify-center gap-10">
+            <div className="h-3 w-20 rounded bg-muted" />
+            <div className="h-8 w-8 rounded-full bg-primary/30" />
+            <div className="h-3 w-20 rounded bg-muted" />
+          </div>
+        </div>
       </div>
     </div>
   )

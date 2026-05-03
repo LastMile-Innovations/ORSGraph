@@ -1,9 +1,7 @@
 import { notFound } from "next/navigation"
 import Link from "next/link"
 import { Shell } from "@/components/orsg/shell"
-import { StatuteHeader } from "@/components/orsg/statute/statute-header"
-import { StatuteTabs } from "@/components/orsg/statute/statute-tabs"
-import { StatuteInspectorDrawer, StatuteRightInspector } from "@/components/orsg/statute/statute-right-inspector"
+import { StatuteDetailWorkspace } from "@/components/orsg/statute/statute-detail-workspace"
 import { DataStateBanner } from "@/components/orsg/data-state-banner"
 import { getCachedStatutePageDataState } from "@/lib/authority-server-cache"
 import type { DataSource } from "@/lib/data-state"
@@ -35,11 +33,10 @@ export default async function StatutePage({
   }
 
   return (
-    <Shell rightPanel={<StatuteRightInspector data={data} />}>
+    <Shell>
       <div className="flex flex-1 flex-col overflow-hidden">
         <DataStateBanner source={state.source} error={state.error} label="Statute data" />
-        <StatuteHeader data={data} inspectorAction={<StatuteInspectorDrawer data={data} />} />
-        <StatuteTabs data={data} initialTab={query.tab} />
+        <StatuteDetailWorkspace data={data} initialTab={query.tab} />
       </div>
     </Shell>
   )
