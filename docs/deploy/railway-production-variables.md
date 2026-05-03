@@ -54,6 +54,35 @@ spawn.
 - `ORS_ASSEMBLYAI_ENABLED`, `ASSEMBLYAI_API_KEY`, `ORS_ASSEMBLYAI_WEBHOOK_URL`, `ORS_ASSEMBLYAI_WEBHOOK_SECRET`: optional transcription settings.
 - Deprecated duplicates to avoid: `ORS_NEO4J_*` and double-underscore `ORS__*`.
 
+### orsgraph-mcp
+
+Run MCP as a separate public or private service from `orsgraph-api`.
+The intended build profile is the repository root Dockerfile
+`Dockerfile.mcp`, with `/healthz` as the Railway healthcheck. The template in
+`docs/deploy/railway-orsgraph-mcp.json` records the intended builder,
+healthcheck, restart policy, and MCP-specific watch paths.
+
+- `ORSGRAPH_API_BASE_URL`: required; points at the reachable `orsgraph-api`
+  base URL ending in `/api/v1`.
+- `ORSGRAPH_MCP_BIND`: optional; the Docker entrypoint defaults to
+  `0.0.0.0:$PORT` on Railway.
+- `ORSGRAPH_MCP_BEARER_TOKEN`: acceptable only for local/private deployments.
+- `ORSGRAPH_MCP_JWT_ISSUER`, `ORSGRAPH_MCP_JWT_AUDIENCE`,
+  `ORSGRAPH_MCP_JWKS_URI`, `ORSGRAPH_MCP_REQUIRED_SCOPES`: preferred public
+  endpoint auth.
+- `ORSGRAPH_MCP_OAUTH_RESOURCE`, `ORSGRAPH_MCP_AUTHORIZATION_SERVERS`,
+  `ORSGRAPH_MCP_OAUTH_SCOPES`: optional OAuth protected-resource metadata
+  controls.
+- `ORSGRAPH_MCP_ALLOWED_HOSTS`: set to the public/custom domain list when not
+  relying on the entrypoint's Railway-domain defaults.
+- `ORSGRAPH_MCP_ALLOWED_ORIGINS`: set to trusted browser/client origins when
+  not relying on the entrypoint's Railway public-domain default.
+- `ORSGRAPH_MCP_RATE_LIMIT_REQUESTS`: default `120`; set per deployment risk.
+- `ORSGRAPH_MCP_RATE_LIMIT_WINDOW_SECS`: default `60`.
+- `ORSGRAPH_API_KEY`: optional fixed service credential for protected
+  read-only ORSGraph API routes such as CaseBuilder matter lookup. Do not
+  forward user tokens through MCP.
+
 ## Private Services
 
 ### neo4j
@@ -119,6 +148,7 @@ Rust API/crawler services.
 
 - `frontend`: `frontend/**`
 - `orsgraph-api`: `Cargo.toml`, `Cargo.lock`, `Dockerfile`, `docker-*.sh`, `crates/orsgraph-api/**`, `crates/ors-crawler-v0/**`, `cypher/**`, `docs/data/**`
+- `orsgraph-mcp`: `Cargo.toml`, `Cargo.lock`, `Dockerfile.mcp`, `docker-mcp-entrypoint.sh`, `crates/orsgraph-mcp/**`
 - `ors-crawler`: `Cargo.toml`, `Cargo.lock`, `crates/ors-crawler-v0/**`, `cypher/**`, `docs/data/**`
 
 The first push that adds these config-as-code files may still redeploy the

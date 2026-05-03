@@ -185,12 +185,26 @@ API endpoints:
 
 The `orsgraph-mcp` crate exposes read-only MCP tools over stdio or Streamable
 HTTP for AI clients. It proxies the existing API server and keeps stdio stdout
-reserved for MCP JSON-RPC messages.
+reserved for MCP JSON-RPC messages. Tools cover health, stats, search/open,
+statutes, sources, court-rules registry/applicability, graph neighborhoods, and
+service-token-scoped CaseBuilder matter lookup.
 
 ```bash
 export ORSGRAPH_API_BASE_URL=http://127.0.0.1:8080/api/v1
 cargo run -p orsgraph-mcp
 ```
+
+Set `ORSGRAPH_API_KEY` only when the MCP server should use a fixed ORSGraph
+service credential for protected read-only API routes such as CaseBuilder
+matter lookup. Caller Authorization headers are not forwarded.
+
+For public Streamable HTTP endpoints, configure
+`ORSGRAPH_MCP_JWT_ISSUER`, `ORSGRAPH_MCP_JWT_AUDIENCE`, and optional
+`ORSGRAPH_MCP_REQUIRED_SCOPES` instead of relying on one shared static bearer
+token. The MCP server validates JWTs against JWKS and serves OAuth
+protected-resource metadata for client discovery. Streamable HTTP also applies
+a small `/mcp` rate limit by default so runaway clients cannot hammer the
+search and graph endpoints unchecked.
 
 Streamable HTTP:
 
@@ -198,8 +212,32 @@ Streamable HTTP:
 cargo run -p orsgraph-mcp -- --http --bind 127.0.0.1:8090
 ```
 
-See [ORSGraph MCP Server](docs/mcp-server.md) for tool names, client config,
-security defaults, and verification commands.
+Containerized Streamable HTTP:
+
+```bash
+docker build -f Dockerfile.mcp -t orsgraph-mcp:local .
+docker run --rm -p 8090:8090 \
+  -e ORSGRAPH_API_BASE_URL=http://host.docker.internal:8080/api/v1 \
+  -e ORSGRAPH_MCP_BEARER_TOKEN=local-dev-secret \
+  orsgraph-mcp:local
+```
+
+Smoke Streamable HTTP end to end with a stub API:
+
+```bash
+node scripts/smoke-mcp-http.mjs
+```
+
+Build and test the MCP release binary end to end:
+
+```bash
+scripts/test-mcp-e2e.sh
+```
+
+See [ORSGraph MCP End-To-End Runbook](docs/mcp-end-to-end.md) for the full
+build, smoke, Docker, Railway, and client acceptance path. See
+[ORSGraph MCP Server](docs/mcp-server.md) for tool names, client config,
+security defaults, and deployment reference.
 
 ## Important legal/source note
 

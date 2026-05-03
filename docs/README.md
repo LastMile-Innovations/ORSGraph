@@ -3,6 +3,8 @@
 ## Operations
 
 - [Crawler And API Overview](crawler-api-overview.md): Current operating map for the crawler CLI, graph JSONL flow, admin job runner, Neo4j lifecycle, Docker entrypoint, API server boundary, CaseBuilder transcription boundary, and verification commands.
+- [MCP End-To-End Runbook](mcp-end-to-end.md): Build, smoke, Docker, Railway, client acceptance, CI, and troubleshooting path for the ORSGraph MCP server.
+- [MCP Server Reference](mcp-server.md): MCP tools, stdio and Streamable HTTP client config templates, security defaults, and deployment reference.
 - [Neo4j Cost And Performance Runbook](deploy/neo4j-cost-performance.md): Runtime guardrails for graph reads, Railway Neo4j sizing, cache posture, query review, and admin-only full-graph use.
 
 ## Data Model

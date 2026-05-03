@@ -7,6 +7,7 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::fmt;
 use std::time::Duration;
 use url::Url;
 
@@ -25,10 +26,20 @@ const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'{')
     .add(b'}');
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OrsGraphApiClient {
     base_url: Url,
     http: reqwest::Client,
+    api_key: Option<String>,
+}
+
+impl fmt::Debug for OrsGraphApiClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OrsGraphApiClient")
+            .field("base_url", &self.base_url.as_str())
+            .field("api_key_configured", &self.has_api_key())
+            .finish_non_exhaustive()
+    }
 }
 
 impl OrsGraphApiClient {
@@ -39,11 +50,30 @@ impl OrsGraphApiClient {
             .build()
             .map_err(|error| format!("failed to build HTTP client: {error}"))?;
 
-        Ok(Self { base_url, http })
+        Ok(Self {
+            base_url,
+            http,
+            api_key: None,
+        })
     }
 
     pub fn base_url(&self) -> &Url {
         &self.base_url
+    }
+
+    pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
+        let api_key = api_key.into();
+        let api_key = api_key.trim();
+        if !api_key.is_empty() {
+            self.api_key = Some(api_key.to_string());
+        }
+        self
+    }
+
+    pub fn has_api_key(&self) -> bool {
+        self.api_key
+            .as_deref()
+            .is_some_and(|api_key| !api_key.trim().is_empty())
     }
 
     async fn get_json<Q: Serialize + ?Sized>(
@@ -56,6 +86,9 @@ impl OrsGraphApiClient {
             .join(endpoint)
             .map_err(|error| format!("invalid API endpoint {endpoint}: {error}"))?;
         let mut request = self.http.get(url.clone());
+        if let Some(api_key) = self.api_key.as_deref() {
+            request = request.header("x-api-key", api_key);
+        }
         if let Some(query) = query {
             request = request.query(query);
         }
@@ -107,7 +140,7 @@ impl ServerHandler for OrsGraphMcpServer {
         )
         .with_protocol_version(ProtocolVersion::V_2025_11_25)
         .with_instructions(
-            "Use these read-only tools to inspect ORSGraph health, search legal authority, open a citation, fetch statute detail, and inspect graph neighborhoods."
+            "Use these read-only tools to inspect ORSGraph health and stats, search legal authority, inspect sources, resolve court-rule applicability, open citations, fetch statute detail, inspect graph neighborhoods, and, when a service API key is configured, look up CaseBuilder matter records."
                 .to_string(),
         )
     }
@@ -127,20 +160,39 @@ impl OrsGraphMcpServer {
         description = "Return this MCP server's current ORSGraph API target and read-only policy."
     )]
     pub async fn server_info(&self) -> Result<CallToolResult, McpError> {
+        let mut tools = vec![
+            "orsgraph_server_info",
+            "orsgraph_health",
+            "orsgraph_stats",
+            "orsgraph_search",
+            "orsgraph_open",
+            "orsgraph_get_statute",
+            "orsgraph_sources",
+            "orsgraph_source",
+            "orsgraph_rules_registry",
+            "orsgraph_rule_applicability",
+            "orsgraph_graph_neighborhood",
+        ];
+        if self.api.has_api_key() {
+            tools.extend([
+                "orsgraph_casebuilder_matters",
+                "orsgraph_casebuilder_matter",
+            ]);
+        }
+
         structured_success(json!({
             "server": "orsgraph-mcp",
             "protocolVersion": ProtocolVersion::V_2025_11_25.as_str(),
             "transport": "stdio",
             "apiBaseUrl": self.api.base_url().as_str(),
             "readOnly": true,
-            "tools": [
-                "orsgraph_server_info",
-                "orsgraph_health",
-                "orsgraph_search",
-                "orsgraph_open",
-                "orsgraph_get_statute",
-                "orsgraph_graph_neighborhood"
-            ]
+            "apiKeyConfigured": self.api.has_api_key(),
+            "casebuilderMatterLookup": if self.api.has_api_key() {
+                "enabled_service_token_scope"
+            } else {
+                "disabled_requires_ORSGRAPH_API_KEY"
+            },
+            "tools": tools
         }))
     }
 
@@ -150,6 +202,14 @@ impl OrsGraphMcpServer {
     )]
     pub async fn health(&self) -> Result<CallToolResult, McpError> {
         self.api_tool("health", None::<&EmptyQuery>).await
+    }
+
+    #[tool(
+        name = "orsgraph_stats",
+        description = "Read ORSGraph corpus statistics from /api/v1/stats."
+    )]
+    pub async fn stats(&self) -> Result<CallToolResult, McpError> {
+        self.api_tool("stats", None::<&EmptyQuery>).await
     }
 
     #[tool(
@@ -195,6 +255,56 @@ impl OrsGraphMcpServer {
     }
 
     #[tool(
+        name = "orsgraph_sources",
+        description = "List source documents from /api/v1/sources with optional filters."
+    )]
+    pub async fn sources(
+        &self,
+        Parameters(params): Parameters<SourcesToolParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match params.validated() {
+            Ok(query) => self.api_tool("sources", Some(&query)).await,
+            Err(error) => structured_tool_error("invalid_sources_request", error),
+        }
+    }
+
+    #[tool(
+        name = "orsgraph_source",
+        description = "Fetch one source document detail record by source_id."
+    )]
+    pub async fn source(
+        &self,
+        Parameters(params): Parameters<GetSourceToolParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match params.validated_endpoint() {
+            Ok(endpoint) => self.api_tool(&endpoint, None::<&EmptyQuery>).await,
+            Err(error) => structured_tool_error("invalid_source_request", error),
+        }
+    }
+
+    #[tool(
+        name = "orsgraph_rules_registry",
+        description = "Read the court rules registry from /api/v1/rules/registry."
+    )]
+    pub async fn rules_registry(&self) -> Result<CallToolResult, McpError> {
+        self.api_tool("rules/registry", None::<&EmptyQuery>).await
+    }
+
+    #[tool(
+        name = "orsgraph_rule_applicability",
+        description = "Resolve applicable UTCR, SLR, and order authority for a jurisdiction, filing date, and work-product type."
+    )]
+    pub async fn rule_applicability(
+        &self,
+        Parameters(params): Parameters<RuleApplicabilityToolParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match params.validated() {
+            Ok(query) => self.api_tool("rules/applicable", Some(&query)).await,
+            Err(error) => structured_tool_error("invalid_rule_applicability_request", error),
+        }
+    }
+
+    #[tool(
         name = "orsgraph_graph_neighborhood",
         description = "Fetch a read-only graph neighborhood for a node id."
     )]
@@ -205,6 +315,34 @@ impl OrsGraphMcpServer {
         match params.validated() {
             Ok(query) => self.api_tool("graph/neighborhood", Some(&query)).await,
             Err(error) => structured_tool_error("invalid_graph_request", error),
+        }
+    }
+
+    #[tool(
+        name = "orsgraph_casebuilder_matters",
+        description = "List CaseBuilder matter summaries. Requires ORSGRAPH_API_KEY configured on the MCP server; caller auth is never forwarded."
+    )]
+    pub async fn casebuilder_matters(&self) -> Result<CallToolResult, McpError> {
+        if !self.api.has_api_key() {
+            return casebuilder_auth_not_configured();
+        }
+        self.api_tool("matters", None::<&EmptyQuery>).await
+    }
+
+    #[tool(
+        name = "orsgraph_casebuilder_matter",
+        description = "Fetch a CaseBuilder matter bundle by matter_id. Requires ORSGRAPH_API_KEY configured on the MCP server; caller auth is never forwarded."
+    )]
+    pub async fn casebuilder_matter(
+        &self,
+        Parameters(params): Parameters<CaseBuilderMatterToolParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if !self.api.has_api_key() {
+            return casebuilder_auth_not_configured();
+        }
+        match params.validated_endpoint() {
+            Ok(endpoint) => self.api_tool(&endpoint, None::<&EmptyQuery>).await,
+            Err(error) => structured_tool_error("invalid_casebuilder_matter_request", error),
         }
     }
 
@@ -320,6 +458,101 @@ impl OpenToolParams {
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct SourcesToolParams {
+    /// Optional source title, id, jurisdiction, URL, or parser text filter.
+    #[serde(default)]
+    pub q: Option<String>,
+    /// Optional ingestion status filter.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Optional source edition year.
+    #[serde(default)]
+    pub edition_year: Option<i32>,
+    /// Maximum sources to return. Values are clamped to 1..=100.
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Result offset. Values are clamped to 0..=10,000.
+    #[serde(default)]
+    pub offset: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+struct SourcesQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    q: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    edition_year: Option<i32>,
+    limit: u32,
+    offset: u32,
+}
+
+impl SourcesToolParams {
+    fn validated(self) -> Result<SourcesQuery, String> {
+        Ok(SourcesQuery {
+            q: optional_trimmed(self.q, 200)?,
+            status: optional_trimmed(self.status, 80)?,
+            edition_year: validate_year(self.edition_year)?,
+            limit: clamp_limit(self.limit, 25, 100),
+            offset: clamp_offset(self.offset, 10_000),
+        })
+    }
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct GetSourceToolParams {
+    /// Source id, for example or_leg_odata or a graph source_id.
+    pub source_id: String,
+}
+
+impl GetSourceToolParams {
+    fn validated_endpoint(self) -> Result<String, String> {
+        let source_id = required_trimmed("source_id", self.source_id, 300)?;
+        Ok(format!(
+            "sources/{}",
+            utf8_percent_encode(&source_id, PATH_SEGMENT_ENCODE_SET)
+        ))
+    }
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct RuleApplicabilityToolParams {
+    /// Jurisdiction name or id, for example Linn or or:linn.
+    pub jurisdiction: String,
+    /// Filing or applicability date in YYYY-MM-DD form.
+    pub date: String,
+    /// Work-product type, such as complaint, motion, answer, or filing_packet.
+    #[serde(default)]
+    pub work_product_type: Option<String>,
+    /// Optional court name or court id for more precise local-rule resolution.
+    #[serde(default)]
+    pub court: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RuleApplicabilityQuery {
+    jurisdiction: String,
+    date: String,
+    #[serde(rename = "type")]
+    work_product_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    court: Option<String>,
+}
+
+impl RuleApplicabilityToolParams {
+    fn validated(self) -> Result<RuleApplicabilityQuery, String> {
+        Ok(RuleApplicabilityQuery {
+            jurisdiction: required_trimmed("jurisdiction", self.jurisdiction, 120)?,
+            date: validate_date("date", self.date)?,
+            work_product_type: optional_trimmed(self.work_product_type, 80)?
+                .unwrap_or_else(|| "complaint".to_string()),
+            court: optional_trimmed(self.court, 160)?,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 pub struct GetStatuteToolParams {
     /// Statute citation, for example ORS 90.100.
     pub citation: String,
@@ -331,6 +564,22 @@ impl GetStatuteToolParams {
         Ok(format!(
             "statutes/{}",
             utf8_percent_encode(&citation, PATH_SEGMENT_ENCODE_SET)
+        ))
+    }
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct CaseBuilderMatterToolParams {
+    /// CaseBuilder matter id.
+    pub matter_id: String,
+}
+
+impl CaseBuilderMatterToolParams {
+    fn validated_endpoint(self) -> Result<String, String> {
+        let matter_id = required_trimmed("matter_id", self.matter_id, 300)?;
+        Ok(format!(
+            "matters/{}",
+            utf8_percent_encode(&matter_id, PATH_SEGMENT_ENCODE_SET)
         ))
     }
 }
@@ -435,8 +684,37 @@ fn validate_enum(
     }
 }
 
+fn validate_year(value: Option<i32>) -> Result<Option<i32>, String> {
+    match value {
+        Some(year) if (1800..=2300).contains(&year) => Ok(Some(year)),
+        Some(_) => Err("edition_year must be between 1800 and 2300".to_string()),
+        None => Ok(None),
+    }
+}
+
+fn validate_date(field: &str, value: String) -> Result<String, String> {
+    let value = required_trimmed(field, value, 32)?;
+    let bytes = value.as_bytes();
+    let is_yyyy_mm_dd = bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| index == 4 || index == 7 || byte.is_ascii_digit());
+    if is_yyyy_mm_dd {
+        Ok(value)
+    } else {
+        Err(format!("{field} must use YYYY-MM-DD format"))
+    }
+}
+
 fn clamp_limit(value: Option<u32>, default: u32, max: u32) -> u32 {
     value.unwrap_or(default).clamp(1, max)
+}
+
+fn clamp_offset(value: Option<u32>, max: u32) -> u32 {
+    value.unwrap_or(0).min(max)
 }
 
 fn structured_success(value: impl Serialize) -> Result<CallToolResult, McpError> {
@@ -461,6 +739,13 @@ fn structured_tool_error(
             "message": message.into()
         }
     }))
+}
+
+fn casebuilder_auth_not_configured() -> Result<CallToolResult, McpError> {
+    structured_tool_error(
+        "casebuilder_auth_not_configured",
+        "CaseBuilder matter lookup requires ORSGRAPH_API_KEY configured on the MCP server. Inbound MCP Authorization headers are never forwarded to the ORSGraph API.",
+    )
 }
 
 fn structured_error_value(value: Value) -> Result<CallToolResult, McpError> {

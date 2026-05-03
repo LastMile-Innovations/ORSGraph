@@ -1,0 +1,39 @@
+# Stage 1: Build the MCP server only.
+FROM rust:1.95-slim AS builder
+
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    g++ \
+    cmake \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+
+RUN cargo build --release -p orsgraph-mcp
+
+# Stage 2: Runtime
+FROM debian:trixie-slim AS runtime
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /app/target/release/orsgraph-mcp /app/orsgraph-mcp
+COPY docker-mcp-entrypoint.sh /app/docker-mcp-entrypoint.sh
+RUN chmod +x /app/docker-mcp-entrypoint.sh
+
+ENV RUST_LOG=info
+ENV ORSGRAPH_MCP_PATH=/mcp
+ENV ORSGRAPH_MCP_STATEFUL=true
+
+EXPOSE 8090
+
+ENTRYPOINT ["/app/docker-mcp-entrypoint.sh"]

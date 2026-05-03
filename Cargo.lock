@@ -3459,6 +3459,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "jsonwebtoken",
  "percent-encoding",
  "reqwest 0.13.3",
  "rmcp",
@@ -3467,6 +3468,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "url",
