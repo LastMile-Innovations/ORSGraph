@@ -6,17 +6,17 @@ import { fontVariables } from "./fonts"
 export default function GlobalError({
   error,
   unstable_retry,
-  reset,
 }: {
   error: Error & { digest?: string }
-  unstable_retry?: () => void
-  reset?: () => void
+  unstable_retry: () => void
 }) {
   useEffect(() => {
     console.error(error)
   }, [error])
 
-  const retry = unstable_retry ?? reset
+  const message = error.digest
+    ? `Unexpected root error. Digest: ${error.digest}`
+    : error.message || "Unexpected root error."
 
   return (
     <html lang="en" className={fontVariables}>
@@ -36,25 +36,23 @@ export default function GlobalError({
             </p>
             <h1 style={{ margin: "8px 0 0", fontSize: 20 }}>ORSGraph could not recover the root shell.</h1>
             <p style={{ color: "#52525b", lineHeight: 1.6 }}>
-              {error.digest ? `Unexpected root error. Digest: ${error.digest}` : error.message || "Unexpected root error."}
+              {message}
             </p>
-            {retry && (
-              <button
-                type="button"
-                onClick={retry}
-                style={{
-                  minHeight: 40,
-                  border: 0,
-                  borderRadius: 6,
-                  background: "#18181b",
-                  color: "white",
-                  cursor: "pointer",
-                  padding: "0 14px",
-                }}
-              >
-                Try again
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={unstable_retry}
+              style={{
+                minHeight: 40,
+                border: 0,
+                borderRadius: 6,
+                background: "#18181b",
+                color: "white",
+                cursor: "pointer",
+                padding: "0 14px",
+              }}
+            >
+              Try again
+            </button>
           </section>
         </main>
       </body>

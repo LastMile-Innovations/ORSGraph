@@ -5,8 +5,7 @@ import { RouteErrorState } from "./route-state"
 
 export interface RouteErrorBoundaryProps {
   error: Error & { digest?: string }
-  unstable_retry?: () => void
-  reset?: () => void
+  unstable_retry: () => void
   title: string
   homeHref: string
   homeLabel: string
@@ -15,7 +14,6 @@ export interface RouteErrorBoundaryProps {
 export function RouteErrorBoundary({
   error,
   unstable_retry,
-  reset,
   title,
   homeHref,
   homeLabel,
@@ -24,16 +22,15 @@ export function RouteErrorBoundary({
     console.error(error)
   }, [error])
 
-  const retry = unstable_retry ?? reset
   const message = error.digest
-    ? `${error.message || "The route could not render."} Error digest: ${error.digest}`
+    ? `The route could not render. Error digest: ${error.digest}`
     : error.message || "The route could not render."
 
   return (
     <RouteErrorState
       title={title}
       message={message}
-      reset={retry}
+      reset={unstable_retry}
       homeHref={homeHref}
       homeLabel={homeLabel}
     />
