@@ -100,11 +100,27 @@ import { decodeMatterRouteId, decodeRouteSegment } from "./routes"
 
 const API_BASE_URL = orsApiBaseUrl()
 const DEMO_MODE = process.env.NEXT_PUBLIC_ORS_DEMO_MODE === "true"
-const API_TIMEOUT_MS = Number(
-  process.env.NEXT_PUBLIC_ORS_CASEBUILDER_API_TIMEOUT_MS ||
-    process.env.NEXT_PUBLIC_ORS_API_TIMEOUT_MS ||
-    5000,
-)
+export const DEFAULT_CASEBUILDER_API_TIMEOUT_MS = 120_000
+const API_TIMEOUT_MS = resolveCaseBuilderApiTimeoutMs()
+
+export function resolveCaseBuilderApiTimeoutMs(
+  casebuilderTimeout = process.env.NEXT_PUBLIC_ORS_CASEBUILDER_API_TIMEOUT_MS,
+  genericTimeout = process.env.NEXT_PUBLIC_ORS_API_TIMEOUT_MS,
+) {
+  const explicitCasebuilderTimeout = positiveTimeoutMs(casebuilderTimeout)
+  if (explicitCasebuilderTimeout != null) return explicitCasebuilderTimeout
+
+  const inheritedTimeout = positiveTimeoutMs(genericTimeout)
+  return inheritedTimeout == null
+    ? DEFAULT_CASEBUILDER_API_TIMEOUT_MS
+    : Math.max(inheritedTimeout, DEFAULT_CASEBUILDER_API_TIMEOUT_MS)
+}
+
+function positiveTimeoutMs(value: string | undefined) {
+  if (!value?.trim()) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
 
 function documentContentProxyUrl(matterId: string, documentId: string, contentUrl?: string | null): string | null {
   if (!contentUrl) return null

@@ -1,5 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { archiveDocument, getMatterState, getMatterSummariesState, patchDocument, restoreDocument } from "./api"
+import {
+  DEFAULT_CASEBUILDER_API_TIMEOUT_MS,
+  archiveDocument,
+  getMatterState,
+  getMatterSummariesState,
+  patchDocument,
+  resolveCaseBuilderApiTimeoutMs,
+  restoreDocument,
+} from "./api"
+
+describe("CaseBuilder API timeout", () => {
+  it("uses a CaseBuilder-sized timeout instead of inheriting the short generic API default", () => {
+    expect(resolveCaseBuilderApiTimeoutMs(undefined, undefined)).toBe(DEFAULT_CASEBUILDER_API_TIMEOUT_MS)
+    expect(resolveCaseBuilderApiTimeoutMs(undefined, "5000")).toBe(DEFAULT_CASEBUILDER_API_TIMEOUT_MS)
+    expect(resolveCaseBuilderApiTimeoutMs(undefined, "180000")).toBe(180_000)
+    expect(resolveCaseBuilderApiTimeoutMs("30000", "5000")).toBe(30_000)
+  })
+})
 
 describe("CaseBuilder API request loading", () => {
   afterEach(() => {
