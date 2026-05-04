@@ -94,7 +94,6 @@ pub async fn ask(
             score: result.score,
             preview: result.snippet.clone(),
         });
-
     }
 
     let short_answer = if search.results.is_empty() {

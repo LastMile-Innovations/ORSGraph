@@ -42,6 +42,18 @@ export function documentIsArchived(document: CaseDocument): boolean {
   return Boolean(document.archived_at || document.deleted_at || document.storage_status === "deleted")
 }
 
+export function isMarkdownIndexableFile(filename: string, mimeType?: string | null): boolean {
+  return /\.(md|markdown)$/i.test(filename) || mimeType?.toLowerCase() === "text/markdown"
+}
+
+export function documentIsMarkdownIndexable(document: Pick<CaseDocument, "filename" | "mime_type">): boolean {
+  return isMarkdownIndexableFile(document.filename, document.mime_type)
+}
+
+export function documentIsViewOnly(document: Pick<CaseDocument, "processing_status">): boolean {
+  return document.processing_status === "view_only"
+}
+
 export function documentLibraryPath(document: CaseDocument): string {
   const explicit = normalizeClientLibraryPath(document.library_path || document.original_relative_path || "")
   if (explicit) return explicit

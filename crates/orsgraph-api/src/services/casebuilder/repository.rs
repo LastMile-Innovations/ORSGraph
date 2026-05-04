@@ -1355,7 +1355,9 @@ impl CaseBuilderService {
                          c.ordinal = $ordinal,
                          c.status = $status,
                          c.text_hash = $text_hash,
-                         c.text_excerpt = $text_excerpt
+                         c.text_excerpt = $text_excerpt,
+                         c.unit_type = $unit_type,
+                         c.structure_path = $structure_path
                      MERGE (d)-[:HAS_TEXT_CHUNK]->(c)
                      WITH d, c
                      OPTIONAL MATCH (p:Page {page_id: $page_id})
@@ -1409,7 +1411,12 @@ impl CaseBuilderService {
                 .param("ordinal", chunk.ordinal as i64)
                 .param("status", chunk.status.clone())
                 .param("text_hash", chunk.text_hash.clone())
-                .param("text_excerpt", chunk.text_excerpt.clone()),
+                .param("text_excerpt", chunk.text_excerpt.clone())
+                .param("unit_type", chunk.unit_type.clone().unwrap_or_default())
+                .param(
+                    "structure_path",
+                    chunk.structure_path.clone().unwrap_or_default(),
+                ),
             )
             .await?;
         Ok(chunk)

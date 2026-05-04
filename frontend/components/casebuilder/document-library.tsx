@@ -44,10 +44,13 @@ import { matterComplaintHref, matterDocumentHref } from "@/lib/casebuilder/route
 import {
   buildDocumentTree,
   buildUploadPreviewRows,
+  documentIsMarkdownIndexable,
   documentIsArchived,
   documentIsMedia,
+  documentIsViewOnly,
   documentLibraryPath,
   filterDocumentsBySelection,
+  isMarkdownIndexableFile,
   latestUploadBatchId,
   type DocumentTreeNode,
   type DocumentTreeSelection,
@@ -870,6 +873,9 @@ function IndexConsole({
   indexSummary: MatterIndexSummary | null
   onIndex: () => void
 }) {
+  const markdownIndexable = documents.filter((document) => documentIsMarkdownIndexable(document)).length
+  const viewOnly = indexSummary?.processing_status_counts?.find((item) => item.status === "view_only")?.count
+    ?? documents.filter((document) => documentIsViewOnly(document)).length
   return (
     <div className="rounded border border-border bg-background p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
@@ -887,12 +893,14 @@ function IndexConsole({
           reindex pending
         </button>
       </div>
-      <div className="grid grid-cols-3 gap-2 text-center md:grid-cols-7">
+      <div className="grid grid-cols-3 gap-2 text-center md:grid-cols-9">
         <IndexTile label="active" value={indexSummary?.active_documents ?? documents.length} />
         <IndexTile label="archived" value={indexSummary?.archived_documents ?? 0} />
         <IndexTile label="indexed" value={indexSummary?.indexed_documents ?? documents.filter((d) => d.facts_extracted > 0 || (d.source_spans?.length ?? 0) > 0).length} />
         <IndexTile label="pending" value={indexSummary?.pending_documents ?? documents.filter((d) => d.processing_status === "queued").length} />
         <IndexTile label="extractable" value={indexSummary?.extractable_pending_documents ?? 0} />
+        <IndexTile label="markdown" value={markdownIndexable} />
+        <IndexTile label="view only" value={viewOnly} />
         <IndexTile label="failed" value={indexSummary?.failed_documents ?? documents.filter((d) => d.processing_status === "failed").length} tone="bad" />
         <IndexTile label="duplicates" value={indexSummary?.duplicate_groups.length ?? duplicateGroups} tone={duplicateGroups ? "warn" : undefined} />
       </div>
@@ -1171,7 +1179,7 @@ function MediaQueue({
                 const latest = latestTranscription(transcriptions[document.document_id] ?? [])
                 const status = latest?.job.status ?? "not_started"
                 const failed = latest?.job.status === "failed" || latest?.job.status === "provider_disabled"
-                const processingDisabled = !isMarkdownIndexableFile(document.filename, document.mime_type)
+                const processingDisabled = documentIsViewOnly(document) || !documentIsMarkdownIndexable(document)
                 const canStart = !latest
                 const canRetry = Boolean(latest && (latest.job.retryable || latest.job.status === "failed" || latest.job.status === "provider_disabled"))
                 const canReview = Boolean(latest && latest.segments.length > 0)
@@ -1771,10 +1779,6 @@ function guessMimeType(filename: string) {
   if (/\.(mp3|m4a|wav|aac|flac)$/i.test(filename)) return "audio/*"
   if (/\.(mp4|mov|m4v|webm)$/i.test(filename)) return "video/*"
   return "application/octet-stream"
-}
-
-function isMarkdownIndexableFile(filename: string, mimeType?: string | null) {
-  return /\.(md|markdown)$/i.test(filename) || mimeType?.toLowerCase() === "text/markdown"
 }
 
 function guessDocumentType(filename: string, mimeType: string): DocumentType {

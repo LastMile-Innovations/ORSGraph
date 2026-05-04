@@ -518,6 +518,10 @@ pub struct TextChunk {
     pub text_hash: String,
     pub text_excerpt: String,
     pub token_count: u64,
+    #[serde(default)]
+    pub unit_type: Option<String>,
+    #[serde(default)]
+    pub structure_path: Option<String>,
     pub byte_start: Option<u64>,
     pub byte_end: Option<u64>,
     pub char_start: Option<u64>,
@@ -1240,6 +1244,10 @@ pub struct ExtractedTextChunk {
     pub document_id: String,
     pub page: u64,
     pub text: String,
+    #[serde(default)]
+    pub unit_type: Option<String>,
+    #[serde(default)]
+    pub structure_path: Option<String>,
     #[serde(default)]
     pub document_version_id: Option<String>,
     #[serde(default)]

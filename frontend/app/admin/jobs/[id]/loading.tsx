@@ -1,9 +1,9 @@
-import { TopNav } from "@/components/orsg/top-nav"
+import { TopNavBoundary } from "@/components/orsg/top-nav-boundary"
 
 export default function AdminJobLoading() {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      <TopNav />
+      <TopNavBoundary />
       <div className="flex flex-1 overflow-hidden">
         <aside className="hidden w-72 shrink-0 border-r border-border bg-sidebar p-4 lg:block">
           <div className="h-4 w-28 animate-pulse rounded bg-muted" />

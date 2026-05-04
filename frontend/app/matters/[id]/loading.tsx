@@ -1,9 +1,9 @@
-import { TopNav } from "@/components/orsg/top-nav"
+import { TopNavBoundary } from "@/components/orsg/top-nav-boundary"
 
 export default function MatterLoading() {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background">
-      <TopNav />
+      <TopNavBoundary />
       <div className="flex flex-1 overflow-hidden">
         <aside className="hidden w-60 border-r border-sidebar-border bg-sidebar p-3 md:block">
           <div className="h-4 w-24 animate-pulse rounded bg-muted" />

@@ -21,6 +21,7 @@ import { SearchResultCard } from "./search-result-card"
 import { SearchEmptyState } from "./search-empty-state"
 import { SearchLoadingState } from "./search-loading-state"
 import { directOpen, searchWithParamsState } from "@/lib/api"
+import { toSafeInternalHref } from "@/lib/navigation-safety"
 import { AUTHORITY_LADDER } from "@/lib/authority-taxonomy"
 import { DataStateBanner } from "@/components/orsg/data-state-banner"
 import { cn } from "@/lib/utils"
@@ -176,8 +177,9 @@ export function SearchClient({
       try {
         const opened = await directOpen(trimmed)
         if (requestId !== searchRequestRef.current) return
-        if (opened.matched && opened.href) {
-          router.push(opened.href)
+        const href = toSafeInternalHref(opened.href)
+        if (opened.matched && href) {
+          router.push(href)
           return
         }
       } catch (openError) {
@@ -195,8 +197,9 @@ export function SearchClient({
 
   const handleSuggestionSelect = (suggestion: SuggestResult) => {
     setQ(suggestion.label)
-    if (suggestion.href && !suggestion.href.startsWith("/search")) {
-      router.push(suggestion.href)
+    const href = toSafeInternalHref(suggestion.href)
+    if (href && !href.startsWith("/search")) {
+      router.push(href)
       return
     }
     performSearch({ query: suggestion.label, nextOffset: 0 })

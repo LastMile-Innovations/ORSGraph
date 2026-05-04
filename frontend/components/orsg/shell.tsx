@@ -1,6 +1,6 @@
 import "server-only"
 
-import { TopNav } from "./top-nav"
+import { TopNavBoundary } from "./top-nav-boundary"
 import { LeftRail } from "./left-rail"
 import { MobileLeftRailSheet } from "./mobile-left-rail-sheet"
 import { getSidebarState } from "@/lib/api"
@@ -16,7 +16,7 @@ interface ShellProps {
 export async function Shell({ children, rightPanel, hideLeftRail = false }: ShellProps) {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      <TopNav
+      <TopNavBoundary
         leftRailTrigger={
           hideLeftRail ? null : (
             <Suspense fallback={<div className="h-8 w-8 lg:hidden" aria-hidden="true" />}>

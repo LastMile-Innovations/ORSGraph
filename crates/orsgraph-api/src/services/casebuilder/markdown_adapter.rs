@@ -1,3 +1,4 @@
+use super::markdown_policy::is_generated_review_notice_line;
 use super::work_product_ast::{
     find_ast_block_mut, normalize_work_product_type_lossy, prosemirror_doc_for_text,
     work_product_document_from_projection,
@@ -203,7 +204,15 @@ pub(crate) fn markdown_to_work_product_ast(
         if line.trim_start().starts_with("<!--") {
             continue;
         }
+        if is_generated_review_notice_line(line) {
+            flush_pending(product, &mut blocks, &mut current, &mut ordinal);
+            continue;
+        }
         if line.trim().is_empty() {
+            if pending_is_quote(&current) {
+                flush_pending(product, &mut blocks, &mut current, &mut ordinal);
+                continue;
+            }
             if !current.text.is_empty() {
                 current.text.push(String::new());
             }
@@ -269,14 +278,18 @@ pub(crate) fn markdown_to_work_product_ast(
             }
             // For meta-declared quote blocks, strip any residual `> ` prefix so
             // the stored text matches what render_markdown_block will re-emit.
-            let push_text =
-                if current.meta.as_ref().map(|m| m.block_type == "quote").unwrap_or(false) {
-                    markdown_blockquote_line(line)
-                        .map(str::to_string)
-                        .unwrap_or_else(|| line.trim().to_string())
-                } else {
-                    line.trim().to_string()
-                };
+            let push_text = if current
+                .meta
+                .as_ref()
+                .map(|m| m.block_type == "quote")
+                .unwrap_or(false)
+            {
+                markdown_blockquote_line(line)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| line.trim().to_string())
+            } else {
+                line.trim().to_string()
+            };
             current.text.push(push_text);
         }
     }
@@ -572,6 +585,14 @@ fn markdown_blockquote_line(line: &str) -> Option<&str> {
     None
 }
 
+fn pending_is_quote(pending: &PendingMarkdownBlock) -> bool {
+    pending.block_type.as_deref() == Some("quote")
+        || pending
+            .meta
+            .as_ref()
+            .is_some_and(|meta| meta.block_type == "quote")
+}
+
 fn markdown_heading(line: &str) -> Option<(usize, &str)> {
     let trimmed = line.trim_start();
     let level = trimmed.chars().take_while(|value| *value == '#').count();
@@ -597,9 +618,10 @@ fn markdown_numbered_paragraph(line: &str) -> Option<(u64, &str)> {
 fn roman_or_number_after_count(text: &str) -> Option<u64> {
     let rest = text.trim_start_matches(|c: char| c != ' ').trim();
     let token = rest.split_whitespace().next().unwrap_or_default();
-    token.parse::<u64>().ok().or_else(|| {
-        roman_numeral_to_u64(token.trim_matches(|c: char| !c.is_ascii_alphabetic()))
-    })
+    token
+        .parse::<u64>()
+        .ok()
+        .or_else(|| roman_numeral_to_u64(token.trim_matches(|c: char| !c.is_ascii_alphabetic())))
 }
 
 fn roman_numeral_to_u64(s: &str) -> Option<u64> {

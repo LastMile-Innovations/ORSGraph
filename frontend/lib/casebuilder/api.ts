@@ -3241,6 +3241,8 @@ function normalizeTextChunk(input: any): TextChunk {
     text_hash: string(input.text_hash, input.textHash),
     text_excerpt: string(input.text_excerpt, input.textExcerpt, input.text),
     token_count: number(input.token_count, input.tokenCount),
+    unit_type: input.unit_type ?? input.unitType ?? null,
+    structure_path: input.structure_path ?? input.structurePath ?? null,
     byte_start: nullableNumber(input.byte_start, input.byteStart),
     byte_end: nullableNumber(input.byte_end, input.byteEnd),
     char_start: nullableNumber(input.char_start, input.charStart),

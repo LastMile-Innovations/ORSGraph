@@ -8,7 +8,7 @@ import { ArrowRight, Clock3, ShieldAlert } from "lucide-react"
 import { AuthFrame } from "@/components/auth/auth-frame"
 import { Button } from "@/components/ui/button"
 
-export function PendingClient({ callbackUrl }: { callbackUrl: string }) {
+export function PendingClient({ safeCallbackUrl }: { safeCallbackUrl: string }) {
   const router = useRouter()
   const session = useSession()
   const status = session.data?.accessStatus || "unknown"
@@ -22,9 +22,9 @@ export function PendingClient({ callbackUrl }: { callbackUrl: string }) {
 
   useEffect(() => {
     if (session.status === "authenticated" && (session.data?.accessStatus === "active" || isAdmin)) {
-      router.replace(callbackUrl)
+      router.replace(safeCallbackUrl)
     }
-  }, [callbackUrl, isAdmin, router, session.data?.accessStatus, session.status])
+  }, [isAdmin, router, safeCallbackUrl, session.data?.accessStatus, session.status])
 
   return (
     <AuthFrame
@@ -53,7 +53,7 @@ export function PendingClient({ callbackUrl }: { callbackUrl: string }) {
           >
             Request access
           </Link>
-          <Button type="button" variant="outline" onClick={() => signIn("zitadel", { callbackUrl })} className="min-h-10 rounded-md">
+          <Button type="button" variant="outline" onClick={() => signIn("zitadel", { callbackUrl: safeCallbackUrl })} className="min-h-10 rounded-md">
             Sign in again
             <ArrowRight className="h-4 w-4" />
           </Button>

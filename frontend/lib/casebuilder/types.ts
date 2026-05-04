@@ -413,6 +413,8 @@ export interface TextChunk {
   text_hash: string
   text_excerpt: string
   token_count: number
+  unit_type?: string | null
+  structure_path?: string | null
   byte_start?: number | null
   byte_end?: number | null
   char_start?: number | null

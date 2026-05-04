@@ -1,6 +1,7 @@
+import { Suspense } from "react"
 import type { MatterSummary } from "@/lib/casebuilder/types"
 import type { LoadSource } from "@/lib/casebuilder/api"
-import { TopNav } from "@/components/orsg/top-nav"
+import { TopNavBoundary } from "@/components/orsg/top-nav-boundary"
 import { MatterSidebar, MatterSidebarSheet } from "./matter-sidebar"
 import { DataStateBanner } from "./data-state-banner"
 
@@ -16,14 +17,18 @@ interface MatterShellProps {
 export function MatterShell({ matter, children, rightPanel, counts, dataState }: MatterShellProps) {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background">
-      <TopNav />
+      <TopNavBoundary />
       <DataStateBanner source={dataState?.source} error={dataState?.error} />
       <div className="flex flex-1 overflow-hidden">
         <div className="hidden shrink-0 md:flex">
-          <MatterSidebar matter={matter} counts={counts} />
+          <Suspense fallback={<MatterSidebarFallback />}>
+            <MatterSidebar matter={matter} counts={counts} />
+          </Suspense>
         </div>
         <main id="app-main" className="flex min-w-0 flex-1 flex-col overflow-hidden" tabIndex={-1}>
-          <MatterSidebarSheet matter={matter} counts={counts} />
+          <Suspense fallback={<div className="border-b border-border bg-card px-3 py-2 md:hidden" aria-hidden="true" />}>
+            <MatterSidebarSheet matter={matter} counts={counts} />
+          </Suspense>
           {children}
         </main>
         {rightPanel && (
@@ -33,5 +38,19 @@ export function MatterShell({ matter, children, rightPanel, counts, dataState }:
         )}
       </div>
     </div>
+  )
+}
+
+function MatterSidebarFallback() {
+  return (
+    <aside className="hidden w-60 shrink-0 border-r border-sidebar-border bg-sidebar p-3 md:block" aria-hidden="true">
+      <div className="h-4 w-24 rounded bg-sidebar-accent/70" />
+      <div className="mt-4 h-8 w-40 rounded bg-sidebar-accent/70" />
+      <div className="mt-6 space-y-2">
+        {Array.from({ length: 10 }).map((_, index) => (
+          <div key={index} className="h-6 rounded bg-sidebar-accent/60" />
+        ))}
+      </div>
+    </aside>
   )
 }

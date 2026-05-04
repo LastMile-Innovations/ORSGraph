@@ -1,4 +1,5 @@
 use super::*;
+use serde::{Deserialize, Serialize};
 
 impl CaseBuilderService {
     pub async fn upload_file(
@@ -1055,14 +1056,19 @@ impl CaseBuilderService {
             });
         }
 
+        let index_text = markdown_index_text(&text);
         let source_context = source_context_from_provenance(provenance.as_ref());
-        let text_sha256 = sha256_hex(text.as_bytes());
+        let text_sha256 = sha256_hex(index_text.as_bytes());
         let index_run_id_value = index_run_id(
             document_id,
             source_context.document_version_id.as_deref(),
             &text_sha256,
         );
-        let mut chunks = chunk_text(document_id, &text);
+        let mut chunks = chunk_text_for_version(
+            document_id,
+            source_context.document_version_id.as_deref(),
+            &index_text,
+        );
         for chunk in &mut chunks {
             chunk.document_version_id = source_context.document_version_id.clone();
             chunk.object_blob_id = source_context.object_blob_id.clone();
@@ -1078,7 +1084,13 @@ impl CaseBuilderService {
             );
         let mut source_spans =
             source_spans_for_chunks(matter_id, document_id, &chunks, &source_context);
-        let proposed_facts = propose_facts(matter_id, document_id, &text, &source_context);
+        let proposed_facts = propose_facts(
+            matter_id,
+            document_id,
+            &index_text,
+            &source_context,
+            &chunks,
+        );
         for fact in &proposed_facts {
             source_spans.extend(fact.source_spans.clone());
         }
@@ -1097,7 +1109,7 @@ impl CaseBuilderService {
             .store_extraction_index_artifacts(
                 matter_id,
                 &document,
-                &text,
+                &index_text,
                 &text_sha256,
                 &source_context,
                 &index_run_id_value,
@@ -1110,7 +1122,7 @@ impl CaseBuilderService {
             .await?;
         document.extracted_text = Some(text.clone());
         document.processing_status = "processed".to_string();
-        document.summary = summarize_text(&text);
+        document.summary = summarize_text(&index_text);
         document.facts_extracted = proposed_facts.len() as u64;
         document.source_spans = source_spans.clone();
         let document = self
@@ -1386,8 +1398,10 @@ impl CaseBuilderService {
             produced_object_keys: produced_object_keys.clone(),
             created_at: now_string(),
         };
-        let manifest_bytes =
-            serde_json::to_vec(&manifest).map_err(|error| ApiError::Internal(error.to_string()))?;
+        let structure_map = extraction_manifest_structure_map(text_chunks, evidence_spans);
+        let manifest_payload = extraction_manifest_payload_value(&manifest, &structure_map)?;
+        let manifest_bytes = serde_json::to_vec(&manifest_payload)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
         let manifest_artifact = self
             .store_document_artifact_version_for_creator(
                 matter_id,
@@ -1709,6 +1723,8 @@ fn build_extraction_index_records(
             text_hash: text_hash.clone(),
             text_excerpt: text_excerpt(&chunk.text, 500),
             token_count: approximate_token_count(&chunk.text),
+            unit_type: chunk.unit_type.clone(),
+            structure_path: chunk.structure_path.clone(),
             byte_start: chunk.byte_start,
             byte_end: chunk.byte_end,
             char_start: chunk.char_start,
@@ -1755,11 +1771,7 @@ fn build_extraction_index_records(
             created_at: now.clone(),
             indexed_at: Some(now.clone()),
         });
-        entity_mentions.extend(date_entity_mentions_for_chunk(
-            matter_id,
-            document_id,
-            chunk,
-        ));
+        entity_mentions.extend(entity_mentions_for_chunk(matter_id, document_id, chunk));
     }
 
     (
@@ -1769,6 +1781,88 @@ fn build_extraction_index_records(
         entity_mentions,
         search_index_records,
     )
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct ExtractionManifestStructureEntry {
+    text_chunk_id: String,
+    text_hash: String,
+    text_excerpt: String,
+    source_unit: ExtractionManifestSourceUnit,
+    source_span_hint: ExtractionManifestSourceSpanHint,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct ExtractionManifestSourceUnit {
+    ordinal: u64,
+    page: u64,
+    page_id: Option<String>,
+    unit_type: Option<String>,
+    structure_path: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct ExtractionManifestSourceSpanHint {
+    source_span_id: Option<String>,
+    evidence_span_id: Option<String>,
+    byte_start: Option<u64>,
+    byte_end: Option<u64>,
+    char_start: Option<u64>,
+    char_end: Option<u64>,
+}
+
+fn extraction_manifest_structure_map(
+    text_chunks: &[TextChunk],
+    evidence_spans: &[EvidenceSpan],
+) -> Vec<ExtractionManifestStructureEntry> {
+    text_chunks
+        .iter()
+        .map(|chunk| {
+            let evidence = evidence_spans
+                .iter()
+                .find(|span| span.text_chunk_id.as_deref() == Some(chunk.text_chunk_id.as_str()));
+            ExtractionManifestStructureEntry {
+                text_chunk_id: chunk.text_chunk_id.clone(),
+                text_hash: chunk.text_hash.clone(),
+                text_excerpt: chunk.text_excerpt.clone(),
+                source_unit: ExtractionManifestSourceUnit {
+                    ordinal: chunk.ordinal,
+                    page: chunk.page,
+                    page_id: chunk.page_id.clone(),
+                    unit_type: chunk.unit_type.clone(),
+                    structure_path: chunk.structure_path.clone(),
+                },
+                source_span_hint: ExtractionManifestSourceSpanHint {
+                    source_span_id: chunk.source_span_id.clone(),
+                    evidence_span_id: evidence.map(|span| span.evidence_span_id.clone()),
+                    byte_start: chunk.byte_start,
+                    byte_end: chunk.byte_end,
+                    char_start: chunk.char_start,
+                    char_end: chunk.char_end,
+                },
+            }
+        })
+        .collect()
+}
+
+fn extraction_manifest_payload_value(
+    manifest: &ExtractionArtifactManifest,
+    structure_map: &[ExtractionManifestStructureEntry],
+) -> ApiResult<serde_json::Value> {
+    let mut payload =
+        serde_json::to_value(manifest).map_err(|error| ApiError::Internal(error.to_string()))?;
+    if let serde_json::Value::Object(object) = &mut payload {
+        object.insert(
+            "schema_version".to_string(),
+            serde_json::Value::String("casebuilder.extraction_manifest.v1".to_string()),
+        );
+        object.insert(
+            "structure_map".to_string(),
+            serde_json::to_value(structure_map)
+                .map_err(|error| ApiError::Internal(error.to_string()))?,
+        );
+    }
+    Ok(payload)
 }
 
 fn completed_index_run(
@@ -2239,6 +2333,8 @@ mod tests {
             document_id: "doc:1".to_string(),
             page: 1,
             text: "Tenant paid April rent.".to_string(),
+            unit_type: Some("paragraph".to_string()),
+            structure_path: Some("Ledger".to_string()),
             document_version_id: context.document_version_id.clone(),
             object_blob_id: context.object_blob_id.clone(),
             source_span_id: Some("span:doc_1:chunk:1".to_string()),
@@ -2269,6 +2365,82 @@ mod tests {
         assert_eq!(
             search_records[0].index_run_id.as_deref(),
             Some("index-run:doc_1:abc")
+        );
+        let structure_map = extraction_manifest_structure_map(&text_chunks, &evidence_spans);
+        assert_eq!(structure_map.len(), 1);
+        assert_eq!(structure_map[0].text_chunk_id, "chunk:doc_1:1");
+        assert_eq!(
+            structure_map[0].source_unit.unit_type.as_deref(),
+            Some("paragraph")
+        );
+        assert_eq!(
+            structure_map[0].source_unit.structure_path.as_deref(),
+            Some("Ledger")
+        );
+        assert_eq!(
+            structure_map[0].source_span_hint.source_span_id.as_deref(),
+            Some("span:doc_1:chunk:1")
+        );
+        assert_eq!(
+            structure_map[0]
+                .source_span_hint
+                .evidence_span_id
+                .as_deref(),
+            Some(evidence_spans[0].evidence_span_id.as_str())
+        );
+        assert_eq!(structure_map[0].source_span_hint.byte_start, Some(4));
+        let manifest = ExtractionArtifactManifest {
+            manifest_id: "extraction-manifest:doc_1:abc".to_string(),
+            id: "extraction-manifest:doc_1:abc".to_string(),
+            matter_id: "matter:test".to_string(),
+            document_id: "doc:1".to_string(),
+            document_version_id: context.document_version_id.clone(),
+            object_blob_id: context.object_blob_id.clone(),
+            ingestion_run_id: context.ingestion_run_id.clone(),
+            index_run_id: Some("index-run:doc_1:abc".to_string()),
+            normalized_text_version_id: Some("version:doc_1:text".to_string()),
+            pages_version_id: Some("version:doc_1:pages".to_string()),
+            manifest_version_id: None,
+            text_sha256: "sha256:text".to_string(),
+            pages_sha256: Some("sha256:pages".to_string()),
+            manifest_sha256: None,
+            page_ids: pages.iter().map(|page| page.page_id.clone()).collect(),
+            text_chunk_ids: text_chunks
+                .iter()
+                .map(|chunk| chunk.text_chunk_id.clone())
+                .collect(),
+            evidence_span_ids: evidence_spans
+                .iter()
+                .map(|span| span.evidence_span_id.clone())
+                .collect(),
+            entity_mention_ids: Vec::new(),
+            search_index_record_ids: search_records
+                .iter()
+                .map(|record| record.search_index_record_id.clone())
+                .collect(),
+            produced_object_keys: Vec::new(),
+            created_at: "1".to_string(),
+        };
+        let manifest_payload =
+            extraction_manifest_payload_value(&manifest, &structure_map).expect("manifest payload");
+        assert_eq!(
+            manifest_payload["schema_version"],
+            "casebuilder.extraction_manifest.v1"
+        );
+        assert_eq!(
+            manifest_payload["structure_map"][0]["source_unit"]["structure_path"],
+            "Ledger"
+        );
+        assert_eq!(
+            manifest_payload["structure_map"][0]["source_span_hint"]["source_span_id"],
+            "span:doc_1:chunk:1"
+        );
+        assert!(
+            serde_json::to_value(&manifest)
+                .expect("graph manifest payload")
+                .get("structure_map")
+                .is_none(),
+            "heavy structure map should stay in manifest.json, not the graph manifest DTO"
         );
         assert!(entity_mentions.is_empty());
     }

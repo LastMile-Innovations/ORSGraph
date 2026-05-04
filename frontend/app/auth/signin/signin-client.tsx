@@ -7,10 +7,10 @@ import { AuthFrame } from "@/components/auth/auth-frame"
 import { Button } from "@/components/ui/button"
 import { trackConversionEvent } from "@/lib/conversion-events"
 
-export function SignInClient({ callbackUrl }: { callbackUrl: string }) {
+export function SignInClient({ safeCallbackUrl }: { safeCallbackUrl: string }) {
   function startSignIn() {
     trackConversionEvent("sign_in_started", { source: "signin_page" })
-    void signIn("zitadel", { callbackUrl })
+    void signIn("zitadel", { callbackUrl: safeCallbackUrl })
   }
 
   return (

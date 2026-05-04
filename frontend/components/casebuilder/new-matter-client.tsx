@@ -19,6 +19,7 @@ import {
 import { cn } from "@/lib/utils"
 import type { Matter, MatterType } from "@/lib/casebuilder/types"
 import { createMatter, runMatterIndex, uploadBinaryFile, uploadTextFile } from "@/lib/casebuilder/api"
+import { isMarkdownIndexableFile } from "@/lib/casebuilder/document-tree"
 import { matterHref } from "@/lib/casebuilder/routes"
 import {
   createUploadBatchId,
@@ -626,10 +627,6 @@ function buildUploadRows(uploadBatchId: string, story: string, files: UploadCand
 function rowIsMarkdownIndexable(row: IntakeUploadRow) {
   if (row.kind === "story") return true
   return Boolean(row.file && isMarkdownIndexableFile(row.file.name, row.file.type))
-}
-
-function isMarkdownIndexableFile(filename: string, mimeType?: string | null) {
-  return /\.(md|markdown)$/i.test(filename) || mimeType?.toLowerCase() === "text/markdown"
 }
 
 function resetUploadRow(row: IntakeUploadRow): IntakeUploadRow {

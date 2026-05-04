@@ -1,13 +1,13 @@
 import Link from "next/link"
 import { FileQuestion } from "lucide-react"
-import { TopNav } from "@/components/orsg/top-nav"
+import { TopNavBoundary } from "@/components/orsg/top-nav-boundary"
 import { Button } from "@/components/ui/button"
 import { casebuilderHomeHref, newMatterHref } from "@/lib/casebuilder/routes"
 
 export default function MatterNotFound() {
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <TopNav />
+      <TopNavBoundary />
       <main className="flex flex-1 items-center justify-center px-6 py-12">
         <section className="max-w-md rounded border border-border bg-card p-5">
           <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">

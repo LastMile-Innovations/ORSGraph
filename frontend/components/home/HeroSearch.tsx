@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { openSearch } from "@/lib/api"
+import { toSafeInternalHref } from "@/lib/navigation-safety"
 import { Loader2, Search } from "lucide-react"
 
 export function HeroSearch() {
@@ -20,8 +21,9 @@ export function HeroSearch() {
       
       if (isCitationLike) {
         const response = await openSearch(query)
-        if (response.matched && response.href) {
-          router.push(response.href)
+        const href = toSafeInternalHref(response.href)
+        if (response.matched && href) {
+          router.push(href)
           return
         }
       }

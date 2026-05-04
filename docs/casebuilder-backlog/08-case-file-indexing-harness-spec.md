@@ -79,14 +79,12 @@ If a source coordinate is unavailable, the node must say why: unsupported file t
 
 ## File Type Strategy
 
-### V0 Required
+### V0 Active
 
-- TXT, Markdown, HTML.
-- PDF with embedded text.
-- DOCX.
-- CSV and XLSX.
-- Images as stored/previewable artifacts with OCR-deferred state.
-- ZIP or folder upload as an archive manifest with child files queued individually.
+- Markdown is the only editable, extractable, promotable, and indexable source format in the active CaseBuilder path.
+- Non-Markdown files are still accepted, stored privately, previewable/openable where supported, and annotatable, but they remain `view_only` and are skipped by extraction/index runs.
+- Folder upload semantics and private relative paths remain first-class for both Markdown and view-only files.
+- DOCX, PDF, TXT/HTML/CSV/XLSX, image/OCR, archive, email/message, and media parsers are adapter backlog items until explicitly re-enabled.
 
 ### V0.1 Required
 
@@ -122,7 +120,7 @@ If a source coordinate is unavailable, the node must say why: unsupported file t
    - Produce page/layout/text manifests.
 5. Chunk
    - Create retrieval-ready chunks with stable IDs and source coordinates.
-   - Use page/section/table/email boundaries before token-size splitting.
+   - In the active Markdown path, use heading paths, numbered paragraphs, blockquotes, lists, tables, and code blocks before token-size splitting.
 6. Enrich
    - Extract dates, parties, entities, citations, money amounts, deadlines, candidate facts.
    - Provider-gate AI enrichments and label deterministic/template/live mode.

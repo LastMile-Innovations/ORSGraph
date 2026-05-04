@@ -11,8 +11,8 @@ This backlog implements the case-file indexing harness described in [08-case-fil
 - Acceptance checks: Contract tests cover serialization, frontend normalization, Neo4j constraints, and no raw filename leakage in IDs/object keys.
 - Dependencies: `CB-V0F-014`, `CB-V0F-015`, `CB-X-013`.
 - Status: Partial
-- Progress: First provenance DTO/constraint slice is implemented for `ObjectBlob`, `DocumentVersion`, `IngestionRun`, and `SourceSpan`; backend/frontend contract tests cover serialization, normalization references, graph constraints, and opaque object key behavior.
-- Still needed: Add `IndexRun`, `Page`, `TextChunk`, `EvidenceSpan`, `EntityMention`, and `SearchIndexRecord`; expand constraints/indexes for large-matter indexing; and connect DTOs to parser registry, manifests, search indexes, and provenance UI.
+- Progress: Provenance DTOs now cover `ObjectBlob`, `DocumentVersion`, `IngestionRun`, `IndexRun`, `Page`, `TextChunk`, `EvidenceSpan`, `EntityMention`, `SearchIndexRecord`, `SourceSpan`, and object-backed normalized artifacts.
+- Still needed: Expand parser registry/search adapters beyond the active Markdown-only path, add stale-index/reindex controls, and deepen provenance UI for chunk/entity/artifact inspection.
 
 ## CB-IDX-002 - Parser registry and file classifier
 - Priority: P0
@@ -23,6 +23,7 @@ This backlog implements the case-file indexing harness described in [08-case-fil
 - Acceptance checks: Fixtures classify TXT, PDF, DOCX, HTML, CSV, XLSX, ZIP, image, unknown binary, and malformed files correctly.
 - Dependencies: `CB-IDX-001`, `CB-V0-021`.
 - Status: Todo
+- Active-mode note: Current CaseBuilder behavior intentionally routes only Markdown files into extraction/indexing. Non-Markdown files are stored as `view_only` until this parser registry is implemented.
 
 ## CB-IDX-003 - Inventory and fingerprint index
 - Priority: P0

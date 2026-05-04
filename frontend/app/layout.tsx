@@ -2,11 +2,13 @@ import type { Metadata, Viewport } from "next"
 import { Analytics } from "@vercel/analytics/next"
 import { AuthSessionProvider } from "@/components/auth-session-provider"
 import { ThemeProvider } from "@/components/theme-provider"
+import { WebVitals } from "@/components/web-vitals"
 import { siteOrigin } from "./metadata"
 import { fontVariables } from "./fonts"
 import "./globals.css"
 
 const enableVercelAnalytics = process.env.VERCEL === "1"
+const enableWebVitals = Boolean(process.env.NEXT_PUBLIC_WEB_VITALS_ENDPOINT)
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteOrigin()),
@@ -54,6 +56,7 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
           <AuthSessionProvider>{children}</AuthSessionProvider>
         </ThemeProvider>
+        {enableWebVitals && <WebVitals />}
         {enableVercelAnalytics && <Analytics />}
       </body>
     </html>

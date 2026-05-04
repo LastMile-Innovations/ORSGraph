@@ -31,6 +31,7 @@ mod html_renderer;
 mod ids;
 mod indexes;
 mod markdown_adapter;
+mod markdown_policy;
 mod matters;
 mod parsing;
 mod pdf_renderer;
@@ -363,8 +364,6 @@ struct DateCandidate {
     confidence: f32,
     byte_start: u64,
     byte_end: u64,
-    char_start: u64,
-    char_end: u64,
     warnings: Vec<String>,
 }
 
@@ -478,6 +477,12 @@ static MONTH_DATE_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static NUMERIC_DATE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b(0?[1-9]|1[0-2])/([0-2]?[0-9]|3[01])/(20[0-9]{2})\b").unwrap());
+static MONEY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:\$\s?[0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?|\b[0-9]+(?:\.[0-9]+)?\s?(?:dollars|usd)\b)").unwrap()
+});
+static CAPITALIZED_ENTITY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b(?:[A-Z][a-z]+|[A-Z]{2,})(?:(?:\s+(?:of|the|and|for))?\s+(?:[A-Z][a-z]+|[A-Z]{2,}|LLC|Inc\.?|Corp\.?|Company|Apartments|Properties|Court|County|City|State|Department|Division|Authority|Bank|Trust|Holdings|Rentals|Association)){1,6}\b").unwrap()
+});
 
 #[derive(Clone)]
 struct ParserOutcome {
@@ -10587,21 +10592,91 @@ fn summarize_text(text: &str) -> String {
 struct TextParagraph {
     text: String,
     is_heading: bool,
+    unit_type: String,
+    structure_path: Option<String>,
     byte_start: usize,
     byte_end: usize,
 }
 
-fn strip_sidecar_comments(text: &str) -> String {
+fn markdown_index_text(text: &str) -> String {
     text.lines()
-        .filter(|line| !line.trim_start().starts_with("<!--"))
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            !trimmed.starts_with("<!--") && !markdown_policy::is_generated_review_notice_line(line)
+        })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn strip_sidecar_comments(text: &str) -> String {
+    markdown_index_text(text)
 }
 
 fn is_markdown_heading_line(line: &str) -> bool {
     let t = line.trim_start();
     let n = t.chars().take_while(|c| *c == '#').count();
     (1..=4).contains(&n) && t.chars().nth(n) == Some(' ')
+}
+
+fn markdown_heading_parts(line: &str) -> Option<(usize, String)> {
+    let t = line.trim_start();
+    let n = t.chars().take_while(|c| *c == '#').count();
+    if (1..=4).contains(&n) && t.chars().nth(n) == Some(' ') {
+        return Some((n, t[n + 1..].trim().to_string()));
+    }
+    None
+}
+
+fn markdown_line_unit_type(line: &str) -> &'static str {
+    let t = line.trim_start();
+    if is_markdown_heading_line(t) {
+        "heading"
+    } else if markdown_numbered_line(t).is_some() {
+        "numbered_paragraph"
+    } else if t.starts_with('>') {
+        "quote"
+    } else if t.starts_with("```") || t.starts_with("~~~") {
+        "code"
+    } else if t.starts_with('|') && t.ends_with('|') {
+        "table"
+    } else if t.starts_with("- ") || t.starts_with("* ") || t.starts_with("+ ") {
+        "list"
+    } else {
+        "paragraph"
+    }
+}
+
+fn markdown_numbered_line(line: &str) -> Option<()> {
+    let t = line.trim_start();
+    let dot = t.find('.')?;
+    if dot == 0 || dot > 4 {
+        return None;
+    }
+    let text = t[dot + 1..].trim();
+    if t[..dot].parse::<u64>().is_ok() && !text.is_empty() {
+        Some(())
+    } else {
+        None
+    }
+}
+
+fn should_start_new_index_unit(current: &str, next: &str) -> bool {
+    if current == next {
+        return false;
+    }
+    matches!(current, "heading" | "quote" | "list" | "table" | "code")
+        || matches!(next, "heading" | "quote" | "list" | "table" | "code")
+}
+
+fn structure_path_text(headings: &[(usize, String)]) -> Option<String> {
+    let value = headings
+        .iter()
+        .map(|(_, heading)| heading)
+        .filter(|heading| !heading.trim().is_empty())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" > ");
+    (!value.is_empty()).then_some(value)
 }
 
 fn normalize_line_for_indexing(line: &str) -> String {
@@ -10623,6 +10698,9 @@ fn collect_text_paragraphs(text: &str) -> Vec<TextParagraph> {
     let mut result = Vec::new();
     let mut current_lines: Vec<String> = Vec::new();
     let mut first_line_is_heading = false;
+    let mut current_unit_type = "paragraph".to_string();
+    let mut current_structure_path: Option<String> = None;
+    let mut heading_stack: Vec<(usize, String)> = Vec::new();
     let mut para_start = 0usize;
     let mut para_end = 0usize;
     let mut cursor = 0usize;
@@ -10636,31 +10714,69 @@ fn collect_text_paragraphs(text: &str) -> Vec<TextParagraph> {
                 result.push(TextParagraph {
                     is_heading: first_line_is_heading,
                     text: current_lines.join("\n"),
+                    unit_type: current_unit_type.clone(),
+                    structure_path: current_structure_path.clone(),
                     byte_start: para_start,
                     byte_end: para_end,
                 });
                 current_lines.clear();
                 first_line_is_heading = false;
+                current_unit_type = "paragraph".to_string();
+                current_structure_path = None;
             }
             cursor = line_end;
             continue;
         }
 
+        if let Some((level, heading)) = markdown_heading_parts(trimmed) {
+            while heading_stack
+                .last()
+                .is_some_and(|(existing_level, _)| *existing_level >= level)
+            {
+                heading_stack.pop();
+            }
+            heading_stack.push((level, heading));
+        }
+        let line_unit_type = markdown_line_unit_type(trimmed);
         if is_markdown_heading_line(trimmed) && !current_lines.is_empty() {
             result.push(TextParagraph {
                 is_heading: first_line_is_heading,
                 text: current_lines.join("\n"),
+                unit_type: current_unit_type.clone(),
+                structure_path: current_structure_path.clone(),
                 byte_start: para_start,
                 byte_end: para_end,
             });
             current_lines.clear();
             first_line_is_heading = false;
+            current_unit_type = "paragraph".to_string();
+            current_structure_path = None;
+            para_start = cursor;
+        }
+
+        if !current_lines.is_empty()
+            && should_start_new_index_unit(&current_unit_type, line_unit_type)
+        {
+            result.push(TextParagraph {
+                is_heading: first_line_is_heading,
+                text: current_lines.join("\n"),
+                unit_type: current_unit_type.clone(),
+                structure_path: current_structure_path.clone(),
+                byte_start: para_start,
+                byte_end: para_end,
+            });
+            current_lines.clear();
+            first_line_is_heading = false;
+            current_unit_type = "paragraph".to_string();
+            current_structure_path = None;
             para_start = cursor;
         }
 
         if current_lines.is_empty() {
             para_start = cursor;
             first_line_is_heading = is_markdown_heading_line(trimmed);
+            current_unit_type = line_unit_type.to_string();
+            current_structure_path = structure_path_text(&heading_stack);
         }
         current_lines.push(normalize_line_for_indexing(line.trim_end()));
         para_end = line_end;
@@ -10671,6 +10787,8 @@ fn collect_text_paragraphs(text: &str) -> Vec<TextParagraph> {
         result.push(TextParagraph {
             is_heading: first_line_is_heading,
             text: current_lines.join("\n"),
+            unit_type: current_unit_type,
+            structure_path: current_structure_path,
             byte_start: para_start,
             byte_end: para_end,
         });
@@ -10682,9 +10800,12 @@ fn collect_text_paragraphs(text: &str) -> Vec<TextParagraph> {
 fn push_indexed_chunk(
     chunks: &mut Vec<ExtractedTextChunk>,
     document_id: &str,
+    document_version_id: Option<&str>,
     index: &mut u64,
     clean_text: &str,
     content: &str,
+    unit_type: Option<&str>,
+    structure_path: Option<&str>,
     byte_start: usize,
     byte_end: usize,
 ) {
@@ -10696,12 +10817,26 @@ fn push_indexed_chunk(
     let be = byte_end.min(clean_text.len());
     let char_start = clean_text[..bs].chars().count() as u64;
     let char_end = clean_text[..be].chars().count() as u64;
+    let structure_seed = structure_path.unwrap_or("root");
+    let unit_seed = unit_type.unwrap_or("paragraph");
+    let chunk_seed =
+        if let Some(version_id) = document_version_id.filter(|value| !value.trim().is_empty()) {
+            format!("{version_id}:{structure_seed}:{unit_seed}:{index}:{bs}:{be}")
+        } else {
+            format!("{structure_seed}:{unit_seed}:{index}:{bs}:{be}")
+        };
     chunks.push(ExtractedTextChunk {
-        chunk_id: format!("chunk:{document_id}:{index}"),
+        chunk_id: format!(
+            "chunk:{}:{}",
+            sanitize_path_segment(document_id),
+            hex_prefix(chunk_seed.as_bytes(), 20)
+        ),
         document_id: document_id.to_string(),
         page: *index,
         text: trimmed.to_string(),
-        document_version_id: None,
+        unit_type: unit_type.map(str::to_string),
+        structure_path: structure_path.map(str::to_string),
+        document_version_id: document_version_id.map(str::to_string),
         object_blob_id: None,
         source_span_id: None,
         byte_start: Some(bs as u64),
@@ -10712,7 +10847,16 @@ fn push_indexed_chunk(
     *index += 1;
 }
 
+#[cfg(test)]
 fn chunk_text(document_id: &str, text: &str) -> Vec<ExtractedTextChunk> {
+    chunk_text_for_version(document_id, None, text)
+}
+
+fn chunk_text_for_version(
+    document_id: &str,
+    document_version_id: Option<&str>,
+    text: &str,
+) -> Vec<ExtractedTextChunk> {
     // Strip hidden sidecar metadata comments that pollute the search index.
     let clean = strip_sidecar_comments(text);
     let paragraphs = collect_text_paragraphs(&clean);
@@ -10721,6 +10865,8 @@ fn chunk_text(document_id: &str, text: &str) -> Vec<ExtractedTextChunk> {
     let mut current = String::new();
     let mut current_start = 0usize;
     let mut current_end = 0usize;
+    let mut current_unit_type: Option<String> = None;
+    let mut current_structure_path: Option<String> = None;
     let mut index = 1u64;
     let mut section_heading: Option<String> = None;
 
@@ -10736,17 +10882,24 @@ fn chunk_text(document_id: &str, text: &str) -> Vec<ExtractedTextChunk> {
                 push_indexed_chunk(
                     &mut chunks,
                     document_id,
+                    document_version_id,
                     &mut index,
                     &clean,
                     &current,
+                    current_unit_type.as_deref(),
+                    current_structure_path.as_deref(),
                     current_start,
                     current_end,
                 );
                 current.clear();
+                current_unit_type = None;
+                current_structure_path = None;
             }
             section_heading = Some(para.text.trim().to_string());
             if current.is_empty() {
                 current_start = para.byte_start;
+                current_unit_type = Some(para.unit_type.clone());
+                current_structure_path = para.structure_path.clone();
             }
             if !current.is_empty() && !current.ends_with('\n') {
                 current.push('\n');
@@ -10756,31 +10909,37 @@ fn chunk_text(document_id: &str, text: &str) -> Vec<ExtractedTextChunk> {
             continue;
         }
 
-        let would_exceed =
-            !current.is_empty() && current.len() + 1 + para.text.len() > 1800;
+        let would_exceed = !current.is_empty() && current.len() + 1 + para.text.len() > 1800;
+        let unit_boundary = current_unit_type
+            .as_deref()
+            .is_some_and(|current_type| should_start_new_index_unit(current_type, &para.unit_type));
 
-        if would_exceed {
+        if would_exceed || unit_boundary {
             push_indexed_chunk(
                 &mut chunks,
                 document_id,
+                document_version_id,
                 &mut index,
                 &clean,
                 &current,
+                current_unit_type.as_deref(),
+                current_structure_path.as_deref(),
                 current_start,
                 current_end,
             );
             current.clear();
-            // Re-prefix with the section heading so the continuation chunk
-            // remains self-describing without re-reading prior chunks.
-            if let Some(h) = &section_heading {
-                current.push_str(h);
-                current.push('\n');
-            }
+            current_unit_type = None;
+            current_structure_path = None;
             current_start = para.byte_start;
         }
 
         if current.is_empty() {
             current_start = para.byte_start;
+            current_unit_type = Some(para.unit_type.clone());
+            current_structure_path = para
+                .structure_path
+                .clone()
+                .or_else(|| section_heading.clone());
         }
         if !current.is_empty() && !current.ends_with('\n') {
             current.push('\n');
@@ -10793,9 +10952,12 @@ fn chunk_text(document_id: &str, text: &str) -> Vec<ExtractedTextChunk> {
         push_indexed_chunk(
             &mut chunks,
             document_id,
+            document_version_id,
             &mut index,
             &clean,
             &current,
+            current_unit_type.as_deref(),
+            current_structure_path.as_deref(),
             current_start,
             current_end,
         );
@@ -10809,16 +10971,39 @@ fn propose_facts(
     document_id: &str,
     text: &str,
     context: &SourceContext,
+    chunks: &[ExtractedTextChunk],
 ) -> Vec<CaseFact> {
-    sentence_candidates_with_offsets(text)
+    let mut candidates = sentence_candidates_with_offsets(text)
+        .into_iter()
+        .map(|sentence| {
+            let score = fact_candidate_score(&sentence.text);
+            (sentence, score)
+        })
+        .filter(|(_, score)| *score > 0)
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1)
+            .then_with(|| left.0.byte_start.cmp(&right.0.byte_start))
+    });
+
+    candidates
         .into_iter()
         .take(24)
         .enumerate()
-        .map(|(index, sentence)| {
+        .map(|(index, (sentence, score))| {
             let ordinal = index as u64 + 1;
             let fact_id = format!("fact:{}:{}", sanitize_path_segment(document_id), ordinal);
-            let source_span =
+            let mut source_span =
                 source_span_for_sentence(matter_id, document_id, ordinal, &sentence, context);
+            let linked_chunk_ids = text_chunk_ids_for_range(chunks, Some(&source_span));
+            source_span.chunk_id = linked_chunk_ids.first().cloned();
+            let date = date_candidates_in_text(&sentence.text)
+                .into_iter()
+                .next()
+                .map(|date| date.iso_date);
+            let confidence = (0.52 + (score.min(8) as f32 * 0.045)).min(0.88);
             CaseFact {
                 id: fact_id.clone(),
                 fact_id,
@@ -10826,8 +11011,8 @@ fn propose_facts(
                 statement: sentence.text.clone(),
                 text: sentence.text,
                 status: "proposed".to_string(),
-                confidence: 0.55,
-                date: None,
+                confidence,
+                date,
                 party_id: None,
                 source_document_ids: vec![document_id.to_string()],
                 source_evidence_ids: Vec::new(),
@@ -10838,12 +11023,65 @@ fn propose_facts(
                 needs_verification: true,
                 source_spans: vec![source_span],
                 notes: Some(
-                    "Deterministic V0 extraction from document text; user review required."
+                    "Deterministic Markdown extraction from indexed source text; user review required."
                         .to_string(),
                 ),
             }
         })
         .collect()
+}
+
+fn fact_candidate_score(text: &str) -> u32 {
+    let lower = text.to_ascii_lowercase();
+    let mut score: u32 = 0;
+    if !date_candidates_in_text(text).is_empty() {
+        score += 4;
+    }
+    if ORS_CITATION_RE.is_match(text)
+        || ORCP_CITATION_RE.is_match(text)
+        || UTCR_CITATION_RE.is_match(text)
+        || OR_CONST_CITATION_RE.is_match(text)
+        || SESSION_LAW_CITATION_RE.is_match(text)
+    {
+        score += 3;
+    }
+    if MONEY_RE.is_match(text) {
+        score += 2;
+    }
+    if [
+        "reported",
+        "notified",
+        "served",
+        "filed",
+        "paid",
+        "accepted",
+        "refused",
+        "requested",
+        "admitted",
+        "denied",
+        "completed",
+        "failed",
+        "deadline",
+        "hearing",
+        "inspection",
+        "invoice",
+        "receipt",
+        "rent",
+        "repair",
+        "notice",
+    ]
+    .iter()
+    .any(|term| lower.contains(term))
+    {
+        score += 2;
+    }
+    if CAPITALIZED_ENTITY_RE.is_match(text) {
+        score += 1;
+    }
+    if lower.contains("maybe") || lower.contains("possibly") || lower.contains("unknown") {
+        score = score.saturating_sub(1);
+    }
+    score
 }
 
 fn timeline_suggestions_from_facts(
@@ -11001,40 +11239,429 @@ fn timeline_suggestions_from_text(
     suggestions
 }
 
-fn date_entity_mentions_for_chunk(
+fn entity_mentions_for_chunk(
     matter_id: &str,
     document_id: &str,
     chunk: &ExtractedTextChunk,
 ) -> Vec<EntityMention> {
-    date_candidates_in_text(&chunk.text)
-        .into_iter()
-        .enumerate()
-        .map(|(index, date)| {
-            let entity_mention_id = format!(
-                "entity-mention:{}:date:{}",
-                sanitize_path_segment(&chunk.chunk_id),
-                index + 1
-            );
-            let byte_base = chunk.byte_start.unwrap_or_default();
-            let char_base = chunk.char_start.unwrap_or_default();
-            EntityMention {
-                id: entity_mention_id.clone(),
-                entity_mention_id,
-                matter_id: matter_id.to_string(),
-                document_id: document_id.to_string(),
-                text_chunk_id: Some(chunk.chunk_id.clone()),
-                source_span_id: chunk.source_span_id.clone(),
-                mention_text: date.date_text,
-                entity_type: "date".to_string(),
-                confidence: date.confidence,
-                byte_start: Some(byte_base + date.byte_start),
-                byte_end: Some(byte_base + date.byte_end),
-                char_start: Some(char_base + date.char_start),
-                char_end: Some(char_base + date.char_end),
-                review_status: "unreviewed".to_string(),
-            }
+    let mut mentions = Vec::new();
+    let mut seen = HashSet::new();
+    for date in date_candidates_in_text(&chunk.text) {
+        push_entity_mention(
+            &mut mentions,
+            &mut seen,
+            matter_id,
+            document_id,
+            chunk,
+            "date",
+            &date.date_text,
+            date.confidence,
+            date.byte_start as usize,
+            date.byte_end as usize,
+        );
+    }
+    for matched in ORS_CITATION_RE.find_iter(&chunk.text) {
+        push_entity_mention(
+            &mut mentions,
+            &mut seen,
+            matter_id,
+            document_id,
+            chunk,
+            "statute",
+            matched.as_str(),
+            0.9,
+            matched.start(),
+            matched.end(),
+        );
+    }
+    for matched in ORCP_CITATION_RE
+        .find_iter(&chunk.text)
+        .chain(UTCR_CITATION_RE.find_iter(&chunk.text))
+    {
+        push_entity_mention(
+            &mut mentions,
+            &mut seen,
+            matter_id,
+            document_id,
+            chunk,
+            "rule",
+            matched.as_str(),
+            0.9,
+            matched.start(),
+            matched.end(),
+        );
+    }
+    for matched in OR_CONST_CITATION_RE.find_iter(&chunk.text) {
+        push_entity_mention(
+            &mut mentions,
+            &mut seen,
+            matter_id,
+            document_id,
+            chunk,
+            "constitutional_authority",
+            matched.as_str(),
+            0.9,
+            matched.start(),
+            matched.end(),
+        );
+    }
+    for matched in SESSION_LAW_CITATION_RE.find_iter(&chunk.text) {
+        push_entity_mention(
+            &mut mentions,
+            &mut seen,
+            matter_id,
+            document_id,
+            chunk,
+            "session_law",
+            matched.as_str(),
+            0.9,
+            matched.start(),
+            matched.end(),
+        );
+    }
+    for matched in MONEY_RE.find_iter(&chunk.text) {
+        push_entity_mention(
+            &mut mentions,
+            &mut seen,
+            matter_id,
+            document_id,
+            chunk,
+            "money",
+            matched.as_str(),
+            0.82,
+            matched.start(),
+            matched.end(),
+        );
+    }
+    for matched in CAPITALIZED_ENTITY_RE.find_iter(&chunk.text) {
+        let Some(classified) =
+            classify_capitalized_entity_mention(&chunk.text, matched.start(), matched.end())
+        else {
+            continue;
+        };
+        push_entity_mention(
+            &mut mentions,
+            &mut seen,
+            matter_id,
+            document_id,
+            chunk,
+            classified.entity_type,
+            classified.mention_text,
+            classified.confidence,
+            classified.start,
+            classified.end,
+        );
+    }
+    mentions
+}
+
+struct ClassifiedEntityMention<'a> {
+    entity_type: &'static str,
+    mention_text: &'a str,
+    confidence: f32,
+    start: usize,
+    end: usize,
+}
+
+fn classify_capitalized_entity_mention<'a>(
+    text: &'a str,
+    start: usize,
+    end: usize,
+) -> Option<ClassifiedEntityMention<'a>> {
+    let raw = text.get(start..end)?;
+    let (mention_text, adjusted_start, adjusted_end) = trim_entity_mention(raw, start, end);
+    let lower = mention_text.to_ascii_lowercase();
+    if should_suppress_capitalized_entity(mention_text, &lower) {
+        return None;
+    }
+    let context = entity_context(text, adjusted_start, adjusted_end);
+    let context_lower = context.to_ascii_lowercase();
+    let has_party_context = has_party_context(&context_lower);
+    let (entity_type, confidence) =
+        if lower.contains("court") || lower.contains("judicial district") {
+            ("court", 0.82)
+        } else if lower.contains("municipal code") || lower.contains("code chapter") {
+            ("statute", 0.78)
+        } else if likely_organization_name(&lower) {
+            ("organization", 0.74)
+        } else if likely_place_name(&lower) {
+            ("place", 0.7)
+        } else if has_party_context && likely_party_name(mention_text) {
+            ("party", 0.76)
+        } else if likely_party_name(mention_text) {
+            ("party", 0.64)
+        } else {
+            return None;
+        };
+    Some(ClassifiedEntityMention {
+        entity_type,
+        mention_text,
+        confidence,
+        start: adjusted_start,
+        end: adjusted_end,
+    })
+}
+
+fn trim_entity_mention(mention: &str, start: usize, end: usize) -> (&str, usize, usize) {
+    let mut text = mention.trim();
+    let mut adjusted_start = start + (mention.len() - mention.trim_start().len());
+    let mut adjusted_end = end - (mention.len() - mention.trim_end().len());
+    for prefix in [
+        "Plaintiff",
+        "Defendant",
+        "Petitioner",
+        "Respondent",
+        "Tenant",
+        "Landlord",
+        "Appellant",
+        "Appellee",
+    ] {
+        if let Some(rest) = text
+            .strip_prefix(prefix)
+            .and_then(|value| value.strip_prefix(' '))
+        {
+            adjusted_start += prefix.len() + 1;
+            text = rest;
+            break;
+        }
+    }
+    while let Some(stripped) = text.strip_suffix('.') {
+        text = stripped;
+        adjusted_end = adjusted_end.saturating_sub(1);
+    }
+    (text, adjusted_start, adjusted_end)
+}
+
+fn should_suppress_capitalized_entity(mention_text: &str, lower: &str) -> bool {
+    let words = entity_words(mention_text);
+    if words.len() < 2 {
+        return true;
+    }
+    if [
+        "review needed",
+        "legal advice",
+        "filing ready",
+        "source span",
+        "text chunk",
+        "case builder",
+        "document version",
+        "timeline suggestion",
+        "index run",
+        "page one",
+        "section one",
+        "section two",
+        "tenant notice",
+        "rental agreement",
+        "case timeline",
+        "exhibit list",
+        "fact summary",
+    ]
+    .iter()
+    .any(|phrase| lower == *phrase)
+    {
+        return true;
+    }
+    if words.iter().any(|word| is_month_name(word))
+        && !likely_place_name(lower)
+        && !likely_organization_name(lower)
+    {
+        return true;
+    }
+    let meaningful = words
+        .iter()
+        .filter(|word| {
+            !matches!(
+                word.to_ascii_lowercase().as_str(),
+                "of" | "the" | "and" | "for"
+            )
         })
+        .collect::<Vec<_>>();
+    if meaningful
+        .iter()
+        .all(|word| is_generic_entity_false_positive_word(word))
+    {
+        return true;
+    }
+    false
+}
+
+fn entity_words(text: &str) -> Vec<&str> {
+    text.split_whitespace()
+        .map(|word| word.trim_matches(|ch: char| !ch.is_ascii_alphanumeric()))
+        .filter(|word| !word.is_empty())
         .collect()
+}
+
+fn is_month_name(word: &str) -> bool {
+    matches!(
+        word,
+        "January"
+            | "February"
+            | "March"
+            | "April"
+            | "May"
+            | "June"
+            | "July"
+            | "August"
+            | "September"
+            | "October"
+            | "November"
+            | "December"
+    )
+}
+
+fn is_generic_entity_false_positive_word(word: &str) -> bool {
+    matches!(
+        word.to_ascii_lowercase().as_str(),
+        "case"
+            | "claim"
+            | "count"
+            | "document"
+            | "evidence"
+            | "exhibit"
+            | "fact"
+            | "filing"
+            | "hearing"
+            | "invoice"
+            | "ledger"
+            | "notice"
+            | "page"
+            | "paragraph"
+            | "receipt"
+            | "record"
+            | "review"
+            | "section"
+            | "status"
+            | "summary"
+            | "tenant"
+            | "timeline"
+            | "version"
+    )
+}
+
+fn likely_organization_name(lower: &str) -> bool {
+    [
+        " llc",
+        " inc",
+        " inc.",
+        " corp",
+        " corp.",
+        " company",
+        " apartments",
+        " properties",
+        " rentals",
+        " association",
+        " bank",
+        " trust",
+        " holdings",
+        " department",
+        " division",
+        " authority",
+    ]
+    .iter()
+    .any(|suffix| lower.ends_with(suffix) || lower.contains(&format!("{suffix} ")))
+}
+
+fn likely_place_name(lower: &str) -> bool {
+    lower.ends_with(" county")
+        || lower.ends_with(" city")
+        || lower.starts_with("city of ")
+        || lower.starts_with("state of ")
+        || lower == "state of oregon"
+        || lower == "oregon"
+}
+
+fn likely_party_name(text: &str) -> bool {
+    let words = entity_words(text)
+        .into_iter()
+        .filter(|word| {
+            !matches!(
+                word.to_ascii_lowercase().as_str(),
+                "of" | "the" | "and" | "for"
+            )
+        })
+        .collect::<Vec<_>>();
+    (2..=4).contains(&words.len())
+        && words.iter().all(|word| {
+            word.chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_uppercase())
+                && !is_generic_entity_false_positive_word(word)
+                && !is_month_name(word)
+        })
+}
+
+fn entity_context(text: &str, start: usize, end: usize) -> String {
+    let context_start = text[..start]
+        .char_indices()
+        .rev()
+        .nth(40)
+        .map_or(0, |(idx, _)| idx);
+    let context_end = text[end..]
+        .char_indices()
+        .nth(40)
+        .map_or(text.len(), |(idx, _)| end + idx);
+    text[context_start..context_end].to_string()
+}
+
+fn has_party_context(context_lower: &str) -> bool {
+    [
+        "plaintiff",
+        "defendant",
+        "petitioner",
+        "respondent",
+        "tenant",
+        "landlord",
+        "appellant",
+        "appellee",
+    ]
+    .iter()
+    .any(|term| context_lower.contains(term))
+}
+
+fn push_entity_mention(
+    mentions: &mut Vec<EntityMention>,
+    seen: &mut HashSet<String>,
+    matter_id: &str,
+    document_id: &str,
+    chunk: &ExtractedTextChunk,
+    entity_type: &str,
+    mention_text: &str,
+    confidence: f32,
+    start: usize,
+    end: usize,
+) {
+    let key = format!(
+        "{entity_type}:{start}:{end}:{}",
+        mention_text.to_ascii_lowercase()
+    );
+    if !seen.insert(key) {
+        return;
+    }
+    let byte_base = chunk.byte_start.unwrap_or_default();
+    let char_base = chunk.char_start.unwrap_or_default();
+    let entity_mention_id = format!(
+        "entity-mention:{}:{}:{}",
+        sanitize_path_segment(&chunk.chunk_id),
+        entity_type,
+        mentions.len() + 1
+    );
+    mentions.push(EntityMention {
+        id: entity_mention_id.clone(),
+        entity_mention_id,
+        matter_id: matter_id.to_string(),
+        document_id: document_id.to_string(),
+        text_chunk_id: Some(chunk.chunk_id.clone()),
+        source_span_id: chunk.source_span_id.clone(),
+        mention_text: mention_text.to_string(),
+        entity_type: entity_type.to_string(),
+        confidence,
+        byte_start: Some(byte_base + start as u64),
+        byte_end: Some(byte_base + end as u64),
+        char_start: Some(char_base + chunk.text[..start].chars().count() as u64),
+        char_end: Some(char_base + chunk.text[..end].chars().count() as u64),
+        review_status: "unreviewed".to_string(),
+    });
 }
 
 fn text_chunk_ids_for_range(
@@ -11175,8 +11802,6 @@ fn date_candidate(
         confidence,
         byte_start: byte_start as u64,
         byte_end: byte_end as u64,
-        char_start: text[..byte_start].chars().count() as u64,
-        char_end: text[..byte_end].chars().count() as u64,
         warnings,
     }
 }
@@ -11254,20 +11879,60 @@ fn sentence_candidates_with_offsets(text: &str) -> Vec<SentenceCandidate> {
     let mut current = String::new();
     let mut sentence_start = 0usize;
     let mut cursor = 0usize;
+    let mut previous = None;
 
-    for ch in text.chars() {
+    let mut chars = text.char_indices().peekable();
+    while let Some((byte_index, ch)) = chars.next() {
         if current.is_empty() {
-            sentence_start = cursor;
+            sentence_start = byte_index;
         }
         current.push(ch);
-        cursor += ch.len_utf8();
-        if matches!(ch, '.' | '?' | '!' | '\n') {
+        cursor = byte_index + ch.len_utf8();
+        let next = chars.peek().map(|(_, next)| *next);
+        if sentence_terminator_at(text, byte_index, ch, previous, next) {
             push_sentence_candidate(&mut candidates, text, &current, sentence_start, cursor);
             current.clear();
         }
+        previous = Some(ch);
     }
     push_sentence_candidate(&mut candidates, text, &current, sentence_start, cursor);
     candidates
+}
+
+fn sentence_terminator_at(
+    text: &str,
+    byte_index: usize,
+    ch: char,
+    previous: Option<char>,
+    next: Option<char>,
+) -> bool {
+    match ch {
+        '?' | '!' | '\n' => true,
+        '.' => {
+            if previous.is_some_and(|value| value.is_ascii_digit())
+                && next.is_some_and(|value| value.is_ascii_digit())
+            {
+                return false;
+            }
+            !sentence_abbreviation_before_dot(text, byte_index)
+        }
+        _ => false,
+    }
+}
+
+fn sentence_abbreviation_before_dot(text: &str, dot_byte_index: usize) -> bool {
+    let Some(prefix) = text.get(..dot_byte_index) else {
+        return false;
+    };
+    let token = prefix
+        .rsplit(|ch: char| ch.is_whitespace() || matches!(ch, '(' | '[' | '{' | '"' | '\''))
+        .next()
+        .unwrap_or_default()
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric());
+    matches!(
+        token,
+        "Art" | "Co" | "Corp" | "Dr" | "Inc" | "Jr" | "Mr" | "Mrs" | "Ms" | "No" | "Or" | "Sr"
+    )
 }
 
 fn push_sentence_candidate(
@@ -11957,12 +12622,13 @@ mod tests {
         assemblyai_prompt_preset_text, assemblyai_raw_words, assemblyai_speech_models,
         assemblyai_transcript_create_request, assemblyai_transcript_delete_response,
         assemblyai_transcript_error_message, assemblyai_transcript_list_query_pairs,
-        canonical_id_for_citation, chunk_text, citation_uses_for_text, date_candidates_in_text,
-        default_formatting_profile, docx_package_manifest, docx_with_replaced_document_xml,
-        failed_ingestion_run, generate_opaque_id, looks_like_complaint,
-        normalize_assemblyai_prompt_preset, normalize_assemblyai_remove_audio_tags,
-        normalize_assemblyai_transcript_id, normalize_assemblyai_transcript_list_query,
-        normalize_compare_layers, normalize_transcript_review_surface, object_blob_id_for_hash,
+        canonical_id_for_citation, chunk_text, chunk_text_for_version, citation_uses_for_text,
+        date_candidates_in_text, default_formatting_profile, docx_package_manifest,
+        docx_with_replaced_document_xml, entity_mentions_for_chunk, failed_ingestion_run,
+        generate_opaque_id, looks_like_complaint, normalize_assemblyai_prompt_preset,
+        normalize_assemblyai_remove_audio_tags, normalize_assemblyai_transcript_id,
+        normalize_assemblyai_transcript_list_query, normalize_compare_layers,
+        normalize_transcript_review_surface, object_blob_id_for_hash,
         oregon_civil_complaint_rule_pack, parse_complaint_structure, parse_document_bytes,
         propose_facts, prosemirror_doc_for_text, provider_subtitle_or_local,
         rebuild_work_product_ast_from_projection, redact_transcript_text,
@@ -13114,12 +13780,13 @@ mod tests {
         let body = "x".repeat(900);
         let text = format!("## Section One\n\n{body}\n\n## Section Two\n\nshort");
         let chunks = chunk_text("doc:4", &text);
-        // Section One heading + body is one chunk, Section Two heading + short is another
         assert!(chunks.len() >= 2);
-        let last = chunks.last().unwrap();
         assert!(
-            last.text.contains("Section Two"),
-            "last chunk should contain the heading that started it"
+            chunks.iter().any(|chunk| {
+                chunk.structure_path.as_deref() == Some("Section Two")
+                    && chunk.text.contains("short")
+            }),
+            "Section Two body should keep its heading context as metadata"
         );
     }
 
@@ -13135,9 +13802,10 @@ mod tests {
             continuation.is_some(),
             "should produce a continuation chunk for body_b"
         );
-        assert!(
-            continuation.unwrap().text.starts_with("My Section"),
-            "continuation chunk should be prefixed with the section heading for context"
+        assert_eq!(
+            continuation.unwrap().structure_path.as_deref(),
+            Some("My Section"),
+            "continuation chunk should keep section context as metadata"
         );
     }
 
@@ -13151,6 +13819,136 @@ mod tests {
             "blockquote markers should be stripped from indexed text"
         );
         assert!(chunks[0].text.contains("This is a quoted passage."));
+        assert_eq!(chunks[0].unit_type.as_deref(), Some("quote"));
+    }
+
+    #[test]
+    fn chunks_drop_generated_review_notice() {
+        let text = "## Summary\n\nUseful indexed text.\n\n> Review needed; not legal advice or filing-ready.";
+        let chunks = chunk_text("doc:7", text);
+        assert!(
+            chunks
+                .iter()
+                .all(|chunk| !chunk.text.contains("Review needed")),
+            "generated review notice should not enter indexed text"
+        );
+        assert!(
+            chunks
+                .iter()
+                .any(|chunk| chunk.text.contains("Useful indexed text.")),
+            "real Markdown body text should remain indexed"
+        );
+    }
+
+    #[test]
+    fn chunk_ids_are_document_version_aware_when_available() {
+        let text = "## Ledger\n\nTenant paid rent on March 1, 2024.";
+        let unversioned = chunk_text("doc:versioned", text);
+        let version_a =
+            chunk_text_for_version("doc:versioned", Some("version:doc_versioned:a"), text);
+        let version_a_again =
+            chunk_text_for_version("doc:versioned", Some("version:doc_versioned:a"), text);
+        let version_b =
+            chunk_text_for_version("doc:versioned", Some("version:doc_versioned:b"), text);
+
+        let version_a_ids = version_a
+            .iter()
+            .map(|chunk| chunk.chunk_id.clone())
+            .collect::<Vec<_>>();
+        let version_a_again_ids = version_a_again
+            .iter()
+            .map(|chunk| chunk.chunk_id.clone())
+            .collect::<Vec<_>>();
+        let version_b_ids = version_b
+            .iter()
+            .map(|chunk| chunk.chunk_id.clone())
+            .collect::<Vec<_>>();
+        let unversioned_ids = unversioned
+            .iter()
+            .map(|chunk| chunk.chunk_id.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            version_a_ids, version_a_again_ids,
+            "same document version and source structure should keep stable chunk IDs"
+        );
+        assert_ne!(
+            version_a_ids, version_b_ids,
+            "different document versions should produce different chunk IDs"
+        );
+        assert_ne!(
+            version_a_ids, unversioned_ids,
+            "versioned chunks should not collide with legacy unversioned chunks"
+        );
+        assert!(version_a.iter().all(|chunk| {
+            chunk.document_version_id.as_deref() == Some("version:doc_versioned:a")
+        }));
+    }
+
+    #[test]
+    fn entity_mentions_extract_markdown_signal_types_from_chunks() {
+        let text = "## Notice\n\nBlue Ox Rentals LLC served ORS 90.320 notice on April 1, 2026 and demanded $1,250.00.";
+        let mut chunks = chunk_text("doc:mentions", text);
+        let chunk = chunks
+            .iter_mut()
+            .find(|chunk| chunk.text.contains("Blue Ox Rentals LLC"))
+            .expect("body chunk");
+        chunk.source_span_id = Some("span:doc_mentions:chunk:2".to_string());
+
+        let mentions = entity_mentions_for_chunk("matter:test", "doc:mentions", chunk);
+
+        assert!(mentions.iter().any(|mention| {
+            mention.entity_type == "date" && mention.mention_text == "April 1, 2026"
+        }));
+        assert!(mentions.iter().any(|mention| {
+            mention.entity_type == "statute" && mention.mention_text == "ORS 90.320"
+        }));
+        assert!(mentions.iter().any(|mention| {
+            mention.entity_type == "money" && mention.mention_text == "$1,250.00"
+        }));
+        assert!(mentions.iter().any(|mention| {
+            mention.entity_type == "organization" && mention.mention_text == "Blue Ox Rentals LLC"
+        }));
+        assert!(mentions.iter().all(|mention| {
+            mention.text_chunk_id.as_deref() == Some(chunk.chunk_id.as_str())
+                && mention.source_span_id.as_deref() == Some("span:doc_mentions:chunk:2")
+        }));
+    }
+
+    #[test]
+    fn entity_mentions_classify_parties_courts_places_and_suppress_noise() {
+        let text = "## Parties\n\nPlaintiff Debra Paynter filed in Linn County Circuit Court against Blue Ox Rentals LLC. State of Oregon records identify the address. Tenant Notice and April Rent Ledger are document labels, not entities.";
+        let mut chunks = chunk_text("doc:classified-mentions", text);
+        let chunk = chunks
+            .iter_mut()
+            .find(|chunk| chunk.text.contains("Debra Paynter"))
+            .expect("body chunk");
+        chunk.source_span_id = Some("span:doc_classified_mentions:chunk:2".to_string());
+
+        let mentions = entity_mentions_for_chunk("matter:test", "doc:classified-mentions", chunk);
+
+        assert!(mentions.iter().any(|mention| {
+            mention.entity_type == "party" && mention.mention_text == "Debra Paynter"
+        }));
+        assert!(mentions.iter().any(|mention| {
+            mention.entity_type == "court" && mention.mention_text == "Linn County Circuit Court"
+        }));
+        assert!(mentions.iter().any(|mention| {
+            mention.entity_type == "organization" && mention.mention_text == "Blue Ox Rentals LLC"
+        }));
+        assert!(mentions.iter().any(|mention| {
+            mention.entity_type == "place" && mention.mention_text == "State of Oregon"
+        }));
+        assert!(
+            mentions
+                .iter()
+                .all(|mention| mention.mention_text != "Tenant Notice")
+        );
+        assert!(
+            mentions
+                .iter()
+                .all(|mention| mention.mention_text != "April Rent Ledger")
+        );
     }
 
     #[test]
@@ -13203,17 +14001,15 @@ mod tests {
             object_blob_id: Some("blob:doc:1".to_string()),
             ingestion_run_id: Some("ingestion:doc:1".to_string()),
         };
-        let facts = propose_facts(
-            "matter:test",
-            "doc:test",
-            "Tenant reported mold on April 1, 2026. Repairs were not completed for two weeks.",
-            &context,
-        );
+        let text =
+            "Tenant reported mold on April 1, 2026. Repairs were not completed for two weeks.";
+        let chunks = chunk_text("doc:test", text);
+        let facts = propose_facts("matter:test", "doc:test", text, &context, &chunks);
         let suggestions = timeline_suggestions_from_facts(
             "matter:test",
             Some("doc:test"),
             &facts,
-            &[],
+            &chunks,
             "document_index",
             None,
             None,
@@ -13756,12 +14552,9 @@ mod tests {
             object_blob_id: Some("blob:sha256:abc".to_string()),
             ingestion_run_id: Some("ingestion:doc_opaque:primary".to_string()),
         };
-        let facts = propose_facts(
-            "matter:test",
-            "doc:opaque",
-            "The tenant paid rent on March 1, 2024, and the landlord accepted the payment without objection.",
-            &context,
-        );
+        let text = "The tenant paid rent on March 1, 2024, and the landlord accepted the payment without objection.";
+        let chunks = chunk_text("doc:opaque", text);
+        let facts = propose_facts("matter:test", "doc:opaque", text, &context, &chunks);
         assert_eq!(facts.len(), 1);
         assert_eq!(facts[0].source_spans.len(), 1);
         assert_eq!(
@@ -13773,6 +14566,31 @@ mod tests {
             Some(
                 "The tenant paid rent on March 1, 2024, and the landlord accepted the payment without objection."
             )
+        );
+    }
+
+    #[test]
+    fn proposed_facts_prioritize_high_signal_sentence_candidates() {
+        let context = SourceContext {
+            document_version_id: Some("version:doc_ranked:original".to_string()),
+            object_blob_id: Some("blob:sha256:ranked".to_string()),
+            ingestion_run_id: Some("ingestion:doc_ranked:primary".to_string()),
+        };
+        let text = "Background sentence with no review signal. Blue Ox Rentals LLC served ORS 90.320 notice on April 1, 2026. The rent demand was $900 for the April ledger after the notice.";
+        let chunks = chunk_text("doc:ranked", text);
+        let facts = propose_facts("matter:test", "doc:ranked", text, &context, &chunks);
+
+        assert_eq!(facts.len(), 2);
+        assert!(
+            facts[0].statement.contains("ORS 90.320")
+                && facts[0].date.as_deref() == Some("2026-04-01"),
+            "citation/date sentence should rank ahead of the lower-signal money-only sentence"
+        );
+        assert!(
+            facts
+                .iter()
+                .all(|fact| !fact.statement.contains("Background sentence")),
+            "low-signal filler should not become a proposed fact"
         );
     }
 
