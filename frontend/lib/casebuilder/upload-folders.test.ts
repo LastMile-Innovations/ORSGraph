@@ -21,4 +21,16 @@ describe("folder upload helpers", () => {
     expect(normalizeUploadRelativePath(file, "../Evidence/./secret.txt")).toBe("Evidence/secret.txt")
     expect(folderFromRelativePath("Evidence/secret.txt")).toBe("Evidence")
   })
+
+  it("replaces colon separators before upload intent validation", () => {
+    const file = new File(["shot"], "error:upload.png", { type: "image/png" })
+
+    expect(normalizeUploadRelativePath(file, "Screenshots/May 4 15:01:39/error:upload.png")).toBe(
+      "Screenshots/May 4 15_01_39/error_upload.png",
+    )
+    expect(filesToUploadCandidates([file])[0]).toMatchObject({
+      relativePath: "error_upload.png",
+      folder: "Uploads",
+    })
+  })
 })

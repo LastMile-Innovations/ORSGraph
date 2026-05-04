@@ -156,6 +156,27 @@ describe("CaseBuilderUploadProvider", () => {
     })
   })
 
+  it("sanitizes upload paths before creating signed upload intents", async () => {
+    render(
+      <CaseBuilderUploadProvider>
+        <UploadHarness file={new File(["# Facts"], "facts:timeline.md", { type: "text/markdown" })} />
+      </CaseBuilderUploadProvider>,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: /start upload/i }))
+
+    await waitFor(() => {
+      expect(mocks.createFileUpload).toHaveBeenCalledWith(
+        "matter:test",
+        expect.objectContaining({
+          filename: "facts:timeline.md",
+          relative_path: "Evidence/facts_timeline.md",
+          folder: "Evidence",
+        }),
+      )
+    })
+  })
+
   it("honors matter upload settings for fallback metadata and auto-indexing", async () => {
     render(
       <CaseBuilderUploadProvider>

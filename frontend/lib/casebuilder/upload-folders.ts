@@ -4,6 +4,8 @@ export interface UploadCandidate {
   folder: string
 }
 
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g
+
 export function createUploadBatchId(prefix = "batch"): string {
   const random = Math.random().toString(36).slice(2, 8)
   return `${prefix}:${Date.now().toString(36)}:${random}`
@@ -15,16 +17,38 @@ export function normalizeUploadRelativePath(file: File, explicitPath?: string): 
   const normalized = raw
     .replace(/\\/g, "/")
     .split("/")
-    .map((segment) => segment.trim())
-    .filter((segment) => segment && segment !== "." && segment !== ".." && !/[\u0000-\u001f\u007f]/.test(segment))
+    .map((segment) => normalizeUploadPathSegment(segment, ""))
+    .filter(Boolean)
     .join("/")
-  return normalized || file.name
+  return normalized || normalizeUploadPathSegment(file.name, "upload")
 }
 
 export function folderFromRelativePath(relativePath: string, fallback = "Uploads"): string {
   const first = relativePath.split("/").find(Boolean)
-  if (!first || first === relativePath) return fallback
-  return first
+  if (!first || first === relativePath) return normalizeUploadFolder(fallback)
+  return normalizeUploadFolder(first, fallback)
+}
+
+export function normalizeUploadFolder(folder: string | undefined, fallback = "Uploads"): string {
+  return normalizeUploadPathSegment(folder ?? "", fallback)
+}
+
+export function normalizeUploadCandidate(candidate: UploadCandidate, fallbackFolder = "Uploads"): UploadCandidate {
+  const relativePath = normalizeUploadRelativePath(candidate.file, candidate.relativePath)
+  return {
+    file: candidate.file,
+    relativePath,
+    folder: folderFromRelativePath(relativePath, normalizeUploadFolder(candidate.folder, fallbackFolder)),
+  }
+}
+
+function normalizeUploadPathSegment(segment: string, fallback: string): string {
+  const normalized = segment
+    .trim()
+    .replace(CONTROL_CHARS, "")
+    .replace(/:/g, "_")
+  if (!normalized || normalized === "." || normalized === "..") return fallback
+  return normalized
 }
 
 export function filesToUploadCandidates(files: FileList | File[], fallbackFolder = "Uploads"): UploadCandidate[] {

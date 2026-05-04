@@ -34,7 +34,7 @@ import {
 } from "@/lib/casebuilder/api"
 import { isMarkdownIndexableFile } from "@/lib/casebuilder/document-tree"
 import { matterComplaintHref, matterHref } from "@/lib/casebuilder/routes"
-import { createUploadBatchId, type UploadCandidate } from "@/lib/casebuilder/upload-folders"
+import { createUploadBatchId, normalizeUploadCandidate, type UploadCandidate } from "@/lib/casebuilder/upload-folders"
 import type { CaseBuilderEffectiveSettings, DocumentType, MatterIndexJob } from "@/lib/casebuilder/types"
 
 export type CaseBuilderUploadRowStatus =
@@ -416,7 +416,8 @@ export function CaseBuilderUploadProvider({ children }: { children: ReactNode })
         createUploadBatchId(candidates.some((candidate) => candidate.relativePath.includes("/")) ? "folder" : "batch")
       const batchId = uploadBatchId
       const processingOptions = normalizeUploadProcessingOptions(options)
-      const nextRows = candidates.map((candidate, index): CaseBuilderUploadRow => ({
+      const normalizedCandidates = candidates.map((candidate) => normalizeUploadCandidate(candidate))
+      const nextRows = normalizedCandidates.map((candidate, index): CaseBuilderUploadRow => ({
         id: `${batchId}:row:${index}`,
         batchId,
         matterId,
