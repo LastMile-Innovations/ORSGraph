@@ -5,10 +5,12 @@ import {
   getHomePageState,
   getProvisionInspectorDataState,
   getSourceDetailState,
+  getSourcesState,
   getStatuteIndexState,
   getStatutePageDataState,
   searchWithParamsState,
   type SearchParams,
+  type SourceIndexParams,
   type SourceDetailResult,
   type StatuteIndexParams,
 } from "./api"
@@ -27,6 +29,17 @@ export async function getCachedHomePageState() {
   tagAuthorityRead("home")
   cacheLife("authorityShell")
   return getHomePageState()
+}
+
+export async function getCachedSourcesState(params: SourceIndexParams = {}) {
+  return getCachedSourcesStateForParams(params)
+}
+
+async function getCachedSourcesStateForParams(params: SourceIndexParams) {
+  "use cache"
+  tagAuthorityRead("sources", stableAuthorityParamsKey(params))
+  cacheLife("authorityShell")
+  return getSourcesState(params)
 }
 
 export async function getCachedStatuteIndexState(params: StatuteIndexParams = {}) {
@@ -68,4 +81,15 @@ function releaseIdFromHotsetBaseUrl(baseUrl: string) {
   } catch {
     return segment
   }
+}
+
+function stableAuthorityParamsKey(params: object) {
+  const entries = Object.entries(params as Record<string, unknown>)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "" && value !== "all")
+    .sort(([left], [right]) => left.localeCompare(right))
+
+  if (entries.length === 0) return "default"
+  return entries
+    .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(",") : String(value)}`)
+    .join("&")
 }

@@ -80,7 +80,8 @@ describe("cacheHandlers policy", () => {
     const authorityCache = readFileSync(join(frontendDir, "lib/authority-server-cache.ts"), "utf8")
     const cacheDirectives = Array.from(authorityCache.matchAll(/["']use cache(?:: [^"']+)?["']/g)).map((match) => match[0])
 
-    expect(cacheDirectives).toEqual(['"use cache"', '"use cache"', '"use cache"'])
+    expect(cacheDirectives.every((directive) => directive === '"use cache"')).toBe(true)
+    expect(cacheDirectives).toHaveLength(4)
     expect(authorityCache).not.toContain("use cache: remote")
   })
 

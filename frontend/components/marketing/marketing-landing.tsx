@@ -1,16 +1,11 @@
-"use client"
-
 import Image from "next/image"
 import Link from "next/link"
-import { useSession } from "next-auth/react"
 import {
-  ArrowRight,
   BookMarked,
   BriefcaseBusiness,
   CheckCircle2,
   FileCheck2,
   FileSearch,
-  GitBranch,
   Landmark,
   Layers3,
   LockKeyhole,
@@ -21,7 +16,7 @@ import {
   UploadCloud,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { trackConversionEvent } from "@/lib/conversion-events"
+import { MarketingSessionLink } from "./marketing-session-link"
 
 const proofPoints = [
   { value: "52K+", label: "graph-ready statutory and authority records" },
@@ -61,9 +56,6 @@ const workflow = [
 ]
 
 export function MarketingLanding() {
-  const session = useSession()
-  const isSignedIn = session.status === "authenticated"
-  const primaryHref = isSignedIn ? "/onboarding" : "/auth/request-access"
   const inviteHref = "/auth/signin?callbackUrl=%2Fonboarding"
 
   return (
@@ -103,29 +95,33 @@ export function MarketingLanding() {
             </nav>
 
             <div className="flex shrink-0 items-center gap-2">
-              {!isSignedIn && (
-                <Button
-                  asChild
-                  variant="outline"
-                  className="hidden h-9 rounded-md border-hero-border bg-hero-foreground/5 px-4 text-hero-foreground hover:bg-hero-foreground/10 sm:inline-flex"
-                >
-                  <Link href={inviteHref} onClick={() => trackConversionEvent("sign_in_started", { source: "landing" })}>
-                    I Have An Invite
-                  </Link>
-                </Button>
-              )}
+              <Button
+                asChild
+                variant="outline"
+                className="hidden h-9 rounded-md border-hero-border bg-hero-foreground/5 px-4 text-hero-foreground hover:bg-hero-foreground/10 sm:inline-flex"
+              >
+                <MarketingSessionLink
+                  signedInHref="/dashboard"
+                  signedOutHref={inviteHref}
+                  signedInChildren="Dashboard"
+                  signedOutChildren="I Have An Invite"
+                  signedOutTrackingEvent="sign_in_started"
+                  signedOutTrackingProperties={{ source: "landing" }}
+                  hideWhenSignedIn
+                />
+              </Button>
               <Button
                 asChild
                 className="h-9 rounded-md bg-hero-accent px-4 text-hero-accent-foreground hover:bg-hero-accent/85"
               >
-                <Link
-                  href={primaryHref}
-                  onClick={() => {
-                    if (!isSignedIn) trackConversionEvent("landing_cta_click", { action: "request_access" })
-                  }}
-                >
-                  {isSignedIn ? "Enter App" : "Request Access"}
-                </Link>
+                <MarketingSessionLink
+                  signedInHref="/onboarding"
+                  signedOutHref="/auth/request-access"
+                  signedInChildren="Enter App"
+                  signedOutChildren="Request Access"
+                  signedOutTrackingEvent="landing_cta_click"
+                  signedOutTrackingProperties={{ action: "request_access" }}
+                />
               </Button>
             </div>
           </header>
@@ -152,26 +148,26 @@ export function MarketingLanding() {
                   asChild
                   className="min-h-11 w-full rounded-md bg-hero-accent px-5 text-hero-accent-foreground hover:bg-hero-accent/85 sm:w-auto"
                 >
-                  <Link
-                    href={primaryHref}
-                    onClick={() => {
-                      if (!isSignedIn) trackConversionEvent("landing_cta_click", { action: "request_access" })
-                    }}
-                  >
-                    {isSignedIn ? "Create First Matter" : "Request Beta Access"}
-                    <ArrowRight className="h-4 w-4" />
-                  </Link>
+                  <MarketingSessionLink
+                    signedInHref="/onboarding"
+                    signedOutHref="/auth/request-access"
+                    signedInChildren="Create First Matter"
+                    signedOutChildren="Request Beta Access"
+                    signedOutTrackingEvent="landing_cta_click"
+                    signedOutTrackingProperties={{ action: "request_access" }}
+                    icon="arrow"
+                  />
                 </Button>
-                <Link
-                  href={isSignedIn ? "/dashboard" : inviteHref}
-                  onClick={() => {
-                    if (!isSignedIn) trackConversionEvent("sign_in_started", { source: "landing" })
-                  }}
+                <MarketingSessionLink
+                  signedInHref="/dashboard"
+                  signedOutHref={inviteHref}
+                  signedInChildren="Open Dashboard"
+                  signedOutChildren="I Have An Invite"
+                  signedOutTrackingEvent="sign_in_started"
+                  signedOutTrackingProperties={{ source: "landing" }}
+                  icon="branch"
                   className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-hero-border bg-hero-panel px-5 text-sm font-medium text-hero-foreground outline-none backdrop-blur transition hover:border-hero-accent/70 hover:bg-hero-foreground/10 focus-visible:ring-2 focus-visible:ring-hero-accent/70 sm:w-auto"
-                >
-                  {isSignedIn ? "Open Dashboard" : "I Have An Invite"}
-                  <GitBranch className="h-4 w-4" />
-                </Link>
+                />
               </div>
             </div>
 
@@ -296,15 +292,15 @@ export function MarketingLanding() {
               asChild
               className="min-h-10 rounded-md bg-hero-accent px-5 text-hero-accent-foreground hover:bg-hero-accent/85"
             >
-              <Link
-                href={primaryHref}
-                onClick={() => {
-                  if (!isSignedIn) trackConversionEvent("landing_cta_click", { action: "request_access" })
-                }}
-              >
-                {isSignedIn ? "Create First Matter" : "Request Access"}
-                <ArrowRight className="h-4 w-4" />
-              </Link>
+              <MarketingSessionLink
+                signedInHref="/onboarding"
+                signedOutHref="/auth/request-access"
+                signedInChildren="Create First Matter"
+                signedOutChildren="Request Access"
+                signedOutTrackingEvent="landing_cta_click"
+                signedOutTrackingProperties={{ action: "request_access" }}
+                icon="arrow"
+              />
             </Button>
           </div>
         </div>

@@ -3,7 +3,7 @@
 import "client-only"
 import { track } from "@vercel/analytics"
 
-type ConversionEvent =
+export type ConversionEvent =
   | "landing_cta_click"
   | "access_request_submitted"
   | "invite_accepted"
