@@ -337,6 +337,12 @@ pub struct CaseDocument {
     #[serde(default)]
     pub deleted_at: Option<String>,
     #[serde(default)]
+    pub library_path: Option<String>,
+    #[serde(default)]
+    pub archived_at: Option<String>,
+    #[serde(default)]
+    pub archived_reason: Option<String>,
+    #[serde(default)]
     pub original_relative_path: Option<String>,
     #[serde(default)]
     pub upload_batch_id: Option<String>,
@@ -963,6 +969,24 @@ pub struct SaveDocumentTextRequest {
     pub text: String,
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub struct PatchDocumentRequest {
+    pub title: Option<String>,
+    pub library_path: Option<String>,
+    pub document_type: Option<String>,
+    pub confidentiality: Option<String>,
+    pub is_exhibit: Option<bool>,
+    #[serde(default)]
+    pub exhibit_label: Option<Option<String>>,
+    #[serde(default)]
+    pub date_observed: Option<Option<String>>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ArchiveDocumentRequest {
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct SaveDocumentTextResponse {
     pub document: CaseDocument,
@@ -1104,6 +1128,8 @@ pub struct MatterIndexUploadBatchSummary {
 pub struct MatterIndexSummary {
     pub matter_id: String,
     pub total_documents: u64,
+    pub active_documents: u64,
+    pub archived_documents: u64,
     pub indexed_documents: u64,
     pub pending_documents: u64,
     pub extractable_pending_documents: u64,

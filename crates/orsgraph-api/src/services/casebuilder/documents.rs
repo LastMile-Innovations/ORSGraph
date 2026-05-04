@@ -16,6 +16,7 @@ impl CaseBuilderService {
             .folder
             .or_else(|| folder_from_relative_path(relative_path.as_deref()))
             .unwrap_or_else(|| "Uploads".to_string());
+        let library_path = library_path_from_upload(relative_path.as_deref(), &folder, &request.filename)?;
         let bytes = request
             .text
             .as_ref()
@@ -92,6 +93,9 @@ impl CaseBuilderService {
                 .and_then(|object| object.etag.clone()),
             upload_expires_at: None,
             deleted_at: None,
+            library_path: Some(library_path),
+            archived_at: None,
+            archived_reason: None,
             original_relative_path: relative_path,
             upload_batch_id,
             object_blob_id: None,
@@ -135,6 +139,7 @@ impl CaseBuilderService {
             .folder
             .or_else(|| folder_from_relative_path(relative_path.as_deref()))
             .unwrap_or_else(|| "Uploads".to_string());
+        let library_path = library_path_from_upload(relative_path.as_deref(), &folder, &request.filename)?;
         let object_key = build_document_object_key(&document_id, &request.filename);
         let hash = sha256_hex(&request.bytes);
         let stored_object = self
@@ -192,6 +197,9 @@ impl CaseBuilderService {
             content_etag: stored_object.etag.clone(),
             upload_expires_at: None,
             deleted_at: None,
+            library_path: Some(library_path),
+            archived_at: None,
+            archived_reason: None,
             original_relative_path: relative_path,
             upload_batch_id,
             object_blob_id: None,
@@ -242,6 +250,7 @@ impl CaseBuilderService {
             .folder
             .or_else(|| folder_from_relative_path(relative_path.as_deref()))
             .unwrap_or_else(|| "Uploads".to_string());
+        let library_path = library_path_from_upload(relative_path.as_deref(), &folder, &request.filename)?;
         let object_key = build_document_object_key(&document_id, &request.filename);
         let expires_at = timestamp_after(self.upload_ttl_seconds);
         let presigned = self
@@ -290,6 +299,9 @@ impl CaseBuilderService {
             content_etag: None,
             upload_expires_at: Some(expires_at.clone()),
             deleted_at: None,
+            library_path: Some(library_path),
+            archived_at: None,
+            archived_reason: None,
             original_relative_path: relative_path,
             upload_batch_id,
             object_blob_id: None,
@@ -453,6 +465,8 @@ impl CaseBuilderService {
             targets = documents
                 .iter()
                 .filter(|document| {
+                    document.archived_at.is_none()
+                        &&
                     document_can_attempt_index(document) && document_needs_index(document)
                 })
                 .take(limit)
@@ -482,6 +496,19 @@ impl CaseBuilderService {
 
         for document_id in targets {
             let document = self.get_document(matter_id, &document_id).await?;
+            if document.archived_at.is_some() {
+                skipped += 1;
+                results.push(MatterIndexRunDocumentResult {
+                    document_id,
+                    status: "skipped".to_string(),
+                    extraction_status: Some(document.processing_status.clone()),
+                    message: "Archived documents stay out of active indexing.".to_string(),
+                    produced_chunks: 0,
+                    produced_facts: document.facts_extracted,
+                    produced_timeline_suggestions: 0,
+                });
+                continue;
+            }
             if !document_can_attempt_index(&document) {
                 skipped += 1;
                 results.push(MatterIndexRunDocumentResult {
@@ -558,6 +585,69 @@ impl CaseBuilderService {
         document_id: &str,
     ) -> ApiResult<CaseDocument> {
         self.get_node(matter_id, document_spec(), document_id).await
+    }
+
+    pub async fn patch_document(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        request: PatchDocumentRequest,
+    ) -> ApiResult<CaseDocument> {
+        let mut document = self.get_document(matter_id, document_id).await?;
+        if let Some(title) = normalize_optional_label(request.title, "title")? {
+            document.title = title;
+        }
+        if let Some(document_type) =
+            normalize_optional_label(request.document_type, "document_type")?
+        {
+            document.document_type = document_type;
+        }
+        if let Some(confidentiality) =
+            normalize_optional_label(request.confidentiality, "confidentiality")?
+        {
+            document.confidentiality = confidentiality;
+        }
+        if let Some(library_path) = request.library_path {
+            let normalized = normalize_document_library_path(Some(library_path), &document.filename)?;
+            document.folder = folder_from_library_path(&normalized);
+            document.library_path = Some(normalized);
+        }
+        if let Some(is_exhibit) = request.is_exhibit {
+            document.is_exhibit = is_exhibit;
+        }
+        if let Some(exhibit_label) = request.exhibit_label {
+            document.exhibit_label = normalize_nullable_label(exhibit_label);
+        }
+        if let Some(date_observed) = request.date_observed {
+            document.date_observed = normalize_nullable_label(date_observed);
+        }
+        self.merge_node(matter_id, document_spec(), &document.document_id, &document)
+            .await
+    }
+
+    pub async fn archive_document(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+        request: ArchiveDocumentRequest,
+    ) -> ApiResult<CaseDocument> {
+        let mut document = self.get_document(matter_id, document_id).await?;
+        document.archived_at = Some(now_string());
+        document.archived_reason = normalize_nullable_label(request.reason);
+        self.merge_node(matter_id, document_spec(), &document.document_id, &document)
+            .await
+    }
+
+    pub async fn restore_document(
+        &self,
+        matter_id: &str,
+        document_id: &str,
+    ) -> ApiResult<CaseDocument> {
+        let mut document = self.get_document(matter_id, document_id).await?;
+        document.archived_at = None;
+        document.archived_reason = None;
+        self.merge_node(matter_id, document_spec(), &document.document_id, &document)
+            .await
     }
 
     pub async fn get_document_workspace(
@@ -1464,6 +1554,63 @@ fn folder_from_relative_path(relative_path: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn library_path_from_upload(
+    relative_path: Option<&str>,
+    folder: &str,
+    filename: &str,
+) -> ApiResult<String> {
+    let candidate = match relative_path {
+        Some(path) if path.contains('/') => path.to_string(),
+        Some(path) if !folder.trim().is_empty() => format!("{}/{path}", folder.trim()),
+        Some(path) => path.to_string(),
+        None if !folder.trim().is_empty() => format!("{}/{}", folder.trim(), filename),
+        None => filename.to_string(),
+    };
+    normalize_document_library_path(Some(candidate), filename)
+}
+
+fn normalize_document_library_path(value: Option<String>, filename: &str) -> ApiResult<String> {
+    let normalized = match normalize_upload_relative_path(value)? {
+        Some(path) => Some(path),
+        None => normalize_upload_relative_path(Some(filename.to_string()))?,
+    };
+    normalized.ok_or_else(|| {
+        ApiError::BadRequest("library_path must include at least one safe path segment".to_string())
+    })
+}
+
+fn folder_from_library_path(library_path: &str) -> String {
+    library_path
+        .split('/')
+        .next()
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .unwrap_or("Uploads")
+        .to_string()
+}
+
+fn normalize_optional_label(value: Option<String>, field: &str) -> ApiResult<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::BadRequest(format!("{field} cannot be empty")));
+    }
+    if trimmed.chars().any(|ch| ch == '\0' || ch.is_control()) {
+        return Err(ApiError::BadRequest(format!(
+            "{field} cannot contain control characters"
+        )));
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+fn normalize_nullable_label(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn build_extraction_index_records(
     matter_id: &str,
     document_id: &str,
@@ -1752,6 +1899,8 @@ fn build_matter_index_summary(
     let mut by_hash = BTreeMap::<String, Vec<&CaseDocument>>::new();
     let mut extractable_pending_document_ids = Vec::new();
 
+    let mut active_documents = 0_u64;
+    let mut archived_documents = 0_u64;
     let mut indexed_documents = 0_u64;
     let mut pending_documents = 0_u64;
     let mut failed_documents = 0_u64;
@@ -1760,6 +1909,12 @@ fn build_matter_index_summary(
     let mut unsupported_documents = 0_u64;
 
     for document in documents {
+        if document.archived_at.is_some() {
+            archived_documents += 1;
+            continue;
+        }
+        active_documents += 1;
+
         *processing_counts
             .entry(document.processing_status.clone())
             .or_default() += 1;
@@ -1862,6 +2017,8 @@ fn build_matter_index_summary(
     MatterIndexSummary {
         matter_id: matter_id.to_string(),
         total_documents: documents.len() as u64,
+        active_documents,
+        archived_documents,
         indexed_documents,
         pending_documents,
         extractable_pending_documents: extractable_pending_document_ids.len() as u64,
@@ -1900,6 +2057,21 @@ mod tests {
         assert!(normalize_upload_relative_path(Some("../secret.txt".to_string())).is_err());
         assert!(normalize_upload_relative_path(Some("/tmp/secret.txt".to_string())).is_err());
         assert!(normalize_upload_relative_path(Some("C:/secret.txt".to_string())).is_err());
+    }
+
+    #[test]
+    fn library_paths_preserve_nested_uploads_and_folder_single_files() {
+        assert_eq!(
+            library_path_from_upload(Some("Evidence/Receipts/rent.txt"), "Evidence", "rent.txt")
+                .unwrap(),
+            "Evidence/Receipts/rent.txt"
+        );
+        assert_eq!(
+            library_path_from_upload(Some("rent.txt"), "Uploads", "rent.txt").unwrap(),
+            "Uploads/rent.txt"
+        );
+        assert!(normalize_document_library_path(Some("../secret.txt".to_string()), "secret.txt")
+            .is_err());
     }
 
     #[test]
@@ -1942,6 +2114,8 @@ mod tests {
         let summary = build_matter_index_summary("matter:test", &docs, &[]);
 
         assert_eq!(summary.total_documents, 4);
+        assert_eq!(summary.active_documents, 4);
+        assert_eq!(summary.archived_documents, 0);
         assert_eq!(summary.indexed_documents, 1);
         assert_eq!(summary.pending_documents, 2);
         assert_eq!(summary.extractable_pending_documents, 2);
@@ -1952,6 +2126,40 @@ mod tests {
             summary.extractable_pending_document_ids,
             vec!["doc:2".to_string(), "doc:3".to_string()]
         );
+    }
+
+    #[test]
+    fn matter_index_summary_keeps_archived_documents_out_of_active_counts() {
+        let mut docs = vec![
+            test_document(
+                "doc:1",
+                "rent.txt",
+                "processed",
+                2,
+                Some("sha256:dup"),
+                Some("batch:1"),
+            ),
+            test_document(
+                "doc:2",
+                "notice.txt",
+                "queued",
+                0,
+                Some("sha256:dup"),
+                Some("batch:1"),
+            ),
+        ];
+        docs[1].archived_at = Some("2026-05-04T00:00:00Z".to_string());
+        docs[1].archived_reason = Some("Replaced by better scan".to_string());
+
+        let summary = build_matter_index_summary("matter:test", &docs, &[]);
+
+        assert_eq!(summary.total_documents, 2);
+        assert_eq!(summary.active_documents, 1);
+        assert_eq!(summary.archived_documents, 1);
+        assert_eq!(summary.indexed_documents, 1);
+        assert_eq!(summary.pending_documents, 0);
+        assert!(summary.duplicate_groups.is_empty());
+        assert_eq!(summary.upload_batches[0].count, 1);
     }
 
     #[test]
@@ -2063,6 +2271,9 @@ mod tests {
             content_etag: None,
             upload_expires_at: None,
             deleted_at: None,
+            library_path: Some(format!("Evidence/{filename}")),
+            archived_at: None,
+            archived_reason: None,
             original_relative_path: Some(format!("Evidence/{filename}")),
             upload_batch_id: upload_batch_id.map(str::to_string),
             object_blob_id: None,

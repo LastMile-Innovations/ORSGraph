@@ -528,6 +528,8 @@ export interface MatterIndexUploadBatchSummary {
 export interface MatterIndexSummary {
   matter_id: string
   total_documents: number
+  active_documents: number
+  archived_documents: number
   indexed_documents: number
   pending_documents: number
   extractable_pending_documents: number
@@ -972,6 +974,9 @@ export interface MatterDocument {
   content_etag?: string | null
   upload_expires_at?: string | null
   deleted_at?: string | null
+  library_path?: string | null
+  archived_at?: string | null
+  archived_reason?: string | null
   original_relative_path?: string | null
   upload_batch_id?: string | null
   object_blob_id?: string | null

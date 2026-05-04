@@ -235,6 +235,20 @@ export interface SaveDocumentTextInput {
   text: string
 }
 
+export interface PatchDocumentInput {
+  title?: string
+  library_path?: string
+  document_type?: string
+  confidentiality?: string
+  is_exhibit?: boolean
+  exhibit_label?: string | null
+  date_observed?: string | null
+}
+
+export interface ArchiveDocumentInput {
+  reason?: string
+}
+
 export interface SaveDocumentTextResponse {
   document: CaseDocument
   document_version: DocumentVersion
@@ -947,6 +961,49 @@ export function promoteDocumentWorkProduct(
           warnings: array(response.warnings),
         }
       },
+    },
+  )
+}
+
+export function patchDocument(
+  matterId: string,
+  documentId: string,
+  input: PatchDocumentInput,
+): Promise<ActionState<CaseDocument>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/documents/${encodeURIComponent(documentId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+      normalize: normalizeDocument,
+    },
+  )
+}
+
+export function archiveDocument(
+  matterId: string,
+  documentId: string,
+  input: ArchiveDocumentInput = {},
+): Promise<ActionState<CaseDocument>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/documents/${encodeURIComponent(documentId)}/archive`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      normalize: normalizeDocument,
+    },
+  )
+}
+
+export function restoreDocument(
+  matterId: string,
+  documentId: string,
+): Promise<ActionState<CaseDocument>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/documents/${encodeURIComponent(documentId)}/restore`,
+    {
+      method: "POST",
+      normalize: normalizeDocument,
     },
   )
 }
@@ -2847,6 +2904,9 @@ function normalizeDocument(input: any): CaseDocument {
     content_etag: input.content_etag ?? input.contentEtag ?? null,
     upload_expires_at: input.upload_expires_at ?? input.uploadExpiresAt ?? null,
     deleted_at: input.deleted_at ?? input.deletedAt ?? null,
+    library_path: input.library_path ?? input.libraryPath ?? input.original_relative_path ?? input.originalRelativePath ?? null,
+    archived_at: input.archived_at ?? input.archivedAt ?? null,
+    archived_reason: input.archived_reason ?? input.archivedReason ?? null,
     original_relative_path: input.original_relative_path ?? input.originalRelativePath ?? null,
     upload_batch_id: input.upload_batch_id ?? input.uploadBatchId ?? null,
     object_blob_id: input.object_blob_id ?? input.objectBlobId ?? null,
@@ -3260,6 +3320,8 @@ function normalizeMatterIndexSummary(input: any): MatterIndexSummary {
   return {
     matter_id: string(input.matter_id, input.matterId),
     total_documents: number(input.total_documents, input.totalDocuments),
+    active_documents: number(input.active_documents, input.activeDocuments, input.total_documents, input.totalDocuments),
+    archived_documents: number(input.archived_documents, input.archivedDocuments),
     indexed_documents: number(input.indexed_documents, input.indexedDocuments),
     pending_documents: number(input.pending_documents, input.pendingDocuments),
     extractable_pending_documents: number(input.extractable_pending_documents, input.extractablePendingDocuments),

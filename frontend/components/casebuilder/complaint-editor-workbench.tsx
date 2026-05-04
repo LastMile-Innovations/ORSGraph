@@ -52,6 +52,7 @@ import {
   runComplaintQc,
 } from "@/lib/casebuilder/api"
 import { matterClaimsHref, matterComplaintHref, matterDocumentHref, matterFactsHref, type ComplaintWorkspaceSection } from "@/lib/casebuilder/routes"
+import { sanitizePreviewHtml } from "@/lib/safe-html"
 import { cn } from "@/lib/utils"
 
 interface ComplaintEditorWorkbenchProps {
@@ -731,7 +732,7 @@ function PreviewPanel({ complaint, previewHtml, onPreview }: { complaint: Compla
         <button type="button" onClick={onPreview} className="toolbar-button"><BookOpen className="h-3.5 w-3.5" />Generate</button>
       </div>
       <div className="min-h-[680px] rounded border border-border bg-white p-8 text-black shadow-sm">
-        {previewHtml ? <div dangerouslySetInnerHTML={{ __html: previewHtml }} /> : <pre className="whitespace-pre-wrap text-sm">{complaint.paragraphs.map((paragraph) => `${paragraph.number}. ${paragraph.text}`).join("\n\n")}</pre>}
+        {previewHtml ? <div dangerouslySetInnerHTML={{ __html: sanitizePreviewHtml(previewHtml) }} /> : <pre className="whitespace-pre-wrap text-sm">{complaint.paragraphs.map((paragraph) => `${paragraph.number}. ${paragraph.text}`).join("\n\n")}</pre>}
       </div>
     </div>
   )

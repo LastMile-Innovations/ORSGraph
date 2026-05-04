@@ -68,6 +68,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Textarea } from "@/components/ui/textarea"
+import { sanitizePreviewHtml } from "@/lib/safe-html"
 import { cn } from "@/lib/utils"
 
 interface WorkProductWorkbenchProps {
@@ -889,7 +890,7 @@ function PreviewPanel({
           <div className="border-b border-border bg-muted/30 px-4 py-2 text-[11px] text-muted-foreground">
             {preview.page_count} pages · {preview.review_label}
           </div>
-          <div className="bg-background p-5 text-sm leading-relaxed text-foreground" dangerouslySetInnerHTML={{ __html: preview.html }} />
+          <div className="bg-background p-5 text-sm leading-relaxed text-foreground" dangerouslySetInnerHTML={{ __html: sanitizePreviewHtml(preview.html) }} />
         </Card>
       ) : (
         <Card className="p-4 text-sm text-muted-foreground">Preview has not been generated yet.</Card>

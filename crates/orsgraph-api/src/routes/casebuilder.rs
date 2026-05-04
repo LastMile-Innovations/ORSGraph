@@ -58,7 +58,15 @@ pub fn routes() -> Router<AppState> {
         .route("/matters/{matter_id}/documents", get(list_documents))
         .route(
             "/matters/{matter_id}/documents/{document_id}",
-            get(get_document).delete(delete_document),
+            get(get_document).patch(patch_document).delete(delete_document),
+        )
+        .route(
+            "/matters/{matter_id}/documents/{document_id}/archive",
+            post(archive_document),
+        )
+        .route(
+            "/matters/{matter_id}/documents/{document_id}/restore",
+            post(restore_document),
         )
         .route(
             "/matters/{matter_id}/documents/{document_id}/workspace",
@@ -707,6 +715,44 @@ async fn get_document(
         state
             .casebuilder_service
             .get_document(&matter_id, &document_id)
+            .await?,
+    ))
+}
+
+async fn patch_document(
+    State(state): State<AppState>,
+    Path((matter_id, document_id)): Path<(String, String)>,
+    Json(request): Json<PatchDocumentRequest>,
+) -> ApiResult<Json<CaseDocument>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_document(&matter_id, &document_id, request)
+            .await?,
+    ))
+}
+
+async fn archive_document(
+    State(state): State<AppState>,
+    Path((matter_id, document_id)): Path<(String, String)>,
+    Json(request): Json<ArchiveDocumentRequest>,
+) -> ApiResult<Json<CaseDocument>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .archive_document(&matter_id, &document_id, request)
+            .await?,
+    ))
+}
+
+async fn restore_document(
+    State(state): State<AppState>,
+    Path((matter_id, document_id)): Path<(String, String)>,
+) -> ApiResult<Json<CaseDocument>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .restore_document(&matter_id, &document_id)
             .await?,
     ))
 }
