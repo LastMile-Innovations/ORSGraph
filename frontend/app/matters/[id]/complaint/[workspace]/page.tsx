@@ -13,11 +13,12 @@ interface PageProps {
 export default async function ComplaintWorkspacePage({ params }: PageProps) {
   const { id, workspace } = await params
   if (!WORKSPACES.includes(workspace as ComplaintWorkspaceSection)) notFound()
-  const matterState = await getMatterState(id)
+  const [matterState, complaintState] = await Promise.all([
+    getMatterState(id),
+    getComplaintState(id),
+  ])
   const matter = matterState.data
   if (!matter) notFound()
-
-  const complaintState = await getComplaintState(matter.id)
 
   return (
     <MatterShell matter={matter} activeSection="complaint" dataState={matterState}>

@@ -8,7 +8,7 @@ import {
   normalizedAuthorityRequest,
 } from "@/lib/authority-hotset.mjs"
 import { authOptions } from "@/lib/auth"
-import { orsBackendApiBaseUrl } from "@/lib/ors-api-url"
+import { orsBackendApiBaseUrl } from "@/lib/ors-backend-api-url"
 
 type RouteContext = {
   params: Promise<{

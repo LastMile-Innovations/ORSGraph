@@ -9,11 +9,12 @@ interface PageProps {
 
 export default async function WorkProductsPage({ params }: PageProps) {
   const { id } = await params
-  const matterState = await getMatterState(id)
+  const [matterState, workProductsState] = await Promise.all([
+    getMatterState(id),
+    getWorkProductsState(id, { includeDocumentAst: true }),
+  ])
   const matter = matterState.data
   if (!matter) notFound()
-
-  const workProductsState = await getWorkProductsState(matter.id, { includeDocumentAst: true })
 
   return (
     <MatterShell

@@ -3,12 +3,16 @@ import "server-only"
 import { cacheLife, cacheTag } from "next/cache"
 import {
   getHomePageState,
+  getProvisionInspectorDataState,
+  getSourceDetailState,
   getStatuteIndexState,
   getStatutePageDataState,
   searchWithParamsState,
   type SearchParams,
+  type SourceDetailResult,
   type StatuteIndexParams,
 } from "./api"
+import type { DataState } from "./data-state"
 import { authorityCacheTags } from "./authority-hotset.mjs"
 
 const AUTHORITY_RELEASE_ID = releaseIdFromHotsetBaseUrl(process.env.ORS_AUTHORITY_HOTSET_BASE_URL || "") || "release:unversioned"
@@ -16,7 +20,7 @@ const AUTHORITY_RELEASE_ID = releaseIdFromHotsetBaseUrl(process.env.ORS_AUTHORIT
 export async function getCachedHomePageState() {
   "use cache"
   tagAuthorityRead("home")
-  cacheLife("hours")
+  cacheLife("minutes")
   return getHomePageState()
 }
 
@@ -30,6 +34,20 @@ export async function getCachedStatutePageDataState(citationOrCanonicalId: strin
 
 export async function getCachedSearchWithParamsState(params: SearchParams) {
   return searchWithParamsState(params)
+}
+
+export async function getCachedSourceDetailState(sourceId: string): Promise<DataState<SourceDetailResult | null>> {
+  "use cache"
+  tagAuthorityRead("source", sourceId)
+  cacheLife("hours")
+  return getSourceDetailState(sourceId)
+}
+
+export async function getCachedProvisionInspectorDataState(provisionId: string) {
+  "use cache"
+  tagAuthorityRead("provision", provisionId)
+  cacheLife("hours")
+  return getProvisionInspectorDataState(provisionId)
 }
 
 function tagAuthorityRead(...keys: string[]) {

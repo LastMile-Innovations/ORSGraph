@@ -1,3 +1,5 @@
+import "client-only"
+
 import { orsApiBaseUrl } from "./ors-api-url"
 
 export type RuntimeState = "checking" | "connected" | "degraded" | "offline"

@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth"
 import { NextRequest } from "next/server"
 import { authOptions } from "@/lib/auth"
-import { orsBackendApiBaseUrl } from "@/lib/ors-api-url"
+import { orsBackendApiBaseUrl } from "@/lib/ors-backend-api-url"
 
 const API_KEY = process.env.ORS_API_KEY
 

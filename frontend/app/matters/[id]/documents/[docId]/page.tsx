@@ -9,8 +9,10 @@ interface PageProps {
 
 export default async function DocumentPage({ params }: PageProps) {
   const { id, docId } = await params
-  const matterState = await getMatterState(id)
-  const workspaceState = await getDocumentWorkspace(id, docId)
+  const [matterState, workspaceState] = await Promise.all([
+    getMatterState(id),
+    getDocumentWorkspace(id, docId),
+  ])
   const matter = matterState.data
   if (!matter) notFound()
   const workspace = workspaceState.data

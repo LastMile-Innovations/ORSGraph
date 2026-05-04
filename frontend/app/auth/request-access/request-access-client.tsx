@@ -1,12 +1,12 @@
 "use client"
 
 import Link from "next/link"
-import { FormEvent, useState } from "react"
+import { useActionState, useEffect, useRef, useState } from "react"
 import { ArrowRight, CheckCircle2, Loader2, Mail, ShieldCheck } from "lucide-react"
 import { AuthFrame } from "@/components/auth/auth-frame"
 import { Button } from "@/components/ui/button"
-import { requestAccess } from "@/lib/auth-access"
 import { trackConversionEvent } from "@/lib/conversion-events"
+import { submitAccessRequest, type RequestAccessActionState } from "./actions"
 
 const SITUATIONS = [
   "I need to respond to a complaint",
@@ -16,37 +16,22 @@ const SITUATIONS = [
 ]
 
 const URGENCY = ["Deadline this week", "Deadline this month", "No immediate deadline", "Not sure"]
+const INITIAL_STATE: RequestAccessActionState = { ok: false }
 
 export function RequestAccessClient() {
-  const [email, setEmail] = useState("")
   const [situation, setSituation] = useState(SITUATIONS[0])
   const [urgency, setUrgency] = useState(URGENCY[1])
-  const [jurisdiction, setJurisdiction] = useState("Oregon")
-  const [note, setNote] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [submitted, setSubmitted] = useState(false)
+  const [state, formAction, pending] = useActionState(submitAccessRequest, INITIAL_STATE)
+  const trackedSubmission = useRef(false)
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setBusy(true)
-    setError(null)
-    try {
-      await requestAccess({
-        email,
-        situation_type: situation,
-        deadline_urgency: urgency,
-        jurisdiction,
-        note,
-      })
-      trackConversionEvent("access_request_submitted", { situation, urgency })
-      setSubmitted(true)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not submit access request")
-    } finally {
-      setBusy(false)
-    }
-  }
+  useEffect(() => {
+    if (!state.ok || trackedSubmission.current) return
+    trackConversionEvent("access_request_submitted", {
+      situation: state.situation || situation,
+      urgency: state.urgency || urgency,
+    })
+    trackedSubmission.current = true
+  }, [state, situation, urgency])
 
   return (
     <AuthFrame
@@ -55,7 +40,7 @@ export function RequestAccessClient() {
       body="We are prioritizing people who need a practical workspace for deadlines, evidence, claims, and source-backed legal work."
     >
       <section className="rounded-md border border-border bg-card p-5 shadow-sm">
-        {submitted ? (
+        {state.ok ? (
           <div className="space-y-5">
             <div className="flex items-start gap-3">
               <CheckCircle2 className="mt-1 h-6 w-6 shrink-0 text-success" />
@@ -74,11 +59,10 @@ export function RequestAccessClient() {
             </Link>
           </div>
         ) : (
-          <form onSubmit={submit} className="space-y-4">
+          <form action={formAction} className="space-y-4">
             <Field label="Email">
               <input
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
+                name="email"
                 type="email"
                 required
                 placeholder="you@example.com"
@@ -87,6 +71,7 @@ export function RequestAccessClient() {
             </Field>
             <Field label="What are you trying to do?">
               <select
+                name="situation_type"
                 value={situation}
                 onChange={(event) => setSituation(event.target.value)}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-primary"
@@ -101,6 +86,7 @@ export function RequestAccessClient() {
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Deadline urgency">
                 <select
+                  name="deadline_urgency"
                   value={urgency}
                   onChange={(event) => setUrgency(event.target.value)}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-primary"
@@ -114,8 +100,8 @@ export function RequestAccessClient() {
               </Field>
               <Field label="County / jurisdiction">
                 <input
-                  value={jurisdiction}
-                  onChange={(event) => setJurisdiction(event.target.value)}
+                  name="jurisdiction"
+                  defaultValue="Oregon"
                   placeholder="Oregon, Linn County, etc."
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-primary"
                 />
@@ -123,18 +109,24 @@ export function RequestAccessClient() {
             </div>
             <Field label="Short note">
               <textarea
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
+                name="note"
                 rows={5}
                 placeholder="Keep it brief. Do not include private facts you are not ready to share."
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm leading-6 outline-none focus:border-primary"
               />
             </Field>
 
-            {error && <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+            {state.error && (
+              <div
+                aria-live="polite"
+                className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+              >
+                {state.error}
+              </div>
+            )}
 
-            <Button type="submit" disabled={busy} className="min-h-11 w-full rounded-md">
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+            <Button type="submit" disabled={pending} className="min-h-11 w-full rounded-md">
+              {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
               Request beta access
               <ArrowRight className="h-4 w-4" />
             </Button>

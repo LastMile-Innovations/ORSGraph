@@ -18,32 +18,74 @@ const requestOptionsForCookie = cache((cookie: string | null): CaseBuilderReques
   return cookie ? { headers: { cookie } } : {}
 })
 
+const requestCookie = cache(async () => {
+  return (await headers()).get("cookie")
+})
+
+const getMatterSummariesStateForCookie = cache((cookie: string | null) => {
+  return getMatterSummariesStateBase(requestOptionsForCookie(cookie))
+})
+
+const getMatterStateForCookie = cache((id: string, cookie: string | null) => {
+  return getMatterStateBase(id, requestOptionsForCookie(cookie))
+})
+
+const getMatterGraphStateForCookie = cache((matterId: string, cookie: string | null) => {
+  return getMatterGraphStateBase(matterId, requestOptionsForCookie(cookie))
+})
+
+const getDocumentWorkspaceForCookie = cache((matterId: string, documentId: string, cookie: string | null) => {
+  return getDocumentWorkspaceBase(matterId, documentId, requestOptionsForCookie(cookie))
+})
+
+const getWorkProductsStateForCookie = cache((matterId: string, includeDocumentAst: boolean | undefined, cookie: string | null) => {
+  return getWorkProductsStateBase(matterId, {
+    includeDocumentAst,
+    request: requestOptionsForCookie(cookie),
+  })
+})
+
+const getWorkProductStateForCookie = cache((
+  matterId: string,
+  workProductId: string | undefined,
+  includeDocumentAst: boolean | undefined,
+  cookie: string | null,
+) => {
+  return getWorkProductStateBase(matterId, workProductId, {
+    includeDocumentAst,
+    request: requestOptionsForCookie(cookie),
+  })
+})
+
+const getComplaintStateForCookie = cache((matterId: string, complaintId: string | undefined, cookie: string | null) => {
+  return getComplaintStateBase(matterId, complaintId, requestOptionsForCookie(cookie))
+})
+
 export async function caseBuilderRequestOptions(): Promise<CaseBuilderRequestOptions> {
-  const cookie = (await headers()).get("cookie")
-  return requestOptionsForCookie(cookie)
+  return requestOptionsForCookie(await requestCookie())
 }
 
 export async function getMatterSummariesState() {
-  return getMatterSummariesStateBase(await caseBuilderRequestOptions())
+  return getMatterSummariesStateForCookie(await requestCookie())
 }
 
 export async function getMatterState(id: string) {
-  return getMatterStateBase(id, await caseBuilderRequestOptions())
+  return getMatterStateForCookie(id, await requestCookie())
 }
 
 export async function getMatterGraphState(matterId: string) {
-  return getMatterGraphStateBase(matterId, await caseBuilderRequestOptions())
+  return getMatterGraphStateForCookie(matterId, await requestCookie())
 }
 
 export async function getDocumentWorkspace(matterId: string, documentId: string) {
-  return getDocumentWorkspaceBase(matterId, documentId, await caseBuilderRequestOptions())
+  return getDocumentWorkspaceForCookie(matterId, documentId, await requestCookie())
 }
 
 export async function getWorkProductsState(
   matterId: string,
   options: GetWorkProductsOptions = {},
 ) {
-  return getWorkProductsStateBase(matterId, { ...options, request: await caseBuilderRequestOptions() })
+  return getWorkProductsStateForCookie(matterId, options.includeDocumentAst, await requestCookie())
 }
 
 export async function getWorkProductState(
@@ -51,9 +93,9 @@ export async function getWorkProductState(
   workProductId?: string,
   options: GetWorkProductsOptions = {},
 ) {
-  return getWorkProductStateBase(matterId, workProductId, { ...options, request: await caseBuilderRequestOptions() })
+  return getWorkProductStateForCookie(matterId, workProductId, options.includeDocumentAst, await requestCookie())
 }
 
 export async function getComplaintState(matterId: string, complaintId?: string) {
-  return getComplaintStateBase(matterId, complaintId, await caseBuilderRequestOptions())
+  return getComplaintStateForCookie(matterId, complaintId, await requestCookie())
 }

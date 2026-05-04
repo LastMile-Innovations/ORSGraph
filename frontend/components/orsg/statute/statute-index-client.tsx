@@ -7,6 +7,7 @@ import { BookOpen, ChevronLeft, ChevronRight, Search, X } from "lucide-react"
 import type { StatuteIdentity } from "@/lib/types"
 import type { DataSource } from "@/lib/data-state"
 import { DataStateBanner } from "@/components/orsg/data-state-banner"
+import { HoverPrefetchLink } from "@/components/navigation/hover-prefetch-link"
 import { StatusBadge } from "@/components/orsg/badges"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -196,9 +197,10 @@ export function StatuteIndexClient({
                 <ul className="divide-y divide-border">
                   {items.map((statute) => (
                     <li key={statute.canonical_id}>
-                      <Link
+                      <HoverPrefetchLink
                         href={`/statutes/${encodeURIComponent(statute.canonical_id)}`}
-                        className="group block px-4 py-3 transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
+                        pendingIndicatorClassName="absolute bottom-3 right-4"
+                        className="group relative block px-4 py-3 transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
                       >
                         <div className="flex min-w-0 items-start justify-between gap-3">
                           <div className="min-w-0">
@@ -210,7 +212,7 @@ export function StatuteIndexClient({
                           </div>
                           <ChevronRight className="mt-1 h-4 w-4 flex-none text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
                         </div>
-                      </Link>
+                      </HoverPrefetchLink>
                     </li>
                   ))}
                 </ul>

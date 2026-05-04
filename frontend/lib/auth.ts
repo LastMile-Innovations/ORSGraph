@@ -1,6 +1,8 @@
+import "server-only"
+
 import type { NextAuthOptions } from "next-auth"
 import ZitadelProvider, { type ZitadelProfile } from "next-auth/providers/zitadel"
-import { orsBackendApiBaseUrl } from "./ors-api-url"
+import { orsBackendApiBaseUrl } from "./ors-backend-api-url"
 
 type AccessStatus = "active" | "pending" | "blocked" | "unknown"
 

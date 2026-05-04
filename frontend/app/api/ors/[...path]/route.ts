@@ -1,7 +1,9 @@
 import { getServerSession } from "next-auth"
+import { revalidateTag } from "next/cache"
 import { NextRequest, NextResponse } from "next/server"
 import { authOptions } from "@/lib/auth"
-import { orsBackendApiBaseUrl } from "@/lib/ors-api-url"
+import { authorityCacheTags } from "@/lib/authority-hotset.mjs"
+import { orsBackendApiBaseUrl } from "@/lib/ors-backend-api-url"
 
 type RouteContext = {
   params: Promise<{
@@ -23,6 +25,7 @@ const HOP_BY_HOP_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
 ])
+const AUTHORITY_RELEASE_ID = releaseIdFromHotsetBaseUrl(process.env.ORS_AUTHORITY_HOTSET_BASE_URL || "")
 
 export async function GET(request: NextRequest, context: RouteContext) {
   return forwardRequest(request, context)
@@ -77,6 +80,9 @@ async function forwardRequest(request: NextRequest, context: RouteContext) {
   }
 
   const response = await fetch(upstreamUrl, init)
+  if (response.ok && isAdminJobDetailPath(path)) {
+    await revalidateAuthorityAfterSuccessfulMutatingJob(response.clone())
+  }
   const responseHeaders = new Headers(response.headers)
   responseHeaders.delete("content-encoding")
   responseHeaders.delete("content-length")
@@ -87,6 +93,31 @@ async function forwardRequest(request: NextRequest, context: RouteContext) {
     statusText: response.statusText,
     headers: responseHeaders,
   })
+}
+
+function isAdminJobDetailPath(path: string[]) {
+  return path.length >= 3 && path[0] === "admin" && path[1] === "jobs"
+}
+
+async function revalidateAuthorityAfterSuccessfulMutatingJob(response: Response) {
+  const body = (await response.json().catch(() => null)) as unknown
+  if (!body || typeof body !== "object" || Array.isArray(body)) return
+
+  const detail = body as { job?: { status?: unknown; is_read_only?: unknown } }
+  if (detail.job?.status !== "succeeded" || detail.job.is_read_only !== false) return
+
+  for (const tag of authorityCacheTags(AUTHORITY_RELEASE_ID)) {
+    revalidateTag(tag, "max")
+  }
+}
+
+function releaseIdFromHotsetBaseUrl(baseUrl: string) {
+  const segment = baseUrl.replace(/\/$/, "").split("/").filter(Boolean).at(-1) || ""
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
 }
 
 function isPublicAuthRequest(method: string, path: string[]) {

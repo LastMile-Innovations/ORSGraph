@@ -1,5 +1,6 @@
 "use client"
 
+import "client-only"
 import { track } from "@vercel/analytics"
 
 type ConversionEvent =

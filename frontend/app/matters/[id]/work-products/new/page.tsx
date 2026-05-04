@@ -12,11 +12,12 @@ export default async function NewWorkProductPage({ params, searchParams }: PageP
   const { id } = await params
   const query = searchParams ? await searchParams : {}
   const initialProductType = Array.isArray(query.type) ? query.type[0] : query.type
-  const matterState = await getMatterState(id)
+  const [matterState, workProductsState] = await Promise.all([
+    getMatterState(id),
+    getWorkProductsState(id, { includeDocumentAst: true }),
+  ])
   const matter = matterState.data
   if (!matter) notFound()
-
-  const workProductsState = await getWorkProductsState(matter.id, { includeDocumentAst: true })
 
   return (
     <MatterShell

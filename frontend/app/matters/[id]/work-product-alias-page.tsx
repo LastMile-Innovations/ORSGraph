@@ -11,11 +11,13 @@ export async function renderWorkProductAliasPage(
   productType: string,
 ) {
   const { id } = await params
-  const matterState = await getMatterState(id)
+  const [matterState, workProductsState] = await Promise.all([
+    getMatterState(id),
+    getWorkProductsState(id),
+  ])
   const matter = matterState.data
   if (!matter) notFound()
 
-  const workProductsState = await getWorkProductsState(matter.id)
   const existing = workProductsState.data.find((product) => product.product_type === productType)
 
   if (existing) {

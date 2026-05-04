@@ -9,11 +9,12 @@ interface PageProps {
 
 export default async function MatterGraphPage({ params }: PageProps) {
   const { id } = await params
-  const matterState = await getMatterState(id)
+  const [matterState, graphState] = await Promise.all([
+    getMatterState(id),
+    getMatterGraphState(id),
+  ])
   const matter = matterState.data
   if (!matter) notFound()
-
-  const graphState = await getMatterGraphState(matter.id)
 
   return (
     <MatterShell matter={matter} activeSection="graph" dataState={matterState.source === "live" ? graphState : matterState}>

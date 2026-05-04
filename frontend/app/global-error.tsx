@@ -1,0 +1,54 @@
+"use client"
+
+import { useEffect } from "react"
+
+export default function GlobalError({
+  error,
+  unstable_retry,
+  reset,
+}: {
+  error: Error & { digest?: string }
+  unstable_retry?: () => void
+  reset?: () => void
+}) {
+  useEffect(() => {
+    console.error(error)
+  }, [error])
+
+  const retry = unstable_retry ?? reset
+
+  return (
+    <html lang="en">
+      <body>
+        <main style={{ display: "grid", minHeight: "100vh", placeItems: "center", padding: 24, fontFamily: "sans-serif" }}>
+          <section style={{ maxWidth: 520, border: "1px solid #d4d4d8", borderRadius: 6, padding: 24 }}>
+            <p style={{ margin: 0, fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: "#dc2626" }}>
+              Application error
+            </p>
+            <h1 style={{ margin: "8px 0 0", fontSize: 20 }}>ORSGraph could not recover the root shell.</h1>
+            <p style={{ color: "#52525b", lineHeight: 1.6 }}>
+              {error.digest ? `Unexpected root error. Digest: ${error.digest}` : error.message || "Unexpected root error."}
+            </p>
+            {retry && (
+              <button
+                type="button"
+                onClick={retry}
+                style={{
+                  minHeight: 40,
+                  border: 0,
+                  borderRadius: 6,
+                  background: "#18181b",
+                  color: "white",
+                  cursor: "pointer",
+                  padding: "0 14px",
+                }}
+              >
+                Try again
+              </button>
+            )}
+          </section>
+        </main>
+      </body>
+    </html>
+  )
+}

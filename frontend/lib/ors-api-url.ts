@@ -17,14 +17,6 @@ export function orsAuthorityApiBaseUrl() {
   return base
 }
 
-export function orsBackendApiBaseUrl() {
-  return (
-    process.env.ORS_API_BASE_URL ||
-    process.env.NEXT_PUBLIC_ORS_API_BASE_URL ||
-    "http://localhost:8080/api/v1"
-  ).replace(/\/$/, "")
-}
-
 function serverOrigin() {
   if (process.env.NEXTAUTH_URL) return process.env.NEXTAUTH_URL.replace(/\/$/, "")
   if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`

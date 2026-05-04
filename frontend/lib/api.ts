@@ -188,24 +188,32 @@ export async function getHomePageData(): Promise<HomePageData> {
   return (await getHomePageState()).data;
 }
 
+export async function getLiveHomePageState(): Promise<DataState<HomePageData>> {
+  return { source: "live", data: await fetchAuthorityApi<HomePageData>('/home') };
+}
+
+export function getHomePageFallbackState(error: unknown): DataState<HomePageData> {
+  const source = classifyFallbackSource(error);
+  return fallbackState(
+    "/home",
+    {
+      ...mockHomePageData,
+      health: {
+        ...mockHomePageData.health,
+        api: source === "offline" ? "offline" : "mock",
+        lastCheckedAt: mockHomePageData.health.lastCheckedAt,
+      },
+    },
+    error,
+    source,
+  );
+}
+
 export async function getHomePageState(): Promise<DataState<HomePageData>> {
   try {
-    return { source: "live", data: await fetchAuthorityApi<HomePageData>('/home') };
+    return await getLiveHomePageState();
   } catch (error) {
-    const source = classifyFallbackSource(error);
-    return fallbackState(
-      "/home",
-      {
-        ...mockHomePageData,
-        health: {
-          ...mockHomePageData.health,
-          api: source === "offline" ? "offline" : "mock",
-          lastCheckedAt: new Date().toISOString(),
-        },
-      },
-      error,
-      source,
-    );
+    return getHomePageFallbackState(error);
   }
 }
 
@@ -223,7 +231,7 @@ export async function getHealthState(): Promise<DataState<SystemHealth>> {
       {
         ...mockSystemHealth,
         api: source === "offline" ? "offline" : "mock",
-        lastCheckedAt: new Date().toISOString(),
+        lastCheckedAt: mockSystemHealth.lastCheckedAt,
       },
       error,
       source,
@@ -444,27 +452,35 @@ export async function getSourcesState(paramsInput: SourceIndexParams = {}): Prom
 
 export async function getSourceDetailState(sourceId: string): Promise<DataState<SourceDetailResult | null>> {
   try {
-    return { source: "live", data: await fetchAuthorityApi<SourceDetailResult>(`/sources/${encodeURIComponent(sourceId)}`) }
+    return await getLiveSourceDetailState(sourceId)
   } catch (error) {
-    if (DEMO_MODE) {
-      const source = getDemoSourceById(sourceId)
-      return fallbackState(
-        `/sources/${sourceId}`,
-        source
-          ? {
-              source,
-              related_sources: demoSourceIndex.filter((item) => item.source_id !== source.source_id).slice(0, 6),
-            }
-          : null,
-        error,
-        source ? "demo" : "error",
-      )
-    }
-    return {
-      source: classifyFallbackSource(error) === "offline" ? "offline" : "error",
-      data: null,
-      error: dataErrorMessage(error),
-    }
+    return getSourceDetailFallbackState(sourceId, error)
+  }
+}
+
+export async function getLiveSourceDetailState(sourceId: string): Promise<DataState<SourceDetailResult | null>> {
+  return { source: "live", data: await fetchAuthorityApi<SourceDetailResult>(`/sources/${encodeURIComponent(sourceId)}`) }
+}
+
+export function getSourceDetailFallbackState(sourceId: string, error: unknown): DataState<SourceDetailResult | null> {
+  if (DEMO_MODE) {
+    const source = getDemoSourceById(sourceId)
+    return fallbackState(
+      `/sources/${sourceId}`,
+      source
+        ? {
+            source,
+            related_sources: demoSourceIndex.filter((item) => item.source_id !== source.source_id).slice(0, 6),
+          }
+        : null,
+      error,
+      source ? "demo" : "error",
+    )
+  }
+  return {
+    source: classifyFallbackSource(error) === "offline" ? "offline" : "error",
+    data: null,
+    error: dataErrorMessage(error),
   }
 }
 
@@ -847,12 +863,20 @@ export async function getProvisionInspectorData(provisionId: string): Promise<Pr
 
 export async function getProvisionInspectorDataState(provisionId: string): Promise<DataState<ProvisionInspectorData | null>> {
   try {
-    const response = await fetchAuthorityApi<any>(`/provisions/${encodeURIComponent(provisionId)}`)
-    return { source: "live", data: mapProvisionInspector(response) }
+    return await getLiveProvisionInspectorDataState(provisionId)
   } catch (error) {
-    const fallback = getProvisionById(provisionId)
-    return fallbackState(`/provisions/${provisionId}`, fallback, error, fallback ? classifyFallbackSource(error) : "error")
+    return getProvisionInspectorFallbackState(provisionId, error)
   }
+}
+
+export async function getLiveProvisionInspectorDataState(provisionId: string): Promise<DataState<ProvisionInspectorData | null>> {
+  const response = await fetchAuthorityApi<any>(`/provisions/${encodeURIComponent(provisionId)}`)
+  return { source: "live", data: mapProvisionInspector(response) }
+}
+
+export function getProvisionInspectorFallbackState(provisionId: string, error: unknown): DataState<ProvisionInspectorData | null> {
+  const fallback = getProvisionById(provisionId)
+  return fallbackState(`/provisions/${provisionId}`, fallback, error, fallback ? classifyFallbackSource(error) : "error")
 }
 
 function mapStatuteCompactPage(page: any): StatutePageResponse {

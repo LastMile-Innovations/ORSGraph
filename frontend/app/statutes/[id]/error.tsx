@@ -1,13 +1,22 @@
 "use client"
 
-import { RouteErrorState } from "@/components/orsg/route-state"
+import { RouteErrorBoundary } from "@/components/orsg/route-error-boundary"
 
-export default function Error({ error, reset }: { error: Error; reset: () => void }) {
+export default function Error({
+  error,
+  unstable_retry,
+  reset,
+}: {
+  error: Error & { digest?: string }
+  unstable_retry?: () => void
+  reset?: () => void
+}) {
   return (
-    <RouteErrorState
-      title="Statute could not load"
-      message={error.message}
+    <RouteErrorBoundary
+      error={error}
+      unstable_retry={unstable_retry}
       reset={reset}
+      title="Statute could not load"
       homeHref="/statutes"
       homeLabel="Statutes"
     />

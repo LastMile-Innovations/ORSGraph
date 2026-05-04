@@ -14,11 +14,13 @@ export async function renderWorkProductPage(
   mode: WorkProductWorkspaceSection | "overview",
 ) {
   const { id, workProductId } = await params
-  const matterState = await getMatterState(id)
+  const [matterState, workProductState] = await Promise.all([
+    getMatterState(id),
+    getWorkProductState(id, workProductId, { includeDocumentAst: true }),
+  ])
   const matter = matterState.data
   if (!matter) notFound()
 
-  const workProductState = await getWorkProductState(matter.id, workProductId, { includeDocumentAst: true })
   const workProduct = workProductState.data
   if (!workProduct) notFound()
 
