@@ -36,11 +36,6 @@ export function CorpusStatusPanel({ corpus }: { corpus: CorpusStatus }) {
           value={corpus.citations.unresolved} 
           state={corpus.citations.unresolved > 0 ? "warning" : "ok"} 
         />
-        <MetricTile 
-          label="QC Status" 
-          value={corpus.qcStatus.toUpperCase()} 
-          state={corpus.qcStatus === "pass" ? "ok" : corpus.qcStatus === "warning" ? "warning" : "error"} 
-        />
       </div>
     </section>
   )

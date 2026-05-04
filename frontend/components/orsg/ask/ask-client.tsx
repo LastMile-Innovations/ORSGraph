@@ -84,7 +84,7 @@ export function AskClient({
             Ask a source-grounded legal question.
           </h1>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
-            Answers stay tied to parsed provisions, retrieved chunks, definitions, caveats, and QC notes.
+            Answers stay tied to parsed provisions, retrieved chunks, definitions, and caveats.
           </p>
           <div className="mt-4 flex items-start gap-2 rounded-md border border-border bg-background p-2 shadow-sm focus-within:border-primary">
             <Sparkles className="mt-2 h-4 w-4 flex-none text-primary" />
@@ -319,24 +319,6 @@ export function AskClient({
                     </li>
                   ))}
                 </ul>
-              </Panel>
-
-              <Panel title="QC notes" count={answer.qc_notes.length}>
-                {answer.qc_notes.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">All sources passed QC.</p>
-                ) : (
-                  <ul className="space-y-1.5">
-                    {answer.qc_notes.map((n, i) => (
-                      <li
-                        key={i}
-                        className="flex items-start gap-1.5 text-xs text-muted-foreground"
-                      >
-                        <AlertTriangle className="mt-0.5 h-3 w-3 flex-none text-warning" />
-                        <span>{n}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </Panel>
 
               <div className="border-t border-border px-4 py-3 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">

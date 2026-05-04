@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth"
 import { revalidateTag } from "next/cache"
-import { NextRequest, NextResponse } from "next/server"
+import { NextResponse } from "next/server"
+import type { NextRequest } from "next/server"
 import { authOptions } from "@/lib/auth"
 import { authorityCacheTags } from "@/lib/authority-hotset.mjs"
 import { orsBackendApiBaseUrl } from "@/lib/ors-backend-api-url"

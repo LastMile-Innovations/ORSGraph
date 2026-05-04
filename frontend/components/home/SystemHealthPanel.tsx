@@ -5,12 +5,10 @@ export function SystemHealthPanel({ health, corpus }: { health: SystemHealth; co
     { label: "Data source", value: `${corpus.source}, ${corpus.editionYear} edition` },
     { label: "API status", value: health.api, state: health.api === "connected" ? "ok" : "warning" },
     { label: "Neo4j status", value: health.neo4j, state: health.neo4j === "connected" ? "ok" : "error" },
-    { label: "QC status", value: health.qc, state: health.qc === "pass" ? "ok" : "warning" },
     { label: "Graph materialization", value: health.graphMaterialization },
     { label: "Embeddings", value: health.embeddings },
     { label: "Rerank status", value: health.rerank },
     { label: "Last checked", value: formatDate(health.lastCheckedAt) },
-    { label: "Last QC run", value: formatDate(corpus.lastQcRun) },
   ]
 
   return (

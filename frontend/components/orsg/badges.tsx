@@ -1,9 +1,7 @@
-import type { QCStatus, LegalStatus, ChunkType, ProvisionSignal } from "@/lib/types"
+import type { LegalStatus, ChunkType, ProvisionSignal } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import {
-  AlertTriangle,
   CheckCircle2,
-  XCircle,
   Quote,
   Hash,
   Scale,
@@ -15,34 +13,6 @@ import {
 
 type BadgeProps = {
   className?: string
-  size?: "sm" | "md"
-}
-
-export function QCBadge({ status, className, size = "sm" }: BadgeProps & { status: QCStatus }) {
-  const base = "inline-flex items-center gap-1 rounded font-mono text-[10px] uppercase tracking-wide"
-  const pad = size === "sm" ? "px-1.5 py-0.5" : "px-2 py-1"
-  if (status === "pass") {
-    return (
-      <span className={cn(base, pad, "bg-success/15 text-success", className)}>
-        <CheckCircle2 className="h-3 w-3" />
-        QC pass
-      </span>
-    )
-  }
-  if (status === "warning") {
-    return (
-      <span className={cn(base, pad, "bg-warning/15 text-warning", className)}>
-        <AlertTriangle className="h-3 w-3" />
-        QC warn
-      </span>
-    )
-  }
-  return (
-    <span className={cn(base, pad, "bg-destructive/15 text-destructive", className)}>
-      <XCircle className="h-3 w-3" />
-      QC fail
-    </span>
-  )
 }
 
 export function StatusBadge({ status, className }: BadgeProps & { status: LegalStatus }) {

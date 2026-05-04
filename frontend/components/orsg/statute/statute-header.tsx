@@ -5,7 +5,7 @@ import type { StatutePageResponse } from "@/lib/types"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { authorityBadges, authorityReason } from "@/lib/authority-taxonomy"
-import { StatusBadge, QCBadge } from "@/components/orsg/badges"
+import { StatusBadge } from "@/components/orsg/badges"
 import { Button } from "@/components/ui/button"
 import { attachAuthority, getMatterSummariesState, type LoadState } from "@/lib/casebuilder/api"
 import type { MatterSummary } from "@/lib/casebuilder/types"
@@ -19,7 +19,7 @@ export function StatuteHeader({
   data: StatutePageResponse
   inspectorAction?: React.ReactNode
 }) {
-  const { identity, current_version, qc, inbound_citations, outbound_citations } = data
+  const { identity, current_version, inbound_citations, outbound_citations } = data
   const router = useRouter()
   const counts = data.summary_counts
   const authorityMeta = {
@@ -92,7 +92,6 @@ export function StatuteHeader({
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <StatusBadge status={identity.status} />
-              <QCBadge status={qc.status} />
               {authorityBadges(authorityMeta).map((badge) => (
                 <span
                   key={badge}
@@ -177,7 +176,6 @@ export function StatuteHeader({
           <Metric label="deadlines" value={counts?.semantic_counts.deadlines ?? data.deadlines.length} />
           <Metric label="penalties" value={counts?.semantic_counts.penalties ?? data.penalties.length} />
           <Metric label="chunks" value={data.chunks.length} />
-          <Metric label="qc" value={`${qc.passed_checks}/${qc.total_checks}`} warn={qc.status === "warning"} fail={qc.status === "fail"} />
           {data.source_documents[0]?.url && (
             <a
               href={data.source_documents[0]?.url}

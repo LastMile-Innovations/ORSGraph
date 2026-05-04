@@ -3,7 +3,6 @@
 import Link from "next/link"
 import { useState } from "react"
 import {
-  AlertTriangle,
   Check,
   Copy,
   ExternalLink,
@@ -27,7 +26,6 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
   const href = result.href || `/statutes/${encodeURIComponent(identity)}`
   const kind = result.kind ?? result.result_type ?? "result"
   const semanticTypes = result.semantic_types ?? []
-  const qcWarnings = result.qc_warnings ?? []
   const hierarchyBadges = authorityBadges(result)
   const scoreBreakdown = result.score_breakdown
   const scoreParts = [
@@ -101,13 +99,6 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
           <p className="mt-2 max-w-5xl text-sm leading-relaxed text-foreground">
             {result.snippet}
           </p>
-
-          {qcWarnings.length > 0 && (
-            <div className="mt-2 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-warning">
-              <AlertTriangle className="h-3 w-3" />
-              {qcWarnings.join(", ")}
-            </div>
-          )}
 
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
             {result.authority_level != null && (

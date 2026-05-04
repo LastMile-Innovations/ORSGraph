@@ -42,7 +42,6 @@ pub async fn ask(
     let mut relevant_provisions = Vec::new();
     let mut citations = Vec::new();
     let mut retrieved_chunks = Vec::new();
-    let mut qc_notes = Vec::new();
 
     for result in &search.results {
         if let Some(citation) = &result.citation {
@@ -96,7 +95,6 @@ pub async fn ask(
             preview: result.snippet.clone(),
         });
 
-        qc_notes.extend(result.qc_warnings.iter().cloned());
     }
 
     let short_answer = if search.results.is_empty() {
@@ -132,6 +130,5 @@ pub async fn ask(
         citations,
         caveats,
         retrieved_chunks,
-        qc_notes,
     }))
 }

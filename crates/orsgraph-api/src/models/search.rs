@@ -342,6 +342,7 @@ pub struct SearchResult {
     pub score_breakdown: Option<ScoreBreakdown>,
     pub semantic_types: Vec<String>,
     pub source_backed: bool,
+    #[serde(skip_serializing)]
     pub qc_warnings: Vec<String>,
     pub href: String,
     pub source: Option<SourceInfo>,
@@ -393,6 +394,7 @@ pub struct SearchFacets {
     pub statuses: std::collections::HashMap<String, usize>,
     pub semantic_types: std::collections::HashMap<String, usize>,
     pub source_backed: SourceBackedFacet,
+    #[serde(skip_serializing)]
     pub qc_warnings: std::collections::HashMap<String, usize>,
 }
 

@@ -26,7 +26,6 @@ export type GraphNode = {
   similarityScore?: number | null
   confidence?: number | null
   sourceBacked?: boolean | null
-  qcWarnings?: string[]
   metrics?: {
     degree?: number | null
     inDegree?: number | null

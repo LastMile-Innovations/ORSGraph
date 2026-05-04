@@ -49,7 +49,6 @@ const statutePageResponse = {
   semantic_counts: { obligations: 0, exceptions: 0, deadlines: 0, penalties: 0, definitions: 0 },
   source_notes: [],
   provisions: [],
-  qc: { status: "pass", passed_checks: 1, total_checks: 1, notes: [] },
 }
 
 describe("authority server cache wrappers", () => {

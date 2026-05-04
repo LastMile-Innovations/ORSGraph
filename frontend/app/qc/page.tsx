@@ -1,10 +1,5 @@
-import { Shell } from "@/components/orsg/shell"
-import { QCConsoleClient } from "@/components/orsg/qc/qc-console-client"
+import { redirect } from "next/navigation"
 
 export default function QCPage() {
-  return (
-    <Shell>
-      <QCConsoleClient />
-    </Shell>
-  )
+  redirect("/admin/qc")
 }

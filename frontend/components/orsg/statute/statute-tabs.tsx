@@ -18,7 +18,6 @@ const ChunksTab = dynamic(() => import("./tabs/chunks-tab").then((mod) => mod.Ch
 const VersionsTab = dynamic(() => import("./tabs/versions-tab").then((mod) => mod.VersionsTab), { loading: TabLoading })
 const SourceTab = dynamic(() => import("./tabs/source-tab").then((mod) => mod.SourceTab), { loading: TabLoading })
 const GraphTab = dynamic(() => import("./tabs/graph-tab").then((mod) => mod.GraphTab), { loading: TabLoading })
-const QCTab = dynamic(() => import("./tabs/qc-tab").then((mod) => mod.QCTab), { loading: TabLoading })
 
 const TABS = [
   { id: "text", label: "Text" },
@@ -31,7 +30,6 @@ const TABS = [
   { id: "versions", label: "Versions" },
   { id: "source", label: "Source" },
   { id: "graph", label: "Graph" },
-  { id: "qc", label: "QC" },
 ] as const
 
 type TabId = (typeof TABS)[number]["id"]
@@ -94,7 +92,7 @@ export function StatuteTabs({
     if (tab === "chunks" && !loaded.chunks) {
       await loadChunks()
     }
-    if ((tab === "source" || tab === "versions" || tab === "qc") && !loaded.history) {
+    if ((tab === "source" || tab === "versions") && !loaded.history) {
       await loadHistory(tab)
     }
   }
@@ -201,17 +199,6 @@ export function StatuteTabs({
       onDataChange((current) => ({
         ...current,
         source_notes: history.source_notes ?? [],
-        qc: {
-          ...current.qc,
-          status: history.source_notes?.length ? "warning" : current.qc.status,
-          notes: (history.source_notes ?? []).map((message, index) => ({
-            note_id: `source-note:${index}`,
-            level: "info",
-            category: "source",
-            message,
-            related_id: current.identity.canonical_id,
-          })),
-        },
       }))
       setLoaded((current) => ({ ...current, history: true }))
     } catch (error) {
@@ -273,7 +260,6 @@ export function StatuteTabs({
         <TabsContent value="versions" className="m-0 h-full"><VersionsTab data={activeData} /></TabsContent>
         <TabsContent value="source" className="m-0 h-full"><SourceTab data={activeData} /></TabsContent>
         <TabsContent value="graph" className="m-0 h-full"><GraphTab data={activeData} /></TabsContent>
-        <TabsContent value="qc" className="m-0 h-full"><QCTab data={activeData} /></TabsContent>
       </div>
     </Tabs>
   )
@@ -356,8 +342,6 @@ function getTabCount(id: TabId, data: StatutePageResponse): number | null {
       return data.chunks.length
     case "versions":
       return data.versions.length
-    case "qc":
-      return data.qc.notes.length
     default:
       return null
   }

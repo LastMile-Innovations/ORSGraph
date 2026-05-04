@@ -3,7 +3,6 @@
 import Link from "next/link"
 import type { StatutePageResponse } from "@/lib/types"
 import { Type, ShieldAlert, Clock, Scale, ArrowDownRight, ArrowUpLeft, AlertTriangle, FileText, PanelRightOpen } from "lucide-react"
-import { QCBadge } from "@/components/orsg/badges"
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 
@@ -227,28 +226,6 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
         </ul>
       </Panel>
 
-      <div className="border-t border-border px-4 py-3">
-        <h3 className="mb-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-          <span>QC notes</span>
-          <QCBadge status={data.qc.status} />
-        </h3>
-        {data.qc.notes.length === 0 ? (
-          <Empty>All checks passed</Empty>
-        ) : (
-          <ul className="space-y-1.5">
-            {data.qc.notes.map((n) => (
-              <li key={n.note_id} className="flex items-start gap-1.5 text-xs">
-                <AlertTriangle
-                  className={`mt-0.5 h-3 w-3 flex-none ${
-                    n.level === "fail" ? "text-destructive" : "text-warning"
-                  }`}
-                />
-                <span className="text-muted-foreground">{n.message}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
     </div>
   )
 }

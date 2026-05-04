@@ -394,6 +394,12 @@ export function AdminDashboardClient() {
                 Beta access
               </Link>
             </Button>
+            <Button asChild variant="outline" size="sm" className="w-fit gap-2">
+              <Link href="/admin/qc">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                QC console
+              </Link>
+            </Button>
             <Button variant="outline" size="sm" onClick={load} disabled={loading} className="w-fit gap-2">
               <RefreshCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
               Refresh

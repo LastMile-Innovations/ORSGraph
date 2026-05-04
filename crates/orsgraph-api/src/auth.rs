@@ -297,8 +297,8 @@ pub fn is_auth_access_bootstrap_path(method: &Method, path: &str) -> bool {
             && *method == Method::POST)
 }
 
-pub fn is_admin_operation(method: &Method, path: &str) -> bool {
-    path.starts_with("/api/v1/admin") || (path == "/api/v1/qc/runs" && *method == Method::POST)
+pub fn is_admin_operation(_method: &Method, path: &str) -> bool {
+    path.starts_with("/api/v1/admin") || path.starts_with("/api/v1/qc")
 }
 
 pub fn matter_id_from_path(path: &str) -> Option<String> {

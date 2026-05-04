@@ -62,7 +62,7 @@ export function GraphInspector({
             </div>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">Select a node to inspect its source, relationships, QC, and actions.</p>
+          <p className="text-sm text-muted-foreground">Select a node to inspect its source, relationships, and actions.</p>
         )}
       </section>
 
@@ -96,16 +96,6 @@ export function GraphInspector({
         </div>
       </section>
 
-      <section className="p-4">
-        <div className="mb-2 font-mono text-[11px] uppercase tracking-wide text-muted-foreground">QC</div>
-        {node?.qcWarnings?.length ? (
-          <ul className="space-y-1 text-xs text-warning">
-            {node.qcWarnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
-          </ul>
-        ) : (
-          <p className="text-xs text-muted-foreground">No warnings returned for this node.</p>
-        )}
-      </section>
     </aside>
   )
 }

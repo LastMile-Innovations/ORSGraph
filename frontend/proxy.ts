@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getToken } from "next-auth/jwt"
 
-const PUBLIC_PATH_PREFIXES = [
-  "/marketing/",
+const PUBLIC_PATHS = [
+  "/",
   "/auth/signin",
   "/auth/request-access",
   "/auth/error",
+]
+
+const PUBLIC_PATH_PREFIXES = [
+  "/marketing/",
   "/auth/invite",
 ]
 
@@ -44,7 +48,12 @@ export async function proxy(request: NextRequest) {
 }
 
 function isPublicPath(pathname: string) {
-  return pathname === "/" || PUBLIC_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+  return PUBLIC_PATHS.includes(pathname) || PUBLIC_PATH_PREFIXES.some((prefix) => matchesPathOrDescendant(pathname, prefix))
+}
+
+function matchesPathOrDescendant(pathname: string, prefix: string) {
+  if (prefix.endsWith("/")) return pathname.startsWith(prefix)
+  return pathname === prefix || pathname.startsWith(`${prefix}/`)
 }
 
 function canonicalMatterPath(pathname: string, search: string) {
@@ -67,6 +76,6 @@ function callbackPath(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!api/|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
+    "/((?!api|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
   ],
 }

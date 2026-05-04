@@ -100,7 +100,6 @@ describe("statute and sidebar API adapters", () => {
         text: "The court may exercise powers provided by law.",
         children: [],
       }],
-      qc: { status: "pass", passed_checks: 2, total_checks: 2, notes: [] },
     }))
     vi.stubGlobal("fetch", fetchMock)
 

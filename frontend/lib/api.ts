@@ -935,14 +935,6 @@ function mapStatuteCompactPage(page: any): StatutePageResponse {
     penalties: Number(page.semantic_counts?.penalties ?? 0),
     definitions: Number(page.semantic_counts?.definitions ?? 0),
   }
-  const notes = (page.qc?.notes ?? []).map((note: any, index: number) => ({
-    note_id: note.note_id ?? `source-note:${index}`,
-    level: normalizeQCNoteLevel(note.level),
-    category: note.category ?? "source",
-    message: note.message ?? "",
-    related_id: note.related_id ?? identity.canonical_id,
-  }))
-
   return {
     identity,
     current_version: currentVersion,
@@ -956,12 +948,6 @@ function mapStatuteCompactPage(page: any): StatutePageResponse {
     outbound_citations: [],
     inbound_citations: [],
     source_documents,
-    qc: {
-      status: normalizeQCStatus(page.qc?.status),
-      passed_checks: Number(page.qc?.passed_checks ?? (notes.length ? 1 : 2)),
-      total_checks: Number(page.qc?.total_checks ?? 2),
-      notes,
-    },
     summary_counts: {
       provision_count: Number(page.provision_count ?? 0),
       citation_counts,
@@ -983,7 +969,6 @@ function mapProvision(p: any): Provision {
     cites_count: 0,
     cited_by_count: 0,
     chunk_count: 0,
-    qc_status: "pass",
     status: "active",
     children: (p.children ?? []).map((child: any) => mapProvision(child)),
   }
@@ -1015,7 +1000,6 @@ function mapProvisionInspector(response: any): ProvisionInspectorData {
     definitions: response.definitions ?? [],
     exceptions: response.exceptions ?? [],
     deadlines: response.deadlines ?? [],
-    qc_notes: response.qc_notes ?? [],
   }
 }
 
@@ -1031,7 +1015,6 @@ function mapProvisionDetail(p: any): Provision {
     cites_count: p.cites_count ?? 0,
     cited_by_count: p.cited_by_count ?? 0,
     chunk_count: p.chunk_count ?? 0,
-    qc_status: p.qc_status ?? "pass",
     status: normalizeLegalStatus(p.status),
     children: [],
   }
@@ -1074,16 +1057,6 @@ function normalizeSidebarStatute(item: SidebarStatute): SidebarStatute {
 function normalizeLegalStatus(status?: string) {
   const value = (status ?? "active").toLowerCase()
   return ["active", "repealed", "renumbered", "amended"].includes(value) ? value as any : "active"
-}
-
-function normalizeQCStatus(status?: string) {
-  const value = (status ?? "pass").toLowerCase()
-  return ["pass", "warning", "fail"].includes(value) ? value as any : "pass"
-}
-
-function normalizeQCNoteLevel(level?: string) {
-  const value = (level ?? "info").toLowerCase()
-  return ["info", "warning", "fail"].includes(value) ? value as any : "info"
 }
 
 function normalizeProvisionType(type?: string) {

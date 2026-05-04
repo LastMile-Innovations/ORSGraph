@@ -18,15 +18,12 @@ import type {
   Definition,
   Exception,
   Deadline,
-  QCNote,
 } from "./types"
 
 export const corpusStatus: CorpusStatus = {
   editionYear: 2025,
   source: "Oregon Revised Statutes",
   lastUpdated: "2026-04-28T14:22:18Z",
-  lastQcRun: "2026-04-28T14:22:18Z",
-  qcStatus: "warning",
   counts: {
     sections: 1284,
     versions: 1842,
@@ -176,7 +173,6 @@ const ors_3_130_provisions: Provision[] = [
     cites_count: 4,
     cited_by_count: 23,
     chunk_count: 1,
-    qc_status: "pass",
     status: "active",
     children: [
       {
@@ -191,7 +187,6 @@ const ors_3_130_provisions: Provision[] = [
         cites_count: 1,
         cited_by_count: 14,
         chunk_count: 2,
-        qc_status: "pass",
         status: "active",
         children: [
           {
@@ -206,7 +201,6 @@ const ors_3_130_provisions: Provision[] = [
             cites_count: 1,
             cited_by_count: 8,
             chunk_count: 1,
-            qc_status: "pass",
             status: "active",
           },
           {
@@ -221,7 +215,6 @@ const ors_3_130_provisions: Provision[] = [
             cites_count: 0,
             cited_by_count: 3,
             chunk_count: 1,
-            qc_status: "pass",
             status: "active",
           },
         ],
@@ -238,7 +231,6 @@ const ors_3_130_provisions: Provision[] = [
         cites_count: 1,
         cited_by_count: 6,
         chunk_count: 2,
-        qc_status: "warning",
         status: "active",
       },
       {
@@ -253,7 +245,6 @@ const ors_3_130_provisions: Provision[] = [
         cites_count: 1,
         cited_by_count: 4,
         chunk_count: 1,
-        qc_status: "pass",
         status: "active",
       },
       {
@@ -267,7 +258,6 @@ const ors_3_130_provisions: Provision[] = [
         cites_count: 1,
         cited_by_count: 2,
         chunk_count: 1,
-        qc_status: "pass",
         status: "active",
       },
     ],
@@ -514,20 +504,6 @@ export const statutePage_3_130: StatutePageResponse = {
       parser_warnings: [],
     },
   ],
-  qc: {
-    status: "warning",
-    passed_checks: 18,
-    total_checks: 19,
-    notes: [
-      {
-        note_id: "qc:1",
-        level: "warning",
-        category: "citation_resolution",
-        message: "Outbound citation 'ORS chapter 131' is unresolved (range citation, no exact target).",
-        related_id: "ORS 3.130(1)",
-      },
-    ],
-  },
 }
 
 // ---------------- Search response ----------------
@@ -547,14 +523,12 @@ export const searchResponse: SearchResponse = {
       status: "active",
       cited_by_count: 23,
       cites_count: 4,
-      qc_status: "warning",
       score: 0.94,
       source_id: "or:ors:3.130",
       matched_chunk_type: "full_statute",
       chapter: "3",
       semantic_types: ["obligation", "deadline", "penalty"],
       source_backed: true,
-      qc_warnings: ["1 unresolved range citation"],
     },
     {
       result_type: "provision",
@@ -567,7 +541,6 @@ export const searchResponse: SearchResponse = {
       status: "active",
       cited_by_count: 11,
       cites_count: 2,
-      qc_status: "pass",
       score: 0.89,
       source_id: "prov:or:ors:8.610(2)",
       matched_chunk_type: "contextual_provision",
@@ -586,7 +559,6 @@ export const searchResponse: SearchResponse = {
       status: "active",
       cited_by_count: 14,
       cites_count: 1,
-      qc_status: "pass",
       score: 0.86,
       source_id: "chunk:or:ors:3.130(1):def",
       matched_chunk_type: "definition_block",
@@ -605,7 +577,6 @@ export const searchResponse: SearchResponse = {
       status: "active",
       cited_by_count: 6,
       cites_count: 1,
-      qc_status: "warning",
       score: 0.83,
       source_id: "prov:or:ors:3.130(2)",
       matched_chunk_type: "deadline_block",
@@ -624,7 +595,6 @@ export const searchResponse: SearchResponse = {
       status: "amended",
       cited_by_count: 5,
       cites_count: 3,
-      qc_status: "pass",
       score: 0.78,
       source_id: "or:ors:8.660",
       matched_chunk_type: "full_statute",
@@ -642,7 +612,6 @@ export const searchResponse: SearchResponse = {
       status: "active",
       cited_by_count: 4,
       cites_count: 1,
-      qc_status: "pass",
       score: 0.76,
       source_id: "prov:or:ors:3.130(3)",
       matched_chunk_type: "exception_block",
@@ -660,7 +629,6 @@ export const searchResponse: SearchResponse = {
       status: "active",
       cited_by_count: 18,
       cites_count: 6,
-      qc_status: "pass",
       score: 0.71,
       source_id: "prov:or:ors:131.005(7)",
       matched_chunk_type: "citation_context",
@@ -792,7 +760,6 @@ export const askAnswer: AskAnswer = {
       preview: "Deadline: 30 days after conviction. Trigger: conviction described in ORS 3.135.",
     },
   ],
-  qc_notes: ["1 unresolved range citation in ORS 3.130(1) — does not affect this answer."],
 }
 
 // ---------------- QC run ----------------
@@ -1042,16 +1009,16 @@ export const qcRun: QCRunSummary = {
 // ---------------- Graph data (small subgraph around ORS 3.130) ----------------
 
 export const graphNodes: GraphNode[] = [
-  { id: "or:ors:3.130", label: "ORS 3.130", type: "Statute", status: "active", qc_status: "warning" },
-  { id: "or:ors:3.135", label: "ORS 3.135", type: "Statute", status: "active", qc_status: "pass" },
-  { id: "or:ors:153.005", label: "ORS 153.005", type: "Statute", status: "active", qc_status: "pass" },
-  { id: "or:ors:162.405", label: "ORS 162.405", type: "Statute", status: "active", qc_status: "pass" },
-  { id: "or:ors:8.610", label: "ORS 8.610", type: "Statute", status: "active", qc_status: "pass" },
-  { id: "or:ors:8.660", label: "ORS 8.660", type: "Statute", status: "amended", qc_status: "pass" },
-  { id: "or:ors:131.005", label: "ORS 131.005", type: "Statute", status: "active", qc_status: "pass" },
-  { id: "or:ors:135.703", label: "ORS 135.703", type: "Statute", status: "active", qc_status: "pass" },
-  { id: "or:ors:419C.005", label: "ORS 419C.005", type: "Statute", status: "active", qc_status: "pass" },
-  { id: "or:ors:161.505", label: "ORS 161.505", type: "Statute", status: "active", qc_status: "pass" },
+  { id: "or:ors:3.130", label: "ORS 3.130", type: "Statute", status: "active" },
+  { id: "or:ors:3.135", label: "ORS 3.135", type: "Statute", status: "active" },
+  { id: "or:ors:153.005", label: "ORS 153.005", type: "Statute", status: "active" },
+  { id: "or:ors:162.405", label: "ORS 162.405", type: "Statute", status: "active" },
+  { id: "or:ors:8.610", label: "ORS 8.610", type: "Statute", status: "active" },
+  { id: "or:ors:8.660", label: "ORS 8.660", type: "Statute", status: "amended" },
+  { id: "or:ors:131.005", label: "ORS 131.005", type: "Statute", status: "active" },
+  { id: "or:ors:135.703", label: "ORS 135.703", type: "Statute", status: "active" },
+  { id: "or:ors:419C.005", label: "ORS 419C.005", type: "Statute", status: "active" },
+  { id: "or:ors:161.505", label: "ORS 161.505", type: "Statute", status: "active" },
   {
     id: "def:da",
     label: "district attorney",
@@ -1134,7 +1101,6 @@ export function getStatuteByCanonicalId(id: string): StatutePageResponse | null 
         cites_count: 0,
         cited_by_count: 0,
         chunk_count: 0,
-        qc_status: "pass",
         status: ident.status,
       },
     ],
@@ -1157,20 +1123,6 @@ export function getStatuteByCanonicalId(id: string): StatutePageResponse | null 
         parser_warnings: [],
       },
     ],
-    qc: {
-      status: "warning",
-      passed_checks: 0,
-      total_checks: 1,
-      notes: [
-        {
-          note_id: "qc:pending",
-          level: "warning",
-          category: "ingestion",
-          message: "Section indexed but full provision tree not yet ingested.",
-          related_id: ident.citation,
-        },
-      ],
-    },
   }
 }
 
@@ -1198,7 +1150,6 @@ export interface ProvisionInspectorData {
   definitions: Definition[]
   exceptions: Exception[]
   deadlines: Deadline[]
-  qc_notes: QCNote[]
 }
 
 export function getProvisionById(provisionId: string): ProvisionInspectorData | null {
@@ -1251,8 +1202,6 @@ export function getProvisionById(provisionId: string): ProvisionInspectorData | 
     (d) => d.source_provision === provision.display_citation,
   )
 
-  const qc_notes = statutePage_3_130.qc.notes.filter((n) => n.related_id === provision.display_citation)
-
   return {
     provision,
     parent_statute: statutePage_3_130.identity,
@@ -1265,7 +1214,6 @@ export function getProvisionById(provisionId: string): ProvisionInspectorData | 
     definitions,
     exceptions,
     deadlines,
-    qc_notes,
   }
 }
 
@@ -1431,7 +1379,6 @@ import { SystemHealth, HomeAction, GraphInsightCard, FeaturedStatute, BuildInfo,
 export const mockSystemHealth: SystemHealth = {
   api: "mock",
   neo4j: "offline",
-  qc: "warning",
   graphMaterialization: "complete",
   embeddings: "not_started",
   rerank: "missing_key",
@@ -1457,7 +1404,7 @@ export const mockHomeActions: HomeAction[] = [
   },
   {
     title: "Statute Intelligence",
-    description: "Open a statute with provision tree, citations, definitions, duties, deadlines, penalties, source notes, chunks, and QC.",
+    description: "Open a statute with provision tree, citations, definitions, duties, deadlines, penalties, source notes, and chunks.",
     href: "/statutes",
     icon: "BookOpen",
     badges: ["deep view", "source-backed"],
@@ -1468,13 +1415,6 @@ export const mockHomeActions: HomeAction[] = [
     href: "/graph",
     icon: "Network",
     badges: ["Neo4j", "multi-hop"],
-  },
-  {
-    title: "Run QC",
-    description: "Inspect duplicates, orphan nodes, unresolved citations, embedding readiness, parser diagnostics, and source provenance.",
-    href: "/qc",
-    icon: "ShieldCheck",
-    badges: ["trust layer"],
   },
   {
     title: "Graph Ops",
@@ -1556,7 +1496,6 @@ export const mockHomePageData: HomePageData = {
   corpus: {
     editionYear: 2025,
     source: "Oregon Revised Statutes",
-    qcStatus: "warning",
     counts: {
       sections: 58688,
       versions: 58688,

@@ -94,13 +94,12 @@ function GraphLoadingState() {
   )
 }
 
-function toMiniNode(node: { id: string; label: string; type: string; status?: string | null; qcWarnings?: string[] }): GraphNode {
+function toMiniNode(node: { id: string; label: string; type: string; status?: string | null }): GraphNode {
   return {
     id: node.id,
     label: node.label,
     type: miniNodeType(node.type),
     status: node.status === "repealed" || node.status === "renumbered" || node.status === "amended" ? node.status : "active",
-    qc_status: node.qcWarnings && node.qcWarnings.length > 0 ? "warning" : "pass",
   }
 }
 

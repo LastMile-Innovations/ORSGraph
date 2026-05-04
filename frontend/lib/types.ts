@@ -67,7 +67,6 @@ export interface Provision {
   cites_count: number
   cited_by_count: number
   chunk_count: number
-  qc_status: QCStatus
   status: LegalStatus
   children?: Provision[]
 }
@@ -78,7 +77,6 @@ export interface CitationMention {
   resolved_target: string | null
   resolved_citation: string | null
   source_provision_id: string
-  qc_status: QCStatus
 }
 
 export interface InboundCitation {
@@ -183,7 +181,6 @@ export interface StatutePageResponse {
   outbound_citations: OutboundCitation[]
   inbound_citations: InboundCitation[]
   source_documents: SourceDocument[]
-  qc: QCSummary
   summary_counts?: StatuteSummaryCounts
   source_notes?: string[]
 }
@@ -207,7 +204,6 @@ export interface ProvisionInspectorData {
   definitions: Definition[]
   exceptions: Exception[]
   deadlines: Deadline[]
-  qc_notes: QCNote[]
 }
 
 export interface GraphInfo {
@@ -284,13 +280,11 @@ export interface SearchResult {
   score_breakdown?: ScoreBreakdown
   semantic_types?: string[]
   source_backed?: boolean
-  qc_warnings?: string[]
   href?: string
   source_provision?: string
   edition_year?: number
   cited_by_count?: number
   cites_count?: number
-  qc_status?: QCStatus
   source_id?: string
   matched_chunk_type?: ChunkType
   source?: {
@@ -384,7 +378,6 @@ export interface SearchFacets {
     true: number
     false: number
   }
-  qc_warnings: Record<string, number>
 }
 
 export interface SuggestResult {
@@ -424,7 +417,6 @@ export interface AskAnswer {
   citations: string[]
   caveats: string[]
   retrieved_chunks: { chunk_id: string; chunk_type: ChunkType; score: number; preview: string }[]
-  qc_notes: string[]
 }
 
 export interface GraphNode {
@@ -432,7 +424,6 @@ export interface GraphNode {
   label: string
   type: "Statute" | "Provision" | "CitationMention" | "Chapter" | "Definition" | "Exception" | "Deadline" | "Penalty" | "Source"
   status?: LegalStatus
-  qc_status?: QCStatus
 }
 
 export interface GraphEdge {
@@ -493,8 +484,6 @@ export interface CorpusStatus {
   editionYear: number
   source: string
   lastUpdated?: string
-  lastQcRun?: string
-  qcStatus: QCStatus | "unknown"
   counts: {
     sections: number
     versions: number
@@ -529,7 +518,6 @@ export interface CorpusStatus {
 export interface SystemHealth {
   api: "connected" | "mock" | "offline" | "unknown"
   neo4j: "connected" | "offline" | "unknown"
-  qc: QCStatus | "unknown"
   graphMaterialization: "complete" | "partial" | "failed" | "unknown"
   embeddings: "not_started" | "partial" | "complete" | "error" | "unknown"
   rerank: "enabled" | "disabled" | "missing_key" | "unknown"
@@ -653,7 +641,6 @@ export interface FactCheckReport {
     canonical_id: string | null
     edition_year: number | null
     status: LegalStatus | "unresolved"
-    qc_status: QCStatus
     occurrences: number[] // paragraph indices
   }[]
 }
@@ -837,7 +824,6 @@ export interface AdminDashboard {
     embedding_failures: number
     neo4j_nodes: number
     neo4j_edges: number
-    qc_status: QCStatus
   }
   recent_runs: OpsRun[]
   services: ServiceHealth[]

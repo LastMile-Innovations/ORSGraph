@@ -68,7 +68,6 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/ask", label: "Ask", icon: MessageSquare, match: ["/ask"] },
   { href: "/statutes", label: "Statutes", icon: BookOpen, match: ["/statutes", "/provisions"] },
   { href: "/graph", label: "Graph", icon: GitGraphIcon, match: ["/graph"] },
-  { href: "/qc", label: "QC", icon: ShieldCheck, match: ["/qc"] },
   { href: "/admin", label: "Admin", icon: SlidersHorizontal, match: ["/admin"] },
 ]
 
@@ -462,12 +461,6 @@ function RuntimeStatusMenu({ status }: { status: RuntimeStatus }) {
           <Link href="/admin">
             <SlidersHorizontal className="h-4 w-4" />
             Open Admin
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild className="cursor-pointer">
-          <Link href="/qc">
-            <ShieldCheck className="h-4 w-4" />
-            Open QC
           </Link>
         </DropdownMenuItem>
       </DropdownMenuContent>

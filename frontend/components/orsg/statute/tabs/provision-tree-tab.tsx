@@ -5,7 +5,7 @@ import Link from "next/link"
 import type { Provision, StatutePageResponse } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { ChevronDown, ChevronRight, ExternalLink } from "lucide-react"
-import { QCBadge, SignalBadge } from "@/components/orsg/badges"
+import { SignalBadge } from "@/components/orsg/badges"
 
 export function ProvisionTreeTab({ data }: { data: StatutePageResponse }) {
   return (
@@ -60,7 +60,6 @@ function ProvisionRow({ provision, depth }: { provision: Provision; depth: numbe
             {provision.signals.map((s) => (
               <SignalBadge key={s} signal={s} />
             ))}
-            <QCBadge status={provision.qc_status} />
           </div>
           <p className="mt-1 line-clamp-2 text-sm text-foreground">{provision.text_preview}</p>
           <div className="mt-1.5 flex items-center gap-3 font-mono text-[10px] tabular-nums text-muted-foreground">

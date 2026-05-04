@@ -97,7 +97,6 @@ export function HomeHero({ corpus, health, build, dataSource }: HomeHeroProps) {
           <dl className="mt-4 space-y-2 border-t border-border pt-3 text-xs">
             <StatusRow label="API" value={health.api} state={health.api === "connected" ? "ok" : "warning"} />
             <StatusRow label="Neo4j" value={health.neo4j} state={health.neo4j === "connected" ? "ok" : "warning"} />
-            <StatusRow label="QC" value={health.qc} state={health.qc === "pass" ? "ok" : "warning"} />
           </dl>
         </aside>
       </div>

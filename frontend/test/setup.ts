@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest"
+import { AsyncLocalStorage } from "node:async_hooks"
 import React from "react"
 import { vi } from "vitest"
 
@@ -9,6 +10,7 @@ class ResizeObserverMock {
 }
 
 globalThis.ResizeObserver = globalThis.ResizeObserver ?? ResizeObserverMock
+globalThis.AsyncLocalStorage = globalThis.AsyncLocalStorage ?? AsyncLocalStorage
 
 vi.mock("next/link", () => ({
   default: ({

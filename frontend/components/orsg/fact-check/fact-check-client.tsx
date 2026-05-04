@@ -5,7 +5,7 @@ import Link from "next/link"
 import type { FactCheckReport, FactCheckStatus } from "@/lib/types"
 import { createDraft, createMatter, factCheckDraft, patchDraft, citationCheckDraft } from "@/lib/casebuilder/api"
 import type { CaseCitationCheckFinding, CaseFactCheckFinding } from "@/lib/casebuilder/types"
-import { QCBadge, StatusBadge } from "@/components/orsg/badges"
+import { StatusBadge } from "@/components/orsg/badges"
 import {
   AlertTriangle,
   CheckCircle2,
@@ -401,7 +401,6 @@ export function FactCheckClient({ report }: { report: FactCheckReport }) {
                       </div>
                     )}
                   </div>
-                  <QCBadge status={c.qc_status} />
                 </div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-2 font-mono text-[10px] tabular-nums text-muted-foreground">
                   {c.status !== "unresolved" && <StatusBadge status={c.status as any} />}
@@ -581,7 +580,6 @@ function buildFactCheckReport(
       canonical_id: finding.canonical_id ?? null,
       edition_year: finding.canonical_id ? new Date().getFullYear() : null,
       status: finding.canonical_id ? "active" : "unresolved",
-      qc_status: finding.severity === "info" ? "pass" : "warning",
       occurrences: [index + 1],
     })),
   }

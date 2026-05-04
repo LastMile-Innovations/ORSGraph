@@ -26,7 +26,6 @@ const centerNode = {
   title: "Powers of court",
   chapter: "3",
   status: "active",
-  qcWarnings: [],
 }
 
 const neighborResponse: GraphViewerResponse = {
@@ -52,7 +51,6 @@ const fullResponse: GraphViewerResponse = {
       type: "Provision",
       labels: ["Provision"],
       citation: "ORS 3.135",
-      qcWarnings: [],
     },
   ],
   edges: [{

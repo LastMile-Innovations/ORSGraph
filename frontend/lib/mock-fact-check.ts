@@ -256,7 +256,6 @@ export const factCheckReport: FactCheckReport = {
       canonical_id: "or:ors:3.130",
       edition_year: 2025,
       status: "active",
-      qc_status: "pass",
       occurrences: [2],
     },
     {
@@ -265,7 +264,6 @@ export const factCheckReport: FactCheckReport = {
       canonical_id: "or:ors:419B.005",
       edition_year: 2025,
       status: "active",
-      qc_status: "warning",
       occurrences: [3],
     },
     {
@@ -274,7 +272,6 @@ export const factCheckReport: FactCheckReport = {
       canonical_id: "or:ors:419B.100",
       edition_year: 2025,
       status: "active",
-      qc_status: "pass",
       occurrences: [4],
     },
     {
@@ -283,7 +280,6 @@ export const factCheckReport: FactCheckReport = {
       canonical_id: "or:ors:419B.875",
       edition_year: 2025,
       status: "active",
-      qc_status: "pass",
       occurrences: [5],
     },
     {
@@ -292,7 +288,6 @@ export const factCheckReport: FactCheckReport = {
       canonical_id: null,
       edition_year: null,
       status: "unresolved",
-      qc_status: "warning",
       occurrences: [6],
     },
     {
@@ -301,7 +296,6 @@ export const factCheckReport: FactCheckReport = {
       canonical_id: "or:ors:30.265",
       edition_year: 2025,
       status: "active",
-      qc_status: "pass",
       occurrences: [7],
     },
     {
@@ -310,7 +304,6 @@ export const factCheckReport: FactCheckReport = {
       canonical_id: "or:ors:30.275",
       edition_year: 2025,
       status: "active",
-      qc_status: "pass",
       occurrences: [8],
     },
     {
@@ -319,7 +312,6 @@ export const factCheckReport: FactCheckReport = {
       canonical_id: "or:ors:418.005",
       edition_year: 2025,
       status: "amended",
-      qc_status: "warning",
       occurrences: [9],
     },
   ],

@@ -1959,15 +1959,14 @@ impl Neo4jService {
                          embedded: chunk.embedded,
                          parser_confidence: chunk.parser_confidence
                        })[0..25] as chunks,
-                       collect(DISTINCT {
-                         provision_id: child.provision_id,
-                         display_citation: child.display_citation,
-                         provision_type: coalesce(child.provision_type, child.kind, 'section'),
-                         parent_id: child.parent_id,
-                         text: child.text,
-                         qc_status: coalesce(child.qc_status, 'pass'),
-                         status: coalesce(child.status, i.status, 'active')
-                       })[0..50] as children,
+	                       collect(DISTINCT {
+	                         provision_id: child.provision_id,
+	                         display_citation: child.display_citation,
+	                         provision_type: coalesce(child.provision_type, child.kind, 'section'),
+	                         parent_id: child.parent_id,
+	                         text: child.text,
+	                         status: coalesce(child.status, i.status, 'active')
+	                       })[0..50] as children,
                        outbound_nodes,
                        inbound_nodes,
                        collect(DISTINCT CASE
@@ -2032,11 +2031,10 @@ impl Neo4jService {
                             p.display_citation as display_citation,
                             coalesce(p.provision_type, p.kind, 'section') as provision_type,
                             p.parent_id as parent_id,
-                            p.text as text,
-                            coalesce(p.signals, []) as signals,
-                            coalesce(p.status, i.status, 'active') as status,
-                            coalesce(p.qc_status, 'pass') as qc_status,
-                            chunks,
+	                            p.text as text,
+	                            coalesce(p.signals, []) as signals,
+	                            coalesce(p.status, i.status, 'active') as status,
+	                            chunks,
                             outbound_nodes,
                             inbound_nodes,
                             children,
@@ -2071,14 +2069,13 @@ impl Neo4jService {
             signals: row.get("signals").unwrap_or_default(),
             cites_count: 0,
             cited_by_count: 0,
-            chunk_count: row
-                .get::<Vec<serde_json::Value>>("chunks")
-                .ok()
-                .map(|chunks| chunks.len() as u64)
-                .unwrap_or(0),
-            qc_status: row.get("qc_status").unwrap_or_else(|_| "pass".to_string()),
-            status: row.get("status").unwrap_or_else(|_| "active".to_string()),
-        };
+	            chunk_count: row
+	                .get::<Vec<serde_json::Value>>("chunks")
+	                .ok()
+	                .map(|chunks| chunks.len() as u64)
+	                .unwrap_or(0),
+	            status: row.get("status").unwrap_or_else(|_| "active".to_string()),
+	        };
 
         let chunks_json: Vec<serde_json::Value> = row.get("chunks").ok().unwrap_or_default();
         let chunks = chunks_json
@@ -2113,12 +2110,11 @@ impl Neo4jService {
                     text_preview: preview_text(&text, 180),
                     text,
                     signals: Vec::new(),
-                    cites_count: 0,
-                    cited_by_count: 0,
-                    chunk_count: 0,
-                    qc_status: json_string_or(&child, "qc_status", "pass"),
-                    status: json_string_or(&child, "status", "active"),
-                }
+	                    cites_count: 0,
+	                    cited_by_count: 0,
+	                    chunk_count: 0,
+	                    status: json_string_or(&child, "status", "active"),
+	                }
             })
             .collect::<Vec<_>>();
 
@@ -2147,12 +2143,11 @@ impl Neo4jService {
             outbound_citations: outbound,
             inbound_citations: inbound,
             definitions: json_to_definitions(row.get("definitions").ok().unwrap_or_default()),
-            exceptions: json_to_provision_exceptions(
-                row.get("exceptions").ok().unwrap_or_default(),
-            ),
-            deadlines: json_to_deadlines(row.get("deadlines").ok().unwrap_or_default()),
-            qc_notes: json_to_qc_notes(row.get("qc_notes").ok().unwrap_or_default()),
-        })
+	            exceptions: json_to_provision_exceptions(
+	                row.get("exceptions").ok().unwrap_or_default(),
+	            ),
+	            deadlines: json_to_deadlines(row.get("deadlines").ok().unwrap_or_default()),
+	        })
     }
 
     pub async fn get_neighborhood(
@@ -2313,12 +2308,11 @@ impl Neo4jService {
                     text_snippet: row.get("text_snippet").ok(),
                     size: None,
                     score: None,
-                    similarity_score: None,
-                    confidence: row.get("confidence").ok(),
-                    source_backed: row.get("source_backed").ok(),
-                    qc_warnings: row.get("qc_warnings").unwrap_or_default(),
-                    metrics: None,
-                });
+	                    similarity_score: None,
+	                    confidence: row.get("confidence").ok(),
+	                    source_backed: row.get("source_backed").ok(),
+	                    metrics: None,
+	                });
             } else if record_kind == "edge" && edges_by_id.len() < edge_limit {
                 let edge_id: String = row.get("edge_id").unwrap_or_default();
                 let source: String = row.get("source_id").unwrap_or_default();
@@ -2560,12 +2554,11 @@ impl Neo4jService {
                     text_snippet: row.get("text_snippet").ok(),
                     size: None,
                     score: None,
-                    similarity_score: None,
-                    confidence: row.get("confidence").ok(),
-                    source_backed: row.get("source_backed").ok(),
-                    qc_warnings: row.get("qc_warnings").unwrap_or_default(),
-                    metrics: None,
-                });
+	                    similarity_score: None,
+	                    confidence: row.get("confidence").ok(),
+	                    source_backed: row.get("source_backed").ok(),
+	                    metrics: None,
+	                });
             } else if record_kind == "edge" && edges_by_id.len() < edge_limit {
                 let edge_id: String = row.get("edge_id").unwrap_or_default();
                 let source: String = row.get("source_id").unwrap_or_default();
@@ -3406,12 +3399,11 @@ fn graph_node_from_json(value: &serde_json::Value) -> GraphNode {
         text_snippet: json_optional_string(value, "textSnippet"),
         size: None,
         score: None,
-        similarity_score: None,
-        confidence: value["confidence"].as_f64(),
-        source_backed: value["sourceBacked"].as_bool(),
-        qc_warnings: json_string_array(value, "qcWarnings"),
-        metrics: None,
-    }
+	        similarity_score: None,
+	        confidence: value["confidence"].as_f64(),
+	        source_backed: value["sourceBacked"].as_bool(),
+	        metrics: None,
+	    }
 }
 
 fn graph_edge_from_json(value: &serde_json::Value) -> GraphEdge {

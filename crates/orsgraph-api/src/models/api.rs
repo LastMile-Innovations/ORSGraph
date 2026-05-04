@@ -80,6 +80,7 @@ pub struct StatutePageResponse {
     pub semantic_counts: SemanticCounts,
     pub source_notes: Vec<String>,
     pub provisions: Vec<ProvisionNode>,
+    #[serde(skip_serializing)]
     pub qc: StatutePageQcSummary,
 }
 
@@ -295,7 +296,6 @@ pub struct ProvisionDetailResponse {
     pub definitions: Vec<DefinitionItem>,
     pub exceptions: Vec<ProvisionException>,
     pub deadlines: Vec<DeadlineItem>,
-    pub qc_notes: Vec<QCNoteItem>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -310,7 +310,6 @@ pub struct ProvisionDetail {
     pub cites_count: u64,
     pub cited_by_count: u64,
     pub chunk_count: u64,
-    pub qc_status: String,
     pub status: String,
 }
 
@@ -519,8 +518,6 @@ pub struct GraphNode {
     pub confidence: Option<f64>,
     #[serde(rename = "sourceBacked")]
     pub source_backed: Option<bool>,
-    #[serde(rename = "qcWarnings")]
-    pub qc_warnings: Vec<String>,
     pub metrics: Option<GraphNodeMetrics>,
     pub href: Option<String>,
 }
@@ -699,7 +696,6 @@ pub struct AskAnswerResponse {
     pub citations: Vec<String>,
     pub caveats: Vec<String>,
     pub retrieved_chunks: Vec<AskRetrievedChunk>,
-    pub qc_notes: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]

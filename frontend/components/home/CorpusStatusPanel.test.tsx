@@ -6,7 +6,6 @@ import { CorpusStatusPanel } from "./CorpusStatusPanel"
 const corpus: CorpusStatus = {
   editionYear: 2026,
   source: "ORS fixture",
-  qcStatus: "warning",
   counts: {
     sections: 12,
     versions: 14,
@@ -46,18 +45,18 @@ describe("CorpusStatusPanel", () => {
     expect(screen.getByText("partial")).toHaveClass("text-warning")
   })
 
-  it("surfaces warning-state graph and QC metrics", () => {
+  it("surfaces warning-state graph metrics without corpus QC status", () => {
     render(<CorpusStatusPanel corpus={corpus} />)
 
     expect(screen.getByText("fast traversal citation edges")).toHaveClass("text-warning")
-    expect(screen.getByText("WARNING")).toBeInTheDocument()
+    expect(screen.queryByText("QC Status")).not.toBeInTheDocument()
+    expect(screen.queryByText("WARNING")).not.toBeInTheDocument()
     expect(screen.getByText("10")).toBeInTheDocument()
   })
 
-  it("renders healthy coverage and failed QC states", () => {
+  it("renders healthy coverage without exposing QC state", () => {
     const healthyCorpus: CorpusStatus = {
       ...corpus,
-      qcStatus: "pass",
       counts: {
         ...corpus.counts,
         citesEdges: corpus.counts.citationMentions,
@@ -74,12 +73,10 @@ describe("CorpusStatusPanel", () => {
       },
     }
 
-    const { rerender } = render(<CorpusStatusPanel corpus={healthyCorpus} />)
+    render(<CorpusStatusPanel corpus={healthyCorpus} />)
 
     expect(screen.getByText("complete")).toHaveClass("text-success")
-    expect(screen.getByText("PASS")).toBeInTheDocument()
-
-    rerender(<CorpusStatusPanel corpus={{ ...healthyCorpus, qcStatus: "fail" }} />)
-    expect(screen.getByText("FAIL")).toBeInTheDocument()
+    expect(screen.queryByText("PASS")).not.toBeInTheDocument()
+    expect(screen.queryByText("FAIL")).not.toBeInTheDocument()
   })
 })

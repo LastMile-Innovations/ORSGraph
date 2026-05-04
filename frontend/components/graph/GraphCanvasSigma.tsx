@@ -71,7 +71,6 @@ export function GraphCanvasSigma({
             size: node.id === selectedId ? 16 : 8 + (node.similarityScore ?? 0) * 5,
             color: NODE_COLORS[node.type] ?? "#94a3b8",
             nodeType: node.type,
-            qc: Boolean(node.qcWarnings?.length),
           })
         }
         for (const edge of edges) {
@@ -104,7 +103,6 @@ export function GraphCanvasSigma({
               label: active || effectiveLabelDensity > 40 ? label : "",
               highlighted: active,
               size: active ? size * 1.35 : size,
-              borderColor: data.qc ? "#f59e0b" : undefined,
             }
           },
           edgeReducer: (_edge: string, data) => ({
@@ -219,12 +217,12 @@ export function GraphCanvasSigma({
                   opacity={selected ? 0.18 : neighbor ? 0.1 : 0}
                 />
                 <circle
-                  r={radius}
-                  fill={NODE_COLORS[node.type] ?? "#94a3b8"}
-                  stroke={node.qcWarnings?.length ? "#f59e0b" : selected ? "#22d3ee" : "#0f172a"}
-                  strokeWidth={selected ? 3 : node.qcWarnings?.length ? 2.5 : 1.5}
-                  strokeDasharray={node.sourceBacked === false ? "3 3" : undefined}
-                />
+	                  r={radius}
+	                  fill={NODE_COLORS[node.type] ?? "#94a3b8"}
+	                  stroke={selected ? "#22d3ee" : "#0f172a"}
+	                  strokeWidth={selected ? 3 : 1.5}
+	                  strokeDasharray={node.sourceBacked === false ? "3 3" : undefined}
+	                />
                 {showLabel && (
                   <text y={-(radius + 8)} textAnchor="middle" className="fill-foreground font-mono" fontSize={selected ? "13" : "10"}>
                     {shortLabel(node.label)}

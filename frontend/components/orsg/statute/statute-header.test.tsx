@@ -48,7 +48,6 @@ function statutePage(): StatutePageResponse {
     penalties: [],
     inbound_citations: [],
     outbound_citations: [],
-    qc: { status: "pass", passed_checks: 1, total_checks: 1, notes: [] },
     summary_counts: {
       provision_count: 0,
       citation_counts: { outbound: 0, inbound: 0 },

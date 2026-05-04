@@ -64,7 +64,7 @@ impl HomeService {
             },
             HomeAction {
                 title: "Statute Intelligence".to_string(),
-                description: "Open a statute with provision tree, citations, definitions, duties, deadlines, penalties, source notes, chunks, and QC.".to_string(),
+                description: "Open a statute with provision tree, citations, definitions, duties, deadlines, penalties, source notes, and chunks.".to_string(),
                 href: "/statutes".to_string(),
                 icon: "BookOpen".to_string(),
                 variant: Some("default".to_string()),
@@ -78,15 +78,6 @@ impl HomeService {
                 icon: "Network".to_string(),
                 variant: Some("default".to_string()),
                 badges: Some(vec!["Neo4j".to_string(), "multi-hop".to_string()]),
-                status: Some("ready".to_string()),
-            },
-            HomeAction {
-                title: "Run QC".to_string(),
-                description: "Inspect duplicates, orphan nodes, unresolved citations, embedding readiness, parser diagnostics, and source provenance.".to_string(),
-                href: "/qc".to_string(),
-                icon: "ShieldCheck".to_string(),
-                variant: Some("default".to_string()),
-                badges: Some(vec!["trust layer".to_string()]),
                 status: Some("ready".to_string()),
             },
             HomeAction {
@@ -142,8 +133,6 @@ impl HomeService {
             edition_year: 2025,
             source: "Oregon Revised Statutes".to_string(),
             last_updated: None,
-            last_qc_run: None,
-            qc_status: "warning".to_string(),
             counts,
             citations: CitationCoverage {
                 total: citation_mentions,
@@ -173,7 +162,6 @@ impl HomeService {
             } else {
                 "offline".to_string()
             },
-            qc: "warning".to_string(),
             graph_materialization: "complete".to_string(),
             embeddings: "not_started".to_string(),
             rerank: "missing_key".to_string(),

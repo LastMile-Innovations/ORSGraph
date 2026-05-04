@@ -346,7 +346,7 @@ export function GraphViewer({
         <SheetContent side="right" className="w-[min(92vw,28rem)] gap-0 p-0 sm:max-w-md">
           <SheetHeader className="border-b border-border pr-12">
             <SheetTitle>Graph inspector</SheetTitle>
-            <SheetDescription>Selected node details, relationships, and QC.</SheetDescription>
+            <SheetDescription>Selected node details, relationships, and actions.</SheetDescription>
           </SheetHeader>
           <GraphInspector
             node={selectedNode}
@@ -567,7 +567,7 @@ function normalizeResponse(value: GraphViewerResponse): GraphViewerResponse {
       truncated: false,
       warnings: [],
     },
-    nodes: value.nodes.map((node) => ({ ...node, labels: node.labels ?? [node.type], qcWarnings: node.qcWarnings ?? [] })),
+    nodes: value.nodes.map((node) => ({ ...node, labels: node.labels ?? [node.type] })),
   }
 }
 

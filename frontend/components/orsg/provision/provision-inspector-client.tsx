@@ -4,7 +4,7 @@ import Link from "next/link"
 import { useState } from "react"
 import { ArrowLeft, ChevronRight, FileText, GitBranch, Hash, ScrollText, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { StatusBadge, QCBadge, SignalBadge, ChunkTypeBadge } from "@/components/orsg/badges"
+import { StatusBadge, SignalBadge, ChunkTypeBadge } from "@/components/orsg/badges"
 import type { ProvisionInspectorData } from "@/lib/types"
 
 const TABS = [
@@ -14,7 +14,6 @@ const TABS = [
   { id: "definitions", label: "Definitions" },
   { id: "exceptions", label: "Exceptions" },
   { id: "deadlines", label: "Deadlines" },
-  { id: "qc", label: "QC" },
 ] as const
 
 type TabId = (typeof TABS)[number]["id"]
@@ -68,7 +67,6 @@ export function ProvisionInspectorClient({ data }: { data: ProvisionInspectorDat
             <div className="flex flex-col items-end gap-2">
               <div className="flex items-center gap-2">
                 <StatusBadge status={p.status} />
-                <QCBadge status={p.qc_status} />
               </div>
               <span className="text-xs text-muted-foreground capitalize">{p.provision_type}</span>
             </div>
@@ -116,10 +114,9 @@ export function ProvisionInspectorClient({ data }: { data: ProvisionInspectorDat
                           href={`/provisions/${encodeURIComponent(c.provision_id)}`}
                           className="block rounded-md border border-border bg-card hover:border-primary/40 hover:bg-accent/40 p-3 transition-colors"
                         >
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="font-mono text-sm text-foreground">{c.display_citation}</span>
-                            <QCBadge status={c.qc_status} />
-                          </div>
+	                          <div className="flex items-center justify-between gap-3">
+	                            <span className="font-mono text-sm text-foreground">{c.display_citation}</span>
+	                          </div>
                           <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{c.text_preview}</p>
                         </Link>
                       </li>
@@ -219,33 +216,6 @@ export function ProvisionInspectorClient({ data }: { data: ProvisionInspectorDat
             />
           )}
 
-          {tab === "qc" && (
-            <div className="space-y-2 max-w-3xl">
-              {data.qc_notes.length === 0 && (
-                <p className="text-sm text-muted-foreground">No QC notes for this provision.</p>
-              )}
-              {data.qc_notes.map((n) => (
-                <div key={n.note_id} className="rounded-md border border-border bg-card p-3">
-                  <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-muted-foreground mb-1">
-                    <span>{n.category}</span>
-                    <span className="text-foreground/50">•</span>
-                    <span
-                      className={
-                        n.level === "fail"
-                          ? "text-rose-500"
-                          : n.level === "warning"
-                          ? "text-amber-500"
-                          : "text-sky-500"
-                      }
-                    >
-                      {n.level}
-                    </span>
-                  </div>
-                  <p className="text-sm text-foreground">{n.message}</p>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
 

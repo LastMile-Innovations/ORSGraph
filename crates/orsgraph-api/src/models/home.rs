@@ -17,8 +17,6 @@ pub struct CorpusStatus {
     pub edition_year: i32,
     pub source: String,
     pub last_updated: Option<String>,
-    pub last_qc_run: Option<String>,
-    pub qc_status: String,
     pub counts: CorpusCounts,
     pub citations: CitationCoverage,
     pub embeddings: EmbeddingStatus,
@@ -67,7 +65,6 @@ pub struct EmbeddingStatus {
 pub struct SystemHealth {
     pub api: String,
     pub neo4j: String,
-    pub qc: String,
     pub graph_materialization: String,
     pub embeddings: String,
     pub rerank: String,
