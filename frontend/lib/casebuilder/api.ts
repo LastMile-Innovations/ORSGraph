@@ -776,6 +776,13 @@ export function patchMatter(matterId: string, input: PatchMatterInput): Promise<
   })
 }
 
+export function deleteMatter(matterId: string): Promise<ActionState<{ deleted: boolean }>> {
+  return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}`, {
+    method: "DELETE",
+    normalize: (raw) => ({ deleted: Boolean((raw as any)?.deleted) }),
+  })
+}
+
 export function uploadTextFile(
   matterId: string,
   input: UploadTextFileInput,

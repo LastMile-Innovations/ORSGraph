@@ -296,36 +296,140 @@ impl CaseBuilderService {
 
     pub async fn delete_matter(&self, matter_id: &str) -> ApiResult<()> {
         self.require_matter(matter_id).await?;
-        for document in self.list_documents(matter_id).await.unwrap_or_default() {
-            if let Some(key) = document.storage_key {
-                if let Err(error) = self.object_store.delete(&key).await {
-                    tracing::warn!(
-                        matter_id,
-                        document_id = document.document_id,
-                        "Failed to delete stored matter document object: {}",
-                        error
-                    );
+
+        let (mut storage_keys, object_blob_ids) = self.matter_delete_targets(matter_id).await?;
+        match self.list_documents(matter_id).await {
+            Ok(documents) => {
+                for document in documents {
+                    if let Some(key) = document.storage_key {
+                        storage_keys.insert(key);
+                    }
                 }
             }
+            Err(error) => {
+                tracing::warn!(
+                    matter_id,
+                    "Failed to enumerate legacy document storage keys before matter delete: {}",
+                    error
+                );
+            }
         }
+        match self
+            .list_nodes::<DocumentVersion>(matter_id, document_version_spec())
+            .await
+        {
+            Ok(versions) => {
+                for version in versions {
+                    storage_keys.insert(version.storage_key);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    matter_id,
+                    "Failed to enumerate document version storage keys before matter delete: {}",
+                    error
+                );
+            }
+        }
+        match self
+            .list_nodes::<IngestionRun>(matter_id, ingestion_run_spec())
+            .await
+        {
+            Ok(runs) => {
+                for run in runs {
+                    storage_keys.extend(run.produced_object_keys);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    matter_id,
+                    "Failed to enumerate ingestion-run storage keys before matter delete: {}",
+                    error
+                );
+            }
+        }
+
         self.neo4j
             .run_rows(
                 query(
-                    "MATCH (m:Matter {matter_id: $matter_id})
-                     OPTIONAL MATCH (m)-[*1..2]-(n)
-                     WHERE n:Party OR n:CaseDocument OR n:Fact OR n:TimelineEvent OR n:Evidence OR
-                           n:Claim OR n:Defense OR n:Element OR n:Draft OR n:DeadlineInstance OR
-                           n:Task OR n:FactCheckFinding OR n:CitationCheckFinding OR
-                           n:DocumentVersion OR n:IngestionRun OR n:SourceSpan OR n:ExtractedText OR
-                           n:DraftParagraph OR n:WorkProduct OR n:WorkProductBlock OR
-                           n:WorkProductMark OR n:WorkProductAnchor OR n:WorkProductFinding OR
-                           n:WorkProductArtifact OR n:WorkProductHistoryEvent
-                     DETACH DELETE n, m",
+                    "MATCH (n)
+                     WHERE n.matter_id = $matter_id AND NOT n:Matter
+                     DETACH DELETE n",
                 )
                 .param("matter_id", matter_id),
             )
             .await?;
+        self.neo4j
+            .run_rows(
+                query("MATCH (m:Matter {matter_id: $matter_id}) DETACH DELETE m")
+                    .param("matter_id", matter_id),
+            )
+            .await?;
+        if !object_blob_ids.is_empty() {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "UNWIND $object_blob_ids AS object_blob_id
+                         MATCH (b:ObjectBlob {object_blob_id: object_blob_id})
+                         OPTIONAL MATCH (:Matter)-[:USES_OBJECT_BLOB]->(b)
+                         WITH b, count(*) AS remaining_matter_refs
+                         WHERE remaining_matter_refs = 0
+                         DETACH DELETE b",
+                    )
+                    .param("object_blob_ids", object_blob_ids),
+                )
+                .await?;
+        }
+
+        for key in storage_keys {
+            if let Err(error) = self.object_store.delete(&key).await {
+                tracing::warn!(
+                    matter_id,
+                    storage_key = key,
+                    "Failed to delete stored matter object: {}",
+                    error
+                );
+            }
+        }
         Ok(())
+    }
+
+    async fn matter_delete_targets(
+        &self,
+        matter_id: &str,
+    ) -> ApiResult<(HashSet<String>, Vec<String>)> {
+        let rows = self
+            .neo4j
+            .run_rows(
+                query(
+                    "MATCH (m:Matter {matter_id: $matter_id})
+                     OPTIONAL MATCH (m)-[:USES_OBJECT_BLOB]->(b:ObjectBlob)
+                     WITH b
+                     WHERE b IS NOT NULL
+                     OPTIONAL MATCH (other:Matter)-[:USES_OBJECT_BLOB]->(b)
+                     WHERE other.matter_id <> $matter_id
+                     WITH b, count(other) AS other_matter_refs
+                     RETURN
+                       [key IN collect(DISTINCT CASE
+                          WHEN other_matter_refs = 0 THEN b.storage_key
+                          ELSE NULL
+                        END) WHERE key IS NOT NULL AND key <> ''] AS storage_keys,
+                       collect(DISTINCT b.object_blob_id) AS object_blob_ids",
+                )
+                .param("matter_id", matter_id),
+            )
+            .await?;
+        let storage_keys = rows
+            .first()
+            .and_then(|row| row.get::<Vec<String>>("storage_keys").ok())
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let object_blob_ids = rows
+            .first()
+            .and_then(|row| row.get::<Vec<String>>("object_blob_ids").ok())
+            .unwrap_or_default();
+        Ok((storage_keys, object_blob_ids))
     }
 
     pub async fn create_party(

@@ -16,9 +16,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode
-}>) {
+}: Readonly<LayoutProps<"/">>) {
   return (
     <html lang="en" suppressHydrationWarning className={`${fontVariables} bg-background`}>
       <body className="font-sans antialiased">
