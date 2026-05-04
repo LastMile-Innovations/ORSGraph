@@ -162,6 +162,11 @@ export function DocumentLibrary({ matter, documents }: Props) {
     return Array.from(new Set(activeDocuments.map((document) => document.upload_batch_id).filter(Boolean) as string[])).sort()
   }, [activeDocuments])
 
+  async function refreshIndexSummary() {
+    const result = await getMatterIndexSummary(matter.matter_id)
+    if (result.data) setIndexSummary(result.data)
+  }
+
   useEffect(() => {
     void refreshIndexSummary()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -219,11 +224,6 @@ export function DocumentLibrary({ matter, documents }: Props) {
       cancelled = true
     }
   }, [selection.kind, matter.matter_id, mediaDocuments])
-
-  async function refreshIndexSummary() {
-    const result = await getMatterIndexSummary(matter.matter_id)
-    if (result.data) setIndexSummary(result.data)
-  }
 
   function queueUploads(candidates: UploadCandidate[]) {
     if (candidates.length === 0) return

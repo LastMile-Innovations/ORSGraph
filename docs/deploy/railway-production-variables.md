@@ -50,7 +50,13 @@ spawn.
 - `ORS_QUERY_EMBEDDING_CACHE_TTL_SECONDS`, `ORS_QUERY_EMBEDDING_CACHE_MAX_CAPACITY`: query embedding cache controls.
 - `ORS_RERANK_POLICY`: `explicit`, `low_confidence`, or `always`; use `explicit` or `low_confidence` to keep runtime model calls off the default path.
 - `ORS_STORAGE_BACKEND`: `local` or `r2`.
-- `ORS_R2_ACCOUNT_ID`, `ORS_R2_BUCKET`, `ORS_R2_ACCESS_KEY_ID`, `ORS_R2_SECRET_ACCESS_KEY`, `ORS_R2_ENDPOINT`: sealed R2 settings, required only when `ORS_STORAGE_BACKEND=r2`.
+- `ORS_R2_ACCOUNT_ID`, `ORS_R2_BUCKET`, `ORS_R2_ACCESS_KEY_ID`, `ORS_R2_SECRET_ACCESS_KEY`, `ORS_R2_ENDPOINT`: sealed R2 settings, required only when `ORS_STORAGE_BACKEND=r2`. For CaseBuilder production direct browser uploads, use Cloudflare R2, not an API byte proxy:
+  - `ORS_R2_ACCOUNT_ID=<Cloudflare account id>`
+  - `ORS_R2_BUCKET=orsgraph-casebuilder-production`
+  - `ORS_R2_ENDPOINT=https://<Cloudflare account id>.r2.cloudflarestorage.com`
+  - `ORS_R2_ACCESS_KEY_ID` / `ORS_R2_SECRET_ACCESS_KEY`: Cloudflare R2 S3 API token, `Object Read & Write`, scoped to `orsgraph-casebuilder-production`.
+  - Bucket CORS must allow origin `https://frontend-production-090c.up.railway.app`, methods `PUT`, `GET`, `HEAD`, request headers `*`, and expose `ETag`.
+  - Production smoke should include `ORS_SMOKE_UPLOAD_ORIGIN=https://frontend-production-090c.up.railway.app` so the signed upload path probes preflight and verifies the `ETag` CORS exposure.
 - `ORS_ASSEMBLYAI_ENABLED`, `ASSEMBLYAI_API_KEY`, `ORS_ASSEMBLYAI_WEBHOOK_URL`, `ORS_ASSEMBLYAI_WEBHOOK_SECRET`: optional transcription settings.
 - Deprecated duplicates to avoid: `ORS_NEO4J_*` and double-underscore `ORS__*`.
 

@@ -1,5 +1,6 @@
 const API_BASE = process.env.ORS_API_BASE_URL || "http://localhost:8080/api/v1"
 const API_KEY = process.env.ORS_API_KEY
+const UPLOAD_CORS_ORIGIN = process.env.ORS_SMOKE_UPLOAD_ORIGIN?.trim() || ""
 
 const headers = API_KEY ? { "x-api-key": API_KEY } : {}
 let matterId = null
@@ -441,13 +442,25 @@ async function signedUpload(matterId, input) {
     }),
   })
 
+  if (UPLOAD_CORS_ORIGIN) {
+    await assertSignedUploadCorsPreflight(intent, input)
+  }
+
+  const putHeaders = { ...(intent.headers ?? {}) }
+  if (UPLOAD_CORS_ORIGIN) {
+    putHeaders.Origin = UPLOAD_CORS_ORIGIN
+  }
+
   const putResponse = await fetch(intent.url, {
     method: intent.method || "PUT",
-    headers: intent.headers ?? {},
+    headers: putHeaders,
     body: blob,
   })
   if (!putResponse.ok) {
     throw new Error(`Signed upload PUT failed for ${input.filename}: ${putResponse.status} ${putResponse.statusText}`)
+  }
+  if (UPLOAD_CORS_ORIGIN) {
+    assertSignedUploadCorsResponse(putResponse, input.filename)
   }
 
   return request(
@@ -461,6 +474,72 @@ async function signedUpload(matterId, input) {
       }),
     },
   )
+}
+
+async function assertSignedUploadCorsPreflight(intent, input) {
+  const requestHeaders = signedUploadRequestHeaderNames(intent, input)
+  const headers = {
+    Origin: UPLOAD_CORS_ORIGIN,
+    "Access-Control-Request-Method": intent.method || "PUT",
+  }
+  if (requestHeaders) {
+    headers["Access-Control-Request-Headers"] = requestHeaders
+  }
+
+  const response = await fetch(intent.url, {
+    method: "OPTIONS",
+    headers,
+  })
+  const allowedOrigin = response.headers.get("access-control-allow-origin")
+  const allowedMethods = response.headers.get("access-control-allow-methods")
+  const allowedHeaders = response.headers.get("access-control-allow-headers")
+
+  assert(response.ok, `signed upload CORS preflight succeeded for ${input.filename}`)
+  assert(
+    allowedOrigin === "*" || allowedOrigin === UPLOAD_CORS_ORIGIN,
+    `signed upload CORS allows ${UPLOAD_CORS_ORIGIN} for ${input.filename}`,
+  )
+  assert(
+    headerListAllowsToken(allowedMethods, intent.method || "PUT"),
+    `signed upload CORS allows ${intent.method || "PUT"} for ${input.filename}`,
+  )
+  for (const header of requestHeaders.split(",").filter(Boolean)) {
+    assert(
+      headerListAllowsToken(allowedHeaders, header),
+      `signed upload CORS allows request header ${header} for ${input.filename}`,
+    )
+  }
+}
+
+function assertSignedUploadCorsResponse(response, filename) {
+  const allowedOrigin = response.headers.get("access-control-allow-origin")
+  const exposedHeaders = response.headers.get("access-control-expose-headers")
+  assert(
+    allowedOrigin === "*" || allowedOrigin === UPLOAD_CORS_ORIGIN,
+    `signed upload response exposes ${UPLOAD_CORS_ORIGIN} for ${filename}`,
+  )
+  assert(headerListAllowsToken(exposedHeaders, "etag"), `signed upload response exposes ETag for ${filename}`)
+}
+
+function signedUploadRequestHeaderNames(intent, input) {
+  const names = new Set(
+    Object.keys(intent.headers ?? {})
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean),
+  )
+  if (input.mime_type) {
+    names.add("content-type")
+  }
+  return [...names].sort().join(",")
+}
+
+function headerListAllowsToken(value, token) {
+  if (!value) return false
+  const normalizedToken = token.trim().toLowerCase()
+  return value
+    .split(",")
+    .map((part) => part.trim().toLowerCase())
+    .some((part) => part === "*" || part === normalizedToken)
 }
 
 async function runIndexJob(matterId, input) {

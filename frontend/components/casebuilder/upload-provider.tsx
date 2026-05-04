@@ -1,7 +1,5 @@
 "use client"
 
-/* eslint-disable react-hooks/exhaustive-deps */
-
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import {
@@ -181,87 +179,89 @@ export function CaseBuilderUploadProvider({ children }: { children: ReactNode })
     setBatches((current) => current.map((batch) => (batch.id === batchId ? { ...batch, ...patch } : batch)))
   }, [])
 
-  const enqueueRows = useCallback(
-    (
-      matterId: string,
-      candidates: UploadCandidate[],
-      options: EnqueueMatterUploadsOptions = {},
-    ) => {
-      if (candidates.length === 0) return null
-      const uploadBatchId =
-        options.uploadBatchId ??
-        createUploadBatchId(candidates.some((candidate) => candidate.relativePath.includes("/")) ? "folder" : "batch")
-      const batchId = uploadBatchId
-      const processingOptions = normalizeUploadProcessingOptions(options)
-      const nextRows = candidates.map((candidate, index): CaseBuilderUploadRow => ({
-        id: `${batchId}:row:${index}`,
-        batchId,
-        matterId,
-        file: candidate.file,
-        relativePath: candidate.relativePath,
-        folder: candidate.folder,
-        status: "queued",
-        message: "Queued",
-        bytes: candidate.file.size,
-        uploadedBytes: 0,
-        uploadSpeedBps: null,
-      }))
-      const batch: CaseBuilderUploadBatch = {
-        id: batchId,
-        matterId,
-        uploadBatchId,
-        label: options.label ?? (uploadBatchId.startsWith("folder") ? "Folder upload" : "File upload"),
-        status: "queued",
-        createdAt: Date.now(),
-        rowIds: nextRows.map((row) => row.id),
-        autoIndex: processingOptions.autoIndex,
-        importComplaints: processingOptions.importComplaints,
-        defaultConfidentiality: processingOptions.defaultConfidentiality,
-        defaultDocumentType: processingOptions.defaultDocumentType,
+  const applyIndexJobToRows = useCallback((batchId: string, job: MatterIndexJob) => {
+    const byDocument = new Map(job.results.map((result) => [result.document_id, result]))
+    setRows((current) =>
+      current.map((row) => {
+        if (row.batchId !== batchId || !row.documentId) return row
+        const result = byDocument.get(row.documentId)
+        if (!result) return ["queued", "running"].includes(job.status) && row.status === "indexing" ? row : row
+        return {
+          ...row,
+          status: result.status === "indexed" ? "indexed" : result.status === "failed" ? "failed" : "stored",
+          message: result.message,
+          error: result.status === "failed" ? result.message : undefined,
+        }
+      }),
+    )
+  }, [])
+
+  const pollIndexJob = useCallback(
+    async (batchId: string, matterId: string, jobId: string) => {
+      let latest: MatterIndexJob | null = null
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await sleep(attempt === 0 ? 400 : 1500)
+        const result = await getMatterIndexJob(matterId, jobId)
+        if (!result.data) {
+          updateBatch(batchId, { status: "failed", message: result.error || "Index job status unavailable." })
+          return
+        }
+        latest = result.data
+        applyIndexJobToRows(batchId, latest)
+        if (!["queued", "running"].includes(latest.status)) break
       }
-      setBatches((current) => [batch, ...current])
-      setRows((current) => [...nextRows, ...current])
-      setCollapsed(false)
-      void processBatch(batch, nextRows, processingOptions)
-      return batchId
+
+      if (!latest) {
+        return
+      }
+      router.refresh()
+      updateBatch(batchId, {
+        status: latest.status === "failed" ? "failed" : "done",
+        message: `${latest.processed} indexed${latest.skipped ? `, ${latest.skipped} skipped` : ""}${latest.failed ? `, ${latest.failed} failed` : ""}.`,
+      })
     },
-    [],
+    [applyIndexJobToRows, router, updateBatch],
   )
 
-  const processBatch = useCallback(
-    async (
-      batch: CaseBuilderUploadBatch,
-      batchRows: CaseBuilderUploadRow[],
-      options: MatterUploadProcessingOptions,
-    ) => {
-      updateBatch(batch.id, { status: "uploading", message: "Uploading" })
-      const indexableDocumentIds: string[] = []
-      let failed = 0
-      let stored = 0
+  const startIndexJobForBatch = useCallback(
+    async (batch: CaseBuilderUploadBatch, documentIds: string[]) => {
+      updateBatch(batch.id, { status: "indexing", message: "Indexing" })
+      setRows((current) =>
+        current.map((row) =>
+          row.batchId === batch.id && row.documentId && documentIds.includes(row.documentId)
+            ? { ...row, status: "indexing", message: "Indexing" }
+            : row,
+        ),
+      )
 
-      for (const row of batchRows) {
-        if (canceledRowsRef.current.has(row.id)) continue
-        const result = await uploadOneRow(row, batch.uploadBatchId, options)
-        if (!result.ok) {
-          failed += 1
-          continue
-        }
-        stored += 1
-        if (result.markdownIndexable && result.documentId) indexableDocumentIds.push(result.documentId)
+      const job = await createMatterIndexJob(batch.matterId, {
+        document_ids: documentIds,
+        upload_batch_id: batch.uploadBatchId,
+      })
+      if (!job.data) {
+        const message = job.error || "Could not start index job."
+        updateBatch(batch.id, { status: "failed", message })
+        setRows((current) =>
+          current.map((row) =>
+            row.batchId === batch.id && row.documentId && documentIds.includes(row.documentId)
+              ? { ...row, status: "failed", message, error: message }
+              : row,
+          ),
+        )
+        return
       }
 
-      router.refresh()
-
-      if (indexableDocumentIds.length > 0 && options.autoIndex) {
-        await startIndexJobForBatch(batch, indexableDocumentIds)
-      } else {
-        updateBatch(batch.id, {
-          status: failed > 0 ? "failed" : "done",
-          message: `${stored} stored${failed ? `, ${failed} failed` : ""}.`,
-        })
-      }
+      updateBatch(batch.id, { indexJobId: job.data.index_job_id })
+      setRows((current) =>
+        current.map((row) =>
+          row.batchId === batch.id && row.documentId && documentIds.includes(row.documentId)
+            ? { ...row, indexJobId: job.data?.index_job_id }
+            : row,
+        ),
+      )
+      await pollIndexJob(batch.id, batch.matterId, job.data.index_job_id)
     },
-    [router, updateBatch],
+    [pollIndexJob, updateBatch],
   )
 
   const uploadOneRow = useCallback(
@@ -368,90 +368,88 @@ export function CaseBuilderUploadProvider({ children }: { children: ReactNode })
     [updateRow],
   )
 
-  const startIndexJobForBatch = useCallback(
-    async (batch: CaseBuilderUploadBatch, documentIds: string[]) => {
-      updateBatch(batch.id, { status: "indexing", message: "Indexing" })
-      setRows((current) =>
-        current.map((row) =>
-          row.batchId === batch.id && row.documentId && documentIds.includes(row.documentId)
-            ? { ...row, status: "indexing", message: "Indexing" }
-            : row,
-        ),
-      )
+  const processBatch = useCallback(
+    async (
+      batch: CaseBuilderUploadBatch,
+      batchRows: CaseBuilderUploadRow[],
+      options: MatterUploadProcessingOptions,
+    ) => {
+      updateBatch(batch.id, { status: "uploading", message: "Uploading" })
+      const indexableDocumentIds: string[] = []
+      let failed = 0
+      let stored = 0
 
-      const job = await createMatterIndexJob(batch.matterId, {
-        document_ids: documentIds,
-        upload_batch_id: batch.uploadBatchId,
-      })
-      if (!job.data) {
-        const message = job.error || "Could not start index job."
-        updateBatch(batch.id, { status: "failed", message })
-        setRows((current) =>
-          current.map((row) =>
-            row.batchId === batch.id && row.documentId && documentIds.includes(row.documentId)
-              ? { ...row, status: "failed", message, error: message }
-              : row,
-          ),
-        )
-        return
-      }
-
-      updateBatch(batch.id, { indexJobId: job.data.index_job_id })
-      setRows((current) =>
-        current.map((row) =>
-          row.batchId === batch.id && row.documentId && documentIds.includes(row.documentId)
-            ? { ...row, indexJobId: job.data?.index_job_id }
-            : row,
-        ),
-      )
-      await pollIndexJob(batch.id, batch.matterId, job.data.index_job_id)
-    },
-    [updateBatch],
-  )
-
-  const pollIndexJob = useCallback(
-    async (batchId: string, matterId: string, jobId: string) => {
-      let latest: MatterIndexJob | null = null
-      for (let attempt = 0; attempt < 120; attempt += 1) {
-        await sleep(attempt === 0 ? 400 : 1500)
-        const result = await getMatterIndexJob(matterId, jobId)
-        if (!result.data) {
-          updateBatch(batchId, { status: "failed", message: result.error || "Index job status unavailable." })
-          return
+      for (const row of batchRows) {
+        if (canceledRowsRef.current.has(row.id)) continue
+        const result = await uploadOneRow(row, batch.uploadBatchId, options)
+        if (!result.ok) {
+          failed += 1
+          continue
         }
-        latest = result.data
-        applyIndexJobToRows(batchId, latest)
-        if (!["queued", "running"].includes(latest.status)) break
+        stored += 1
+        if (result.markdownIndexable && result.documentId) indexableDocumentIds.push(result.documentId)
       }
 
-      if (!latest) {
-        return
-      }
       router.refresh()
-      updateBatch(batchId, {
-        status: latest.status === "failed" ? "failed" : "done",
-        message: `${latest.processed} indexed${latest.skipped ? `, ${latest.skipped} skipped` : ""}${latest.failed ? `, ${latest.failed} failed` : ""}.`,
-      })
+
+      if (indexableDocumentIds.length > 0 && options.autoIndex) {
+        await startIndexJobForBatch(batch, indexableDocumentIds)
+      } else {
+        updateBatch(batch.id, {
+          status: failed > 0 ? "failed" : "done",
+          message: `${stored} stored${failed ? `, ${failed} failed` : ""}.`,
+        })
+      }
     },
-    [router, updateBatch],
+    [router, startIndexJobForBatch, updateBatch, uploadOneRow],
   )
 
-  const applyIndexJobToRows = useCallback((batchId: string, job: MatterIndexJob) => {
-    const byDocument = new Map(job.results.map((result) => [result.document_id, result]))
-    setRows((current) =>
-      current.map((row) => {
-        if (row.batchId !== batchId || !row.documentId) return row
-        const result = byDocument.get(row.documentId)
-        if (!result) return ["queued", "running"].includes(job.status) && row.status === "indexing" ? row : row
-        return {
-          ...row,
-          status: result.status === "indexed" ? "indexed" : result.status === "failed" ? "failed" : "stored",
-          message: result.message,
-          error: result.status === "failed" ? result.message : undefined,
-        }
-      }),
-    )
-  }, [])
+  const enqueueRows = useCallback(
+    (
+      matterId: string,
+      candidates: UploadCandidate[],
+      options: EnqueueMatterUploadsOptions = {},
+    ) => {
+      if (candidates.length === 0) return null
+      const uploadBatchId =
+        options.uploadBatchId ??
+        createUploadBatchId(candidates.some((candidate) => candidate.relativePath.includes("/")) ? "folder" : "batch")
+      const batchId = uploadBatchId
+      const processingOptions = normalizeUploadProcessingOptions(options)
+      const nextRows = candidates.map((candidate, index): CaseBuilderUploadRow => ({
+        id: `${batchId}:row:${index}`,
+        batchId,
+        matterId,
+        file: candidate.file,
+        relativePath: candidate.relativePath,
+        folder: candidate.folder,
+        status: "queued",
+        message: "Queued",
+        bytes: candidate.file.size,
+        uploadedBytes: 0,
+        uploadSpeedBps: null,
+      }))
+      const batch: CaseBuilderUploadBatch = {
+        id: batchId,
+        matterId,
+        uploadBatchId,
+        label: options.label ?? (uploadBatchId.startsWith("folder") ? "Folder upload" : "File upload"),
+        status: "queued",
+        createdAt: Date.now(),
+        rowIds: nextRows.map((row) => row.id),
+        autoIndex: processingOptions.autoIndex,
+        importComplaints: processingOptions.importComplaints,
+        defaultConfidentiality: processingOptions.defaultConfidentiality,
+        defaultDocumentType: processingOptions.defaultDocumentType,
+      }
+      setBatches((current) => [batch, ...current])
+      setRows((current) => [...nextRows, ...current])
+      setCollapsed(false)
+      void processBatch(batch, nextRows, processingOptions)
+      return batchId
+    },
+    [processBatch],
+  )
 
   const cancelRow = useCallback(
     (rowId: string) => {
@@ -748,7 +746,11 @@ function writePersistedUploadSnapshot(batches: CaseBuilderUploadBatch[], rows: C
           rowIds: batch.rowIds.filter((rowId) => activeRowIds.has(rowId)),
         }))
         .filter((batch) => batch.rowIds.length > 0),
-      rows: activeRows.map(({ file: _file, ...row }) => row),
+      rows: activeRows.map((row) => {
+        const persisted = { ...row }
+        delete persisted.file
+        return persisted
+      }),
     }
     window.sessionStorage.setItem(UPLOAD_SNAPSHOT_KEY, JSON.stringify(snapshot))
   } catch {

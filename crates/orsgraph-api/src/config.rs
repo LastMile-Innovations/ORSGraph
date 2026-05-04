@@ -586,6 +586,15 @@ impl ApiConfig {
                 self.storage_backend
             )));
         }
+        normalize_optional_string(&mut self.r2_account_id);
+        normalize_optional_string(&mut self.r2_bucket);
+        normalize_optional_string(&mut self.r2_access_key_id);
+        normalize_optional_string(&mut self.r2_secret_access_key);
+        self.r2_endpoint = self
+            .r2_endpoint
+            .as_ref()
+            .map(|value| value.trim().trim_end_matches('/').to_string())
+            .filter(|value| !value.is_empty());
         if self.r2_upload_ttl_seconds == 0 || self.r2_upload_ttl_seconds > 604_800 {
             return Err(ConfigError::Message(
                 "ORS_R2_UPLOAD_TTL_SECONDS must be between 1 and 604800".to_string(),
@@ -757,6 +766,13 @@ fn read_string(name: &str) -> Option<String> {
     env::var(name).ok().filter(|value| !value.trim().is_empty())
 }
 
+fn normalize_optional_string(value: &mut Option<String>) {
+    *value = value
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+}
+
 fn read_bool(name: &str) -> Option<bool> {
     read_string(name).and_then(|value| match value.to_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Some(true),
@@ -781,9 +797,8 @@ fn read_u16(name: &str) -> Option<u16> {
 mod tests {
     use super::ApiConfig;
 
-    #[test]
-    fn storage_backend_defaults_to_local() {
-        let mut config = ApiConfig {
+    fn test_config() -> ApiConfig {
+        ApiConfig {
             api_host: "127.0.0.1".to_string(),
             api_port: 8080,
             neo4j_uri: "bolt://localhost:7687".to_string(),
@@ -851,86 +866,51 @@ mod tests {
             admin_workdir: ".".to_string(),
             admin_crawler_bin: "cargo".to_string(),
             admin_data_dir: "data".to_string(),
-        };
+        }
+    }
 
+    #[test]
+    fn storage_backend_defaults_to_local() {
+        let mut config = test_config();
+        config.storage_backend = "LOCAL".to_string();
         config.normalize_and_validate().unwrap();
         assert_eq!(config.storage_backend, "local");
     }
 
     #[test]
     fn r2_backend_requires_credentials() {
-        let mut config = ApiConfig {
-            api_host: "127.0.0.1".to_string(),
-            api_port: 8080,
-            neo4j_uri: "bolt://localhost:7687".to_string(),
-            neo4j_user: "neo4j".to_string(),
-            neo4j_password: "neo4j".to_string(),
-            api_key: None,
-            auth_enabled: false,
-            auth_issuer: None,
-            auth_audience: None,
-            auth_admin_role: "orsgraph_admin".to_string(),
-            casebuilder_storage_dir: "data/casebuilder/uploads".to_string(),
-            storage_backend: "r2".to_string(),
-            r2_account_id: None,
-            r2_bucket: Some("bucket".to_string()),
-            r2_access_key_id: Some("access".to_string()),
-            r2_secret_access_key: Some("secret".to_string()),
-            r2_endpoint: None,
-            r2_upload_ttl_seconds: 900,
-            r2_download_ttl_seconds: 300,
-            r2_max_upload_bytes: 10,
-            casebuilder_ast_entity_inline_bytes: 64 * 1024,
-            casebuilder_ast_snapshot_inline_bytes: 256 * 1024,
-            casebuilder_ast_block_inline_bytes: 64 * 1024,
-            assemblyai_enabled: false,
-            assemblyai_api_key: None,
-            assemblyai_base_url: "https://api.assemblyai.com".to_string(),
-            assemblyai_webhook_url: None,
-            assemblyai_webhook_secret: None,
-            assemblyai_timeout_ms: 30_000,
-            assemblyai_max_media_bytes: 500 * 1024 * 1024,
-            casebuilder_timeline_agent_provider: "disabled".to_string(),
-            casebuilder_timeline_agent_model: None,
-            openai_api_key: None,
-            casebuilder_timeline_agent_timeout_ms: 12_000,
-            casebuilder_timeline_agent_max_input_chars: 30_000,
-            casebuilder_timeline_agent_harness_version: "timeline-harness-v1".to_string(),
-            log_level: "info".to_string(),
-            voyage_api_key: None,
-            rerank_enabled: false,
-            rerank_model: "rerank-2.5".to_string(),
-            rerank_fallback_model: "rerank-2.5-lite".to_string(),
-            rerank_candidates: 150,
-            rerank_top_k: 25,
-            rerank_max_doc_tokens: 2000,
-            rerank_timeout_ms: 8000,
-            vector_enabled: false,
-            vector_search_enabled: false,
-            embedding_model: "voyage-4-large".to_string(),
-            vector_index: "retrieval_chunk_embedding_1024".to_string(),
-            vector_dimension: 1024,
-            vector_top_k: 100,
-            vector_min_score: 0.55,
-            vector_profile: "legal_chunk_primary_v1".to_string(),
-            casebuilder_embeddings_enabled: false,
-            corpus_release_manifest_path: "data/graph/corpus_release.json".to_string(),
-            authority_cache_ttl_seconds: 86_400,
-            authority_cache_max_capacity: 20_000,
-            query_embedding_cache_ttl_seconds: 604_800,
-            query_embedding_cache_max_capacity: 50_000,
-            rerank_policy: "low_confidence".to_string(),
-            authority_edge_base_url: None,
-            admin_enabled: false,
-            admin_allow_kill: false,
-            admin_jobs_dir: "data/admin/jobs".to_string(),
-            admin_workdir: ".".to_string(),
-            admin_crawler_bin: "cargo".to_string(),
-            admin_data_dir: "data".to_string(),
-        };
+        let mut config = test_config();
+        config.storage_backend = "r2".to_string();
+        config.r2_account_id = None;
+        config.r2_bucket = Some("bucket".to_string());
+        config.r2_access_key_id = Some("access".to_string());
+        config.r2_secret_access_key = Some("secret".to_string());
 
         let error = config.normalize_and_validate().unwrap_err().to_string();
         assert!(error.contains("ORS_R2_ACCOUNT_ID"));
+    }
+
+    #[test]
+    fn r2_config_values_are_trimmed() {
+        let mut config = test_config();
+        config.storage_backend = " r2 ".to_string();
+        config.r2_account_id = Some(" account-id ".to_string());
+        config.r2_bucket = Some(" bucket ".to_string());
+        config.r2_access_key_id = Some(" access ".to_string());
+        config.r2_secret_access_key = Some(" secret ".to_string());
+        config.r2_endpoint = Some(" https://account-id.r2.cloudflarestorage.com/ ".to_string());
+
+        config.normalize_and_validate().unwrap();
+
+        assert_eq!(config.storage_backend, "r2");
+        assert_eq!(config.r2_account_id.as_deref(), Some("account-id"));
+        assert_eq!(config.r2_bucket.as_deref(), Some("bucket"));
+        assert_eq!(config.r2_access_key_id.as_deref(), Some("access"));
+        assert_eq!(config.r2_secret_access_key.as_deref(), Some("secret"));
+        assert_eq!(
+            config.r2_endpoint.as_deref(),
+            Some("https://account-id.r2.cloudflarestorage.com")
+        );
     }
 }
 
