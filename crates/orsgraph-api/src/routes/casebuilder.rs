@@ -27,18 +27,44 @@ struct ListWorkProductsParams {
     include: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct ListMatterIndexJobsParams {
+    active: Option<bool>,
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route(
+            "/casebuilder/settings",
+            get(get_casebuilder_settings).patch(patch_casebuilder_settings),
+        )
         .route("/matters", get(list_matters).post(create_matter))
         .route("/admin/matters/claim-ownerless", post(claim_ownerless_matters))
         .route(
             "/matters/{matter_id}",
             get(get_matter).patch(patch_matter).delete(delete_matter),
         )
+        .route(
+            "/matters/{matter_id}/settings",
+            get(get_matter_settings).patch(patch_matter_settings),
+        )
         .route("/matters/{matter_id}/graph", get(get_matter_graph))
         .route("/matters/{matter_id}/audit", get(list_matter_audit_events))
         .route("/matters/{matter_id}/index", get(get_matter_index))
         .route("/matters/{matter_id}/index/run", post(run_matter_index))
+        .route(
+            "/matters/{matter_id}/index/jobs",
+            get(list_matter_index_jobs).post(create_matter_index_job),
+        )
+        .route(
+            "/matters/{matter_id}/index/jobs/{job_id}",
+            get(get_matter_index_job),
+        )
+        .route("/matters/{matter_id}/embeddings/run", post(run_matter_embeddings))
+        .route(
+            "/matters/{matter_id}/embeddings/search",
+            post(search_matter_embeddings),
+        )
         .route("/matters/{matter_id}/qc/run", post(run_matter_qc))
         .route("/matters/{matter_id}/issues/spot", post(spot_issues))
         .route(
@@ -119,6 +145,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/matters/{matter_id}/documents/{document_id}/extract",
             post(extract_document),
+        )
+        .route(
+            "/matters/{matter_id}/documents/{document_id}/embeddings/run",
+            post(run_document_embeddings),
         )
         .route(
             "/casebuilder/webhooks/assemblyai",
@@ -509,6 +539,28 @@ async fn create_matter(
     ))
 }
 
+async fn get_casebuilder_settings(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+) -> ApiResult<Json<CaseBuilderUserSettingsResponse>> {
+    Ok(Json(
+        state.casebuilder_service.get_user_settings(&auth).await?,
+    ))
+}
+
+async fn patch_casebuilder_settings(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Json(request): Json<PatchCaseBuilderUserSettingsRequest>,
+) -> ApiResult<Json<CaseBuilderUserSettingsResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_user_settings(&auth, request)
+            .await?,
+    ))
+}
+
 async fn claim_ownerless_matters(
     State(state): State<AppState>,
     Json(request): Json<ClaimOwnerlessMattersRequest>,
@@ -527,6 +579,33 @@ async fn get_matter(
 ) -> ApiResult<Json<MatterBundle>> {
     Ok(Json(
         state.casebuilder_service.get_matter(&matter_id).await?,
+    ))
+}
+
+async fn get_matter_settings(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(matter_id): Path<String>,
+) -> ApiResult<Json<CaseBuilderMatterSettingsResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .get_matter_settings_response(&matter_id, &auth)
+            .await?,
+    ))
+}
+
+async fn patch_matter_settings(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(matter_id): Path<String>,
+    Json(request): Json<PatchCaseBuilderMatterConfigRequest>,
+) -> ApiResult<Json<CaseBuilderMatterSettingsResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .patch_matter_config(&matter_id, request, &auth)
+            .await?,
     ))
 }
 
@@ -707,6 +786,82 @@ async fn run_matter_index(
     ))
 }
 
+async fn create_matter_index_job(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+    Json(request): Json<CreateMatterIndexJobRequest>,
+) -> ApiResult<Json<MatterIndexJob>> {
+    let job = state
+        .casebuilder_service
+        .create_matter_index_job(&matter_id, request)
+        .await?;
+    let service = state.casebuilder_service.clone();
+    let job_matter_id = matter_id.clone();
+    let job_id = job.index_job_id.clone();
+    tokio::spawn(async move {
+        if let Err(error) = service.run_matter_index_job(&job_matter_id, &job_id).await {
+            tracing::error!(
+                matter_id = %job_matter_id,
+                index_job_id = %job_id,
+                error = %error,
+                "CaseBuilder index job executor failed"
+            );
+        }
+    });
+    Ok(Json(job))
+}
+
+async fn list_matter_index_jobs(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+    Query(params): Query<ListMatterIndexJobsParams>,
+) -> ApiResult<Json<Vec<MatterIndexJob>>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .list_matter_index_jobs(&matter_id, params.active.unwrap_or(false))
+            .await?,
+    ))
+}
+
+async fn get_matter_index_job(
+    State(state): State<AppState>,
+    Path((matter_id, job_id)): Path<(String, String)>,
+) -> ApiResult<Json<MatterIndexJob>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .get_matter_index_job(&matter_id, &job_id)
+            .await?,
+    ))
+}
+
+async fn run_matter_embeddings(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+    Json(request): Json<RunCaseBuilderEmbeddingsRequest>,
+) -> ApiResult<Json<RunCaseBuilderEmbeddingsResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .run_matter_embeddings(&matter_id, request)
+            .await?,
+    ))
+}
+
+async fn search_matter_embeddings(
+    State(state): State<AppState>,
+    Path(matter_id): Path<String>,
+    Json(request): Json<CaseBuilderEmbeddingSearchRequest>,
+) -> ApiResult<Json<CaseBuilderEmbeddingSearchResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .search_casebuilder_embeddings(&matter_id, request)
+            .await?,
+    ))
+}
+
 async fn get_document(
     State(state): State<AppState>,
     Path((matter_id, document_id)): Path<(String, String)>,
@@ -852,6 +1007,18 @@ async fn extract_document(
         state
             .casebuilder_service
             .extract_document(&matter_id, &document_id)
+            .await?,
+    ))
+}
+
+async fn run_document_embeddings(
+    State(state): State<AppState>,
+    Path((matter_id, document_id)): Path<(String, String)>,
+) -> ApiResult<Json<CaseBuilderEmbeddingRun>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .run_document_embeddings(&matter_id, &document_id)
             .await?,
     ))
 }

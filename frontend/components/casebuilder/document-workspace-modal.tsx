@@ -8,15 +8,20 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog"
-import type { DocumentWorkspace as DocumentWorkspaceState, Matter } from "@/lib/casebuilder/types"
+import type {
+  CaseBuilderEffectiveSettings,
+  DocumentWorkspace as DocumentWorkspaceState,
+  Matter,
+} from "@/lib/casebuilder/types"
 import { DocumentWorkspace } from "./document-workspace"
 
 interface DocumentWorkspaceModalProps {
   matter: Matter
   workspace: DocumentWorkspaceState
+  settings?: CaseBuilderEffectiveSettings | null
 }
 
-export function DocumentWorkspaceModal({ matter, workspace }: DocumentWorkspaceModalProps) {
+export function DocumentWorkspaceModal({ matter, workspace, settings }: DocumentWorkspaceModalProps) {
   const router = useRouter()
   const [open, setOpen] = useState(true)
 
@@ -33,7 +38,7 @@ export function DocumentWorkspaceModal({ matter, workspace }: DocumentWorkspaceM
           Document workspace for {matter.name}
         </DialogDescription>
         <div className="flex h-full min-h-0 overflow-hidden">
-          <DocumentWorkspace matter={matter} workspace={workspace} />
+          <DocumentWorkspace matter={matter} workspace={workspace} settings={settings} />
         </div>
       </DialogContent>
     </Dialog>

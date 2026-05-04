@@ -363,6 +363,14 @@ function AccountMenu({
             <DropdownMenuSeparator />
           </>
         )}
+        {status === "authenticated" && (
+          <DropdownMenuItem asChild>
+            <Link href="/casebuilder/settings">
+              <SlidersHorizontal className="h-4 w-4" />
+              CaseBuilder settings
+            </Link>
+          </DropdownMenuItem>
+        )}
         {status === "authenticated" ? (
           <DropdownMenuItem className="cursor-pointer" onClick={() => signOut({ callbackUrl: "/" })}>
             <LogOut className="h-4 w-4" />

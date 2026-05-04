@@ -142,7 +142,7 @@ export function ProvisionInspectorClient({ data }: { data: ProvisionInspectorDat
                     <div className="flex items-center gap-3 text-xs text-muted-foreground font-mono">
                       <span>w={c.search_weight.toFixed(2)}</span>
                       <span>conf={c.parser_confidence.toFixed(2)}</span>
-                      <span className={c.embedded ? "text-emerald-500" : "text-amber-500"}>
+                      <span className={c.embedded ? "text-success" : "text-warning"}>
                         {c.embedded ? "embedded" : "pending"}
                       </span>
                     </div>
@@ -164,7 +164,7 @@ export function ProvisionInspectorClient({ data }: { data: ProvisionInspectorDat
                     <div key={i} className="rounded-md border border-border bg-card p-3">
                       <div className="flex items-center justify-between">
                         <span className="font-mono text-sm text-foreground">{c.target_citation}</span>
-                        <span className={`text-xs ${c.resolved ? "text-emerald-500" : "text-rose-500"}`}>
+                        <span className={`text-xs ${c.resolved ? "text-success" : "text-destructive"}`}>
                           {c.resolved ? "resolved" : "unresolved"}
                         </span>
                       </div>

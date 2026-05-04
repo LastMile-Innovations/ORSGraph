@@ -1194,6 +1194,19 @@ impl CaseBuilderService {
                 )
                 .await?;
         }
+        for markdown_ast_node_id in &suggestion.markdown_ast_node_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (s:TimelineSuggestion {suggestion_id: $suggestion_id})
+                         MATCH (n:MarkdownAstNode {markdown_ast_node_id: $markdown_ast_node_id})
+                         MERGE (n)-[:PROPOSES_TIMELINE]->(s)",
+                    )
+                    .param("suggestion_id", suggestion.suggestion_id.clone())
+                    .param("markdown_ast_node_id", markdown_ast_node_id.clone()),
+                )
+                .await?;
+        }
         for fact_id in &suggestion.linked_fact_ids {
             self.neo4j
                 .run_rows(
@@ -1263,6 +1276,32 @@ impl CaseBuilderService {
                     )
                     .param("event_id", event.event_id.clone())
                     .param("source_span_id", source_span_id.clone()),
+                )
+                .await?;
+        }
+        for text_chunk_id in &event.text_chunk_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (e:TimelineEvent {event_id: $event_id})
+                         MATCH (c:TextChunk {text_chunk_id: $text_chunk_id})
+                         MERGE (c)-[:SUPPORTS_EVENT]->(e)",
+                    )
+                    .param("event_id", event.event_id.clone())
+                    .param("text_chunk_id", text_chunk_id.clone()),
+                )
+                .await?;
+        }
+        for markdown_ast_node_id in &event.markdown_ast_node_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (e:TimelineEvent {event_id: $event_id})
+                         MATCH (n:MarkdownAstNode {markdown_ast_node_id: $markdown_ast_node_id})
+                         MERGE (n)-[:SUPPORTS_EVENT]->(e)",
+                    )
+                    .param("event_id", event.event_id.clone())
+                    .param("markdown_ast_node_id", markdown_ast_node_id.clone()),
                 )
                 .await?;
         }
@@ -1419,6 +1458,19 @@ impl CaseBuilderService {
                 ),
             )
             .await?;
+        for markdown_ast_node_id in &chunk.markdown_ast_node_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (c:TextChunk {text_chunk_id: $text_chunk_id})
+                         MATCH (n:MarkdownAstNode {markdown_ast_node_id: $markdown_ast_node_id})
+                         MERGE (n)-[:OVERLAPS_TEXT_CHUNK]->(c)",
+                    )
+                    .param("text_chunk_id", chunk.text_chunk_id.clone())
+                    .param("markdown_ast_node_id", markdown_ast_node_id.clone()),
+                )
+                .await?;
+        }
         Ok(chunk)
     }
 
@@ -1484,6 +1536,19 @@ impl CaseBuilderService {
                 .param("quote_hash", span.quote_hash.clone()),
             )
             .await?;
+        for markdown_ast_node_id in &span.markdown_ast_node_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (e:EvidenceSpan {evidence_span_id: $evidence_span_id})
+                         MATCH (n:MarkdownAstNode {markdown_ast_node_id: $markdown_ast_node_id})
+                         MERGE (n)-[:OVERLAPS_EVIDENCE_SPAN]->(e)",
+                    )
+                    .param("evidence_span_id", span.evidence_span_id.clone())
+                    .param("markdown_ast_node_id", markdown_ast_node_id.clone()),
+                )
+                .await?;
+        }
         Ok(span)
     }
 
@@ -1512,11 +1577,15 @@ impl CaseBuilderService {
                      WITH d, e
                      OPTIONAL MATCH (c:TextChunk {text_chunk_id: $text_chunk_id})
                      OPTIONAL MATCH (s:SourceSpan {source_span_id: $source_span_id})
+                     OPTIONAL MATCH (ce:CaseEntity {entity_id: $entity_id})
                      FOREACH (_ IN CASE WHEN c IS NULL THEN [] ELSE [1] END |
                        MERGE (c)-[:MENTIONS]->(e)
                      )
                      FOREACH (_ IN CASE WHEN s IS NULL THEN [] ELSE [1] END |
                        MERGE (e)-[:FROM_SOURCE_SPAN]->(s)
+                     )
+                     FOREACH (_ IN CASE WHEN ce IS NULL THEN [] ELSE [1] END |
+                       MERGE (e)-[:RESOLVES_TO]->(ce)
                      )",
                 )
                 .param("document_id", mention.document_id.clone())
@@ -1529,11 +1598,410 @@ impl CaseBuilderService {
                     "source_span_id",
                     mention.source_span_id.clone().unwrap_or_default(),
                 )
+                .param("entity_id", mention.entity_id.clone().unwrap_or_default())
                 .param("entity_type", mention.entity_type.clone())
                 .param("review_status", mention.review_status.clone()),
             )
             .await?;
+        for markdown_ast_node_id in &mention.markdown_ast_node_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (e:EntityMention {entity_mention_id: $entity_mention_id})
+                         MATCH (n:MarkdownAstNode {markdown_ast_node_id: $markdown_ast_node_id})
+                         MERGE (n)-[:HAS_ENTITY_MENTION]->(e)",
+                    )
+                    .param("entity_mention_id", mention.entity_mention_id.clone())
+                    .param("markdown_ast_node_id", markdown_ast_node_id.clone()),
+                )
+                .await?;
+        }
         Ok(mention)
+    }
+
+    pub(super) async fn merge_case_entity(
+        &self,
+        matter_id: &str,
+        entity: &CaseEntity,
+    ) -> ApiResult<CaseEntity> {
+        let entity = self
+            .merge_node(matter_id, case_entity_spec(), &entity.entity_id, entity)
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (e:CaseEntity {entity_id: $entity_id})
+                     SET e.matter_id = $matter_id,
+                         e.entity_type = $entity_type,
+                         e.normalized_key = $normalized_key,
+                         e.canonical_name = $canonical_name,
+                         e.review_status = $review_status",
+                )
+                .param("matter_id", matter_id)
+                .param("entity_id", entity.entity_id.clone())
+                .param("entity_type", entity.entity_type.clone())
+                .param("normalized_key", entity.normalized_key.clone())
+                .param("canonical_name", entity.canonical_name.clone())
+                .param("review_status", entity.review_status.clone()),
+            )
+            .await?;
+        for mention_id in &entity.mention_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (m:EntityMention {entity_mention_id: $entity_mention_id})
+                         MATCH (e:CaseEntity {entity_id: $entity_id})
+                         MERGE (m)-[:RESOLVES_TO]->(e)",
+                    )
+                    .param("entity_mention_id", mention_id.clone())
+                    .param("entity_id", entity.entity_id.clone()),
+                )
+                .await?;
+        }
+        for party_id in &entity.party_match_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (e:CaseEntity {entity_id: $entity_id})
+                         MATCH (p:Party {party_id: $party_id})
+                         MERGE (e)-[:MAY_MATCH_PARTY]->(p)",
+                    )
+                    .param("entity_id", entity.entity_id.clone())
+                    .param("party_id", party_id.clone()),
+                )
+                .await?;
+        }
+        Ok(entity)
+    }
+
+    pub(super) async fn merge_markdown_ast_document(
+        &self,
+        matter_id: &str,
+        document: &MarkdownAstDocument,
+    ) -> ApiResult<MarkdownAstDocument> {
+        let document = self
+            .merge_node(
+                matter_id,
+                markdown_ast_document_spec(),
+                &document.markdown_ast_document_id,
+                document,
+            )
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (d:CaseDocument {document_id: $document_id})
+                     MATCH (a:MarkdownAstDocument {markdown_ast_document_id: $markdown_ast_document_id})
+                     SET a.document_id = $document_id,
+                         a.status = $status,
+                         a.source_sha256 = $source_sha256,
+                         a.parser_id = $parser_id,
+                         a.parser_version = $parser_version,
+                         a.graph_schema_version = $graph_schema_version,
+                         a.node_count = $node_count,
+                         a.semantic_unit_count = $semantic_unit_count,
+                         a.heading_count = $heading_count,
+                         a.reference_count = $reference_count
+                     MERGE (d)-[:HAS_MARKDOWN_AST_DOCUMENT]->(a)
+                     WITH d, a
+                     OPTIONAL MATCH (v:DocumentVersion {document_version_id: $document_version_id})
+                     OPTIONAL MATCH (b:ObjectBlob {object_blob_id: $object_blob_id})
+                     OPTIONAL MATCH (i:IngestionRun {ingestion_run_id: $ingestion_run_id})
+                     OPTIONAL MATCH (r:IndexRun {index_run_id: $index_run_id})
+                     OPTIONAL MATCH (root:MarkdownAstNode {markdown_ast_node_id: $root_node_id})
+                     FOREACH (_ IN CASE WHEN v IS NULL THEN [] ELSE [1] END |
+                       MERGE (v)-[:HAS_MARKDOWN_AST_DOCUMENT]->(a)
+                     )
+                     FOREACH (_ IN CASE WHEN b IS NULL THEN [] ELSE [1] END |
+                       MERGE (a)-[:DERIVED_FROM]->(b)
+                     )
+                     FOREACH (_ IN CASE WHEN i IS NULL THEN [] ELSE [1] END |
+                       MERGE (i)-[:PRODUCED]->(a)
+                     )
+                     FOREACH (_ IN CASE WHEN r IS NULL THEN [] ELSE [1] END |
+                       MERGE (r)-[:PRODUCED]->(a)
+                     )
+                     FOREACH (_ IN CASE WHEN root IS NULL THEN [] ELSE [1] END |
+                       MERGE (a)-[:HAS_AST_ROOT]->(root)
+                     )",
+                )
+                .param("document_id", document.document_id.clone())
+                .param(
+                    "markdown_ast_document_id",
+                    document.markdown_ast_document_id.clone(),
+                )
+                .param(
+                    "document_version_id",
+                    document.document_version_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "object_blob_id",
+                    document.object_blob_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "ingestion_run_id",
+                    document.ingestion_run_id.clone().unwrap_or_default(),
+                )
+                .param("index_run_id", document.index_run_id.clone().unwrap_or_default())
+                .param("root_node_id", document.root_node_id.clone())
+                .param("status", document.status.clone())
+                .param("source_sha256", document.source_sha256.clone())
+                .param("parser_id", document.parser_id.clone())
+                .param("parser_version", document.parser_version.clone())
+                .param("graph_schema_version", document.graph_schema_version.clone())
+                .param("node_count", document.node_count as i64)
+                .param("semantic_unit_count", document.semantic_unit_count as i64)
+                .param("heading_count", document.heading_count as i64)
+                .param("reference_count", document.reference_count as i64),
+            )
+            .await?;
+        Ok(document)
+    }
+
+    pub(super) async fn merge_markdown_ast_node(
+        &self,
+        matter_id: &str,
+        node: &MarkdownAstNode,
+    ) -> ApiResult<MarkdownAstNode> {
+        let node = self
+            .merge_node(
+                matter_id,
+                markdown_ast_node_spec(),
+                &node.markdown_ast_node_id,
+                node,
+            )
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (d:CaseDocument {document_id: $document_id})
+                     MATCH (n:MarkdownAstNode {markdown_ast_node_id: $markdown_ast_node_id})
+                     MATCH (a:MarkdownAstDocument {markdown_ast_document_id: $markdown_ast_document_id})
+                     SET n.document_id = $document_id,
+                         n.node_kind = $node_kind,
+                         n.ordinal = $ordinal,
+                         n.depth = $depth,
+                         n.ast_path = $ast_path,
+                         n.sibling_index = $sibling_index,
+                         n.child_count = $child_count,
+                         n.structure_path = $structure_path,
+                         n.section_path = $section_path,
+                         n.semantic_role = $semantic_role,
+                         n.semantic_fingerprint = $semantic_fingerprint,
+                         n.semantic_unit_id = $semantic_unit_id,
+                         n.heading_level = $heading_level,
+                         n.heading_text = $heading_text,
+                         n.review_status = $review_status,
+                         n.text_excerpt = $text_excerpt,
+                         n.contains_entity_mention = $contains_entity_mention,
+                         n.contains_citation = $contains_citation,
+                         n.contains_date = $contains_date,
+                         n.contains_money = $contains_money
+                     MERGE (d)-[:CONTAINS_AST_NODE]->(n)
+                     MERGE (a)-[:CONTAINS_AST_NODE]->(n)
+                     WITH d, n, a
+                     OPTIONAL MATCH (v:DocumentVersion {document_version_id: $document_version_id})
+                     OPTIONAL MATCH (i:IngestionRun {ingestion_run_id: $ingestion_run_id})
+                     OPTIONAL MATCH (r:IndexRun {index_run_id: $index_run_id})
+                     OPTIONAL MATCH (u:MarkdownSemanticUnit {semantic_unit_id: $semantic_unit_id})
+                     OPTIONAL MATCH (parent:MarkdownAstNode {markdown_ast_node_id: $parent_ast_node_id})
+                     OPTIONAL MATCH (prev:MarkdownAstNode {markdown_ast_node_id: $previous_ast_node_id})
+                     FOREACH (_ IN CASE WHEN v IS NULL THEN [] ELSE [1] END |
+                       MERGE (v)-[:CONTAINS_AST_NODE]->(n)
+                     )
+                     FOREACH (_ IN CASE WHEN i IS NULL THEN [] ELSE [1] END |
+                       MERGE (i)-[:PRODUCED]->(n)
+                     )
+                     FOREACH (_ IN CASE WHEN r IS NULL THEN [] ELSE [1] END |
+                       MERGE (r)-[:PRODUCED]->(n)
+                     )
+                     FOREACH (_ IN CASE WHEN u IS NULL THEN [] ELSE [1] END |
+                       MERGE (n)-[:REALIZES_SEMANTIC_UNIT]->(u)
+                     )
+                     FOREACH (_ IN CASE WHEN parent IS NULL THEN [] ELSE [1] END |
+                       MERGE (parent)-[:PARENT_OF]->(n)
+                     )
+                     FOREACH (_ IN CASE WHEN prev IS NULL THEN [] ELSE [1] END |
+                       MERGE (prev)-[:NEXT_AST_NODE]->(n)
+                     )
+                     FOREACH (_ IN CASE WHEN $is_root THEN [1] ELSE [] END |
+                       MERGE (a)-[:HAS_AST_ROOT]->(n)
+                     )",
+                )
+                .param("document_id", node.document_id.clone())
+                .param("markdown_ast_node_id", node.markdown_ast_node_id.clone())
+                .param(
+                    "markdown_ast_document_id",
+                    node.markdown_ast_document_id.clone(),
+                )
+                .param(
+                    "document_version_id",
+                    node.document_version_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "ingestion_run_id",
+                    node.ingestion_run_id.clone().unwrap_or_default(),
+                )
+                .param("index_run_id", node.index_run_id.clone().unwrap_or_default())
+                .param(
+                    "parent_ast_node_id",
+                    node.parent_ast_node_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "previous_ast_node_id",
+                    node.previous_ast_node_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "semantic_unit_id",
+                    node.semantic_unit_id.clone().unwrap_or_default(),
+                )
+                .param("node_kind", node.node_kind.clone())
+                .param("is_root", node.parent_ast_node_id.is_none())
+                .param("ordinal", node.ordinal as i64)
+                .param("depth", node.depth as i64)
+                .param("ast_path", node.ast_path.clone())
+                .param("sibling_index", node.sibling_index as i64)
+                .param("child_count", node.child_count as i64)
+                .param("structure_path", node.structure_path.clone().unwrap_or_default())
+                .param("section_path", node.section_path.clone().unwrap_or_default())
+                .param(
+                    "semantic_role",
+                    node.semantic_role.clone().unwrap_or_default(),
+                )
+                .param(
+                    "semantic_fingerprint",
+                    node.semantic_fingerprint.clone().unwrap_or_default(),
+                )
+                .param("heading_level", node.heading_level.unwrap_or_default() as i64)
+                .param("heading_text", node.heading_text.clone().unwrap_or_default())
+                .param("review_status", node.review_status.clone())
+                .param("text_excerpt", node.text_excerpt.clone().unwrap_or_default())
+                .param("contains_entity_mention", node.contains_entity_mention)
+                .param("contains_citation", node.contains_citation)
+                .param("contains_date", node.contains_date)
+                .param("contains_money", node.contains_money),
+            )
+            .await?;
+        for source_span_id in &node.source_span_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (n:MarkdownAstNode {markdown_ast_node_id: $markdown_ast_node_id})
+                         MATCH (s:SourceSpan {source_span_id: $source_span_id})
+                         MERGE (n)-[:OVERLAPS_SOURCE_SPAN]->(s)",
+                    )
+                    .param("markdown_ast_node_id", node.markdown_ast_node_id.clone())
+                    .param("source_span_id", source_span_id.clone()),
+                )
+                .await?;
+        }
+        for text_chunk_id in &node.text_chunk_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (n:MarkdownAstNode {markdown_ast_node_id: $markdown_ast_node_id})
+                         MATCH (c:TextChunk {text_chunk_id: $text_chunk_id})
+                         MERGE (n)-[:OVERLAPS_TEXT_CHUNK]->(c)",
+                    )
+                    .param("markdown_ast_node_id", node.markdown_ast_node_id.clone())
+                    .param("text_chunk_id", text_chunk_id.clone()),
+                )
+                .await?;
+        }
+        for evidence_span_id in &node.evidence_span_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (n:MarkdownAstNode {markdown_ast_node_id: $markdown_ast_node_id})
+                         MATCH (e:EvidenceSpan {evidence_span_id: $evidence_span_id})
+                         MERGE (n)-[:OVERLAPS_EVIDENCE_SPAN]->(e)",
+                    )
+                    .param("markdown_ast_node_id", node.markdown_ast_node_id.clone())
+                    .param("evidence_span_id", evidence_span_id.clone()),
+                )
+                .await?;
+        }
+        for search_index_record_id in &node.search_index_record_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (n:MarkdownAstNode {markdown_ast_node_id: $markdown_ast_node_id})
+                         MATCH (r:SearchIndexRecord {search_index_record_id: $search_index_record_id})
+                         MERGE (n)-[:INDEXED_AS]->(r)",
+                    )
+                    .param("markdown_ast_node_id", node.markdown_ast_node_id.clone())
+                    .param("search_index_record_id", search_index_record_id.clone()),
+                )
+                .await?;
+        }
+        Ok(node)
+    }
+
+    pub(super) async fn merge_markdown_semantic_unit(
+        &self,
+        matter_id: &str,
+        unit: &MarkdownSemanticUnit,
+    ) -> ApiResult<MarkdownSemanticUnit> {
+        let unit = self
+            .merge_node(
+                matter_id,
+                markdown_semantic_unit_spec(),
+                &unit.semantic_unit_id,
+                unit,
+            )
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (d:CaseDocument {document_id: $document_id})
+                     MATCH (u:MarkdownSemanticUnit {semantic_unit_id: $semantic_unit_id})
+                     SET u.document_id = $document_id,
+                         u.unit_kind = $unit_kind,
+                         u.semantic_role = $semantic_role,
+                         u.canonical_label = $canonical_label,
+                         u.normalized_key = $normalized_key,
+                         u.semantic_fingerprint = $semantic_fingerprint,
+                         u.review_status = $review_status,
+                         u.occurrence_count = $occurrence_count
+                     MERGE (d)-[:HAS_MARKDOWN_SEMANTIC_UNIT]->(u)
+                     WITH d, u
+                     OPTIONAL MATCH (v:DocumentVersion {document_version_id: $document_version_id})
+                     OPTIONAL MATCH (a:MarkdownAstDocument {markdown_ast_document_id: $markdown_ast_document_id})
+                     OPTIONAL MATCH (section:MarkdownAstNode {markdown_ast_node_id: $section_ast_node_id})
+                     FOREACH (_ IN CASE WHEN v IS NULL THEN [] ELSE [1] END |
+                       MERGE (v)-[:HAS_MARKDOWN_SEMANTIC_UNIT]->(u)
+                     )
+                     FOREACH (_ IN CASE WHEN a IS NULL THEN [] ELSE [1] END |
+                       MERGE (a)-[:HAS_SEMANTIC_UNIT]->(u)
+                     )
+                     FOREACH (_ IN CASE WHEN section IS NULL THEN [] ELSE [1] END |
+                       MERGE (section)-[:CONTAINS_SEMANTIC_UNIT]->(u)
+                     )",
+                )
+                .param("document_id", unit.document_id.clone())
+                .param("semantic_unit_id", unit.semantic_unit_id.clone())
+                .param(
+                    "document_version_id",
+                    unit.document_version_id.clone().unwrap_or_default(),
+                )
+                .param(
+                    "markdown_ast_document_id",
+                    unit.markdown_ast_document_id.clone(),
+                )
+                .param(
+                    "section_ast_node_id",
+                    unit.section_ast_node_id.clone().unwrap_or_default(),
+                )
+                .param("unit_kind", unit.unit_kind.clone())
+                .param("semantic_role", unit.semantic_role.clone())
+                .param("canonical_label", unit.canonical_label.clone())
+                .param("normalized_key", unit.normalized_key.clone())
+                .param("semantic_fingerprint", unit.semantic_fingerprint.clone())
+                .param("review_status", unit.review_status.clone())
+                .param("occurrence_count", unit.occurrence_count as i64),
+            )
+            .await?;
+        Ok(unit)
     }
 
     pub(super) async fn merge_search_index_record(
@@ -1600,6 +2068,383 @@ impl CaseBuilderService {
             )
             .await?;
         Ok(record)
+    }
+
+    pub(super) async fn merge_casebuilder_embedding_run(
+        &self,
+        matter_id: &str,
+        run: &CaseBuilderEmbeddingRun,
+    ) -> ApiResult<CaseBuilderEmbeddingRun> {
+        let run = self
+            .merge_node(
+                matter_id,
+                casebuilder_embedding_run_spec(),
+                &run.embedding_run_id,
+                run,
+            )
+            .await?;
+        self.neo4j
+            .run_rows(
+                query(
+                    "MATCH (r:CaseBuilderEmbeddingRun {embedding_run_id: $embedding_run_id})
+                     SET r.matter_id = $matter_id,
+                         r.document_id = $document_id,
+                         r.document_version_id = $document_version_id,
+                         r.index_run_id = $index_run_id,
+                         r.model = $model,
+                         r.profile = $profile,
+                         r.dimension = $dimension,
+                         r.vector_index_name = $vector_index_name,
+                         r.status = $status,
+                         r.stage = $stage,
+                         r.target_count = $target_count,
+                         r.embedded_count = $embedded_count,
+                         r.skipped_count = $skipped_count,
+                         r.stale_count = $stale_count,
+                         r.retryable = $retryable,
+                         r.started_at = $started_at,
+                         r.completed_at = $completed_at
+                     WITH r
+                     OPTIONAL MATCH (d:CaseDocument {document_id: $document_id})
+                     OPTIONAL MATCH (v:DocumentVersion {document_version_id: $document_version_id})
+                     OPTIONAL MATCH (i:IndexRun {index_run_id: $index_run_id})
+                     FOREACH (_ IN CASE WHEN d IS NULL THEN [] ELSE [1] END |
+                       MERGE (d)-[:HAS_EMBEDDING_RUN]->(r)
+                     )
+                     FOREACH (_ IN CASE WHEN v IS NULL THEN [] ELSE [1] END |
+                       MERGE (v)-[:HAS_EMBEDDING_RUN]->(r)
+                     )
+                     FOREACH (_ IN CASE WHEN i IS NULL THEN [] ELSE [1] END |
+                       MERGE (i)-[:PRODUCED]->(r)
+                     )",
+                )
+                .param("matter_id", matter_id.to_string())
+                .param("embedding_run_id", run.embedding_run_id.clone())
+                .param("document_id", run.document_id.clone().unwrap_or_default())
+                .param(
+                    "document_version_id",
+                    run.document_version_id.clone().unwrap_or_default(),
+                )
+                .param("index_run_id", run.index_run_id.clone().unwrap_or_default())
+                .param("model", run.model.clone())
+                .param("profile", run.profile.clone())
+                .param("dimension", run.dimension as i64)
+                .param("vector_index_name", run.vector_index_name.clone())
+                .param("status", run.status.clone())
+                .param("stage", run.stage.clone())
+                .param("target_count", run.target_count as i64)
+                .param("embedded_count", run.embedded_count as i64)
+                .param("skipped_count", run.skipped_count as i64)
+                .param("stale_count", run.stale_count as i64)
+                .param("retryable", run.retryable)
+                .param("started_at", run.started_at.clone())
+                .param("completed_at", run.completed_at.clone().unwrap_or_default()),
+            )
+            .await?;
+        Ok(run)
+    }
+
+    pub(super) async fn merge_casebuilder_embedding_record(
+        &self,
+        matter_id: &str,
+        record: &CaseBuilderEmbeddingRecord,
+        embedding: Option<Vec<f32>>,
+    ) -> ApiResult<CaseBuilderEmbeddingRecord> {
+        let record = self
+            .merge_node(
+                matter_id,
+                casebuilder_embedding_record_spec(),
+                &record.embedding_record_id,
+                record,
+            )
+            .await?;
+        let statement = query(
+            "MATCH (r:CaseBuilderEmbeddingRecord {embedding_record_id: $embedding_record_id})
+             SET r.matter_id = $matter_id,
+                 r.document_id = $document_id,
+                 r.document_version_id = $document_version_id,
+                 r.index_run_id = $index_run_id,
+                 r.embedding_run_id = $embedding_run_id,
+                 r.target_kind = $target_kind,
+                 r.target_id = $target_id,
+                 r.target_label = $target_label,
+                 r.model = $model,
+                 r.profile = $profile,
+                 r.dimension = $dimension,
+                 r.vector_index_name = $vector_index_name,
+                 r.input_hash = $input_hash,
+                 r.source_text_hash = $source_text_hash,
+                 r.chunker_version = $chunker_version,
+                 r.graph_schema_version = $graph_schema_version,
+                 r.embedding_strategy = $embedding_strategy,
+                 r.status = $status,
+                 r.stale = $stale,
+                 r.review_status = $review_status,
+                 r.text_excerpt = $text_excerpt,
+                 r.embedded_at = $embedded_at
+             WITH r
+             OPTIONAL MATCH (d:CaseDocument {document_id: $document_id})
+             OPTIONAL MATCH (v:DocumentVersion {document_version_id: $document_version_id})
+             OPTIONAL MATCH (i:IndexRun {index_run_id: $index_run_id})
+             OPTIONAL MATCH (run:CaseBuilderEmbeddingRun {embedding_run_id: $embedding_run_id})
+             FOREACH (_ IN CASE WHEN d IS NULL THEN [] ELSE [1] END |
+               MERGE (d)-[:HAS_EMBEDDING_RECORD]->(r)
+             )
+             FOREACH (_ IN CASE WHEN v IS NULL THEN [] ELSE [1] END |
+               MERGE (v)-[:HAS_EMBEDDING_RECORD]->(r)
+             )
+             FOREACH (_ IN CASE WHEN i IS NULL THEN [] ELSE [1] END |
+               MERGE (i)-[:PRODUCED]->(r)
+             )
+             FOREACH (_ IN CASE WHEN run IS NULL THEN [] ELSE [1] END |
+               MERGE (run)-[:PRODUCED]->(r)
+             )",
+        )
+        .param("matter_id", matter_id.to_string())
+        .param("embedding_record_id", record.embedding_record_id.clone())
+        .param("document_id", record.document_id.clone())
+        .param(
+            "document_version_id",
+            record.document_version_id.clone().unwrap_or_default(),
+        )
+        .param(
+            "index_run_id",
+            record.index_run_id.clone().unwrap_or_default(),
+        )
+        .param(
+            "embedding_run_id",
+            record.embedding_run_id.clone().unwrap_or_default(),
+        )
+        .param("target_kind", record.target_kind.clone())
+        .param("target_id", record.target_id.clone())
+        .param("target_label", record.target_label.clone())
+        .param("model", record.model.clone())
+        .param("profile", record.profile.clone())
+        .param("dimension", record.dimension as i64)
+        .param("vector_index_name", record.vector_index_name.clone())
+        .param("input_hash", record.input_hash.clone())
+        .param("source_text_hash", record.source_text_hash.clone())
+        .param(
+            "chunker_version",
+            record.chunker_version.clone().unwrap_or_default(),
+        )
+        .param(
+            "graph_schema_version",
+            record.graph_schema_version.clone().unwrap_or_default(),
+        )
+        .param("embedding_strategy", record.embedding_strategy.clone())
+        .param("status", record.status.clone())
+        .param("stale", record.stale)
+        .param("review_status", record.review_status.clone())
+        .param(
+            "text_excerpt",
+            record.text_excerpt.clone().unwrap_or_default(),
+        )
+        .param(
+            "embedded_at",
+            record.embedded_at.clone().unwrap_or_default(),
+        );
+        self.neo4j.run_rows(statement).await?;
+        if let Some(embedding) = embedding {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (r:CaseBuilderEmbeddingRecord {embedding_record_id: $embedding_record_id})
+                         SET r.embedding = $embedding",
+                    )
+                    .param("embedding_record_id", record.embedding_record_id.clone())
+                    .param("embedding", embedding),
+                )
+                .await?;
+        }
+        self.link_embedding_record_targets(&record).await?;
+        Ok(record)
+    }
+
+    async fn link_embedding_record_targets(
+        &self,
+        record: &CaseBuilderEmbeddingRecord,
+    ) -> ApiResult<()> {
+        match record.target_kind.as_str() {
+            "markdown_file" => {
+                if let Some(version_id) = record.document_version_id.as_deref() {
+                    self.neo4j
+                        .run_rows(
+                            query(
+                                "MATCH (v:DocumentVersion {document_version_id: $document_version_id})
+                                 MATCH (r:CaseBuilderEmbeddingRecord {embedding_record_id: $embedding_record_id})
+                                 MERGE (v)-[:HAS_EMBEDDING_RECORD]->(r)",
+                            )
+                            .param("document_version_id", version_id.to_string())
+                            .param("embedding_record_id", record.embedding_record_id.clone()),
+                        )
+                        .await?;
+                }
+            }
+            "markdown_ast_document" => {
+                self.neo4j
+                    .run_rows(
+                        query(
+                            "MATCH (a:MarkdownAstDocument {markdown_ast_document_id: $target_id})
+                             MATCH (r:CaseBuilderEmbeddingRecord {embedding_record_id: $embedding_record_id})
+                             MERGE (a)-[:HAS_EMBEDDING_RECORD]->(r)",
+                        )
+                        .param("target_id", record.target_id.clone())
+                        .param("embedding_record_id", record.embedding_record_id.clone()),
+                    )
+                    .await?;
+            }
+            "text_chunk" => {
+                self.neo4j
+                    .run_rows(
+                        query(
+                            "MATCH (c:TextChunk {text_chunk_id: $target_id})
+                             MATCH (r:CaseBuilderEmbeddingRecord {embedding_record_id: $embedding_record_id})
+                             MERGE (c)-[:HAS_EMBEDDING_RECORD]->(r)",
+                        )
+                        .param("target_id", record.target_id.clone())
+                        .param("embedding_record_id", record.embedding_record_id.clone()),
+                    )
+                    .await?;
+            }
+            "markdown_semantic_unit" => {
+                self.neo4j
+                    .run_rows(
+                        query(
+                            "MATCH (u:MarkdownSemanticUnit {semantic_unit_id: $target_id})
+                             MATCH (r:CaseBuilderEmbeddingRecord {embedding_record_id: $embedding_record_id})
+                             MERGE (u)-[:HAS_EMBEDDING_RECORD]->(r)",
+                        )
+                        .param("target_id", record.target_id.clone())
+                        .param("embedding_record_id", record.embedding_record_id.clone()),
+                    )
+                    .await?;
+            }
+            _ => {}
+        }
+        for source_span_id in &record.source_span_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (r:CaseBuilderEmbeddingRecord {embedding_record_id: $embedding_record_id})
+                         MATCH (s:SourceSpan {source_span_id: $source_span_id})
+                         MERGE (r)-[:EMBEDS_SOURCE_SPAN]->(s)",
+                    )
+                    .param("embedding_record_id", record.embedding_record_id.clone())
+                    .param("source_span_id", source_span_id.clone()),
+                )
+                .await?;
+        }
+        for text_chunk_id in &record.text_chunk_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (r:CaseBuilderEmbeddingRecord {embedding_record_id: $embedding_record_id})
+                         MATCH (c:TextChunk {text_chunk_id: $text_chunk_id})
+                         MERGE (r)-[:EMBEDS_TEXT_CHUNK]->(c)",
+                    )
+                    .param("embedding_record_id", record.embedding_record_id.clone())
+                    .param("text_chunk_id", text_chunk_id.clone()),
+                )
+                .await?;
+        }
+        for ast_node_id in &record.markdown_ast_node_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (r:CaseBuilderEmbeddingRecord {embedding_record_id: $embedding_record_id})
+                         MATCH (a:MarkdownAstNode {markdown_ast_node_id: $markdown_ast_node_id})
+                         MERGE (r)-[:EMBEDS_AST_NODE]->(a)",
+                    )
+                    .param("embedding_record_id", record.embedding_record_id.clone())
+                    .param("markdown_ast_node_id", ast_node_id.clone()),
+                )
+                .await?;
+        }
+        for unit_id in &record.markdown_semantic_unit_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (r:CaseBuilderEmbeddingRecord {embedding_record_id: $embedding_record_id})
+                         MATCH (u:MarkdownSemanticUnit {semantic_unit_id: $semantic_unit_id})
+                         MERGE (r)-[:EMBEDS_SEMANTIC_UNIT]->(u)",
+                    )
+                    .param("embedding_record_id", record.embedding_record_id.clone())
+                    .param("semantic_unit_id", unit_id.clone()),
+                )
+                .await?;
+        }
+        for source_record_id in &record.centroid_source_record_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (r:CaseBuilderEmbeddingRecord {embedding_record_id: $embedding_record_id})
+                         MATCH (source:CaseBuilderEmbeddingRecord {embedding_record_id: $source_record_id})
+                         MERGE (r)-[:CENTROID_OF]->(source)",
+                    )
+                    .param("embedding_record_id", record.embedding_record_id.clone())
+                    .param("source_record_id", source_record_id.clone()),
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub(super) async fn search_casebuilder_embedding_records(
+        &self,
+        matter_id: &str,
+        embedding: Vec<f32>,
+        limit: u64,
+        document_ids: &[String],
+        target_kinds: &[String],
+        include_stale: bool,
+    ) -> ApiResult<Vec<(CaseBuilderEmbeddingRecord, f32)>> {
+        let limit = limit.max(1).min(50);
+        let top_k = limit.max(10).min(100);
+        let cypher = format!(
+            "MATCH (record:CaseBuilderEmbeddingRecord)
+               SEARCH record IN (
+                 VECTOR INDEX casebuilder_markdown_embedding_1024
+                 FOR $embedding
+                 WHERE record.matter_id = $matter_id
+                   AND record.status = 'embedded'
+                   AND ($include_stale = true OR record.stale = false)
+                 LIMIT {top_k}
+               ) SCORE AS score
+             WHERE ($document_ids_empty = true OR record.document_id IN $document_ids)
+               AND ($target_kinds_empty = true OR record.target_kind IN $target_kinds)
+             RETURN record.payload AS payload, score
+             ORDER BY score DESC
+             LIMIT {limit}",
+            top_k = top_k,
+            limit = limit,
+        );
+        let rows = self
+            .neo4j
+            .run_rows(
+                query(&cypher)
+                    .param("embedding", embedding)
+                    .param("matter_id", matter_id.to_string())
+                    .param("include_stale", include_stale)
+                    .param("document_ids_empty", document_ids.is_empty())
+                    .param("document_ids", document_ids.to_vec())
+                    .param("target_kinds_empty", target_kinds.is_empty())
+                    .param("target_kinds", target_kinds.to_vec()),
+            )
+            .await?;
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            let payload = row
+                .get::<String>("payload")
+                .map_err(|error| ApiError::Internal(error.to_string()))?;
+            let score = row
+                .get::<f64>("score")
+                .map(|value| value as f32)
+                .or_else(|_| row.get::<f32>("score"))
+                .unwrap_or(0.0);
+            results.push((from_payload(&payload)?, score));
+        }
+        Ok(results)
     }
 
     pub(super) async fn merge_extraction_artifact_manifest(

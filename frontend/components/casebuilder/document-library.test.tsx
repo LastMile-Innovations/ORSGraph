@@ -13,21 +13,35 @@ vi.mock("next/navigation", () => ({
 }))
 
 const createTranscription = vi.fn()
+const createMatterIndexJob = vi.fn()
+const enqueueMatterUploads = vi.fn()
+const getMatterSettingsState = vi.fn()
 const getMatterIndexSummary = vi.fn()
-const importDocumentComplaint = vi.fn()
 const listTranscriptions = vi.fn()
-const runMatterIndex = vi.fn()
 const syncTranscription = vi.fn()
-const uploadBinaryFile = vi.fn()
+const uploadOptionsFromEffectiveSettings = vi.fn()
 
 vi.mock("@/lib/casebuilder/api", () => ({
+  createMatterIndexJob: (...args: unknown[]) => createMatterIndexJob(...args),
   createTranscription: (...args: unknown[]) => createTranscription(...args),
+  getMatterSettingsState: (...args: unknown[]) => getMatterSettingsState(...args),
   getMatterIndexSummary: (...args: unknown[]) => getMatterIndexSummary(...args),
-  importDocumentComplaint: (...args: unknown[]) => importDocumentComplaint(...args),
   listTranscriptions: (...args: unknown[]) => listTranscriptions(...args),
-  runMatterIndex: (...args: unknown[]) => runMatterIndex(...args),
   syncTranscription: (...args: unknown[]) => syncTranscription(...args),
-  uploadBinaryFile: (...args: unknown[]) => uploadBinaryFile(...args),
+}))
+
+vi.mock("./upload-provider", () => ({
+  uploadOptionsFromEffectiveSettings: (...args: unknown[]) => uploadOptionsFromEffectiveSettings(...args),
+  useCaseBuilderUploads: () => ({
+    activeCount: 0,
+    batches: [],
+    cancelRow: vi.fn(),
+    dismissBatch: vi.fn(),
+    enqueueMatterIntake: vi.fn(),
+    enqueueMatterUploads,
+    retryRow: vi.fn(),
+    rows: [],
+  }),
 }))
 
 const matter = {
@@ -39,15 +53,19 @@ describe("DocumentLibrary media queue", () => {
   beforeEach(() => {
     router.refresh.mockReset()
     createTranscription.mockReset()
+    createMatterIndexJob.mockReset()
+    enqueueMatterUploads.mockReset()
+    getMatterSettingsState.mockReset()
     getMatterIndexSummary.mockReset()
-    importDocumentComplaint.mockReset()
     listTranscriptions.mockReset()
-    runMatterIndex.mockReset()
     syncTranscription.mockReset()
-    uploadBinaryFile.mockReset()
+    uploadOptionsFromEffectiveSettings.mockReset()
 
+    enqueueMatterUploads.mockReturnValue("folder:test")
+    getMatterSettingsState.mockResolvedValue({ data: { effective: null } })
     getMatterIndexSummary.mockResolvedValue({ data: indexSummary() })
     listTranscriptions.mockResolvedValue({ data: [transcription()] })
+    uploadOptionsFromEffectiveSettings.mockReturnValue({})
   })
 
   it("turns the media queue into an operations table with transcript status and actions", async () => {
@@ -97,35 +115,17 @@ describe("DocumentLibrary media queue", () => {
     expect(createTranscription).not.toHaveBeenCalled()
   })
 
-  it("uploads mixed folders but indexes only Markdown files", async () => {
+  it("queues mixed folder uploads through the shared provider and preserves relative paths", async () => {
     const user = userEvent.setup()
-    uploadBinaryFile.mockImplementation((_matterId: string, file: File) => ({
-      data: {
-        document_id: `doc:${file.name}`,
-        storage_status: "stored",
-        mime_type: file.type,
-      },
-    }))
-    runMatterIndex.mockResolvedValue({
-      data: {
-        processed: 1,
-        skipped: 0,
-        failed: 0,
-        results: [
-          {
-            document_id: "doc:facts.md",
-            status: "indexed",
-            message: "Indexed Markdown",
-          },
-        ],
-        summary: indexSummary(),
-      },
-    })
     const { container } = render(<DocumentLibrary matter={matter} documents={[]} />)
     const markdown = new File(["# Facts"], "facts.md", { type: "text/markdown" })
     const pdf = new File(["pdf"], "lease.pdf", { type: "application/pdf" })
     const image = new File(["img"], "photo.png", { type: "image/png" })
     const text = new File(["plain"], "notes.txt", { type: "text/plain" })
+    defineRelativePath(markdown, "Case File/Facts/facts.md")
+    defineRelativePath(pdf, "Case File/Contracts/lease.pdf")
+    defineRelativePath(image, "Case File/Photos/photo.png")
+    defineRelativePath(text, "Case File/Notes/notes.txt")
 
     fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]') as HTMLInputElement, {
       target: { files: [markdown, pdf, image, text] },
@@ -133,12 +133,32 @@ describe("DocumentLibrary media queue", () => {
     await user.click(await screen.findByRole("button", { name: /upload batch/i }))
 
     await waitFor(() => {
-      expect(uploadBinaryFile).toHaveBeenCalledTimes(4)
-      expect(runMatterIndex).toHaveBeenCalledWith("matter:smith-abc", { document_ids: ["doc:facts.md"] })
-      expect(screen.getByText(/4 uploaded, 1 indexed/i)).toBeInTheDocument()
+      expect(enqueueMatterUploads).toHaveBeenCalledTimes(1)
+      expect(screen.getByText(/upload started/i)).toBeInTheDocument()
     })
+    const [matterId, candidates, options] = enqueueMatterUploads.mock.calls[0] as [
+      string,
+      { file: File; relativePath: string; folder: string }[],
+      { label: string },
+    ]
+    expect(matterId).toBe("matter:smith-abc")
+    expect(candidates.map((candidate) => candidate.relativePath)).toEqual([
+      "Case File/Facts/facts.md",
+      "Case File/Contracts/lease.pdf",
+      "Case File/Photos/photo.png",
+      "Case File/Notes/notes.txt",
+    ])
+    expect(candidates.map((candidate) => candidate.file)).toEqual([markdown, pdf, image, text])
+    expect(options).toEqual({ label: "Folder upload" })
   })
 })
+
+function defineRelativePath(file: File, relativePath: string) {
+  Object.defineProperty(file, "webkitRelativePath", {
+    configurable: true,
+    value: relativePath,
+  })
+}
 
 function mediaDocument(): CaseDocument {
   return {

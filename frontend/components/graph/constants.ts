@@ -54,34 +54,62 @@ export const NODE_FAMILIES = {
   diagnostics: ["ParserDiagnostic"],
 } as const
 
-export const NODE_COLORS: Record<string, string> = {
-  LegalTextIdentity: "#60a5fa",
-  LegalTextVersion: "#2563eb",
-  ChapterVersion: "#38bdf8",
-  Provision: "#34d399",
-  RetrievalChunk: "#94a3b8",
-  CitationMention: "#64748b",
-  ExternalLegalCitation: "#475569",
-  Definition: "#a78bfa",
-  DefinedTerm: "#c084fc",
-  DefinitionScope: "#d8b4fe",
-  Obligation: "#10b981",
-  Power: "#14b8a6",
-  Permission: "#22d3ee",
-  Prohibition: "#ef4444",
-  Deadline: "#f59e0b",
-  Penalty: "#f97316",
-  Exception: "#eab308",
-  Remedy: "#f472b6",
-  RequiredNotice: "#facc15",
-  FormText: "#a16207",
-  LegalActor: "#f8fafc",
-  LegalAction: "#86efac",
-  SourceNote: "#d6d3d1",
-  StatusEvent: "#fb923c",
-  TemporalEffect: "#fbbf24",
-  LineageEvent: "#fb7185",
-  SessionLaw: "#818cf8",
-  Amendment: "#c084fc",
-  ParserDiagnostic: "#ef4444",
+export const GRAPH_COLOR_TOKENS = {
+  authority: "--primary",
+  authorityStrong: "--primary",
+  accent: "--accent",
+  info: "--info",
+  success: "--success",
+  warning: "--warning",
+  destructive: "--destructive",
+  foreground: "--foreground",
+  background: "--background",
+  neutral: "--muted-foreground",
+  document: "--muted-foreground",
+  evidence: "--success",
+  deadline: "--warning",
+  draftInsert: "--success",
+  draftDelete: "--destructive",
+} as const
+
+export type GraphColorRole = keyof typeof GRAPH_COLOR_TOKENS
+
+export const NODE_COLOR_ROLES: Record<string, GraphColorRole> = {
+  LegalTextIdentity: "authority",
+  LegalTextVersion: "authorityStrong",
+  ChapterVersion: "info",
+  Provision: "evidence",
+  RetrievalChunk: "document",
+  CitationMention: "neutral",
+  ExternalLegalCitation: "neutral",
+  Definition: "authority",
+  DefinedTerm: "info",
+  DefinitionScope: "document",
+  Obligation: "success",
+  Power: "accent",
+  Permission: "info",
+  Prohibition: "destructive",
+  Deadline: "deadline",
+  Penalty: "destructive",
+  Exception: "warning",
+  Remedy: "draftDelete",
+  RequiredNotice: "warning",
+  FormText: "deadline",
+  LegalActor: "foreground",
+  LegalAction: "draftInsert",
+  SourceNote: "document",
+  StatusEvent: "warning",
+  TemporalEffect: "warning",
+  LineageEvent: "draftDelete",
+  SessionLaw: "authority",
+  Amendment: "info",
+  ParserDiagnostic: "destructive",
+}
+
+export function graphColorVar(role: GraphColorRole) {
+  return `var(${GRAPH_COLOR_TOKENS[role]})`
+}
+
+export function graphNodeColorRole(type: string): GraphColorRole {
+  return NODE_COLOR_ROLES[type] ?? "neutral"
 }

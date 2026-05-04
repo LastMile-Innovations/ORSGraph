@@ -8,6 +8,7 @@ impl CaseBuilderService {
         request: UploadFileRequest,
     ) -> ApiResult<CaseDocument> {
         self.require_matter(matter_id).await?;
+        let defaults = self.effective_settings_for_matter_id(matter_id).await?;
         let now = now_string();
         let document_id = generate_opaque_id("doc");
         let title = title_from_filename(&request.filename);
@@ -55,7 +56,9 @@ impl CaseBuilderService {
             matter_id: matter_id.to_string(),
             filename: request.filename,
             title,
-            document_type: request.document_type.unwrap_or_else(|| "other".to_string()),
+            document_type: request
+                .document_type
+                .unwrap_or_else(|| defaults.default_document_type.clone()),
             mime_type: request.mime_type,
             pages: 1,
             bytes,
@@ -64,7 +67,7 @@ impl CaseBuilderService {
             source: "user_upload".to_string(),
             confidentiality: request
                 .confidentiality
-                .unwrap_or_else(|| "private".to_string()),
+                .unwrap_or_else(|| defaults.default_confidentiality.clone()),
             processing_status: if request.text.is_some() && markdown_indexable {
                 "processed".to_string()
             } else if markdown_indexable {
@@ -138,6 +141,7 @@ impl CaseBuilderService {
         request: BinaryUploadRequest,
     ) -> ApiResult<CaseDocument> {
         self.require_matter(matter_id).await?;
+        let defaults = self.effective_settings_for_matter_id(matter_id).await?;
         self.ensure_upload_size(request.bytes.len() as u64)?;
         validate_mime_type(request.mime_type.as_deref())?;
 
@@ -181,7 +185,9 @@ impl CaseBuilderService {
             matter_id: matter_id.to_string(),
             filename: request.filename.clone(),
             title: title_from_filename(&request.filename),
-            document_type: request.document_type.unwrap_or_else(|| "other".to_string()),
+            document_type: request
+                .document_type
+                .unwrap_or_else(|| defaults.default_document_type.clone()),
             mime_type: request.mime_type,
             pages: 1,
             bytes: stored_object.content_length,
@@ -190,7 +196,7 @@ impl CaseBuilderService {
             source: "user_upload".to_string(),
             confidentiality: request
                 .confidentiality
-                .unwrap_or_else(|| "private".to_string()),
+                .unwrap_or_else(|| defaults.default_confidentiality.clone()),
             processing_status,
             is_exhibit: false,
             exhibit_label: None,
@@ -244,6 +250,7 @@ impl CaseBuilderService {
         request: CreateFileUploadRequest,
     ) -> ApiResult<FileUploadResponse> {
         self.require_matter(matter_id).await?;
+        let defaults = self.effective_settings_for_matter_id(matter_id).await?;
         if request.bytes == 0 {
             return Err(ApiError::BadRequest(
                 "Upload intent bytes must be greater than 0".to_string(),
@@ -288,7 +295,9 @@ impl CaseBuilderService {
             matter_id: matter_id.to_string(),
             filename: request.filename.clone(),
             title: title_from_filename(&request.filename),
-            document_type: request.document_type.unwrap_or_else(|| "other".to_string()),
+            document_type: request
+                .document_type
+                .unwrap_or_else(|| defaults.default_document_type.clone()),
             mime_type: request.mime_type,
             pages: 1,
             bytes: request.bytes,
@@ -297,7 +306,7 @@ impl CaseBuilderService {
             source: "user_upload".to_string(),
             confidentiality: request
                 .confidentiality
-                .unwrap_or_else(|| "private".to_string()),
+                .unwrap_or_else(|| defaults.default_confidentiality.clone()),
             processing_status: if markdown_indexable {
                 "queued".to_string()
             } else {
@@ -479,6 +488,152 @@ impl CaseBuilderService {
         Ok(build_matter_index_summary(matter_id, &documents, &runs))
     }
 
+    pub async fn create_matter_index_job(
+        &self,
+        matter_id: &str,
+        request: CreateMatterIndexJobRequest,
+    ) -> ApiResult<MatterIndexJob> {
+        self.require_matter(matter_id).await?;
+        let documents = self.list_documents(matter_id).await?;
+        let limit = request.limit.unwrap_or(250).clamp(1, 1_000);
+        let upload_batch_id = normalize_upload_batch_id(request.upload_batch_id)?;
+        let document_ids = resolve_index_job_document_ids(
+            &documents,
+            request.document_ids.unwrap_or_default(),
+            upload_batch_id.as_deref(),
+            limit,
+        )?;
+        let now = now_string();
+        let index_job_id = generate_opaque_id("index-job");
+        let job = MatterIndexJob {
+            index_job_id: index_job_id.clone(),
+            id: index_job_id,
+            matter_id: matter_id.to_string(),
+            upload_batch_id,
+            document_ids,
+            limit,
+            status: "queued".to_string(),
+            stage: "queued".to_string(),
+            requested: 0,
+            processed: 0,
+            skipped: 0,
+            failed: 0,
+            produced_timeline_suggestions: 0,
+            results: Vec::new(),
+            summary: None,
+            warnings: Vec::new(),
+            error_code: None,
+            error_message: None,
+            retryable: true,
+            created_at: now,
+            started_at: None,
+            completed_at: None,
+        };
+        let mut job = self
+            .merge_node(matter_id, matter_index_job_spec(), &job.index_job_id, &job)
+            .await?;
+        job.requested = job.document_ids.len() as u64;
+        self.merge_node(matter_id, matter_index_job_spec(), &job.index_job_id, &job)
+            .await
+    }
+
+    pub async fn list_matter_index_jobs(
+        &self,
+        matter_id: &str,
+        active: bool,
+    ) -> ApiResult<Vec<MatterIndexJob>> {
+        self.require_matter(matter_id).await?;
+        let mut jobs = self
+            .list_nodes::<MatterIndexJob>(matter_id, matter_index_job_spec())
+            .await?;
+        if active {
+            jobs.retain(|job| matter_index_job_is_active(job));
+        }
+        jobs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        Ok(jobs)
+    }
+
+    pub async fn get_matter_index_job(
+        &self,
+        matter_id: &str,
+        job_id: &str,
+    ) -> ApiResult<MatterIndexJob> {
+        self.get_node(matter_id, matter_index_job_spec(), job_id)
+            .await
+    }
+
+    pub async fn run_matter_index_job(
+        &self,
+        matter_id: &str,
+        job_id: &str,
+    ) -> ApiResult<MatterIndexJob> {
+        let mut job = self.get_matter_index_job(matter_id, job_id).await?;
+        if !matter_index_job_is_active(&job) {
+            return Ok(job);
+        }
+
+        job.status = "running".to_string();
+        job.stage = "indexing".to_string();
+        job.started_at = Some(now_string());
+        job.retryable = false;
+        job.error_code = None;
+        job.error_message = None;
+        self.merge_node(matter_id, matter_index_job_spec(), &job.index_job_id, &job)
+            .await?;
+
+        if job.document_ids.is_empty() {
+            job.status = "succeeded".to_string();
+            job.stage = "completed".to_string();
+            job.completed_at = Some(now_string());
+            job.retryable = false;
+            job.summary = Some(self.get_matter_index_summary(matter_id).await?);
+            return self
+                .merge_node(matter_id, matter_index_job_spec(), &job.index_job_id, &job)
+                .await;
+        }
+
+        match self
+            .run_matter_index(
+                matter_id,
+                RunMatterIndexRequest {
+                    document_ids: Some(job.document_ids.clone()),
+                    limit: Some(job.limit),
+                },
+            )
+            .await
+        {
+            Ok(response) => {
+                job.status = if response.failed > 0 {
+                    "partial_success".to_string()
+                } else {
+                    "succeeded".to_string()
+                };
+                job.stage = "completed".to_string();
+                job.requested = response.requested;
+                job.processed = response.processed;
+                job.skipped = response.skipped;
+                job.failed = response.failed;
+                job.produced_timeline_suggestions = response.produced_timeline_suggestions;
+                job.results = response.results;
+                job.summary = Some(response.summary);
+                job.retryable = response.failed > 0;
+                job.completed_at = Some(now_string());
+            }
+            Err(error) => {
+                job.status = "failed".to_string();
+                job.stage = "failed".to_string();
+                job.error_code = Some("index_job_failed".to_string());
+                job.error_message = Some(error.to_string());
+                job.retryable = true;
+                job.completed_at = Some(now_string());
+                job.summary = self.get_matter_index_summary(matter_id).await.ok();
+            }
+        }
+
+        self.merge_node(matter_id, matter_index_job_spec(), &job.index_job_id, &job)
+            .await
+    }
+
     pub async fn run_matter_index(
         &self,
         matter_id: &str,
@@ -540,6 +695,10 @@ impl CaseBuilderService {
                     produced_chunks: 0,
                     produced_facts: document.facts_extracted,
                     produced_timeline_suggestions: 0,
+                    produced_markdown_ast_nodes: 0,
+                    produced_markdown_semantic_units: 0,
+                    produced_embedding_records: 0,
+                    produced_entities: 0,
                 });
                 continue;
             }
@@ -553,6 +712,10 @@ impl CaseBuilderService {
                     produced_chunks: 0,
                     produced_facts: document.facts_extracted,
                     produced_timeline_suggestions: 0,
+                    produced_markdown_ast_nodes: 0,
+                    produced_markdown_semantic_units: 0,
+                    produced_embedding_records: 0,
+                    produced_entities: 0,
                 });
                 continue;
             }
@@ -570,6 +733,15 @@ impl CaseBuilderService {
                         produced_chunks: extraction.chunks.len() as u64,
                         produced_facts: extraction.proposed_facts.len() as u64,
                         produced_timeline_suggestions: suggestion_count,
+                        produced_markdown_ast_nodes: extraction.markdown_ast_nodes.len() as u64,
+                        produced_markdown_semantic_units: extraction.markdown_semantic_units.len()
+                            as u64,
+                        produced_embedding_records: extraction
+                            .embedding_run
+                            .as_ref()
+                            .map(|run| run.produced_embedding_record_ids.len() as u64)
+                            .unwrap_or(0),
+                        produced_entities: extraction.entities.len() as u64,
                     });
                 }
                 Ok(extraction) => {
@@ -583,6 +755,15 @@ impl CaseBuilderService {
                         produced_chunks: extraction.chunks.len() as u64,
                         produced_facts: extraction.proposed_facts.len() as u64,
                         produced_timeline_suggestions: suggestion_count,
+                        produced_markdown_ast_nodes: extraction.markdown_ast_nodes.len() as u64,
+                        produced_markdown_semantic_units: extraction.markdown_semantic_units.len()
+                            as u64,
+                        produced_embedding_records: extraction
+                            .embedding_run
+                            .as_ref()
+                            .map(|run| run.produced_embedding_record_ids.len() as u64)
+                            .unwrap_or(0),
+                        produced_entities: extraction.entities.len() as u64,
                     });
                 }
                 Err(error) => {
@@ -595,6 +776,10 @@ impl CaseBuilderService {
                         produced_chunks: 0,
                         produced_facts: 0,
                         produced_timeline_suggestions: 0,
+                        produced_markdown_ast_nodes: 0,
+                        produced_markdown_semantic_units: 0,
+                        produced_embedding_records: 0,
+                        produced_entities: 0,
                     });
                 }
             }
@@ -701,6 +886,121 @@ impl CaseBuilderService {
             .into_iter()
             .filter(|span| span.document_id == document_id)
             .collect::<Vec<_>>();
+        let markdown_ast_document = self
+            .list_nodes::<MarkdownAstDocument>(matter_id, markdown_ast_document_spec())
+            .await?
+            .into_iter()
+            .filter(|ast| ast.document_id == document_id)
+            .max_by(|left, right| left.created_at.cmp(&right.created_at));
+        let mut markdown_ast_nodes = self
+            .list_nodes::<MarkdownAstNode>(matter_id, markdown_ast_node_spec())
+            .await?
+            .into_iter()
+            .filter(|node| node.document_id == document_id)
+            .collect::<Vec<_>>();
+        markdown_ast_nodes.sort_by_key(|node| node.ordinal);
+        let text_chunks = self
+            .list_nodes::<TextChunk>(matter_id, text_chunk_spec())
+            .await?
+            .into_iter()
+            .filter(|chunk| chunk.document_id == document_id)
+            .collect::<Vec<_>>();
+        let evidence_spans = self
+            .list_nodes::<EvidenceSpan>(matter_id, evidence_span_spec())
+            .await?
+            .into_iter()
+            .filter(|span| span.document_id == document_id)
+            .collect::<Vec<_>>();
+        let entity_mentions = self
+            .list_nodes::<EntityMention>(matter_id, entity_mention_spec())
+            .await?
+            .into_iter()
+            .filter(|mention| mention.document_id == document_id)
+            .collect::<Vec<_>>();
+        let mention_entity_ids = entity_mentions
+            .iter()
+            .filter_map(|mention| mention.entity_id.clone())
+            .collect::<HashSet<_>>();
+        let entities = self
+            .list_nodes::<CaseEntity>(matter_id, case_entity_spec())
+            .await?
+            .into_iter()
+            .filter(|entity| mention_entity_ids.contains(&entity.entity_id))
+            .collect::<Vec<_>>();
+        let search_index_records = self
+            .list_nodes::<SearchIndexRecord>(matter_id, search_index_record_spec())
+            .await?
+            .into_iter()
+            .filter(|record| record.document_id == document_id)
+            .collect::<Vec<_>>();
+        let embedding_runs = self
+            .list_nodes::<CaseBuilderEmbeddingRun>(matter_id, casebuilder_embedding_run_spec())
+            .await?
+            .into_iter()
+            .filter(|run| run.document_id.as_deref() == Some(document_id))
+            .collect::<Vec<_>>();
+        let embedding_records = self
+            .list_nodes::<CaseBuilderEmbeddingRecord>(
+                matter_id,
+                casebuilder_embedding_record_spec(),
+            )
+            .await?
+            .into_iter()
+            .filter(|record| record.document_id == document_id)
+            .collect::<Vec<_>>();
+        let embedding_coverage = self.embedding_coverage_for_records(&embedding_records);
+        let source_span_ids = source_spans
+            .iter()
+            .map(|span| span.source_span_id.clone())
+            .collect::<HashSet<_>>();
+        let markdown_ast_node_ids = markdown_ast_nodes
+            .iter()
+            .map(|node| node.markdown_ast_node_id.clone())
+            .collect::<HashSet<_>>();
+        let markdown_semantic_units = self
+            .list_nodes::<MarkdownSemanticUnit>(matter_id, markdown_semantic_unit_spec())
+            .await?
+            .into_iter()
+            .filter(|unit| unit.document_id == document_id)
+            .filter(|unit| {
+                unit.markdown_ast_node_ids
+                    .iter()
+                    .any(|id| markdown_ast_node_ids.contains(id))
+                    || unit.document_version_id.as_deref() == document.current_version_id.as_deref()
+            })
+            .collect::<Vec<_>>();
+        let proposed_facts = self
+            .list_facts(matter_id)
+            .await?
+            .into_iter()
+            .filter(|fact| {
+                fact.source_document_ids.iter().any(|id| id == document_id)
+                    || fact.source_spans.iter().any(|span| {
+                        span.document_id == document_id
+                            || source_span_ids.contains(&span.source_span_id)
+                    })
+                    || fact
+                        .markdown_ast_node_ids
+                        .iter()
+                        .any(|id| markdown_ast_node_ids.contains(id))
+            })
+            .collect::<Vec<_>>();
+        let timeline_suggestions = self
+            .list_timeline_suggestions(matter_id)
+            .await?
+            .into_iter()
+            .filter(|suggestion| {
+                suggestion.source_document_id.as_deref() == Some(document_id)
+                    || suggestion
+                        .source_span_ids
+                        .iter()
+                        .any(|id| source_span_ids.contains(id))
+                    || suggestion
+                        .markdown_ast_node_ids
+                        .iter()
+                        .any(|id| markdown_ast_node_ids.contains(id))
+            })
+            .collect::<Vec<_>>();
         let mut warnings = Vec::new();
         let bytes = match self.document_bytes(&document).await {
             Ok(bytes) => Some(bytes),
@@ -757,6 +1057,19 @@ impl CaseBuilderService {
             capabilities,
             annotations,
             source_spans,
+            markdown_ast_document,
+            markdown_ast_nodes,
+            markdown_semantic_units,
+            text_chunks,
+            evidence_spans,
+            entity_mentions,
+            entities,
+            search_index_records,
+            embedding_runs,
+            embedding_records,
+            embedding_coverage,
+            proposed_facts,
+            timeline_suggestions,
             transcriptions,
             docx_manifest,
             text_content,
@@ -960,6 +1273,11 @@ impl CaseBuilderService {
                 entity_mentions: Vec::new(),
                 search_index_records: Vec::new(),
                 source_spans: Vec::new(),
+                markdown_ast_document: None,
+                markdown_ast_nodes: Vec::new(),
+                markdown_semantic_units: Vec::new(),
+                entities: Vec::new(),
+                embedding_run: None,
                 timeline_suggestions: Vec::new(),
             });
         }
@@ -1052,6 +1370,11 @@ impl CaseBuilderService {
                 entity_mentions: Vec::new(),
                 search_index_records: Vec::new(),
                 source_spans: Vec::new(),
+                markdown_ast_document: None,
+                markdown_ast_nodes: Vec::new(),
+                markdown_semantic_units: Vec::new(),
+                entities: Vec::new(),
+                embedding_run: None,
                 timeline_suggestions: Vec::new(),
             });
         }
@@ -1074,7 +1397,7 @@ impl CaseBuilderService {
             chunk.object_blob_id = source_context.object_blob_id.clone();
             chunk.source_span_id = Some(source_span_id(document_id, "chunk", chunk.page));
         }
-        let (pages, text_chunks, evidence_spans, entity_mentions, search_index_records) =
+        let (pages, mut text_chunks, mut evidence_spans, mut entity_mentions, search_index_records) =
             build_extraction_index_records(
                 matter_id,
                 document_id,
@@ -1084,7 +1407,7 @@ impl CaseBuilderService {
             );
         let mut source_spans =
             source_spans_for_chunks(matter_id, document_id, &chunks, &source_context);
-        let proposed_facts = propose_facts(
+        let mut proposed_facts = propose_facts(
             matter_id,
             document_id,
             &index_text,
@@ -1094,7 +1417,7 @@ impl CaseBuilderService {
         for fact in &proposed_facts {
             source_spans.extend(fact.source_spans.clone());
         }
-        let timeline_agent_outcome = self
+        let mut timeline_agent_outcome = self
             .execute_timeline_agent_for_indexed_document(
                 matter_id,
                 document_id,
@@ -1104,6 +1427,40 @@ impl CaseBuilderService {
                 50,
             )
             .await?;
+        let (mut markdown_ast_document, mut markdown_ast_nodes) =
+            markdown_graph::build_markdown_ast_graph(
+                matter_id,
+                document_id,
+                &source_context,
+                &index_run_id_value,
+                &index_text,
+                &text_sha256,
+                &text_chunks,
+                &evidence_spans,
+                &source_spans,
+                &search_index_records,
+            );
+        markdown_graph::attach_markdown_ast_node_ids_to_records(
+            &mut markdown_ast_nodes,
+            &mut chunks,
+            &mut text_chunks,
+            &mut evidence_spans,
+            &mut entity_mentions,
+            &mut proposed_facts,
+            &mut timeline_agent_outcome.suggestions,
+        );
+        let markdown_semantic_units = markdown_graph::build_markdown_semantic_units(
+            matter_id,
+            document_id,
+            &mut markdown_ast_document,
+            &markdown_ast_nodes,
+        );
+        let parties = self.list_parties(matter_id).await?;
+        let entities = markdown_graph::canonical_entities_for_mentions(
+            matter_id,
+            &mut entity_mentions,
+            &parties,
+        );
         let timeline_suggestions = timeline_agent_outcome.suggestions.clone();
         let (index_artifacts, artifact_manifest) = self
             .store_extraction_index_artifacts(
@@ -1201,6 +1558,19 @@ impl CaseBuilderService {
         );
         push_unique(
             &mut produced_ids,
+            markdown_ast_document.markdown_ast_document_id.clone(),
+        );
+        for node in &markdown_ast_nodes {
+            push_unique(&mut produced_ids, node.markdown_ast_node_id.clone());
+        }
+        for unit in &markdown_semantic_units {
+            push_unique(&mut produced_ids, unit.semantic_unit_id.clone());
+        }
+        for entity in &entities {
+            push_unique(&mut produced_ids, entity.entity_id.clone());
+        }
+        push_unique(
+            &mut produced_ids,
             timeline_agent_outcome.run.agent_run_id.clone(),
         );
         for suggestion in &timeline_suggestions {
@@ -1237,11 +1607,30 @@ impl CaseBuilderService {
         for span in &evidence_spans {
             self.merge_evidence_span(matter_id, span).await?;
         }
-        for mention in &entity_mentions {
-            self.merge_entity_mention(matter_id, mention).await?;
-        }
         for record in &search_index_records {
             self.merge_search_index_record(matter_id, record).await?;
+        }
+        self.merge_markdown_ast_document(matter_id, &markdown_ast_document)
+            .await?;
+        for unit in &markdown_semantic_units {
+            self.merge_markdown_semantic_unit(matter_id, unit).await?;
+        }
+        for node in &markdown_ast_nodes {
+            self.merge_markdown_ast_node(matter_id, node).await?;
+        }
+        for unit in &markdown_semantic_units {
+            self.merge_markdown_semantic_unit(matter_id, unit).await?;
+        }
+        self.merge_markdown_ast_document(matter_id, &markdown_ast_document)
+            .await?;
+        for fact in &stored_facts {
+            self.materialize_fact_edges(fact).await?;
+        }
+        for entity in &entities {
+            self.merge_case_entity(matter_id, entity).await?;
+        }
+        for mention in &entity_mentions {
+            self.merge_entity_mention(matter_id, mention).await?;
         }
         let timeline_agent_outcome = self
             .persist_timeline_agent_outcome(matter_id, &timeline_agent_outcome)
@@ -1259,6 +1648,14 @@ impl CaseBuilderService {
         if let Some(run) = &ingestion_run {
             self.merge_ingestion_run(matter_id, run).await?;
         }
+        let embedding_run = self
+            .queue_document_embeddings_after_index(
+                matter_id,
+                document_id,
+                index_run.as_ref().map(|run| run.index_run_id.clone()),
+                document.current_version_id.clone(),
+            )
+            .await?;
 
         Ok(DocumentExtractionResponse {
             enabled: true,
@@ -1279,6 +1676,11 @@ impl CaseBuilderService {
             entity_mentions,
             search_index_records,
             source_spans,
+            markdown_ast_document: Some(markdown_ast_document),
+            markdown_ast_nodes,
+            markdown_semantic_units,
+            entities,
+            embedding_run,
             timeline_suggestions: stored_timeline_suggestions,
         })
     }
@@ -1725,6 +2127,7 @@ fn build_extraction_index_records(
             token_count: approximate_token_count(&chunk.text),
             unit_type: chunk.unit_type.clone(),
             structure_path: chunk.structure_path.clone(),
+            markdown_ast_node_ids: chunk.markdown_ast_node_ids.clone(),
             byte_start: chunk.byte_start,
             byte_end: chunk.byte_end,
             char_start: chunk.char_start,
@@ -1742,6 +2145,7 @@ fn build_extraction_index_records(
             object_blob_id: source_context.object_blob_id.clone(),
             text_chunk_id: Some(chunk.chunk_id.clone()),
             source_span_id: chunk.source_span_id.clone(),
+            markdown_ast_node_ids: chunk.markdown_ast_node_ids.clone(),
             ingestion_run_id: source_context.ingestion_run_id.clone(),
             index_run_id: Some(index_run_id.to_string()),
             quote_hash: text_hash,
@@ -1790,6 +2194,7 @@ struct ExtractionManifestStructureEntry {
     text_excerpt: String,
     source_unit: ExtractionManifestSourceUnit,
     source_span_hint: ExtractionManifestSourceSpanHint,
+    markdown_ast_node_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -1840,6 +2245,7 @@ fn extraction_manifest_structure_map(
                     char_start: chunk.char_start,
                     char_end: chunk.char_end,
                 },
+                markdown_ast_node_ids: chunk.markdown_ast_node_ids.clone(),
             }
         })
         .collect()
@@ -2023,6 +2429,51 @@ fn index_skip_message(document: &CaseDocument) -> String {
         }
         _ => "Document does not need indexing.".to_string(),
     }
+}
+
+fn matter_index_job_is_active(job: &MatterIndexJob) -> bool {
+    matches!(job.status.as_str(), "queued" | "running")
+}
+
+fn resolve_index_job_document_ids(
+    documents: &[CaseDocument],
+    requested_ids: Vec<String>,
+    upload_batch_id: Option<&str>,
+    limit: u64,
+) -> ApiResult<Vec<String>> {
+    let limit = limit.clamp(1, 1_000) as usize;
+    if !requested_ids.is_empty() {
+        let known = documents
+            .iter()
+            .map(|document| document.document_id.as_str())
+            .collect::<HashSet<_>>();
+        let mut targets = Vec::new();
+        for document_id in requested_ids
+            .into_iter()
+            .filter(|id| !id.trim().is_empty())
+            .take(limit)
+        {
+            if !known.contains(document_id.as_str()) {
+                return Err(ApiError::NotFound(format!(
+                    "Document {document_id} was not found in this matter"
+                )));
+            }
+            push_unique(&mut targets, document_id);
+        }
+        return Ok(targets);
+    }
+
+    Ok(documents
+        .iter()
+        .filter(|document| document.archived_at.is_none())
+        .filter(|document| {
+            upload_batch_id
+                .is_none_or(|batch_id| document.upload_batch_id.as_deref() == Some(batch_id))
+        })
+        .filter(|document| document_can_attempt_index(document) && document_needs_index(document))
+        .take(limit)
+        .map(|document| document.document_id.clone())
+        .collect())
 }
 
 fn build_matter_index_summary(
@@ -2322,6 +2773,63 @@ mod tests {
     }
 
     #[test]
+    fn index_job_batch_targeting_selects_pending_markdown_documents() {
+        let docs = vec![
+            test_document(
+                "doc:md",
+                "facts.md",
+                "queued",
+                0,
+                Some("sha256:md"),
+                Some("batch:target"),
+            ),
+            test_document(
+                "doc:pdf",
+                "lease.pdf",
+                "view_only",
+                0,
+                Some("sha256:pdf"),
+                Some("batch:target"),
+            ),
+            test_document(
+                "doc:other",
+                "other.md",
+                "queued",
+                0,
+                Some("sha256:other"),
+                Some("batch:other"),
+            ),
+        ];
+
+        let targets = resolve_index_job_document_ids(&docs, Vec::new(), Some("batch:target"), 250)
+            .expect("batch targets");
+
+        assert_eq!(targets, vec!["doc:md".to_string()]);
+    }
+
+    #[test]
+    fn index_job_explicit_documents_reject_unknown_ids() {
+        let docs = vec![test_document(
+            "doc:known",
+            "facts.md",
+            "queued",
+            0,
+            Some("sha256:md"),
+            None,
+        )];
+
+        let err = resolve_index_job_document_ids(
+            &docs,
+            vec!["doc:known".to_string(), "doc:missing".to_string()],
+            None,
+            250,
+        )
+        .expect_err("unknown documents should be rejected");
+
+        assert!(matches!(err, ApiError::NotFound(message) if message.contains("doc:missing")));
+    }
+
+    #[test]
     fn extraction_index_records_keep_hashes_offsets_and_search_refs() {
         let context = SourceContext {
             document_version_id: Some("version:doc_1:original".to_string()),
@@ -2338,6 +2846,7 @@ mod tests {
             document_version_id: context.document_version_id.clone(),
             object_blob_id: context.object_blob_id.clone(),
             source_span_id: Some("span:doc_1:chunk:1".to_string()),
+            markdown_ast_node_ids: Vec::new(),
             byte_start: Some(4),
             byte_end: Some(27),
             char_start: Some(4),

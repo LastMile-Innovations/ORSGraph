@@ -42,6 +42,7 @@ const suggestion: TimelineSuggestion = {
   source_document_id: "doc:mold",
   source_span_ids: ["span:doc:mold:1"],
   text_chunk_ids: ["chunk:doc:mold:1"],
+  markdown_ast_node_ids: ["markdown-node:doc_mold:abc"],
   linked_fact_ids: ["fact:mold"],
   linked_claim_ids: ["claim:habitability"],
   work_product_id: "work-product:memo",

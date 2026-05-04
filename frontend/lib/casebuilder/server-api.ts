@@ -3,8 +3,10 @@ import "server-only"
 import { headers } from "next/headers"
 import { cache } from "react"
 import {
+  getCaseBuilderSettingsState as getCaseBuilderSettingsStateBase,
   getComplaintState as getComplaintStateBase,
   getDocumentWorkspace as getDocumentWorkspaceBase,
+  getMatterSettingsState as getMatterSettingsStateBase,
   getMatterGraphState as getMatterGraphStateBase,
   getMatterState as getMatterStateBase,
   getMatterSummariesState as getMatterSummariesStateBase,
@@ -28,6 +30,14 @@ const getMatterSummariesStateForCookie = cache((cookie: string | null) => {
 
 const getMatterStateForCookie = cache((id: string, cookie: string | null) => {
   return getMatterStateBase(id, requestOptionsForCookie(cookie))
+})
+
+const getCaseBuilderSettingsStateForCookie = cache((cookie: string | null) => {
+  return getCaseBuilderSettingsStateBase(requestOptionsForCookie(cookie))
+})
+
+const getMatterSettingsStateForCookie = cache((matterId: string, cookie: string | null) => {
+  return getMatterSettingsStateBase(matterId, requestOptionsForCookie(cookie))
 })
 
 const getMatterGraphStateForCookie = cache((matterId: string, cookie: string | null) => {
@@ -71,6 +81,14 @@ export async function getMatterSummariesState() {
 
 export async function getMatterState(id: string) {
   return getMatterStateForCookie(id, await requestCookie())
+}
+
+export async function getCaseBuilderSettingsState() {
+  return getCaseBuilderSettingsStateForCookie(await requestCookie())
+}
+
+export async function getMatterSettingsState(matterId: string) {
+  return getMatterSettingsStateForCookie(matterId, await requestCookie())
 }
 
 export async function getMatterGraphState(matterId: string) {

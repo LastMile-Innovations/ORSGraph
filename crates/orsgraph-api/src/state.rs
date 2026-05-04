@@ -76,7 +76,9 @@ impl AppState {
             None
         };
 
-        let embedding_service = if (config.vector_enabled || config.vector_search_enabled)
+        let embedding_service = if (config.vector_enabled
+            || config.vector_search_enabled
+            || config.casebuilder_embeddings_enabled)
             && config.voyage_api_key.is_some()
         {
             Some(Arc::new(EmbeddingService::new(
@@ -155,6 +157,8 @@ impl AppState {
                 max_input_chars: config.casebuilder_timeline_agent_max_input_chars,
                 harness_version: config.casebuilder_timeline_agent_harness_version.clone(),
             },
+            embeddings: embedding_service.clone(),
+            embeddings_enabled: config.casebuilder_embeddings_enabled,
         }));
 
         if let Err(e) = casebuilder_service.ensure_indexes().await {

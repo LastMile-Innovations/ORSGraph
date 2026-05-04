@@ -59,6 +59,8 @@ Each layer must be independently retryable and tied to a versioned manifest.
 - `EvidenceSpan`: exact quote/span used as support.
 - `EntityMention`: extracted person/org/date/money/address/citation mention.
 - `SearchIndexRecord`: durable record that a chunk/version was indexed into full-text/vector stores.
+- `CaseBuilderEmbeddingRun`: provider run status, scope, profile/model/dimension, retryability, warnings, and produced record IDs.
+- `CaseBuilderEmbeddingRecord`: vector-bearing retrieval record for Markdown full-file, chunk, and semantic-unit targets.
 
 ### Provenance Rule
 
@@ -85,6 +87,9 @@ If a source coordinate is unavailable, the node must say why: unsupported file t
 - Non-Markdown files are still accepted, stored privately, previewable/openable where supported, and annotatable, but they remain `view_only` and are skipped by extraction/index runs.
 - Folder upload semantics and private relative paths remain first-class for both Markdown and view-only files.
 - DOCX, PDF, TXT/HTML/CSV/XLSX, image/OCR, archive, email/message, and media parsers are adapter backlog items until explicitly re-enabled.
+- Markdown indexing now includes a `pulldown-cmark` AST graph. Each parsed Markdown document produces `MarkdownAstDocument` and `MarkdownAstNode` records with byte/char source ranges, parent/previous links, structure paths, hashes, capped excerpts, and overlap links to source spans, chunks, evidence spans, search records, proposed facts, timeline suggestions, and entity mentions.
+- Entity mentions group into reviewable `CaseEntity` candidates. Party-like entities may produce `MAY_MATCH_PARTY` edges, but the party list is never mutated automatically.
+- Optional Voyage embeddings are Markdown-only. They produce `CaseBuilderEmbeddingRecord.embedding` vectors for full Markdown files, `TextChunk`, and `MarkdownSemanticUnit` targets using `voyage-4-large`/1024 by default. Oversized full-file inputs use a centroid from chunk/semantic-unit vectors instead of provider truncation.
 
 ### V0.1 Required
 
@@ -128,6 +133,7 @@ If a source coordinate is unavailable, the node must say why: unsupported file t
    - Upsert Neo4j pages/chunks/spans/mentions/facts.
    - Update full-text and vector indexes.
    - Record `SearchIndexRecord` rows and index versions.
+   - When enabled, queue Markdown embeddings after extraction so provider failures do not block review workflows.
 8. Review
    - Surface proposed facts/entities/deadlines/issues for approval.
    - Keep rejected items traceable but inactive.

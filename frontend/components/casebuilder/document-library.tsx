@@ -27,20 +27,26 @@ import {
   X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { CaseDocument, DocumentType, MatterIndexSummary, MatterSummary, TranscriptionJobResponse } from "@/lib/casebuilder/types"
+import type {
+  CaseBuilderEffectiveSettings,
+  CaseDocument,
+  DocumentType,
+  MatterIndexSummary,
+  MatterSummary,
+  TranscriptionJobResponse,
+} from "@/lib/casebuilder/types"
 import {
   archiveDocument,
+  createMatterIndexJob,
   createTranscription,
+  getMatterSettingsState,
   getMatterIndexSummary,
-  importDocumentComplaint,
   listTranscriptions,
   patchDocument,
   restoreDocument,
-  runMatterIndex,
   syncTranscription,
-  uploadBinaryFile,
 } from "@/lib/casebuilder/api"
-import { matterComplaintHref, matterDocumentHref } from "@/lib/casebuilder/routes"
+import { matterDocumentHref } from "@/lib/casebuilder/routes"
 import {
   buildDocumentTree,
   buildUploadPreviewRows,
@@ -50,19 +56,18 @@ import {
   documentIsViewOnly,
   documentLibraryPath,
   filterDocumentsBySelection,
-  isMarkdownIndexableFile,
   latestUploadBatchId,
   type DocumentTreeNode,
   type DocumentTreeSelection,
   type UploadPreviewRow,
 } from "@/lib/casebuilder/document-tree"
 import {
-  createUploadBatchId,
   dataTransferToUploadCandidates,
   filesToUploadCandidates,
   type UploadCandidate,
 } from "@/lib/casebuilder/upload-folders"
 import { ProcessingBadge } from "./badges"
+import { uploadOptionsFromEffectiveSettings, useCaseBuilderUploads } from "./upload-provider"
 
 const TYPE_LABEL: Record<DocumentType, string> = {
   complaint: "Complaint",
@@ -94,18 +99,9 @@ interface Props {
   documents: CaseDocument[]
 }
 
-type UploadQueueStatus = "queued" | "uploading" | "indexing" | "indexed" | "stored" | "failed"
-
-interface UploadQueueRow {
-  id: string
-  candidate: UploadCandidate
-  status: UploadQueueStatus
-  message: string
-  documentId?: string
-}
-
 export function DocumentLibrary({ matter, documents }: Props) {
   const router = useRouter()
+  const { enqueueMatterUploads } = useCaseBuilderUploads()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
   const [selection, setSelection] = useState<DocumentTreeSelection>({ kind: "all" })
@@ -116,11 +112,7 @@ export function DocumentLibrary({ matter, documents }: Props) {
   const [storageFilter, setStorageFilter] = useState<string>("All")
   const [batchFilter, setBatchFilter] = useState<string>("All")
   const [duplicateOnly, setDuplicateOnly] = useState(false)
-  const [uploading, setUploading] = useState(false)
   const [uploadMessage, setUploadMessage] = useState<string | null>(null)
-  const [uploadError, setUploadError] = useState<string | null>(null)
-  const [importedComplaints, setImportedComplaints] = useState<Array<{ title: string; href: string }>>([])
-  const [uploadRows, setUploadRows] = useState<UploadQueueRow[]>([])
   const [pendingUploads, setPendingUploads] = useState<UploadCandidate[]>([])
   const [indexSummary, setIndexSummary] = useState<MatterIndexSummary | null>(null)
   const [indexMessage, setIndexMessage] = useState<string | null>(null)
@@ -132,6 +124,7 @@ export function DocumentLibrary({ matter, documents }: Props) {
   const [editingDocument, setEditingDocument] = useState<CaseDocument | null>(null)
   const [actionBusy, setActionBusy] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [settings, setSettings] = useState<CaseBuilderEffectiveSettings | null>(null)
 
   const activeDocuments = useMemo(() => documents.filter((document) => !documentIsArchived(document)), [documents])
   const archivedDocuments = useMemo(() => documents.filter(documentIsArchived), [documents])
@@ -173,6 +166,18 @@ export function DocumentLibrary({ matter, documents }: Props) {
     void refreshIndexSummary()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matter.matter_id, documents.length])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadSettings() {
+      const result = await getMatterSettingsState(matter.matter_id)
+      if (!cancelled) setSettings(result.data?.effective ?? null)
+    }
+    void loadSettings()
+    return () => {
+      cancelled = true
+    }
+  }, [matter.matter_id])
 
   const selectionDocuments = useMemo(() => {
     return filterDocumentsBySelection(documents, selection, latestBatch ?? undefined)
@@ -222,7 +227,6 @@ export function DocumentLibrary({ matter, documents }: Props) {
 
   function queueUploads(candidates: UploadCandidate[]) {
     if (candidates.length === 0) return
-    setUploadError(null)
     setUploadMessage(null)
     setPendingUploads(candidates)
   }
@@ -233,165 +237,40 @@ export function DocumentLibrary({ matter, documents }: Props) {
       const candidates = await dataTransferToUploadCandidates(event.dataTransfer)
       queueUploads(candidates)
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : String(error))
+      setUploadMessage(error instanceof Error ? error.message : String(error))
     }
   }
 
   async function indexDocuments(documentIds?: string[]) {
     setIndexBusy(true)
     setIndexMessage(null)
-    const result = await runMatterIndex(matter.matter_id, {
+    const result = await createMatterIndexJob(matter.matter_id, {
       document_ids: documentIds && documentIds.length > 0 ? documentIds : undefined,
     })
     setIndexBusy(false)
     if (!result.data) {
-      setIndexMessage(result.error || "Index run failed.")
+      setIndexMessage(result.error || "Index job failed to start.")
       return null
     }
-    setIndexSummary(result.data.summary)
-    setIndexMessage(
-      `${result.data.processed} indexed${result.data.skipped ? `, ${result.data.skipped} skipped` : ""}${result.data.failed ? `, ${result.data.failed} failed` : ""}.`,
-    )
+    setIndexMessage(`Index job started for ${result.data.requested} document${result.data.requested === 1 ? "" : "s"}.`)
     return result.data
   }
 
   async function uploadCandidates(candidates: UploadCandidate[]) {
     if (candidates.length === 0) return
 
-    setUploading(true)
     setUploadMessage(null)
-    setUploadError(null)
     setIndexMessage(null)
     setPendingUploads([])
-
-    let stored = 0
-    let binaryStored = 0
-    let imported = 0
-    const importedLinks: Array<{ title: string; href: string }> = []
-    const failures: string[] = []
-    const markdownDocumentIds: string[] = []
-    const uploadBatchId = createUploadBatchId(candidates.some((item) => item.relativePath.includes("/")) ? "folder" : "batch")
+    const uploadBatchId = enqueueMatterUploads(matter.matter_id, candidates, {
+      label: candidates.some((item) => item.relativePath.includes("/")) ? "Folder upload" : "File upload",
+      ...uploadOptionsFromEffectiveSettings(settings),
+    })
+    if (!uploadBatchId) return
     setBatchFilter(uploadBatchId)
     setExpandedPaths((current) => expandUploadAncestors(current, candidates))
     setSelection({ kind: "recent" })
-    setUploadRows(
-      candidates.map((candidate, index) => ({
-        id: `${uploadBatchId}:${index}`,
-        candidate,
-        status: "queued",
-        message: candidate.relativePath,
-      })),
-    )
-
-    for (const [index, candidate] of candidates.entries()) {
-      const file = candidate.file
-      const rowId = `${uploadBatchId}:${index}`
-      try {
-        const mimeType = file.type || guessMimeType(file.name)
-        const documentType = guessDocumentType(file.name, mimeType)
-        setUploadRows((rows) =>
-          rows.map((row) => (row.id === rowId ? { ...row, status: "uploading", message: "Uploading privately" } : row)),
-        )
-        const result = await uploadBinaryFile(matter.matter_id, file, {
-          document_type: documentType,
-          folder: candidate.folder,
-          confidentiality: "private",
-          relative_path: candidate.relativePath,
-          upload_batch_id: uploadBatchId,
-        })
-
-        if (!result.data) {
-          failures.push(`${file.name}: ${result.error || "upload failed"}`)
-          setUploadRows((rows) =>
-            rows.map((row) =>
-              row.id === rowId ? { ...row, status: "failed", message: result.error || "Upload failed" } : row,
-            ),
-          )
-          continue
-        }
-
-        stored += 1
-        const markdownIndexable = isMarkdownIndexableFile(file.name, result.data.mime_type || mimeType)
-        if (markdownIndexable) {
-          markdownDocumentIds.push(result.data.document_id)
-        }
-        setUploadRows((rows) =>
-          rows.map((row) =>
-            row.id === rowId
-              ? {
-                  ...row,
-                  status: markdownIndexable ? "indexing" : "stored",
-                  documentId: result.data?.document_id,
-                  message: markdownIndexable ? "Queued for indexing" : "Stored privately; Markdown-only indexing skipped",
-                }
-              : row,
-          ),
-        )
-        if (result.data.storage_status === "stored") {
-          binaryStored += 1
-        }
-        if (markdownIndexable && shouldImportAsComplaint(file.name, documentType)) {
-          const importedComplaint = await importDocumentComplaint(matter.matter_id, result.data.document_id, {
-            force: true,
-            mode: "structured_import",
-          })
-          const complaint = importedComplaint.data?.imported[0]?.complaint
-          if (complaint) {
-            imported += 1
-            importedLinks.push({
-              title: complaint.title || file.name,
-              href: matterComplaintHref(matter.matter_id, "editor", {
-                type: "complaint",
-                id: complaint.complaint_id,
-              }),
-            })
-          } else if (importedComplaint.data?.skipped[0]) {
-            failures.push(`${file.name}: ${importedComplaint.data.skipped[0].message}`)
-          } else if (importedComplaint.error) {
-            failures.push(`${file.name}: ${importedComplaint.error}`)
-          }
-        }
-      } catch (error) {
-        failures.push(`${file.name}: ${error instanceof Error ? error.message : String(error)}`)
-        setUploadRows((rows) =>
-          rows.map((row) =>
-            row.id === rowId
-              ? { ...row, status: "failed", message: error instanceof Error ? error.message : String(error) }
-              : row,
-          ),
-        )
-      }
-    }
-
-    const indexRun = markdownDocumentIds.length ? await indexDocuments(markdownDocumentIds) : null
-    if (indexRun) {
-      const byDocument = new Map(indexRun.results.map((result) => [result.document_id, result]))
-      setUploadRows((rows) =>
-        rows.map((row) => {
-          const result = row.documentId ? byDocument.get(row.documentId) : null
-          if (!result) return row.status === "failed" ? row : { ...row, status: "stored", message: row.message || "Stored privately" }
-          return {
-            ...row,
-            status: result.status === "indexed" ? "indexed" : result.status === "failed" ? "failed" : "stored",
-            message: result.message,
-          }
-        }),
-      )
-    }
-
-    setUploading(false)
-    setImportedComplaints(importedLinks)
-    if (failures.length > 0) {
-      setUploadError(failures.join(" | "))
-    }
-    setUploadMessage(
-      `${stored} uploaded${indexRun?.processed ? `, ${indexRun.processed} indexed` : ""}${binaryStored ? `, ${binaryStored} stored privately` : ""}${imported ? `, ${imported} opened as structured complaint` : ""}.`,
-    )
-    router.refresh()
-  }
-
-  async function retryUpload(row: UploadQueueRow) {
-    await uploadCandidates([row.candidate])
+    setUploadMessage("Upload started. You can leave this page while files store and index.")
   }
 
   async function saveDocumentMetadata(document: CaseDocument, values: {
@@ -496,9 +375,10 @@ export function DocumentLibrary({ matter, documents }: Props) {
     setMediaMessage(null)
     const result = await createTranscription(matter.matter_id, document.document_id, {
       force,
-      redact_pii: true,
-      speaker_labels: true,
-      remove_audio_tags: "all",
+      redact_pii: settings?.transcript_redact_pii ?? true,
+      speaker_labels: settings?.transcript_speaker_labels ?? true,
+      prompt_preset: settings?.transcript_prompt_preset || null,
+      remove_audio_tags: (settings?.transcript_remove_audio_tags ?? true) ? "all" : null,
     })
     setMediaActionBusy(null)
     if (!result.data) {
@@ -583,50 +463,26 @@ export function DocumentLibrary({ matter, documents }: Props) {
           <div className="flex items-center gap-2">
             <button
               onClick={() => folderInputRef.current?.click()}
-              disabled={uploading}
-              className="flex items-center gap-1.5 rounded border border-border bg-background px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex items-center gap-1.5 rounded border border-border bg-background px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-foreground hover:bg-muted"
             >
               <FolderUp className="h-3.5 w-3.5" />
               folder
             </button>
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-primary-foreground hover:bg-primary/90"
             >
               <Upload className="h-3.5 w-3.5" />
-              {uploading ? "uploading" : "upload files"}
+              upload files
             </button>
           </div>
         </div>
-        {(uploadMessage || uploadError || actionMessage) && (
-          <div
-            className={cn(
-              "mt-3 rounded border px-3 py-2 text-xs",
-              uploadError
-                ? "border-destructive/30 bg-destructive/5 text-destructive"
-                : "border-primary/20 bg-primary/5 text-muted-foreground",
-            )}
-          >
-            {uploadError || uploadMessage || actionMessage}
-            {importedComplaints.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {importedComplaints.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    title={item.title}
-                    className="inline-flex items-center gap-1 rounded border border-primary/25 bg-background px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-primary hover:bg-primary/10"
-                  >
-                    <FileText className="h-3 w-3" />
-                    opened as structured complaint
-                  </Link>
-                ))}
-              </div>
-            )}
+        {(uploadMessage || actionMessage) && (
+          <div className="mt-3 rounded border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+            {uploadMessage || actionMessage}
           </div>
         )}
-        <div className="mt-3 grid gap-2 lg:grid-cols-[1.3fr_1fr]">
+        <div className="mt-3 grid gap-2">
           <IndexConsole
             documents={activeDocuments}
             duplicateGroups={duplicateGroups}
@@ -635,7 +491,6 @@ export function DocumentLibrary({ matter, documents }: Props) {
             indexSummary={indexSummary}
             onIndex={() => void indexDocuments()}
           />
-          <UploadBatchPanel rows={uploadRows} onRetry={retryUpload} />
         </div>
       </div>
 
@@ -839,7 +694,7 @@ export function DocumentLibrary({ matter, documents }: Props) {
       {pendingUploads.length > 0 && (
         <UploadPreviewDialog
           rows={uploadPreviewRows}
-          uploading={uploading}
+          uploading={false}
           onCancel={() => setPendingUploads([])}
           onRemove={(index) => setPendingUploads((current) => current.filter((_, itemIndex) => itemIndex !== index))}
           onUpload={() => void uploadCandidates(pendingUploads)}
@@ -910,35 +765,6 @@ function IndexConsole({
             `last run ${indexSummary?.recent_ingestion_runs[0]?.stage ?? "stored"} · ${indexSummary?.recent_ingestion_runs[0]?.status ?? "queued"}`}
         </div>
       )}
-    </div>
-  )
-}
-
-function UploadBatchPanel({ rows, onRetry }: { rows: UploadQueueRow[]; onRetry: (row: UploadQueueRow) => void }) {
-  if (rows.length === 0) return null
-  return (
-    <div className="rounded border border-border bg-background p-3">
-      <div className="mb-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">upload batch</div>
-      <div className="max-h-28 space-y-1 overflow-y-auto pr-1">
-        {rows.map((row) => (
-          <div key={row.id} className="flex items-center gap-2 rounded border border-border px-2 py-1 text-[11px]">
-            <span className={cn("h-2 w-2 rounded-full", uploadStatusClass(row.status))} />
-            <span className="min-w-0 flex-1 truncate font-mono" title={row.candidate.relativePath}>
-              {row.candidate.relativePath}
-            </span>
-            <span className="shrink-0 text-muted-foreground">{row.status}</span>
-            {row.status === "failed" && (
-              <button
-                type="button"
-                onClick={() => onRetry(row)}
-                className="shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] uppercase text-muted-foreground hover:bg-muted"
-              >
-                retry
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
     </div>
   )
 }
@@ -1098,13 +924,6 @@ function IndexTile({ label, value, tone }: { label: string; value: number; tone?
       </div>
     </div>
   )
-}
-
-function uploadStatusClass(status: UploadQueueStatus) {
-  if (status === "indexed") return "bg-success"
-  if (status === "failed") return "bg-destructive"
-  if (status === "uploading" || status === "indexing") return "bg-primary"
-  return "bg-muted-foreground"
 }
 
 function MediaQueue({
@@ -1764,40 +1583,6 @@ function ConflictPill({ conflict }: { conflict: UploadPreviewRow["conflict"] }) 
   }
   const label = conflict === "existing_path" ? "path exists" : "duplicate path"
   return <span className="rounded bg-warning/15 px-1.5 py-0.5 font-mono text-[10px] uppercase text-warning">{label}</span>
-}
-
-function guessMimeType(filename: string) {
-  if (/\.(md|markdown)$/i.test(filename)) return "text/markdown"
-  if (/\.csv$/i.test(filename)) return "text/csv"
-  if (/\.html?$/i.test(filename)) return "text/html"
-  if (/\.json$/i.test(filename)) return "application/json"
-  if (/\.pdf$/i.test(filename)) return "application/pdf"
-  if (/\.docx?$/i.test(filename)) {
-    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-  }
-  if (/\.(png|jpe?g|gif|webp|heic)$/i.test(filename)) return "image/*"
-  if (/\.(mp3|m4a|wav|aac|flac)$/i.test(filename)) return "audio/*"
-  if (/\.(mp4|mov|m4v|webm)$/i.test(filename)) return "video/*"
-  return "application/octet-stream"
-}
-
-function guessDocumentType(filename: string, mimeType: string): DocumentType {
-  const lower = filename.toLowerCase()
-  if (lower.includes("complaint")) return "complaint"
-  if (lower.includes("answer")) return "answer"
-  if (lower.includes("motion")) return "motion"
-  if (lower.includes("notice")) return "notice"
-  if (lower.includes("lease")) return "lease"
-  if (lower.includes("contract")) return "contract"
-  if (lower.includes("receipt")) return "receipt"
-  if (lower.includes("invoice")) return "invoice"
-  if (/\.csv$/i.test(filename)) return "spreadsheet"
-  if (mimeType.startsWith("image/") || /\.(png|jpe?g|gif|webp|heic)$/i.test(filename)) return "photo"
-  return "evidence"
-}
-
-function shouldImportAsComplaint(filename: string, documentType: DocumentType) {
-  return documentType === "complaint" || /complaint|pleading|petition/i.test(filename)
 }
 
 function latestTranscription(transcriptions: TranscriptionJobResponse[]) {

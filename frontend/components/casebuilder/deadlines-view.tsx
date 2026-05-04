@@ -203,9 +203,9 @@ function SummaryCard({
   tone: "rose" | "amber" | "emerald" | "neutral"
 }) {
   const colors: Record<typeof tone, string> = {
-    rose: "border-rose-500/40 bg-rose-500/5 text-rose-700 dark:text-rose-300",
-    amber: "border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300",
-    emerald: "border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300",
+    rose: "border-destructive/40 bg-destructive/5 text-destructive",
+    amber: "border-warning/40 bg-warning/5 text-warning",
+    emerald: "border-success/40 bg-success/5 text-success",
     neutral: "border-border bg-card text-foreground",
   }
   return (
@@ -229,9 +229,9 @@ function DeadlineRow({ deadline, today, onToggle }: { deadline: Deadline; today:
   const dateColor = isComplete
     ? "text-muted-foreground"
     : isOverdue
-      ? "text-rose-700 dark:text-rose-400"
+      ? "text-destructive"
       : daysUntil <= 7
-        ? "text-amber-700 dark:text-amber-400"
+        ? "text-warning"
         : "text-foreground"
 
   return (
@@ -239,7 +239,7 @@ function DeadlineRow({ deadline, today, onToggle }: { deadline: Deadline; today:
       id={deadline.id}
       className={cn(
         "group flex items-start gap-3 rounded-md border bg-card p-3 transition-colors hover:border-foreground/20",
-        isOverdue ? "border-rose-500/40" : "border-border",
+        isOverdue ? "border-destructive/40" : "border-border",
         isComplete && "opacity-60",
       )}
     >
@@ -300,13 +300,13 @@ function DeadlineRow({ deadline, today, onToggle }: { deadline: Deadline; today:
             </span>
           )}
           {isOverdue && (
-            <Badge variant="outline" className="gap-1 border-rose-500/40 text-[10px] text-rose-700 dark:text-rose-400">
+            <Badge variant="outline" className="gap-1 border-destructive/40 text-[10px] text-destructive">
               <AlertTriangle className="h-2.5 w-2.5" />
               Overdue
             </Badge>
           )}
           {isComplete && (
-            <Badge className="gap-1 bg-emerald-600/15 text-emerald-700 hover:bg-emerald-600/15 dark:text-emerald-300">
+            <Badge className="gap-1 bg-success/15 text-success hover:bg-success/15">
               <CheckCircle2 className="h-2.5 w-2.5" />
               Complete
             </Badge>
@@ -321,7 +321,7 @@ function DeadlineRow({ deadline, today, onToggle }: { deadline: Deadline; today:
                 className="flex items-center gap-2 text-[11px] text-muted-foreground"
               >
                 {task.done ? (
-                  <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                  <CheckCircle2 className="h-3 w-3 text-success" />
                 ) : (
                   <Clock className="h-3 w-3" />
                 )}

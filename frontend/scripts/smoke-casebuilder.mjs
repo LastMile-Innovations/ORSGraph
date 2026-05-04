@@ -44,49 +44,38 @@ async function main() {
   assert(emptyComplaint.paragraphs?.length > 0, "empty matter complaint still has a usable paragraph")
   assert(emptyComplaint.next_actions?.length > 0, "empty matter complaint has next actions")
 
-  const form = new FormData()
-  form.append(
-    "file",
-    new Blob([
-      "Tenant reported mold on April 1, 2026. Landlord accepted rent after notice. Repairs were not completed for two weeks.",
-    ], { type: "text/markdown" }),
-    "smoke-narrative.md",
-  )
-  form.append("document_type", "evidence")
-  form.append("folder", "Smoke")
-  form.append("confidentiality", "private")
-  form.append("relative_path", "Smoke/Narratives/smoke-narrative.md")
-  form.append("upload_batch_id", `smoke:${Date.now()}`)
-
-  const document = await request(`/matters/${encodeURIComponent(matterId)}/files/binary`, {
-    method: "POST",
-    body: form,
+  const uploadBatchId = `smoke:${Date.now()}`
+  const document = await signedUpload(matterId, {
+    bytes: "Tenant reported mold on April 1, 2026. Landlord accepted rent after notice. Repairs were not completed for two weeks.",
+    document_type: "evidence",
+    filename: "smoke-narrative.md",
+    folder: "Smoke",
+    mime_type: "text/markdown",
+    relative_path: "Smoke/Narratives/smoke-narrative.md",
+    upload_batch_id: uploadBatchId,
   })
-  assert(document.document_id, "binary upload returned document")
+  assert(document.document_id, "signed upload returned document")
   assert(document.storage_status === "stored", "document stored")
   assert(document.original_relative_path === "Smoke/Narratives/smoke-narrative.md", "document preserved private relative path")
 
-  const pdfForm = new FormData()
-  pdfForm.append("file", new Blob(["%PDF-1.4\nstored only"], { type: "application/pdf" }), "stored-only.pdf")
-  pdfForm.append("document_type", "evidence")
-  pdfForm.append("folder", "Smoke")
-  pdfForm.append("confidentiality", "private")
-  pdfForm.append("relative_path", "Smoke/Narratives/stored-only.pdf")
-  pdfForm.append("upload_batch_id", `smoke:${Date.now()}:view`)
-
-  const viewOnlyDocument = await request(`/matters/${encodeURIComponent(matterId)}/files/binary`, {
-    method: "POST",
-    body: pdfForm,
+  const viewOnlyDocument = await signedUpload(matterId, {
+    bytes: "%PDF-1.4\nstored only",
+    document_type: "evidence",
+    filename: "stored-only.pdf",
+    folder: "Smoke",
+    mime_type: "application/pdf",
+    relative_path: "Smoke/Narratives/stored-only.pdf",
+    upload_batch_id: `${uploadBatchId}:view`,
   })
   assert(viewOnlyDocument.storage_status === "stored", "non-Markdown document stored")
   assert(viewOnlyDocument.processing_status === "view_only", "non-Markdown document stays view-only")
 
-  const indexRun = await request(`/matters/${encodeURIComponent(matterId)}/index/run`, {
-    method: "POST",
-    body: JSON.stringify({ document_ids: [document.document_id] }),
+  const indexJob = await runIndexJob(matterId, {
+    document_ids: [document.document_id],
+    upload_batch_id: uploadBatchId,
   })
-  assert(indexRun.processed === 1, "matter index run processed uploaded document")
-  assert(indexRun.summary.indexed_documents >= 1, "matter index summary tracks indexed documents")
+  assert(indexJob.processed === 1, "matter index job processed uploaded document")
+  assert(indexJob.summary.indexed_documents >= 1, "matter index summary tracks indexed documents")
 
   const extraction = await request(
     `/matters/${encodeURIComponent(matterId)}/documents/${encodeURIComponent(document.document_id)}/extract`,
@@ -99,17 +88,17 @@ async function main() {
   assert(extraction.artifact_manifest?.normalized_text_version_id, "artifact manifest references normalized text")
   assert(extraction.index_artifacts?.some((artifact) => artifact.artifact_kind === "text.normalized.json"), "normalized text artifact stored")
   assert(extraction.text_chunks?.length > 0, "index text chunks returned")
-  assert(indexRun.produced_timeline_suggestions >= 1, "matter index run reports timeline suggestions")
+  assert(indexJob.produced_timeline_suggestions >= 1, "matter index job reports timeline suggestions")
   assert(extraction.timeline_suggestions?.length > 0, "reviewable timeline suggestions returned")
   assert(extraction.timeline_suggestions[0].status === "suggested", "timeline suggestion is review-first")
   assert(extraction.timeline_suggestions[0].agent_run_id, "indexed suggestion points to a timeline agent run")
 
-  const skippedIndexRun = await request(`/matters/${encodeURIComponent(matterId)}/index/run`, {
-    method: "POST",
-    body: JSON.stringify({ document_ids: [viewOnlyDocument.document_id] }),
+  const skippedIndexJob = await runIndexJob(matterId, {
+    document_ids: [viewOnlyDocument.document_id],
+    upload_batch_id: `${uploadBatchId}:view`,
   })
-  assert(skippedIndexRun.processed === 0, "non-Markdown document is not indexed")
-  assert(skippedIndexRun.skipped === 1, "non-Markdown document is reported as skipped")
+  assert(skippedIndexJob.processed === 0, "non-Markdown document is not indexed")
+  assert(skippedIndexJob.skipped === 1, "non-Markdown document is reported as skipped")
 
   const fact = extraction.proposed_facts[0]
 
@@ -434,6 +423,62 @@ async function main() {
 
 function assert(value, message) {
   if (!value) throw new Error(`Smoke assertion failed: ${message}`)
+}
+
+async function signedUpload(matterId, input) {
+  const blob = new Blob([input.bytes], { type: input.mime_type })
+  const intent = await request(`/matters/${encodeURIComponent(matterId)}/files/uploads`, {
+    method: "POST",
+    body: JSON.stringify({
+      bytes: blob.size,
+      confidentiality: "private",
+      document_type: input.document_type,
+      filename: input.filename,
+      folder: input.folder,
+      mime_type: input.mime_type,
+      relative_path: input.relative_path,
+      upload_batch_id: input.upload_batch_id,
+    }),
+  })
+
+  const putResponse = await fetch(intent.url, {
+    method: intent.method || "PUT",
+    headers: intent.headers ?? {},
+    body: blob,
+  })
+  if (!putResponse.ok) {
+    throw new Error(`Signed upload PUT failed for ${input.filename}: ${putResponse.status} ${putResponse.statusText}`)
+  }
+
+  return request(
+    `/matters/${encodeURIComponent(matterId)}/files/uploads/${encodeURIComponent(intent.upload_id)}/complete`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        bytes: blob.size,
+        document_id: intent.document_id,
+        etag: putResponse.headers.get("etag"),
+      }),
+    },
+  )
+}
+
+async function runIndexJob(matterId, input) {
+  const job = await request(`/matters/${encodeURIComponent(matterId)}/index/jobs`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+  assert(job.index_job_id, "index job id returned")
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const latest = await request(
+      `/matters/${encodeURIComponent(matterId)}/index/jobs/${encodeURIComponent(job.index_job_id)}`,
+    )
+    if (!["queued", "running"].includes(latest.status)) {
+      return latest
+    }
+    await new Promise((resolve) => setTimeout(resolve, 750))
+  }
+  throw new Error(`Index job ${job.index_job_id} did not finish before smoke timeout`)
 }
 
 main()

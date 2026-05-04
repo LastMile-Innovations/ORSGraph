@@ -332,7 +332,7 @@ export function DraftEditor({ matter, draft: initialDraft }: DraftEditorProps) {
                       </span>{" "}
                       {section.heading}
                       {section.suggestions.length > 0 && (
-                        <span className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-500/20 text-[8px] font-bold text-amber-700 dark:text-amber-300">
+                        <span className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-warning/20 text-[8px] font-bold text-warning">
                           {section.suggestions.length}
                         </span>
                       )}
@@ -597,8 +597,8 @@ function CitationPill({ citation, matter }: { citation: DraftCitation; matter: M
           className={cn(
             "mx-0.5 inline-flex items-center gap-0.5 rounded border px-1 py-px font-sans align-baseline text-[10px] font-medium transition-colors",
             citation.verified
-              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
-              : "border-amber-500/40 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300",
+              ? "border-success/40 bg-success/10 text-success hover:bg-success/20"
+              : "border-warning/40 bg-warning/10 text-warning hover:bg-warning/20",
           )}
         >
           {citation.verified ? (
@@ -671,15 +671,15 @@ function SuggestionBlock({
         </p>
 
         {suggestion.original && (
-          <div className="rounded border border-rose-500/30 bg-rose-500/5 p-2 text-[12px] leading-relaxed text-rose-900/90 dark:text-rose-200/90">
+          <div className="rounded border border-case-draft-delete/30 bg-case-draft-delete/5 p-2 text-[12px] leading-relaxed text-case-draft-delete">
             <p className="font-mono text-[10px] font-semibold uppercase tracking-wider opacity-70">
               − Remove
             </p>
-            <p className="mt-1 line-through decoration-rose-500/60">{suggestion.original}</p>
+            <p className="mt-1 line-through decoration-case-draft-delete/60">{suggestion.original}</p>
           </div>
         )}
 
-        <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-2 text-[12px] leading-relaxed text-emerald-900/90 dark:text-emerald-200/90">
+        <div className="rounded border border-case-draft-insert/30 bg-case-draft-insert/5 p-2 text-[12px] leading-relaxed text-case-draft-insert">
           <p className="font-mono text-[10px] font-semibold uppercase tracking-wider opacity-70">
             + {suggestion.kind === "insert" ? "Insert" : "Replace with"}
           </p>
@@ -787,9 +787,9 @@ function CitationCard({ citation, matter }: { citation: DraftCitation; matter: M
           {citation.sourceKind}
         </Badge>
         {citation.verified ? (
-          <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+          <CheckCircle2 className="h-3 w-3 text-success" />
         ) : (
-          <AlertTriangle className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+          <AlertTriangle className="h-3 w-3 text-warning" />
         )}
       </div>
       <p className="mt-1 font-medium leading-tight text-foreground">{citation.fullLabel}</p>
@@ -819,24 +819,24 @@ function CiteCheckPanel({ draft, matter }: { draft: Draft; matter: Matter }) {
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-foreground">Status</span>
           {issues.length === 0 && unverified.length === 0 && persistedFindingCount === 0 ? (
-            <Badge className="gap-1 bg-emerald-600/15 text-emerald-700 hover:bg-emerald-600/15 dark:text-emerald-300">
+            <Badge className="gap-1 bg-success/15 text-success hover:bg-success/15">
               <CheckCircle2 className="h-3 w-3" />
               Clean
             </Badge>
           ) : (
-            <Badge variant="outline" className="gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400">
+            <Badge variant="outline" className="gap-1 border-warning/40 text-warning">
               <AlertTriangle className="h-3 w-3" />
               {issues.length + unverified.length + persistedFindingCount} flag{issues.length + unverified.length + persistedFindingCount === 1 ? "" : "s"}
             </Badge>
           )}
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-          <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-2">
-            <p className="text-[10px] uppercase text-emerald-700 dark:text-emerald-300">Verified</p>
+          <div className="rounded border border-success/30 bg-success/5 p-2">
+            <p className="text-[10px] uppercase text-success">Verified</p>
             <p className="mt-0.5 font-mono text-lg font-semibold">{verified.length}</p>
           </div>
-          <div className="rounded border border-amber-500/30 bg-amber-500/5 p-2">
-            <p className="text-[10px] uppercase text-amber-700 dark:text-amber-400">Unverified</p>
+          <div className="rounded border border-warning/30 bg-warning/5 p-2">
+            <p className="text-[10px] uppercase text-warning">Unverified</p>
             <p className="mt-0.5 font-mono text-lg font-semibold">{unverified.length}</p>
           </div>
         </div>
@@ -849,9 +849,9 @@ function CiteCheckPanel({ draft, matter }: { draft: Draft; matter: Matter }) {
           </h3>
           <ul className="mt-2 space-y-2">
             {factFindings.map((finding) => (
-              <li key={finding.finding_id} className="rounded border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs">
+              <li key={finding.finding_id} className="rounded border border-warning/30 bg-warning/5 p-2.5 text-xs">
                 <div className="flex items-start gap-2">
-                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-warning" />
                   <div>
                     <p className="font-medium text-foreground">{finding.finding_type}</p>
                     <p className="mt-0.5 leading-relaxed text-muted-foreground">{finding.message}</p>
@@ -865,9 +865,9 @@ function CiteCheckPanel({ draft, matter }: { draft: Draft; matter: Matter }) {
               </li>
             ))}
             {citationFindings.map((finding) => (
-              <li key={finding.finding_id} className="rounded border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs">
+              <li key={finding.finding_id} className="rounded border border-warning/30 bg-warning/5 p-2.5 text-xs">
                 <div className="flex items-start gap-2">
-                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-warning" />
                   <div>
                     <p className="font-medium text-foreground">{finding.finding_type}</p>
                     <p className="mt-0.5 leading-relaxed text-muted-foreground">{finding.message}</p>
@@ -891,10 +891,10 @@ function CiteCheckPanel({ draft, matter }: { draft: Draft; matter: Matter }) {
             {issues.map((issue) => (
               <li
                 key={issue.id}
-                className="rounded border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs"
+                className="rounded border border-warning/30 bg-warning/5 p-2.5 text-xs"
               >
                 <div className="flex items-start gap-2">
-                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-warning" />
                   <div>
                     <p className="font-medium text-foreground">{issue.title}</p>
                     <p className="mt-0.5 leading-relaxed text-muted-foreground">{issue.detail}</p>
@@ -917,7 +917,7 @@ function CiteCheckPanel({ draft, matter }: { draft: Draft; matter: Matter }) {
                 key={c.id}
                 className="flex items-start gap-2 rounded border border-border bg-background p-2 text-xs"
               >
-                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400" />
+                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-warning" />
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-foreground">{c.fullLabel}</p>
                   <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">{c.id}</p>

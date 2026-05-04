@@ -248,6 +248,8 @@ pub struct CreateMatterRequest {
     pub jurisdiction: Option<String>,
     pub court: Option<String>,
     pub case_number: Option<String>,
+    #[serde(default)]
+    pub settings: Option<PatchCaseBuilderMatterSettingsRequest>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -258,7 +260,7 @@ pub struct ClaimOwnerlessMattersRequest {
     pub limit: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct PatchMatterRequest {
     pub name: Option<String>,
     pub matter_type: Option<String>,
@@ -267,6 +269,178 @@ pub struct PatchMatterRequest {
     pub jurisdiction: Option<String>,
     pub court: Option<String>,
     pub case_number: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseBuilderSettingsPrincipal {
+    pub subject: String,
+    pub email: Option<String>,
+    pub name: Option<String>,
+    #[serde(default)]
+    pub roles: Vec<String>,
+    pub is_service: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseBuilderUserSettings {
+    pub settings_id: String,
+    pub subject: String,
+    pub workspace_label: Option<String>,
+    pub display_name: Option<String>,
+    pub default_matter_type: String,
+    pub default_user_role: String,
+    pub default_jurisdiction: String,
+    pub default_court: String,
+    pub default_confidentiality: String,
+    pub default_document_type: String,
+    pub auto_index_uploads: bool,
+    pub auto_import_complaints: bool,
+    pub preserve_folder_paths: bool,
+    pub timeline_suggestions_enabled: bool,
+    pub ai_timeline_enrichment_enabled: bool,
+    pub transcript_redact_pii: bool,
+    pub transcript_speaker_labels: bool,
+    pub transcript_default_view: String,
+    pub transcript_prompt_preset: String,
+    pub transcript_remove_audio_tags: bool,
+    pub export_default_format: String,
+    pub export_include_exhibits: bool,
+    pub export_include_qc_report: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct PatchCaseBuilderUserSettingsRequest {
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub workspace_label: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub display_name: Option<Option<String>>,
+    pub default_matter_type: Option<String>,
+    pub default_user_role: Option<String>,
+    pub default_jurisdiction: Option<String>,
+    pub default_court: Option<String>,
+    pub default_confidentiality: Option<String>,
+    pub default_document_type: Option<String>,
+    pub auto_index_uploads: Option<bool>,
+    pub auto_import_complaints: Option<bool>,
+    pub preserve_folder_paths: Option<bool>,
+    pub timeline_suggestions_enabled: Option<bool>,
+    pub ai_timeline_enrichment_enabled: Option<bool>,
+    pub transcript_redact_pii: Option<bool>,
+    pub transcript_speaker_labels: Option<bool>,
+    pub transcript_default_view: Option<String>,
+    pub transcript_prompt_preset: Option<String>,
+    pub transcript_remove_audio_tags: Option<bool>,
+    pub export_default_format: Option<String>,
+    pub export_include_exhibits: Option<bool>,
+    pub export_include_qc_report: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseBuilderMatterSettings {
+    pub settings_id: String,
+    pub matter_id: String,
+    pub owner_subject: Option<String>,
+    pub default_confidentiality: Option<String>,
+    pub default_document_type: Option<String>,
+    pub auto_index_uploads: Option<bool>,
+    pub auto_import_complaints: Option<bool>,
+    pub preserve_folder_paths: Option<bool>,
+    pub timeline_suggestions_enabled: Option<bool>,
+    pub ai_timeline_enrichment_enabled: Option<bool>,
+    pub transcript_redact_pii: Option<bool>,
+    pub transcript_speaker_labels: Option<bool>,
+    pub transcript_default_view: Option<String>,
+    pub transcript_prompt_preset: Option<String>,
+    pub transcript_remove_audio_tags: Option<bool>,
+    pub export_default_format: Option<String>,
+    pub export_include_exhibits: Option<bool>,
+    pub export_include_qc_report: Option<bool>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct PatchCaseBuilderMatterSettingsRequest {
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub default_confidentiality: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub default_document_type: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub auto_index_uploads: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub auto_import_complaints: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub preserve_folder_paths: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub timeline_suggestions_enabled: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub ai_timeline_enrichment_enabled: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub transcript_redact_pii: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub transcript_speaker_labels: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub transcript_default_view: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub transcript_prompt_preset: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub transcript_remove_audio_tags: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub export_default_format: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub export_include_exhibits: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub export_include_qc_report: Option<Option<bool>>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct PatchCaseBuilderMatterConfigRequest {
+    #[serde(default)]
+    pub matter: Option<PatchMatterRequest>,
+    #[serde(default)]
+    pub settings: Option<PatchCaseBuilderMatterSettingsRequest>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseBuilderEffectiveSettings {
+    pub default_confidentiality: String,
+    pub default_document_type: String,
+    pub auto_index_uploads: bool,
+    pub auto_import_complaints: bool,
+    pub preserve_folder_paths: bool,
+    pub timeline_suggestions_enabled: bool,
+    pub ai_timeline_enrichment_enabled: bool,
+    pub transcript_redact_pii: bool,
+    pub transcript_speaker_labels: bool,
+    pub transcript_default_view: String,
+    pub transcript_prompt_preset: String,
+    pub transcript_remove_audio_tags: bool,
+    pub export_default_format: String,
+    pub export_include_exhibits: bool,
+    pub export_include_qc_report: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseBuilderUserSettingsResponse {
+    pub principal: CaseBuilderSettingsPrincipal,
+    pub settings: CaseBuilderUserSettings,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseBuilderMatterSettingsResponse {
+    pub matter: MatterSummary,
+    pub settings: CaseBuilderMatterSettings,
+    pub effective: CaseBuilderEffectiveSettings,
+}
+
+fn deserialize_nullable_patch<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -522,6 +696,8 @@ pub struct TextChunk {
     pub unit_type: Option<String>,
     #[serde(default)]
     pub structure_path: Option<String>,
+    #[serde(default)]
+    pub markdown_ast_node_ids: Vec<String>,
     pub byte_start: Option<u64>,
     pub byte_end: Option<u64>,
     pub char_start: Option<u64>,
@@ -539,6 +715,8 @@ pub struct EvidenceSpan {
     pub object_blob_id: Option<String>,
     pub text_chunk_id: Option<String>,
     pub source_span_id: Option<String>,
+    #[serde(default)]
+    pub markdown_ast_node_ids: Vec<String>,
     pub ingestion_run_id: Option<String>,
     pub index_run_id: Option<String>,
     pub quote_hash: String,
@@ -558,6 +736,10 @@ pub struct EntityMention {
     pub document_id: String,
     pub text_chunk_id: Option<String>,
     pub source_span_id: Option<String>,
+    #[serde(default)]
+    pub entity_id: Option<String>,
+    #[serde(default)]
+    pub markdown_ast_node_ids: Vec<String>,
     pub mention_text: String,
     pub entity_type: String,
     pub confidence: f32,
@@ -584,6 +766,315 @@ pub struct SearchIndexRecord {
     pub stale: bool,
     pub created_at: String,
     pub indexed_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseBuilderEmbeddingRun {
+    pub embedding_run_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: Option<String>,
+    pub document_version_id: Option<String>,
+    pub index_run_id: Option<String>,
+    pub model: String,
+    pub profile: String,
+    pub dimension: u64,
+    pub vector_index_name: String,
+    pub status: String,
+    pub stage: String,
+    pub target_count: u64,
+    pub embedded_count: u64,
+    pub skipped_count: u64,
+    pub stale_count: u64,
+    pub produced_embedding_record_ids: Vec<String>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub retryable: bool,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseBuilderEmbeddingRecord {
+    pub embedding_record_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub document_version_id: Option<String>,
+    pub index_run_id: Option<String>,
+    pub embedding_run_id: Option<String>,
+    pub target_kind: String,
+    pub target_id: String,
+    pub target_label: String,
+    pub model: String,
+    pub profile: String,
+    pub dimension: u64,
+    pub vector_index_name: String,
+    pub input_hash: String,
+    pub source_text_hash: String,
+    pub chunker_version: Option<String>,
+    pub graph_schema_version: Option<String>,
+    pub embedding_strategy: String,
+    pub embedding_input_type: String,
+    pub embedding_output_dtype: String,
+    pub status: String,
+    pub stale: bool,
+    pub review_status: String,
+    pub text_excerpt: Option<String>,
+    pub source_span_ids: Vec<String>,
+    pub text_chunk_ids: Vec<String>,
+    pub markdown_ast_node_ids: Vec<String>,
+    pub markdown_semantic_unit_ids: Vec<String>,
+    pub centroid_source_record_ids: Vec<String>,
+    pub created_at: String,
+    pub embedded_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct CaseBuilderEmbeddingCoverage {
+    pub enabled: bool,
+    pub model: Option<String>,
+    pub profile: Option<String>,
+    pub dimension: Option<u64>,
+    pub vector_index_name: Option<String>,
+    pub target_count: u64,
+    pub embedded_count: u64,
+    pub current_count: u64,
+    pub stale_count: u64,
+    pub skipped_count: u64,
+    pub failed_count: u64,
+    pub full_file_embedded: bool,
+    pub chunk_embedded: u64,
+    pub semantic_unit_embedded: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct RunCaseBuilderEmbeddingsRequest {
+    #[serde(default)]
+    pub document_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub limit: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RunCaseBuilderEmbeddingsResponse {
+    pub matter_id: String,
+    pub requested: u64,
+    pub processed: u64,
+    pub skipped: u64,
+    pub failed: u64,
+    pub runs: Vec<CaseBuilderEmbeddingRun>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct CaseBuilderEmbeddingSearchRequest {
+    pub query: String,
+    #[serde(default)]
+    pub limit: Option<u64>,
+    #[serde(default)]
+    pub document_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub target_kinds: Option<Vec<String>>,
+    #[serde(default)]
+    pub include_stale: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseBuilderEmbeddingSearchResult {
+    pub score: f32,
+    pub embedding_record: CaseBuilderEmbeddingRecord,
+    pub target_kind: String,
+    pub target_id: String,
+    pub document_id: String,
+    pub document_version_id: Option<String>,
+    pub text_excerpt: Option<String>,
+    pub source_span_ids: Vec<String>,
+    pub text_chunk_ids: Vec<String>,
+    pub markdown_ast_node_ids: Vec<String>,
+    pub markdown_semantic_unit_ids: Vec<String>,
+    pub stale: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseBuilderEmbeddingSearchResponse {
+    pub enabled: bool,
+    pub mode: String,
+    pub query: String,
+    pub total: u64,
+    pub results: Vec<CaseBuilderEmbeddingSearchResult>,
+    pub model: Option<String>,
+    pub profile: Option<String>,
+    pub dimension: Option<u64>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MarkdownAstDocument {
+    pub markdown_ast_document_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub document_version_id: Option<String>,
+    pub object_blob_id: Option<String>,
+    pub ingestion_run_id: Option<String>,
+    pub index_run_id: Option<String>,
+    pub parser_id: String,
+    pub parser_version: String,
+    pub source_sha256: String,
+    pub root_node_id: String,
+    pub node_count: u64,
+    #[serde(default)]
+    pub semantic_unit_count: u64,
+    #[serde(default)]
+    pub heading_count: u64,
+    #[serde(default)]
+    pub block_count: u64,
+    #[serde(default)]
+    pub inline_count: u64,
+    #[serde(default)]
+    pub reference_count: u64,
+    #[serde(default)]
+    pub max_depth: u64,
+    #[serde(default)]
+    pub entity_mention_count: u64,
+    #[serde(default)]
+    pub citation_count: u64,
+    #[serde(default)]
+    pub date_count: u64,
+    #[serde(default)]
+    pub money_count: u64,
+    #[serde(default)]
+    pub graph_schema_version: String,
+    pub status: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MarkdownAstNode {
+    pub markdown_ast_node_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub document_version_id: Option<String>,
+    pub object_blob_id: Option<String>,
+    pub ingestion_run_id: Option<String>,
+    pub index_run_id: Option<String>,
+    pub markdown_ast_document_id: String,
+    pub parent_ast_node_id: Option<String>,
+    pub previous_ast_node_id: Option<String>,
+    pub semantic_unit_id: Option<String>,
+    pub node_kind: String,
+    pub tag: String,
+    pub ordinal: u64,
+    pub depth: u64,
+    #[serde(default)]
+    pub ast_path: String,
+    #[serde(default)]
+    pub sibling_index: u64,
+    #[serde(default)]
+    pub child_count: u64,
+    pub structure_path: Option<String>,
+    pub section_ast_node_id: Option<String>,
+    pub section_path: Option<String>,
+    pub heading_level: Option<u64>,
+    pub heading_text: Option<String>,
+    pub semantic_role: Option<String>,
+    pub semantic_fingerprint: Option<String>,
+    pub text_hash: Option<String>,
+    pub text_excerpt: Option<String>,
+    pub byte_start: Option<u64>,
+    pub byte_end: Option<u64>,
+    pub char_start: Option<u64>,
+    pub char_end: Option<u64>,
+    #[serde(default)]
+    pub source_span_ids: Vec<String>,
+    #[serde(default)]
+    pub text_chunk_ids: Vec<String>,
+    #[serde(default)]
+    pub evidence_span_ids: Vec<String>,
+    #[serde(default)]
+    pub search_index_record_ids: Vec<String>,
+    #[serde(default)]
+    pub entity_mention_ids: Vec<String>,
+    #[serde(default)]
+    pub fact_ids: Vec<String>,
+    #[serde(default)]
+    pub timeline_suggestion_ids: Vec<String>,
+    #[serde(default)]
+    pub citation_texts: Vec<String>,
+    #[serde(default)]
+    pub date_texts: Vec<String>,
+    #[serde(default)]
+    pub money_texts: Vec<String>,
+    #[serde(default)]
+    pub contains_entity_mention: bool,
+    #[serde(default)]
+    pub contains_citation: bool,
+    #[serde(default)]
+    pub contains_date: bool,
+    #[serde(default)]
+    pub contains_money: bool,
+    pub review_status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MarkdownSemanticUnit {
+    pub semantic_unit_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub document_version_id: Option<String>,
+    pub markdown_ast_document_id: String,
+    pub unit_kind: String,
+    pub semantic_role: String,
+    pub canonical_label: String,
+    pub normalized_key: String,
+    pub structure_path: Option<String>,
+    pub section_path: Option<String>,
+    pub section_ast_node_id: Option<String>,
+    pub text_hash: Option<String>,
+    pub semantic_fingerprint: String,
+    #[serde(default)]
+    pub markdown_ast_node_ids: Vec<String>,
+    #[serde(default)]
+    pub entity_mention_ids: Vec<String>,
+    #[serde(default)]
+    pub citation_texts: Vec<String>,
+    #[serde(default)]
+    pub date_texts: Vec<String>,
+    #[serde(default)]
+    pub money_texts: Vec<String>,
+    #[serde(default)]
+    pub occurrence_count: u64,
+    #[serde(default)]
+    pub evidence_span_count: u64,
+    #[serde(default)]
+    pub text_chunk_count: u64,
+    #[serde(default)]
+    pub source_span_count: u64,
+    pub review_status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseEntity {
+    pub entity_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub entity_type: String,
+    pub canonical_name: String,
+    pub normalized_key: String,
+    pub confidence: f32,
+    pub review_status: String,
+    pub mention_ids: Vec<String>,
+    #[serde(default)]
+    pub party_match_ids: Vec<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -707,6 +1198,32 @@ pub struct DocumentWorkspace {
     pub capabilities: Vec<DocumentCapability>,
     pub annotations: Vec<DocumentAnnotation>,
     pub source_spans: Vec<SourceSpan>,
+    #[serde(default)]
+    pub markdown_ast_document: Option<MarkdownAstDocument>,
+    #[serde(default)]
+    pub markdown_ast_nodes: Vec<MarkdownAstNode>,
+    #[serde(default)]
+    pub markdown_semantic_units: Vec<MarkdownSemanticUnit>,
+    #[serde(default)]
+    pub text_chunks: Vec<TextChunk>,
+    #[serde(default)]
+    pub evidence_spans: Vec<EvidenceSpan>,
+    #[serde(default)]
+    pub entity_mentions: Vec<EntityMention>,
+    #[serde(default)]
+    pub entities: Vec<CaseEntity>,
+    #[serde(default)]
+    pub search_index_records: Vec<SearchIndexRecord>,
+    #[serde(default)]
+    pub embedding_runs: Vec<CaseBuilderEmbeddingRun>,
+    #[serde(default)]
+    pub embedding_records: Vec<CaseBuilderEmbeddingRecord>,
+    #[serde(default)]
+    pub embedding_coverage: CaseBuilderEmbeddingCoverage,
+    #[serde(default)]
+    pub proposed_facts: Vec<CaseFact>,
+    #[serde(default)]
+    pub timeline_suggestions: Vec<TimelineSuggestion>,
     pub transcriptions: Vec<TranscriptionJobResponse>,
     pub docx_manifest: Option<DocxPackageManifest>,
     pub text_content: Option<String>,
@@ -1093,6 +1610,16 @@ pub struct DocumentExtractionResponse {
     pub entity_mentions: Vec<EntityMention>,
     pub search_index_records: Vec<SearchIndexRecord>,
     pub source_spans: Vec<SourceSpan>,
+    #[serde(default)]
+    pub markdown_ast_document: Option<MarkdownAstDocument>,
+    #[serde(default)]
+    pub markdown_ast_nodes: Vec<MarkdownAstNode>,
+    #[serde(default)]
+    pub markdown_semantic_units: Vec<MarkdownSemanticUnit>,
+    #[serde(default)]
+    pub entities: Vec<CaseEntity>,
+    #[serde(default)]
+    pub embedding_run: Option<CaseBuilderEmbeddingRun>,
     pub timeline_suggestions: Vec<TimelineSuggestion>,
 }
 
@@ -1166,6 +1693,14 @@ pub struct MatterIndexRunDocumentResult {
     pub produced_facts: u64,
     #[serde(default)]
     pub produced_timeline_suggestions: u64,
+    #[serde(default)]
+    pub produced_markdown_ast_nodes: u64,
+    #[serde(default)]
+    pub produced_markdown_semantic_units: u64,
+    #[serde(default)]
+    pub produced_embedding_records: u64,
+    #[serde(default)]
+    pub produced_entities: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1179,6 +1714,43 @@ pub struct MatterIndexRunResponse {
     pub produced_timeline_suggestions: u64,
     pub results: Vec<MatterIndexRunDocumentResult>,
     pub summary: MatterIndexSummary,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateMatterIndexJobRequest {
+    pub document_ids: Option<Vec<String>>,
+    pub upload_batch_id: Option<String>,
+    pub limit: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MatterIndexJob {
+    pub index_job_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub upload_batch_id: Option<String>,
+    pub document_ids: Vec<String>,
+    pub limit: u64,
+    pub status: String,
+    pub stage: String,
+    pub requested: u64,
+    pub processed: u64,
+    pub skipped: u64,
+    pub failed: u64,
+    #[serde(default)]
+    pub produced_timeline_suggestions: u64,
+    #[serde(default)]
+    pub results: Vec<MatterIndexRunDocumentResult>,
+    #[serde(default)]
+    pub summary: Option<MatterIndexSummary>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub retryable: bool,
+    pub created_at: String,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1255,6 +1827,8 @@ pub struct ExtractedTextChunk {
     #[serde(default)]
     pub source_span_id: Option<String>,
     #[serde(default)]
+    pub markdown_ast_node_ids: Vec<String>,
+    #[serde(default)]
     pub byte_start: Option<u64>,
     #[serde(default)]
     pub byte_end: Option<u64>,
@@ -1284,6 +1858,8 @@ pub struct CaseFact {
     pub needs_verification: bool,
     #[serde(default)]
     pub source_spans: Vec<SourceSpan>,
+    #[serde(default)]
+    pub markdown_ast_node_ids: Vec<String>,
     pub notes: Option<String>,
 }
 
@@ -1298,6 +1874,8 @@ pub struct CreateFactRequest {
     pub source_evidence_ids: Option<Vec<String>>,
     #[serde(default)]
     pub source_span_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub markdown_ast_node_ids: Option<Vec<String>>,
     pub notes: Option<String>,
 }
 
@@ -1331,6 +1909,8 @@ pub struct CaseTimelineEvent {
     #[serde(default)]
     pub text_chunk_ids: Vec<String>,
     #[serde(default)]
+    pub markdown_ast_node_ids: Vec<String>,
+    #[serde(default)]
     pub suggestion_id: Option<String>,
     #[serde(default)]
     pub agent_run_id: Option<String>,
@@ -1350,6 +1930,8 @@ pub struct CreateTimelineEventRequest {
     pub linked_claim_ids: Option<Vec<String>>,
     pub source_span_ids: Option<Vec<String>>,
     pub text_chunk_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub markdown_ast_node_ids: Option<Vec<String>>,
     pub suggestion_id: Option<String>,
     pub agent_run_id: Option<String>,
 }
@@ -1425,6 +2007,8 @@ pub struct TimelineSuggestion {
     pub source_document_id: Option<String>,
     pub source_span_ids: Vec<String>,
     pub text_chunk_ids: Vec<String>,
+    #[serde(default)]
+    pub markdown_ast_node_ids: Vec<String>,
     pub linked_fact_ids: Vec<String>,
     pub linked_claim_ids: Vec<String>,
     pub work_product_id: Option<String>,

@@ -26,6 +26,7 @@ jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 percent-encoding = "2"
 async-trait = "0.1"
 uuid = { version = "1", features = ["v4"] }
+pulldown-cmark = "0.13"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-credential-types = "1"
 aws-sdk-s3 = "1"

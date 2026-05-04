@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next"
 import { Analytics } from "@vercel/analytics/next"
 import { AuthSessionProvider } from "@/components/auth-session-provider"
+import { CaseBuilderUploadProvider } from "@/components/casebuilder/upload-provider"
 import { ThemeProvider } from "@/components/theme-provider"
 import { WebVitals } from "@/components/web-vitals"
 import { siteOrigin } from "./metadata"
@@ -41,8 +42,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f8fafc" },
-    { media: "(prefers-color-scheme: dark)", color: "#020617" },
+    { media: "(prefers-color-scheme: light)", color: "#fbfaf7" },
+    { media: "(prefers-color-scheme: dark)", color: "#060c10" },
   ],
   colorScheme: "dark light",
 }
@@ -54,7 +55,9 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning className={`${fontVariables} bg-background`}>
       <body className="font-sans antialiased">
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
-          <AuthSessionProvider>{children}</AuthSessionProvider>
+          <AuthSessionProvider>
+            <CaseBuilderUploadProvider>{children}</CaseBuilderUploadProvider>
+          </AuthSessionProvider>
         </ThemeProvider>
         {enableWebVitals && <WebVitals />}
         {enableVercelAnalytics && <Analytics />}

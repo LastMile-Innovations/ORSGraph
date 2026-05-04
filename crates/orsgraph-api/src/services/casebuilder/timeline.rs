@@ -109,6 +109,7 @@ impl CaseBuilderService {
             linked_claim_ids: suggestion.linked_claim_ids.clone(),
             source_span_ids: suggestion.source_span_ids.clone(),
             text_chunk_ids: suggestion.text_chunk_ids.clone(),
+            markdown_ast_node_ids: suggestion.markdown_ast_node_ids.clone(),
             suggestion_id: Some(suggestion.suggestion_id.clone()),
             agent_run_id: suggestion.agent_run_id.clone(),
             date_confidence: suggestion.date_confidence,

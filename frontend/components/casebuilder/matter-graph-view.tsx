@@ -36,7 +36,60 @@ export function MatterGraphView({
                     ? ["matter", "claim", "element", "authority", "work_product"]
                     : mode === "work_product"
                       ? ["matter", "work_product", "fact", "evidence", "document", "authority"]
-                      : ["matter", "task", "deadline", "claim", "document"],
+                        : mode === "markdown"
+                          ? [
+                              "matter",
+                              "document",
+                              "document_version",
+                              "embedding_run",
+                              "embedding_record",
+                              "markdown_ast_document",
+                              "markdown_ast_node",
+                              "markdown_semantic_unit",
+                            "text_chunk",
+                            "source_span",
+                          ]
+                        : mode === "markdown_ast"
+                          ? ["matter", "document", "document_version", "markdown_ast_document", "markdown_ast_node", "markdown_semantic_unit"]
+                          : mode === "markdown_semantic"
+                            ? ["matter", "document", "document_version", "markdown_ast_document", "markdown_semantic_unit", "markdown_ast_node", "case_entity", "entity_mention"]
+                            : mode === "markdown_embeddings"
+                              ? [
+                                  "matter",
+                                  "document",
+                                  "document_version",
+                                  "index_run",
+                                  "embedding_run",
+                                  "embedding_record",
+                                  "markdown_ast_document",
+                                  "markdown_ast_node",
+                                  "markdown_semantic_unit",
+                                  "text_chunk",
+                                  "source_span",
+                                ]
+                            : mode === "entities"
+                              ? ["matter", "document", "entity_mention", "case_entity", "party", "text_chunk", "source_span", "markdown_semantic_unit"]
+                            : mode === "provenance"
+                              ? [
+                                  "matter",
+                                  "document",
+                                  "document_version",
+                                  "index_run",
+                                  "extraction_manifest",
+                                  "source_span",
+                                  "text_chunk",
+                                  "evidence_span",
+                                  "search_index_record",
+                                  "embedding_run",
+                                  "embedding_record",
+                                  "markdown_ast_document",
+                                  "markdown_ast_node",
+                                  "markdown_semantic_unit",
+                                  "fact",
+                                  "event",
+                                  "timeline_suggestion",
+                                ]
+                              : ["matter", "task", "deadline", "claim", "document"],
           )
     const filteredNodes = nodes.filter((node) => {
       if (allowedKinds && !allowedKinds.has(node.kind)) return false
@@ -167,11 +220,19 @@ export function MatterGraphView({
 
 function toneForKind(kind: string) {
   if (kind === "matter") return "border-primary/40"
-  if (kind === "claim" || kind === "counterclaim" || kind === "defense" || kind === "element") return "border-blue-500/30"
-  if (kind === "evidence" || kind === "fact") return "border-emerald-500/30"
-  if (kind === "timeline_suggestion") return "border-cyan-500/30"
-  if (kind === "deadline" || kind === "task") return "border-amber-500/30"
-  if (kind === "authority") return "border-purple-500/30"
-  if (kind === "work_product") return "border-cyan-500/30"
+  if (kind === "claim" || kind === "element") return "border-case-claim/30"
+  if (kind === "counterclaim") return "border-case-counterclaim/30"
+  if (kind === "defense") return "border-case-defense/30"
+  if (kind === "evidence" || kind === "fact" || kind === "evidence_span") return "border-case-evidence/30"
+  if (kind === "timeline_suggestion") return "border-case-timeline/30"
+  if (kind === "deadline" || kind === "task") return "border-case-deadline/30"
+  if (kind === "authority") return "border-case-authority/30"
+  if (kind === "work_product") return "border-case-work-product/30"
+  if (kind === "markdown_ast_document" || kind === "markdown_ast_node") return "border-case-document/30"
+  if (kind === "markdown_semantic_unit") return "border-case-work-product/30"
+  if (kind === "embedding_run" || kind === "embedding_record") return "border-info/30"
+  if (kind === "source_span" || kind === "text_chunk" || kind === "search_index_record") return "border-case-muted/30"
+  if (kind === "entity_mention" || kind === "case_entity") return "border-case-entity/30"
+  if (kind === "document_version" || kind === "index_run" || kind === "extraction_manifest") return "border-case-document/30"
   return "border-border"
 }

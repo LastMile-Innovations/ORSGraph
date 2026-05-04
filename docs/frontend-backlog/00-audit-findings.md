@@ -240,7 +240,8 @@ This file is the raw inventory from the frontend review. Implementation-ready ta
 - Implementation notes: Replace hard-coded palette with token-based styles after stabilization.
 - Acceptance checks: Theme toggle does not produce inconsistent home styling.
 - Dependencies: None.
-- Status: Todo
+- Status: Done
+- Verification: Global palette tokens were refreshed around cloud-paper neutrals, authority blue, and teal graph accents; the marketing landing page now uses semantic app/hero tokens instead of hard-coded zinc/indigo/hex colors, and `pnpm run build` completed successfully.
 
 ## AUD-021 - Dense legal UI needs keyboard and focus audit
 - Priority: P2

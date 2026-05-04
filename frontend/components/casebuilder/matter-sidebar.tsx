@@ -20,6 +20,7 @@ import {
   Microscope,
   PackageCheck,
   Scale,
+  Settings,
   ShieldCheck,
   Sparkles,
   Users,
@@ -98,6 +99,7 @@ export function MatterSidebar({ matter, counts = {}, className, onNavigate }: Ma
         { href: `${base}/drafts`, label: "Drafts", icon: FileText, count: resolvedCounts.drafts },
         { href: `${base}/tasks`, label: "Tasks", icon: CheckSquare, count: resolvedCounts.tasks },
         { href: `${base}/export`, label: "Exports", icon: PackageCheck },
+        { href: `${base}/settings`, label: "Settings", icon: Settings },
       ],
     },
   ]

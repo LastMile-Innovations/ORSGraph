@@ -236,10 +236,10 @@ function FactRow({
 
 function FactStatusIcon({ fact }: { fact: ExtractedFact }) {
   if (fact.disputed) {
-    return <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+    return <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
   }
   if (fact.confidence >= 0.85) {
-    return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+    return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
   }
   return <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
 }
@@ -284,7 +284,7 @@ function FactDetail({ fact, matter }: { fact: ExtractedFact; matter: Matter }) {
             <FactStatusBadge status={fact.status} />
             <ConfidenceBadge value={fact.confidence} />
             {fact.disputed && (
-              <Badge variant="outline" className="gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400">
+              <Badge variant="outline" className="gap-1 border-warning/40 text-warning">
                 <AlertTriangle className="h-3 w-3" />
                 Disputed
               </Badge>

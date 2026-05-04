@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import type { CaseBuilderUserSettings } from "@/lib/casebuilder/types"
 import { NewMatterClient } from "./new-matter-client"
 
 const router = {
@@ -16,35 +17,28 @@ vi.mock("@/lib/conversion-events", () => ({
 }))
 
 const createMatter = vi.fn()
-const runMatterIndex = vi.fn()
-const uploadBinaryFile = vi.fn()
-const uploadTextFile = vi.fn()
+const enqueueMatterIntake = vi.fn()
 
 vi.mock("@/lib/casebuilder/api", () => ({
   createMatter: (...args: unknown[]) => createMatter(...args),
-  runMatterIndex: (...args: unknown[]) => runMatterIndex(...args),
-  uploadBinaryFile: (...args: unknown[]) => uploadBinaryFile(...args),
-  uploadTextFile: (...args: unknown[]) => uploadTextFile(...args),
+}))
+
+vi.mock("./upload-provider", () => ({
+  useCaseBuilderUploads: () => ({
+    enqueueMatterIntake,
+  }),
 }))
 
 describe("NewMatterClient intake flow", () => {
   beforeEach(() => {
     router.push.mockReset()
     createMatter.mockReset()
-    runMatterIndex.mockReset()
-    uploadBinaryFile.mockReset()
-    uploadTextFile.mockReset()
+    enqueueMatterIntake.mockReset()
 
     createMatter.mockResolvedValue({ data: matter() })
-    runMatterIndex.mockImplementation((_matterId: string, input: { document_ids?: string[] }) => ({
-      data: {
-        results: (input.document_ids ?? []).map((documentId) => ({
-          document_id: documentId,
-          status: "indexed",
-          message: "Indexed",
-        })),
-      },
-    }))
+    enqueueMatterIntake.mockImplementation((_matterId: string, candidates: unknown[], options?: { storyText?: string }) =>
+      candidates.length > 0 || options?.storyText?.trim() ? "batch:intake" : null,
+    )
   })
 
   it("creates a blank matter and routes directly to the dashboard", async () => {
@@ -64,14 +58,14 @@ describe("NewMatterClient intake flow", () => {
       )
       expect(router.push).toHaveBeenCalledWith("/casebuilder/matters/intake-test")
     })
-    expect(uploadTextFile).not.toHaveBeenCalled()
-    expect(uploadBinaryFile).not.toHaveBeenCalled()
-    expect(runMatterIndex).not.toHaveBeenCalled()
+    expect(enqueueMatterIntake).toHaveBeenCalledWith("matter:intake-test", [], expect.objectContaining({
+      label: "Matter intake",
+      storyText: undefined,
+    }))
   })
 
-  it("uploads the build-mode story, indexes it, then routes", async () => {
+  it("enqueues the build-mode story and routes immediately", async () => {
     const user = userEvent.setup()
-    uploadTextFile.mockResolvedValue({ data: document("doc:story") })
     render(<NewMatterClient initialIntent="build" />)
 
     await user.type(screen.getByLabelText(/matter name/i), "Story matter")
@@ -79,27 +73,64 @@ describe("NewMatterClient intake flow", () => {
     await user.click(screen.getByRole("button", { name: /create matter/i }))
 
     await waitFor(() => {
-      expect(uploadTextFile).toHaveBeenCalledWith(
-        "matter:intake-test",
+      expect(enqueueMatterIntake).toHaveBeenCalledWith("matter:intake-test", [], expect.objectContaining({
+        label: "Matter intake",
+        storyText: "Tenant reported mold on April 1.",
+      }))
+      expect(router.push).toHaveBeenCalledWith("/casebuilder/matters/intake-test")
+    })
+  })
+
+  it("prefills creation and intake defaults from workspace settings", async () => {
+    const user = userEvent.setup()
+    render(
+      <NewMatterClient
+        initialIntent="blank"
+        settings={workspaceSettings({
+          default_matter_type: "landlord_tenant",
+          default_user_role: "defendant",
+          default_jurisdiction: "Washington",
+          default_court: "Clark County Superior Court",
+          default_confidentiality: "sealed",
+          default_document_type: "exhibit",
+          auto_index_uploads: false,
+          auto_import_complaints: false,
+        })}
+      />,
+    )
+
+    await user.type(screen.getByLabelText(/matter name/i), "Settings matter")
+    await user.click(screen.getByRole("button", { name: /create matter/i }))
+
+    await waitFor(() => {
+      expect(createMatter).toHaveBeenCalledWith(
         expect.objectContaining({
-          filename: "case-narrative.md",
-          mime_type: "text/markdown",
-          relative_path: "Intake/case-narrative.md",
-          upload_batch_id: expect.stringMatching(/^batch:/),
-          text: "Tenant reported mold on April 1.",
+          matter_type: "landlord_tenant",
+          user_role: "defendant",
+          jurisdiction: "Washington",
+          court: "Clark County Superior Court",
+          settings: undefined,
         }),
       )
-      expect(runMatterIndex).toHaveBeenCalledWith("matter:intake-test", { document_ids: ["doc:story"] })
-      expect(router.push).toHaveBeenCalledWith("/casebuilder/matters/intake-test")
+      expect(enqueueMatterIntake).toHaveBeenCalledWith(
+        "matter:intake-test",
+        [],
+        expect.objectContaining({
+          autoIndex: false,
+          importComplaints: false,
+          defaultConfidentiality: "sealed",
+          defaultDocumentType: "exhibit",
+        }),
+      )
     })
   })
 
   it("preserves folder-relative paths for uploaded files", async () => {
     const user = userEvent.setup()
-    uploadBinaryFile.mockResolvedValue({ data: document("doc:receipt") })
     const { container } = render(<NewMatterClient initialIntent="blank" />)
     const file = new File(["rent"], "receipt.pdf", { type: "application/pdf" })
     Object.defineProperty(file, "webkitRelativePath", {
+      configurable: true,
       value: "Receipts/April/receipt.pdf",
     })
 
@@ -111,110 +142,20 @@ describe("NewMatterClient intake flow", () => {
     await user.click(screen.getByRole("button", { name: /create matter/i }))
 
     await waitFor(() => {
-      expect(uploadBinaryFile).toHaveBeenCalledWith(
-        "matter:intake-test",
+      const [matterId, candidates, options] = enqueueMatterIntake.mock.calls[0] as [
+        string,
+        { file: File; relativePath: string; folder: string }[],
+        { label: string; storyText?: string },
+      ]
+      expect(matterId).toBe("matter:intake-test")
+      expect(candidates).toHaveLength(1)
+      expect(candidates[0]).toMatchObject({
         file,
-        expect.objectContaining({
-          confidentiality: "private",
-          relative_path: "Receipts/April/receipt.pdf",
-          upload_batch_id: expect.stringMatching(/^folder:/),
-        }),
-      )
-      expect(runMatterIndex).not.toHaveBeenCalled()
+        folder: "Receipts",
+        relativePath: "Receipts/April/receipt.pdf",
+      })
+      expect(options).toEqual(expect.objectContaining({ label: "Matter intake", storyText: undefined }))
       expect(router.push).toHaveBeenCalledWith("/casebuilder/matters/intake-test")
-    })
-  })
-
-  it("keeps the user on intake when one upload fails and allows retry", async () => {
-    const user = userEvent.setup()
-    uploadBinaryFile
-      .mockResolvedValueOnce({ data: document("doc:ok") })
-      .mockResolvedValueOnce({ data: null, error: "Upload is too large" })
-      .mockResolvedValueOnce({ data: document("doc:retry") })
-    const { container } = render(<NewMatterClient initialIntent="blank" />)
-    const files = [
-      new File(["ok"], "ok.md", { type: "text/markdown" }),
-      new File(["large"], "large.md", { type: "text/markdown" }),
-    ]
-
-    fireEvent.change(container.querySelector<HTMLInputElement>("#file-input") as HTMLInputElement, {
-      target: { files },
-    })
-    await user.type(screen.getByLabelText(/matter name/i), "Partial matter")
-    await user.click(screen.getByRole("button", { name: /create matter/i }))
-
-    await screen.findByText(/need attention/i)
-    expect(router.push).not.toHaveBeenCalled()
-    expect(screen.getByRole("link", { name: /continue/i })).toHaveAttribute(
-      "href",
-      "/casebuilder/matters/intake-test",
-    )
-
-    const failedRow = within(screen.getAllByText("large.md").at(-1)?.closest("div") as HTMLElement)
-    await user.click(failedRow.getByRole("button", { name: /retry/i }))
-
-    await waitFor(() => {
-      expect(uploadBinaryFile).toHaveBeenCalledTimes(3)
-      expect(runMatterIndex).toHaveBeenLastCalledWith("matter:intake-test", { document_ids: ["doc:retry"] })
-      expect(screen.getAllByText("indexed").length).toBeGreaterThanOrEqual(2)
-    })
-  })
-
-  it("retries indexing without uploading the already-stored document again", async () => {
-    const user = userEvent.setup()
-    uploadBinaryFile.mockResolvedValue({ data: document("doc:index") })
-    runMatterIndex
-      .mockResolvedValueOnce({ data: null, error: "Index service unavailable" })
-      .mockResolvedValueOnce({
-        data: {
-          results: [{ document_id: "doc:index", status: "indexed", message: "Indexed" }],
-        },
-      })
-    const { container } = render(<NewMatterClient initialIntent="blank" />)
-
-    fireEvent.change(container.querySelector<HTMLInputElement>("#file-input") as HTMLInputElement, {
-      target: { files: [new File(["text"], "index.md", { type: "text/markdown" })] },
-    })
-    await user.type(screen.getByLabelText(/matter name/i), "Index matter")
-    await user.click(screen.getByRole("button", { name: /create matter/i }))
-
-    await screen.findByText(/index service unavailable/i)
-    await user.click(screen.getByRole("button", { name: /retry/i }))
-
-    await waitFor(() => {
-      expect(uploadBinaryFile).toHaveBeenCalledTimes(1)
-      expect(runMatterIndex).toHaveBeenCalledTimes(2)
-      expect(screen.getByText("indexed")).toBeInTheDocument()
-    })
-  })
-
-  it("keeps intake open when an index run omits a stored document result", async () => {
-    const user = userEvent.setup()
-    uploadBinaryFile.mockResolvedValue({ data: document("doc:missing-index-result") })
-    runMatterIndex
-      .mockResolvedValueOnce({ data: { results: [] } })
-      .mockResolvedValueOnce({
-        data: {
-          results: [{ document_id: "doc:missing-index-result", status: "indexed", message: "Indexed" }],
-        },
-      })
-    const { container } = render(<NewMatterClient initialIntent="blank" />)
-
-    fireEvent.change(container.querySelector<HTMLInputElement>("#file-input") as HTMLInputElement, {
-      target: { files: [new File(["text"], "unknown-index.md", { type: "text/markdown" })] },
-    })
-    await user.type(screen.getByLabelText(/matter name/i), "Missing result matter")
-    await user.click(screen.getByRole("button", { name: /create matter/i }))
-
-    await screen.findByText(/did not return a result/i)
-    expect(router.push).not.toHaveBeenCalled()
-
-    await user.click(screen.getByRole("button", { name: /retry/i }))
-
-    await waitFor(() => {
-      expect(uploadBinaryFile).toHaveBeenCalledTimes(1)
-      expect(runMatterIndex).toHaveBeenCalledTimes(2)
-      expect(screen.getByText("indexed")).toBeInTheDocument()
     })
   })
 })
@@ -258,10 +199,33 @@ function matter() {
   }
 }
 
-function document(documentId: string) {
+function workspaceSettings(overrides: Partial<CaseBuilderUserSettings> = {}): CaseBuilderUserSettings {
   return {
-    id: documentId,
-    document_id: documentId,
-    storage_status: "stored",
+    settings_id: "casebuilder-user-settings:user:test",
+    subject: "user:test",
+    workspace_label: null,
+    display_name: null,
+    default_matter_type: "civil",
+    default_user_role: "neutral",
+    default_jurisdiction: "Oregon",
+    default_court: "Unassigned",
+    default_confidentiality: "private",
+    default_document_type: "other",
+    auto_index_uploads: true,
+    auto_import_complaints: true,
+    preserve_folder_paths: true,
+    timeline_suggestions_enabled: true,
+    ai_timeline_enrichment_enabled: true,
+    transcript_redact_pii: true,
+    transcript_speaker_labels: true,
+    transcript_default_view: "redacted",
+    transcript_prompt_preset: "unclear",
+    transcript_remove_audio_tags: true,
+    export_default_format: "pdf",
+    export_include_exhibits: true,
+    export_include_qc_report: true,
+    created_at: "2026-05-04T00:00:00Z",
+    updated_at: "2026-05-04T00:00:00Z",
+    ...overrides,
   }
 }

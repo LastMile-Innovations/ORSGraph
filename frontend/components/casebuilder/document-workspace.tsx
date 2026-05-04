@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react"
+import { useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
@@ -11,14 +11,17 @@ import {
   CheckCircle2,
   Download,
   FileText,
+  GitGraphIcon,
   Highlighter,
   Link2,
   MessageSquare,
   Mic,
+  Network,
   PanelRight,
   PlusCircle,
   RefreshCw,
   Save,
+  Search,
   ScrollText,
   Shield,
   Sparkles,
@@ -26,7 +29,10 @@ import {
   Users,
 } from "lucide-react"
 import type {
+  CaseBuilderEffectiveSettings,
   DocumentAnnotation,
+  CaseBuilderEmbeddingSearchResult,
+  MarkdownAstNode,
   DocumentWorkspace as DocumentWorkspaceState,
   Matter,
   TranscriptionJob,
@@ -46,7 +52,9 @@ import {
   patchTranscriptSpeaker,
   promoteDocumentWorkProduct,
   reviewTranscription,
+  runDocumentEmbeddings,
   saveDocumentText,
+  searchMatterEmbeddings,
   suggestTimeline,
   syncTranscription,
 } from "@/lib/casebuilder/api"
@@ -68,9 +76,10 @@ import { cn } from "@/lib/utils"
 interface DocumentWorkspaceProps {
   matter: Matter
   workspace: DocumentWorkspaceState
+  settings?: CaseBuilderEffectiveSettings | null
 }
 
-type WorkspaceTab = "links" | "annotations" | "provenance" | "speakers" | "privacy"
+type WorkspaceTab = "links" | "annotations" | "provenance" | "markdown_graph" | "speakers" | "privacy"
 type SelectedTextRange = { start: number; end: number; quote: string }
 type TranscriptView = "redacted" | "raw"
 type TranscriptSegmentDrafts = Record<string, Partial<Record<TranscriptView, string>>>
@@ -119,7 +128,23 @@ const defaultTranscriptionSettings: TranscriptionSettings = {
   removeAudioTags: true,
 }
 
-export function DocumentWorkspace({ matter, workspace: initialWorkspace }: DocumentWorkspaceProps) {
+function transcriptViewFromSettings(settings?: CaseBuilderEffectiveSettings | null): TranscriptView {
+  return settings?.transcript_default_view === "raw" ? "raw" : "redacted"
+}
+
+function transcriptionSettingsFromEffectiveSettings(settings?: CaseBuilderEffectiveSettings | null): TranscriptionSettings {
+  const promptPreset = settings?.transcript_prompt_preset?.trim() || defaultTranscriptionSettings.promptPreset
+  return {
+    ...defaultTranscriptionSettings,
+    redactPii: settings?.transcript_redact_pii ?? defaultTranscriptionSettings.redactPii,
+    speakerLabels: settings?.transcript_speaker_labels ?? defaultTranscriptionSettings.speakerLabels,
+    promptMode: settings?.transcript_prompt_preset ? "preset" : defaultTranscriptionSettings.promptMode,
+    promptPreset,
+    removeAudioTags: settings?.transcript_remove_audio_tags ?? defaultTranscriptionSettings.removeAudioTags,
+  }
+}
+
+export function DocumentWorkspace({ matter, workspace: initialWorkspace, settings }: DocumentWorkspaceProps) {
   const router = useRouter()
   const [workspace, setWorkspace] = useState(initialWorkspace)
   const [textDraft, setTextDraft] = useState(initialWorkspace.text_content ?? "")
@@ -133,14 +158,15 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
   const [annotationPage, setAnnotationPage] = useState("")
   const [selectedTextRange, setSelectedTextRange] = useState<SelectedTextRange | null>(null)
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null)
-  const [transcriptView, setTranscriptView] = useState<TranscriptView>("redacted")
+  const [transcriptView, setTranscriptView] = useState<TranscriptView>(() => transcriptViewFromSettings(settings))
   const [transcriptSegmentDrafts, setTranscriptSegmentDrafts] = useState<TranscriptSegmentDrafts>({})
   const [timelineDateDrafts, setTimelineDateDrafts] = useState<Record<string, string>>({})
-  const [transcriptionSettings, setTranscriptionSettings] = useState<TranscriptionSettings>(
-    defaultTranscriptionSettings,
+  const [transcriptionSettings, setTranscriptionSettings] = useState<TranscriptionSettings>(() =>
+    transcriptionSettingsFromEffectiveSettings(settings),
   )
   const reviewInFlightRef = useRef(false)
   const reviewGenerationRef = useRef(0)
+  const textAreaRef = useRef<HTMLTextAreaElement | null>(null)
 
   const document = workspace.document
   const filename = document.filename.toLowerCase()
@@ -161,6 +187,27 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
     [workspace.transcriptions],
   )
   const selectedSegment = activeTranscription?.segments.find((segment) => segment.segment_id === selectedSegmentId) ?? null
+
+  function selectMarkdownNode(node: MarkdownAstNode) {
+    const start = node.char_start ?? node.byte_start
+    const end = node.char_end ?? node.byte_end
+    if (start == null || end == null || end <= start) return
+    const quote = textDraft.slice(start, end)
+    setSelectedTextRange({ start, end, quote })
+    const syncEditorSelection = () => {
+      const textArea = textAreaRef.current
+      if (!textArea) return
+      textArea.focus()
+      textArea.setSelectionRange(start, end)
+      const line = textDraft.slice(0, start).split("\n").length
+      textArea.scrollTop = Math.max(0, (line - 4) * 24)
+    }
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(syncEditorSelection)
+    } else {
+      syncEditorSelection()
+    }
+  }
 
   const links = useMemo(
     () => [
@@ -253,10 +300,36 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
           ...current,
           document: data.document,
           source_spans: data.source_spans,
+          markdown_ast_document: data.markdown_ast_document,
+          markdown_ast_nodes: data.markdown_ast_nodes,
+          markdown_semantic_units: data.markdown_semantic_units,
+          text_chunks: data.text_chunks,
+          evidence_spans: data.evidence_spans,
+          entity_mentions: data.entity_mentions,
+          entities: data.entities,
+          search_index_records: data.search_index_records,
+          embedding_runs: data.embedding_run ? [data.embedding_run, ...current.embedding_runs] : current.embedding_runs,
+          proposed_facts: data.proposed_facts,
+          timeline_suggestions: data.timeline_suggestions,
           text_content: data.document.extracted_text ?? current.text_content,
         }))
         setTextDraft(data.document.extracted_text ?? textDraft)
         setMessage(data.message)
+        router.refresh()
+      },
+    )
+  }
+
+  async function onRunEmbeddings() {
+    await runAction(
+      "embeddings",
+      () => runDocumentEmbeddings(matter.id, document.document_id),
+      (run) => {
+        setWorkspace((current) => ({
+          ...current,
+          embedding_runs: [run, ...current.embedding_runs.filter((item) => item.embedding_run_id !== run.embedding_run_id)],
+        }))
+        setMessage(`Embedding run ${run.status}: ${run.embedded_count} record${run.embedded_count === 1 ? "" : "s"}.`)
         router.refresh()
       },
     )
@@ -723,6 +796,7 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
               transcriptionSettings={transcriptionSettings}
               transcriptView={transcriptView}
               textDraft={textDraft}
+              textAreaRef={textAreaRef}
               workspace={workspace}
               onCreateAnnotation={onCreateSegmentAnnotation}
               onCreateEvidence={onCreateSegmentEvidence}
@@ -747,10 +821,11 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
           <aside className="min-h-0 bg-card">
             <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as WorkspaceTab)} className="flex h-full flex-col">
               <div className="border-b px-3 pt-3">
-                <TabsList className={cn("grid w-full", isMedia ? "grid-cols-5" : "grid-cols-3")}>
+                <TabsList className={cn("grid w-full", isMedia ? "grid-cols-6" : "grid-cols-4")}>
                   <TabsTrigger value="links" aria-label="Links"><Link2 className="h-3.5 w-3.5" /></TabsTrigger>
                   <TabsTrigger value="annotations" aria-label="Annotations"><Highlighter className="h-3.5 w-3.5" /></TabsTrigger>
                   <TabsTrigger value="provenance" aria-label="Provenance"><PanelRight className="h-3.5 w-3.5" /></TabsTrigger>
+                  <TabsTrigger value="markdown_graph" aria-label="Markdown graph"><GitGraphIcon className="h-3.5 w-3.5" /></TabsTrigger>
                   {isMedia && <TabsTrigger value="speakers" aria-label="Speakers"><Users className="h-3.5 w-3.5" /></TabsTrigger>}
                   {isMedia && <TabsTrigger value="privacy" aria-label="Privacy"><Shield className="h-3.5 w-3.5" /></TabsTrigger>}
                 </TabsList>
@@ -846,6 +921,15 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
                     </InspectorSection>
                   )}
                 </TabsContent>
+                <TabsContent value="markdown_graph" className="m-0 space-y-4 p-4">
+                  <MarkdownGraphPanel
+                    matterId={matter.id}
+                    workspace={workspace}
+                    selectedTextRange={selectedTextRange}
+                    onSelectNode={selectMarkdownNode}
+                    onRunEmbeddings={onRunEmbeddings}
+                  />
+                </TabsContent>
                 {isMedia && (
                   <TabsContent value="speakers" className="m-0 space-y-4 p-4">
                     <InspectorSection title="Speakers" icon={<Users className="h-4 w-4" />}>
@@ -933,6 +1017,7 @@ function DocumentCenterPane({
   transcriptionSettings,
   transcriptView,
   textDraft,
+  textAreaRef,
   workspace,
   onCreateAnnotation,
   onCreateEvidence,
@@ -967,6 +1052,7 @@ function DocumentCenterPane({
   transcriptionSettings: TranscriptionSettings
   transcriptView: TranscriptView
   textDraft: string
+  textAreaRef: RefObject<HTMLTextAreaElement | null>
   workspace: DocumentWorkspaceState
   onCreateAnnotation: (segment: TranscriptSegment) => void
   onCreateEvidence: (segment: TranscriptSegment) => void
@@ -1041,6 +1127,7 @@ function DocumentCenterPane({
           <Badge variant={canEdit ? "default" : "outline"}>{canEdit ? "Editable" : "Read only"}</Badge>
         </div>
         <Textarea
+          ref={textAreaRef}
           value={textDraft}
           onChange={(event) => onTextChange(event.target.value)}
           onSelect={(event) => {
@@ -1489,6 +1576,306 @@ function IconButton({
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
+  )
+}
+
+function MarkdownGraphPanel({
+  matterId,
+  workspace,
+  selectedTextRange,
+  onSelectNode,
+  onRunEmbeddings,
+}: {
+  matterId: string
+  workspace: DocumentWorkspaceState
+  selectedTextRange: SelectedTextRange | null
+  onSelectNode: (node: MarkdownAstNode) => void
+  onRunEmbeddings: () => Promise<void>
+}) {
+  const [embeddingQuery, setEmbeddingQuery] = useState("")
+  const [embeddingResults, setEmbeddingResults] = useState<CaseBuilderEmbeddingSearchResult[]>([])
+  const [embeddingSearchBusy, setEmbeddingSearchBusy] = useState(false)
+  const [embeddingSearchError, setEmbeddingSearchError] = useState<string | null>(null)
+  const astDocument = workspace.markdown_ast_document
+  const outlineNodes = workspace.markdown_ast_nodes
+    .filter((node) => node.node_kind === "heading" || (node.depth <= 2 && node.node_kind !== "text"))
+    .slice(0, 32)
+  const textNodesById = new Map(workspace.markdown_ast_nodes.map((node) => [node.markdown_ast_node_id, node]))
+  const embeddingRecordsByTarget = new Map(
+    workspace.embedding_records.map((record) => [record.target_id, record]),
+  )
+  const latestEmbeddingRun = workspace.embedding_runs[0] ?? null
+  const coverage = workspace.embedding_coverage
+
+  async function onSearchEmbeddings() {
+    const query = embeddingQuery.trim()
+    if (!query) return
+    setEmbeddingSearchBusy(true)
+    setEmbeddingSearchError(null)
+    const result = await searchMatterEmbeddings(matterId, {
+      query,
+      document_ids: [workspace.document.document_id],
+      limit: 8,
+    })
+    setEmbeddingSearchBusy(false)
+    if (!result.data) {
+      setEmbeddingSearchError(result.error ?? "Embedding search failed.")
+      return
+    }
+    setEmbeddingResults(result.data.results)
+    if (result.data.warnings.length) {
+      setEmbeddingSearchError(result.data.warnings.join(" "))
+    }
+  }
+
+  return (
+    <>
+      <InspectorSection title="Markdown Graph" icon={<GitGraphIcon className="h-4 w-4" />}>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <GraphMetric label="AST nodes" value={String(workspace.markdown_ast_nodes.length)} />
+          <GraphMetric label="Semantic units" value={String(workspace.markdown_semantic_units.length)} />
+          <GraphMetric label="Entities" value={String(workspace.entities.length)} />
+          <GraphMetric label="Spans" value={String(workspace.source_spans.length)} />
+        </div>
+        <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+          <KeyValue label="Parser" value={astDocument?.parser_version ?? "none"} />
+          <KeyValue label="Schema" value={astDocument?.graph_schema_version ?? "none"} />
+          <KeyValue label="Root" value={astDocument?.root_node_id ?? "none"} />
+        </div>
+      </InspectorSection>
+
+      <InspectorSection title="Embeddings" icon={<Sparkles className="h-4 w-4" />}>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <GraphMetric label="Current" value={String(coverage.current_count)} />
+          <GraphMetric label="Chunks" value={String(coverage.chunk_embedded)} />
+          <GraphMetric label="Units" value={String(coverage.semantic_unit_embedded)} />
+          <GraphMetric label="Stale" value={String(coverage.stale_count)} />
+        </div>
+        <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+          <KeyValue label="Model" value={coverage.model ?? "voyage-4-large"} />
+          <KeyValue label="Index" value={coverage.vector_index_name ?? "casebuilder_markdown_embedding_1024"} />
+          <KeyValue label="Latest run" value={latestEmbeddingRun ? `${latestEmbeddingRun.status} / ${latestEmbeddingRun.stage}` : "none"} />
+        </div>
+        <div className="mt-3 flex gap-2">
+          <Button size="sm" variant="outline" className="flex-1" onClick={onRunEmbeddings}>
+            <RefreshCw className="mr-2 h-3.5 w-3.5" />
+            Embed
+          </Button>
+        </div>
+      </InspectorSection>
+
+      <InspectorSection title="Semantic Search" icon={<Search className="h-4 w-4" />}>
+        <div className="flex gap-2">
+          <Input
+            type="search"
+            value={embeddingQuery}
+            onChange={(event) => setEmbeddingQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void onSearchEmbeddings()
+            }}
+            placeholder="Search Markdown graph"
+          />
+          <Button size="icon" variant="outline" onClick={() => void onSearchEmbeddings()} disabled={embeddingSearchBusy}>
+            <Search className="h-4 w-4" />
+          </Button>
+        </div>
+        {embeddingSearchError && <div className="mt-2 text-xs text-destructive">{embeddingSearchError}</div>}
+        {embeddingResults.length ? (
+          <div className="mt-3 space-y-2">
+            {embeddingResults.map((result) => (
+              <button
+                key={result.embedding_record.embedding_record_id}
+                type="button"
+                onClick={() => {
+                  const firstNode = result.markdown_ast_node_ids
+                    .map((id) => textNodesById.get(id))
+                    .find(Boolean)
+                  if (firstNode) onSelectNode(firstNode)
+                }}
+                className="w-full rounded-md border px-3 py-2 text-left text-xs hover:border-primary/40 hover:bg-muted/40"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="line-clamp-1 font-medium">{result.embedding_record.target_label}</span>
+                  <Badge variant={result.stale ? "outline" : "default"}>{Math.round(result.score * 100)}%</Badge>
+                </div>
+                {result.text_excerpt && <div className="mt-1 line-clamp-2 text-muted-foreground">{result.text_excerpt}</div>}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <EmptyLine text="No embedding search results yet." />
+        )}
+      </InspectorSection>
+
+      <InspectorSection title="Semantic Units" icon={<Network className="h-4 w-4" />}>
+        {workspace.markdown_semantic_units.length ? (
+          <div className="space-y-2">
+            {workspace.markdown_semantic_units.slice(0, 24).map((unit) => (
+              <button
+                key={unit.semantic_unit_id}
+                type="button"
+                onClick={() => {
+                  const firstNode = unit.markdown_ast_node_ids
+                    .map((id) => textNodesById.get(id))
+                    .find(Boolean)
+                  if (firstNode) onSelectNode(firstNode)
+                }}
+                className="w-full rounded-md border px-3 py-2 text-left text-xs hover:border-primary/40 hover:bg-muted/40"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="line-clamp-1 font-medium">{unit.canonical_label}</span>
+                  <Badge variant="outline">{unit.semantic_role}</Badge>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  <Badge variant="outline">{unit.unit_kind}</Badge>
+                  {embeddingRecordsByTarget.has(unit.semantic_unit_id) && (
+                    <Badge variant={embeddingRecordsByTarget.get(unit.semantic_unit_id)?.stale ? "outline" : "default"}>embedded</Badge>
+                  )}
+                  {unit.entity_mention_ids.length > 0 && <Badge variant="outline">{unit.entity_mention_ids.length} mentions</Badge>}
+                  {unit.citation_texts.length > 0 && <Badge variant="outline">citations</Badge>}
+                  {unit.date_texts.length > 0 && <Badge variant="outline">dates</Badge>}
+                  {unit.money_texts.length > 0 && <Badge variant="outline">money</Badge>}
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <EmptyLine text="No semantic units yet." />
+        )}
+      </InspectorSection>
+
+      <InspectorSection title="Outline" icon={<FileText className="h-4 w-4" />}>
+        {outlineNodes.length ? (
+          <div className="space-y-2">
+            {outlineNodes.map((node) => (
+              <button
+                key={node.markdown_ast_node_id}
+                type="button"
+                onClick={() => onSelectNode(node)}
+                className="w-full rounded-md border px-3 py-2 text-left text-xs hover:border-primary/40 hover:bg-muted/40"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="line-clamp-1 font-medium">{node.text_excerpt || node.structure_path || node.tag}</span>
+                  <Badge variant="outline">{node.node_kind}</Badge>
+                </div>
+                {node.text_chunk_ids.some((id) => embeddingRecordsByTarget.has(id)) && (
+                  <div className="mt-1">
+                    <Badge variant="default">embedded chunk</Badge>
+                  </div>
+                )}
+                <div className="mt-1 font-mono text-[10px] text-muted-foreground">
+                  {node.char_start != null && node.char_end != null ? `${node.char_start}-${node.char_end}` : node.markdown_ast_node_id}
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <EmptyLine text="No Markdown AST nodes yet." />
+        )}
+      </InspectorSection>
+
+      <InspectorSection title="Entities" icon={<Users className="h-4 w-4" />}>
+        {workspace.entities.length ? (
+          <div className="space-y-2">
+            {workspace.entities.slice(0, 24).map((entity) => (
+              <div key={entity.entity_id} className="rounded-md border px-3 py-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="line-clamp-1 font-medium">{entity.canonical_name}</span>
+                  <Badge variant={entity.review_status === "approved" ? "default" : "outline"}>{entity.entity_type}</Badge>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  <Badge variant="outline">{entity.review_status}</Badge>
+                  <Badge variant="outline">{entity.mention_ids.length} mentions</Badge>
+                  {entity.party_match_ids.length > 0 && <Badge variant="outline">party candidate</Badge>}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyLine text="No reviewable entities yet." />
+        )}
+      </InspectorSection>
+
+      <InspectorSection title="Facts And Timeline" icon={<CalendarClock className="h-4 w-4" />}>
+        <div className="space-y-3">
+          {workspace.proposed_facts.slice(0, 8).map((fact) => (
+            <GraphReviewCard
+              key={fact.fact_id}
+              label="Fact"
+              title={fact.statement}
+              ids={fact.markdown_ast_node_ids ?? []}
+              textNodesById={textNodesById}
+              onSelectNode={onSelectNode}
+            />
+          ))}
+          {workspace.timeline_suggestions.slice(0, 8).map((suggestion) => (
+            <GraphReviewCard
+              key={suggestion.suggestion_id}
+              label={suggestion.date_text}
+              title={suggestion.title}
+              ids={suggestion.markdown_ast_node_ids}
+              textNodesById={textNodesById}
+              onSelectNode={onSelectNode}
+            />
+          ))}
+          {!workspace.proposed_facts.length && !workspace.timeline_suggestions.length && (
+            <EmptyLine text="No proposed facts or timeline suggestions yet." />
+          )}
+        </div>
+      </InspectorSection>
+
+      {selectedTextRange && (
+        <InspectorSection title="Selected Source" icon={<Highlighter className="h-4 w-4" />}>
+          <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            <div className="font-mono text-[10px]">{selectedTextRange.start}-{selectedTextRange.end}</div>
+            <div className="mt-1 line-clamp-3">{selectedTextRange.quote}</div>
+          </div>
+        </InspectorSection>
+      )}
+    </>
+  )
+}
+
+function GraphMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border bg-background px-3 py-2">
+      <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="mt-1 text-base font-semibold text-foreground">{value}</div>
+    </div>
+  )
+}
+
+function GraphReviewCard({
+  ids,
+  label,
+  onSelectNode,
+  textNodesById,
+  title,
+}: {
+  ids: string[]
+  label: string
+  onSelectNode: (node: MarkdownAstNode) => void
+  textNodesById: Map<string, MarkdownAstNode>
+  title: string
+}) {
+  const firstNode = ids.map((id) => textNodesById.get(id)).find(Boolean)
+  return (
+    <div className="rounded-md border px-3 py-2 text-xs">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <Badge variant="outline">{label}</Badge>
+          <div className="mt-2 line-clamp-3 leading-5">{title}</div>
+        </div>
+        {firstNode && (
+          <Button size="sm" variant="outline" onClick={() => onSelectNode(firstNode)} className="shrink-0">
+            Jump
+          </Button>
+        )}
+      </div>
+      <div className="mt-2 font-mono text-[10px] text-muted-foreground">
+        {ids.length ? `${ids.length} AST link${ids.length === 1 ? "" : "s"}` : "no AST link"}
+      </div>
+    </div>
   )
 }
 

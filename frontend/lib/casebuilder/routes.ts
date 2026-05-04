@@ -5,6 +5,10 @@ export function casebuilderHomeHref() {
   return CASEBUILDER_ROOT
 }
 
+export function casebuilderSettingsHref() {
+  return `${CASEBUILDER_ROOT}/settings`
+}
+
 export function newMatterHref(intent?: "fight" | "build" | string) {
   return intent ? `${CASEBUILDER_ROOT}/new?intent=${encodeURIComponent(intent)}` : `${CASEBUILDER_ROOT}/new`
 }
@@ -90,6 +94,10 @@ export function matterTimelineHref(
 
 export function matterClaimsHref(matterId: string, claimId?: string) {
   return withHash(matterHref(matterId, "claims"), claimId)
+}
+
+export function matterSettingsHref(matterId: string) {
+  return matterHref(matterId, "settings")
 }
 
 export function encodeMatterId(value: string) {

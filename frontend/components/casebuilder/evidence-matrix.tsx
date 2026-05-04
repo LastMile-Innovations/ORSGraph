@@ -228,10 +228,10 @@ function StatCard({
 }) {
   const pct = total ? Math.round((count / total) * 100) : 0
   const colors: Record<CellState, string> = {
-    supported: "border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300",
-    weak: "border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300",
-    missing: "border-rose-500/40 bg-rose-500/5 text-rose-700 dark:text-rose-300",
-    rebutted: "border-slate-500/40 bg-slate-500/5 text-slate-700 dark:text-slate-300",
+    supported: "border-success/40 bg-success/5 text-success",
+    weak: "border-warning/40 bg-warning/5 text-warning",
+    missing: "border-destructive/40 bg-destructive/5 text-destructive",
+    rebutted: "border-case-muted/40 bg-case-muted/5 text-case-muted",
   }
   return (
     <div className={cn("rounded-md border p-3", colors[state])}>
@@ -249,16 +249,16 @@ function StatCard({
 
 function CellStateIcon({ state }: { state: CellState }) {
   if (state === "supported") {
-    return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+    return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
   }
   if (state === "weak") {
-    return <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+    return <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
   }
   if (state === "rebutted") {
-    return <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+    return <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
   }
   return (
-    <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 border-dashed border-rose-500/60" />
+    <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 border-dashed border-destructive/60" />
   )
 }
 

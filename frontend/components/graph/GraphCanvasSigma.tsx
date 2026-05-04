@@ -1,7 +1,13 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { NODE_COLORS } from "./constants"
+import {
+  GRAPH_COLOR_TOKENS,
+  graphColorVar,
+  graphNodeColorRole,
+  type GraphColorRole,
+} from "./constants"
+import { useTheme } from "@/components/theme-provider"
 import type { GraphForces } from "./GraphForceControls"
 import type { GraphEdge, GraphLayoutName, GraphNode, GraphViewScope } from "./types"
 
@@ -32,6 +38,7 @@ export function GraphCanvasSigma({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [rendererReady, setRendererReady] = useState(false)
+  const { resolvedTheme } = useTheme()
   const effectiveLabelDensity = viewScope === "full" ? Math.min(forces.labelDensity, 10) : forces.labelDensity
   const positions = useMemo(() => computeLayout(nodes, edges, selectedId, layout, forces, viewScope), [nodes, edges, selectedId, layout, forces, viewScope])
   const selectedNeighborIds = useMemo(() => {
@@ -55,6 +62,7 @@ export function GraphCanvasSigma({
 
     async function mountSigma() {
       try {
+        const graphColors = readGraphColors()
         const [{ default: Graph }, { default: Sigma }] = await Promise.all([
           import("graphology"),
           import("sigma"),
@@ -69,7 +77,7 @@ export function GraphCanvasSigma({
             x: (point.x - WIDTH / 2) / 100,
             y: (point.y - HEIGHT / 2) / 100,
             size: node.id === selectedId ? 16 : 8 + (node.similarityScore ?? 0) * 5,
-            color: NODE_COLORS[node.type] ?? "#94a3b8",
+            color: graphColors[graphNodeColorRole(node.type)],
             nodeType: node.type,
           })
         }
@@ -77,7 +85,7 @@ export function GraphCanvasSigma({
           if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) continue
           graph.addDirectedEdgeWithKey(edge.id, edge.source, edge.target, {
             label: edge.label ?? edge.type,
-            color: edge.style?.color ?? edgeColor(edge),
+            color: edge.style?.color ?? graphColors[edgeColorRole(edge)],
             size: edge.style?.width ?? 1,
             edgeType: edge.type,
             dashed: edge.style?.dashed || edge.kind === "semantic_similarity",
@@ -137,7 +145,7 @@ export function GraphCanvasSigma({
       cancelled = true
       renderer?.kill()
     }
-  }, [nodes, edges, positions, selectedId, selectedNeighborIds, effectiveLabelDensity, onSelect, onRecenter, viewScope])
+  }, [nodes, edges, positions, selectedId, selectedNeighborIds, effectiveLabelDensity, onSelect, onRecenter, viewScope, resolvedTheme])
 
   return (
     <div className="relative h-full min-h-[520px] overflow-hidden bg-background">
@@ -157,7 +165,7 @@ export function GraphCanvasSigma({
             <path d="M 42 0 L 0 0 0 42" fill="none" stroke="currentColor" strokeWidth="0.5" className="text-border" opacity="0.35" />
           </pattern>
           <marker id="atlas-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
+            <path d="M 0 0 L 10 5 L 0 10 z" fill={graphColorVar("neutral")} />
           </marker>
         </defs>
         <rect width={WIDTH} height={HEIGHT} fill="url(#atlas-grid)" />
@@ -168,7 +176,7 @@ export function GraphCanvasSigma({
             const target = positions[edge.target]
             if (!source || !target) return null
             const active = edge.source === selectedId || edge.target === selectedId || edge.source === hoveredId || edge.target === hoveredId
-            const color = edge.style?.color ?? edgeColor(edge)
+            const color = edge.style?.color ?? graphColorVar(edgeColorRole(edge))
             return (
               <g key={edge.id}>
                 <line
@@ -213,13 +221,13 @@ export function GraphCanvasSigma({
               >
                 <circle
                   r={radius + (selected ? 7 : 3)}
-                  fill={selected ? "#22d3ee" : neighbor ? "#60a5fa" : "#000000"}
+                  fill={selected ? graphColorVar("accent") : neighbor ? graphColorVar("authority") : graphColorVar("background")}
                   opacity={selected ? 0.18 : neighbor ? 0.1 : 0}
                 />
                 <circle
 	                  r={radius}
-	                  fill={NODE_COLORS[node.type] ?? "#94a3b8"}
-	                  stroke={selected ? "#22d3ee" : "#0f172a"}
+	                  fill={graphColorVar(graphNodeColorRole(node.type))}
+	                  stroke={selected ? graphColorVar("accent") : graphColorVar("background")}
 	                  strokeWidth={selected ? 3 : 1.5}
 	                  strokeDasharray={node.sourceBacked === false ? "3 3" : undefined}
 	                />
@@ -367,13 +375,28 @@ function groupBy<T>(items: T[], getKey: (item: T) => string) {
   }, {})
 }
 
-function edgeColor(edge: GraphEdge) {
-  if (edge.kind === "semantic_similarity") return "#22d3ee"
-  if (edge.kind === "history") return "#f59e0b"
-  if (edge.type.includes("CITES") || edge.type.includes("RESOLVES")) return "#60a5fa"
-  if (edge.type.includes("DEFIN")) return "#a78bfa"
-  if (edge.type.includes("DEADLINE")) return "#f59e0b"
-  return "#94a3b8"
+function edgeColorRole(edge: GraphEdge): GraphColorRole {
+  if (edge.kind === "semantic_similarity") return "accent"
+  if (edge.kind === "history") return "warning"
+  if (edge.type.includes("CITES") || edge.type.includes("RESOLVES")) return "authority"
+  if (edge.type.includes("DEFIN")) return "info"
+  if (edge.type.includes("DEADLINE")) return "deadline"
+  return "neutral"
+}
+
+function readGraphColors() {
+  if (typeof window === "undefined") {
+    return Object.fromEntries(
+      Object.keys(GRAPH_COLOR_TOKENS).map((role) => [role, graphColorVar(role as GraphColorRole)]),
+    ) as Record<GraphColorRole, string>
+  }
+  const styles = window.getComputedStyle(window.document.documentElement)
+  return Object.fromEntries(
+    Object.entries(GRAPH_COLOR_TOKENS).map(([role, token]) => [
+      role,
+      styles.getPropertyValue(token).trim() || graphColorVar(role as GraphColorRole),
+    ]),
+  ) as Record<GraphColorRole, string>
 }
 
 function shortLabel(value: string) {

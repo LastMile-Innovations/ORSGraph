@@ -14,12 +14,25 @@ import type {
   AuthorityAttachmentResponse,
   AuthorityTargetType,
   CaseAuthoritySearchResponse,
+  CaseBuilderEmbeddingCoverage,
+  CaseBuilderEmbeddingRecord,
+  CaseBuilderEmbeddingRun,
+  CaseBuilderEmbeddingSearchInput,
+  CaseBuilderEmbeddingSearchResponse,
+  CaseBuilderEffectiveSettings,
+  CaseBuilderMatterSettings,
+  CaseBuilderMatterSettingsResponse,
+  CaseBuilderSettingsPrincipal,
+  CaseBuilderUserSettings,
+  CaseBuilderUserSettingsResponse,
   CaseGraphResponse,
   CaseCitationCheckFinding,
   CaseDocument,
   CaseDefense,
+  CaseEntity,
   CaseEvidence,
   CaseTask,
+  CreateMatterIndexJobInput,
   DocxPackageManifest,
   DocumentAnnotation,
   DocumentCapability,
@@ -58,13 +71,21 @@ import type {
   IndexRun,
   IssueSpotResponse,
   Matter,
+  MatterIndexJob,
   MatterIndexRunDocumentResult,
   MatterIndexRunResponse,
   MatterIndexSummary,
   MatterParty,
   MatterSummary,
+  MarkdownAstDocument,
+  MarkdownAstNode,
+  MarkdownSemanticUnit,
   Page,
+  PatchCaseBuilderMatterSettingsInput,
+  PatchCaseBuilderUserSettingsInput,
   QcRun,
+  RunCaseBuilderEmbeddingsInput,
+  RunCaseBuilderEmbeddingsResponse,
   SearchIndexRecord,
   SourceSpan,
   TextChunk,
@@ -142,7 +163,16 @@ export interface ActionState<T> {
   error?: string
 }
 
-export type CaseBuilderRequestOptions = Pick<RequestInit, "headers" | "signal">
+export interface CaseBuilderRequestOptions extends Pick<RequestInit, "headers" | "signal"> {
+  timeoutMs?: number | null
+}
+
+export interface SignedUploadProgress {
+  loaded: number
+  total: number | null
+  speedBps: number | null
+  elapsedMs: number
+}
 
 export interface CreateMatterInput {
   name: string
@@ -151,10 +181,16 @@ export interface CreateMatterInput {
   jurisdiction?: string
   court?: string
   case_number?: string | null
+  settings?: PatchCaseBuilderMatterSettingsInput
 }
 
 export interface PatchMatterInput extends Partial<CreateMatterInput> {
   status?: MatterSummary["status"]
+}
+
+export interface PatchMatterConfigInput {
+  matter?: PatchMatterInput
+  settings?: PatchCaseBuilderMatterSettingsInput
 }
 
 export interface UploadTextFileInput {
@@ -208,6 +244,10 @@ export interface DownloadUrlResponse {
   bytes: number
 }
 
+export interface SignedUploadPutResponse {
+  etag?: string | null
+}
+
 export interface ExtractDocumentResponse {
   enabled: boolean
   mode: string
@@ -226,6 +266,7 @@ export interface ExtractDocumentResponse {
     byte_end?: number | null
     char_start?: number | null
     char_end?: number | null
+    markdown_ast_node_ids?: string[]
   }>
   proposed_facts: ExtractedFact[]
   ingestion_run?: IngestionRun | null
@@ -237,7 +278,12 @@ export interface ExtractDocumentResponse {
   text_chunks: TextChunk[]
   evidence_spans: EvidenceSpan[]
   entity_mentions: EntityMention[]
+  markdown_ast_document?: MarkdownAstDocument | null
+  markdown_ast_nodes: MarkdownAstNode[]
+  markdown_semantic_units: MarkdownSemanticUnit[]
+  entities: CaseEntity[]
   search_index_records: SearchIndexRecord[]
+  embedding_run?: CaseBuilderEmbeddingRun | null
   source_spans: SourceSpan[]
   timeline_suggestions: TimelineSuggestion[]
 }
@@ -345,6 +391,7 @@ export interface CreateFactInput {
   source_document_ids?: string[]
   source_evidence_ids?: string[]
   source_span_ids?: string[]
+  markdown_ast_node_ids?: string[]
   notes?: string | null
 }
 
@@ -361,6 +408,7 @@ export interface CreateTimelineEventInput {
   linked_claim_ids?: string[]
   source_span_ids?: string[]
   text_chunk_ids?: string[]
+  markdown_ast_node_ids?: string[]
   suggestion_id?: string | null
   agent_run_id?: string | null
 }
@@ -760,6 +808,53 @@ export async function getMatterState(
   }
 }
 
+export async function getCaseBuilderSettingsState(
+  options: CaseBuilderRequestOptions = {},
+): Promise<LoadState<CaseBuilderUserSettingsResponse | null>> {
+  try {
+    const live = await fetchCaseBuilder<unknown>("/casebuilder/settings", options)
+    return { source: "live", data: normalizeCaseBuilderUserSettingsResponse(live) }
+  } catch (error) {
+    return { source: "error", data: null, error: errorMessage(error) }
+  }
+}
+
+export function patchCaseBuilderSettings(
+  input: PatchCaseBuilderUserSettingsInput,
+): Promise<ActionState<CaseBuilderUserSettingsResponse>> {
+  return runCaseBuilderAction("/casebuilder/settings", {
+    method: "PATCH",
+    body: JSON.stringify(input),
+    normalize: normalizeCaseBuilderUserSettingsResponse,
+  })
+}
+
+export async function getMatterSettingsState(
+  matterId: string,
+  options: CaseBuilderRequestOptions = {},
+): Promise<LoadState<CaseBuilderMatterSettingsResponse | null>> {
+  try {
+    const live = await fetchCaseBuilder<unknown>(
+      `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/settings`,
+      options,
+    )
+    return { source: "live", data: normalizeCaseBuilderMatterSettingsResponse(live) }
+  } catch (error) {
+    return { source: "error", data: null, error: errorMessage(error) }
+  }
+}
+
+export function patchMatterConfig(
+  matterId: string,
+  input: PatchMatterConfigInput,
+): Promise<ActionState<CaseBuilderMatterSettingsResponse>> {
+  return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/settings`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+    normalize: normalizeCaseBuilderMatterSettingsResponse,
+  })
+}
+
 export function createMatter(input: CreateMatterInput): Promise<ActionState<Matter>> {
   return runCaseBuilderAction("/matters", {
     method: "POST",
@@ -801,6 +896,7 @@ export function createFileUpload(
   return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/files/uploads`, {
     method: "POST",
     body: JSON.stringify(input),
+    timeoutMs: null,
     normalize: (raw) => {
       const response = raw as any
       return {
@@ -822,9 +918,98 @@ export function completeFileUpload(
     {
       method: "POST",
       body: JSON.stringify(input),
+      timeoutMs: null,
       normalize: normalizeDocument,
     },
   )
+}
+
+export async function putSignedUploadFile(
+  intent: Pick<FileUploadIntent, "method" | "url" | "headers">,
+  file: File,
+  options: Pick<RequestInit, "signal"> & {
+    onProgress?: (progress: SignedUploadProgress) => void
+  } = {},
+): Promise<ActionState<SignedUploadPutResponse>> {
+  if (options.onProgress && typeof XMLHttpRequest !== "undefined") {
+    return putSignedUploadFileWithProgress(intent, file, options)
+  }
+
+  try {
+    const response = await fetch(intent.url, {
+      method: intent.method || "PUT",
+      headers: new Headers(intent.headers),
+      body: file,
+      signal: options.signal,
+    })
+    if (!response.ok) {
+      throw new Error(`Signed upload failed: ${response.status}`)
+    }
+    return { source: "live", data: { etag: response.headers.get("etag") } }
+  } catch (error) {
+    return { source: "error", data: null, error: errorMessage(error) }
+  }
+}
+
+function putSignedUploadFileWithProgress(
+  intent: Pick<FileUploadIntent, "method" | "url" | "headers">,
+  file: File,
+  options: Pick<RequestInit, "signal"> & {
+    onProgress?: (progress: SignedUploadProgress) => void
+  },
+): Promise<ActionState<SignedUploadPutResponse>> {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest()
+    const startedAt = performance.now()
+    let settled = false
+
+    function finish(state: ActionState<SignedUploadPutResponse>) {
+      if (settled) return
+      settled = true
+      options.signal?.removeEventListener("abort", abortUpload)
+      resolve(state)
+    }
+
+    function progress(loaded: number, total: number | null) {
+      const elapsedMs = Math.max(performance.now() - startedAt, 1)
+      const speedBps = loaded > 0 ? loaded / (elapsedMs / 1000) : 0
+      options.onProgress?.({ loaded, total, speedBps, elapsedMs })
+    }
+
+    function abortUpload() {
+      xhr.abort()
+      finish({ source: "error", data: null, error: "Upload canceled" })
+    }
+
+    xhr.upload.onprogress = (event) => {
+      progress(event.loaded, event.lengthComputable ? event.total : file.size)
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        progress(file.size, file.size)
+        finish({ source: "live", data: { etag: xhr.getResponseHeader("etag") } })
+      } else {
+        finish({ source: "error", data: null, error: `Signed upload failed: ${xhr.status}` })
+      }
+    }
+    xhr.onerror = () => finish({ source: "error", data: null, error: "Signed upload failed." })
+    xhr.onabort = () => finish({ source: "error", data: null, error: "Upload canceled" })
+
+    if (options.signal?.aborted) {
+      abortUpload()
+      return
+    }
+    options.signal?.addEventListener("abort", abortUpload, { once: true })
+
+    try {
+      xhr.open(intent.method || "PUT", intent.url, true)
+      new Headers(intent.headers).forEach((value, key) => xhr.setRequestHeader(key, value))
+      progress(0, file.size)
+      xhr.send(file)
+    } catch (error) {
+      finish({ source: "error", data: null, error: errorMessage(error) })
+    }
+  })
 }
 
 export async function uploadBinaryFile(
@@ -886,6 +1071,42 @@ export function runMatterIndex(
   })
 }
 
+export function createMatterIndexJob(
+  matterId: string,
+  input: CreateMatterIndexJobInput = {},
+): Promise<ActionState<MatterIndexJob>> {
+  return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/index/jobs`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    timeoutMs: null,
+    normalize: normalizeMatterIndexJob,
+  })
+}
+
+export function listMatterIndexJobs(
+  matterId: string,
+  input: { active?: boolean } = {},
+): Promise<ActionState<MatterIndexJob[]>> {
+  const params = new URLSearchParams()
+  if (typeof input.active === "boolean") params.set("active", String(input.active))
+  const suffix = params.toString() ? `?${params.toString()}` : ""
+  return runCaseBuilderAction(`/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/index/jobs${suffix}`, {
+    normalize: (raw) => array(raw).map(normalizeMatterIndexJob),
+  })
+}
+
+export function getMatterIndexJob(
+  matterId: string,
+  jobId: string,
+): Promise<ActionState<MatterIndexJob>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/index/jobs/${encodeURIComponent(jobId)}`,
+    {
+      normalize: normalizeMatterIndexJob,
+    },
+  )
+}
+
 export async function getDocumentWorkspace(
   matterId: string,
   documentId: string,
@@ -919,6 +1140,19 @@ export async function getDocumentWorkspace(
         capabilities: demoCapabilitiesForDocument(document),
         annotations: [],
         source_spans: document.source_spans ?? [],
+        markdown_ast_document: null,
+        markdown_ast_nodes: [],
+        markdown_semantic_units: [],
+        text_chunks: [],
+        evidence_spans: [],
+        entity_mentions: [],
+        entities: [],
+        search_index_records: [],
+        embedding_runs: [],
+        embedding_records: [],
+        embedding_coverage: {},
+        proposed_facts: [],
+        timeline_suggestions: [],
         docx_manifest: null,
         text_content: document.extracted_text ?? document.chunks?.map((chunk) => chunk.text).join("\n\n") ?? null,
         content_url: null,
@@ -1074,11 +1308,63 @@ export function extractDocument(
           text_chunks: array(response.text_chunks, response.textChunks).map(normalizeTextChunk),
           evidence_spans: array(response.evidence_spans, response.evidenceSpans).map(normalizeEvidenceSpan),
           entity_mentions: array(response.entity_mentions, response.entityMentions).map(normalizeEntityMention),
+          markdown_ast_document:
+            response.markdown_ast_document || response.markdownAstDocument
+              ? normalizeMarkdownAstDocument(response.markdown_ast_document ?? response.markdownAstDocument)
+              : null,
+          markdown_ast_nodes: array(response.markdown_ast_nodes, response.markdownAstNodes).map(normalizeMarkdownAstNode),
+          markdown_semantic_units: array(response.markdown_semantic_units, response.markdownSemanticUnits).map(normalizeMarkdownSemanticUnit),
+          entities: array(response.entities).map(normalizeCaseEntity),
           search_index_records: array(response.search_index_records, response.searchIndexRecords).map(normalizeSearchIndexRecord),
+          embedding_run:
+            response.embedding_run || response.embeddingRun
+              ? normalizeCaseBuilderEmbeddingRun(response.embedding_run ?? response.embeddingRun)
+              : null,
           source_spans: array(response.source_spans).map(normalizeSourceSpan),
           timeline_suggestions: array(response.timeline_suggestions, response.timelineSuggestions).map(normalizeTimelineSuggestion),
         }
       },
+    },
+  )
+}
+
+export function runMatterEmbeddings(
+  matterId: string,
+  input: RunCaseBuilderEmbeddingsInput = {},
+): Promise<ActionState<RunCaseBuilderEmbeddingsResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/embeddings/run`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      normalize: normalizeRunCaseBuilderEmbeddingsResponse,
+    },
+  )
+}
+
+export function runDocumentEmbeddings(
+  matterId: string,
+  documentId: string,
+): Promise<ActionState<CaseBuilderEmbeddingRun>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/documents/${encodeURIComponent(documentId)}/embeddings/run`,
+    {
+      method: "POST",
+      normalize: normalizeCaseBuilderEmbeddingRun,
+    },
+  )
+}
+
+export function searchMatterEmbeddings(
+  matterId: string,
+  input: CaseBuilderEmbeddingSearchInput,
+): Promise<ActionState<CaseBuilderEmbeddingSearchResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/embeddings/search`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      normalize: normalizeCaseBuilderEmbeddingSearchResponse,
     },
   )
 }
@@ -2392,9 +2678,14 @@ export function detachAuthority(
   )
 }
 
+type CaseBuilderActionOptions<T> = RequestInit & {
+  normalize: (raw: unknown) => T
+  timeoutMs?: number | null
+}
+
 async function runCaseBuilderAction<T>(
   endpoint: string,
-  options: RequestInit & { normalize: (raw: unknown) => T },
+  options: CaseBuilderActionOptions<T>,
 ): Promise<ActionState<T>> {
   const { normalize, ...requestOptions } = options
   try {
@@ -2405,17 +2696,24 @@ async function runCaseBuilderAction<T>(
   }
 }
 
-async function fetchCaseBuilder<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+async function fetchCaseBuilder<T>(
+  endpoint: string,
+  options: RequestInit & { timeoutMs?: number | null } = {},
+): Promise<T> {
+  const { timeoutMs = API_TIMEOUT_MS, ...fetchOptions } = options
   const headers = new Headers(options.headers)
   if (!headers.has("Content-Type") && typeof options.body === "string") {
     headers.set("Content-Type", "application/json")
   }
   const controller = new AbortController()
   let timedOut = false
-  const timeout = setTimeout(() => {
-    timedOut = true
-    controller.abort()
-  }, API_TIMEOUT_MS)
+  const timeout =
+    timeoutMs == null
+      ? null
+      : setTimeout(() => {
+          timedOut = true
+          controller.abort()
+        }, timeoutMs)
   const parentSignal = options.signal
   const abortFromParent = () => controller.abort()
 
@@ -2428,7 +2726,7 @@ async function fetchCaseBuilder<T>(endpoint: string, options: RequestInit = {}):
   try {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       cache: "no-store",
-      ...options,
+      ...fetchOptions,
       signal: controller.signal,
       headers,
     })
@@ -2439,11 +2737,11 @@ async function fetchCaseBuilder<T>(endpoint: string, options: RequestInit = {}):
     return response.json()
   } catch (error) {
     if (timedOut && isAbortError(error)) {
-      throw new Error(`CaseBuilder API request timed out after ${Math.round(API_TIMEOUT_MS / 1000)}s`)
+      throw new Error(`CaseBuilder API request timed out after ${Math.round((timeoutMs ?? API_TIMEOUT_MS) / 1000)}s`)
     }
     throw error
   } finally {
-    clearTimeout(timeout)
+    if (timeout) clearTimeout(timeout)
     parentSignal?.removeEventListener("abort", abortFromParent)
   }
 }
@@ -2873,6 +3171,124 @@ function normalizeMatterSummary(input: any): MatterSummary {
   }
 }
 
+function normalizeCaseBuilderSettingsPrincipal(input: any): CaseBuilderSettingsPrincipal {
+  return {
+    subject: string(input?.subject),
+    email: input?.email ?? null,
+    name: input?.name ?? null,
+    roles: array(input?.roles),
+    is_service: Boolean(input?.is_service ?? input?.isService),
+  }
+}
+
+function normalizeCaseBuilderUserSettings(input: any): CaseBuilderUserSettings {
+  return {
+    settings_id: string(input?.settings_id, input?.settingsId),
+    subject: string(input?.subject),
+    workspace_label: input?.workspace_label ?? input?.workspaceLabel ?? null,
+    display_name: input?.display_name ?? input?.displayName ?? null,
+    default_matter_type: string(input?.default_matter_type, input?.defaultMatterType, "civil") as MatterSummary["matter_type"],
+    default_user_role: string(input?.default_user_role, input?.defaultUserRole, "neutral") as MatterSummary["user_role"],
+    default_jurisdiction: string(input?.default_jurisdiction, input?.defaultJurisdiction, "Oregon"),
+    default_court: string(input?.default_court, input?.defaultCourt, "Unassigned"),
+    default_confidentiality: string(input?.default_confidentiality, input?.defaultConfidentiality, "private"),
+    default_document_type: string(input?.default_document_type, input?.defaultDocumentType, "other") as CaseBuilderUserSettings["default_document_type"],
+    auto_index_uploads: booleanWithDefault(input?.auto_index_uploads ?? input?.autoIndexUploads, true),
+    auto_import_complaints: booleanWithDefault(input?.auto_import_complaints ?? input?.autoImportComplaints, true),
+    preserve_folder_paths: booleanWithDefault(input?.preserve_folder_paths ?? input?.preserveFolderPaths, true),
+    timeline_suggestions_enabled: booleanWithDefault(
+      input?.timeline_suggestions_enabled ?? input?.timelineSuggestionsEnabled,
+      true,
+    ),
+    ai_timeline_enrichment_enabled: booleanWithDefault(
+      input?.ai_timeline_enrichment_enabled ?? input?.aiTimelineEnrichmentEnabled,
+      true,
+    ),
+    transcript_redact_pii: booleanWithDefault(input?.transcript_redact_pii ?? input?.transcriptRedactPii, true),
+    transcript_speaker_labels: booleanWithDefault(input?.transcript_speaker_labels ?? input?.transcriptSpeakerLabels, true),
+    transcript_default_view: string(input?.transcript_default_view, input?.transcriptDefaultView, "redacted"),
+    transcript_prompt_preset: string(input?.transcript_prompt_preset, input?.transcriptPromptPreset, "unclear"),
+    transcript_remove_audio_tags: booleanWithDefault(
+      input?.transcript_remove_audio_tags ?? input?.transcriptRemoveAudioTags,
+      true,
+    ),
+    export_default_format: string(input?.export_default_format, input?.exportDefaultFormat, "pdf"),
+    export_include_exhibits: booleanWithDefault(input?.export_include_exhibits ?? input?.exportIncludeExhibits, true),
+    export_include_qc_report: booleanWithDefault(input?.export_include_qc_report ?? input?.exportIncludeQcReport, true),
+    created_at: string(input?.created_at, input?.createdAt),
+    updated_at: string(input?.updated_at, input?.updatedAt),
+  }
+}
+
+function normalizeCaseBuilderMatterSettings(input: any): CaseBuilderMatterSettings {
+  return {
+    settings_id: string(input?.settings_id, input?.settingsId),
+    matter_id: string(input?.matter_id, input?.matterId),
+    owner_subject: input?.owner_subject ?? input?.ownerSubject ?? null,
+    default_confidentiality: input?.default_confidentiality ?? input?.defaultConfidentiality ?? null,
+    default_document_type: input?.default_document_type ?? input?.defaultDocumentType ?? null,
+    auto_index_uploads: nullableBoolean(input?.auto_index_uploads ?? input?.autoIndexUploads),
+    auto_import_complaints: nullableBoolean(input?.auto_import_complaints ?? input?.autoImportComplaints),
+    preserve_folder_paths: nullableBoolean(input?.preserve_folder_paths ?? input?.preserveFolderPaths),
+    timeline_suggestions_enabled: nullableBoolean(input?.timeline_suggestions_enabled ?? input?.timelineSuggestionsEnabled),
+    ai_timeline_enrichment_enabled: nullableBoolean(input?.ai_timeline_enrichment_enabled ?? input?.aiTimelineEnrichmentEnabled),
+    transcript_redact_pii: nullableBoolean(input?.transcript_redact_pii ?? input?.transcriptRedactPii),
+    transcript_speaker_labels: nullableBoolean(input?.transcript_speaker_labels ?? input?.transcriptSpeakerLabels),
+    transcript_default_view: input?.transcript_default_view ?? input?.transcriptDefaultView ?? null,
+    transcript_prompt_preset: input?.transcript_prompt_preset ?? input?.transcriptPromptPreset ?? null,
+    transcript_remove_audio_tags: nullableBoolean(input?.transcript_remove_audio_tags ?? input?.transcriptRemoveAudioTags),
+    export_default_format: input?.export_default_format ?? input?.exportDefaultFormat ?? null,
+    export_include_exhibits: nullableBoolean(input?.export_include_exhibits ?? input?.exportIncludeExhibits),
+    export_include_qc_report: nullableBoolean(input?.export_include_qc_report ?? input?.exportIncludeQcReport),
+    created_at: string(input?.created_at, input?.createdAt),
+    updated_at: string(input?.updated_at, input?.updatedAt),
+  }
+}
+
+function normalizeCaseBuilderEffectiveSettings(input: any): CaseBuilderEffectiveSettings {
+  return {
+    default_confidentiality: string(input?.default_confidentiality, input?.defaultConfidentiality, "private"),
+    default_document_type: string(input?.default_document_type, input?.defaultDocumentType, "other") as CaseBuilderEffectiveSettings["default_document_type"],
+    auto_index_uploads: booleanWithDefault(input?.auto_index_uploads ?? input?.autoIndexUploads, true),
+    auto_import_complaints: booleanWithDefault(input?.auto_import_complaints ?? input?.autoImportComplaints, true),
+    preserve_folder_paths: booleanWithDefault(input?.preserve_folder_paths ?? input?.preserveFolderPaths, true),
+    timeline_suggestions_enabled: booleanWithDefault(
+      input?.timeline_suggestions_enabled ?? input?.timelineSuggestionsEnabled,
+      true,
+    ),
+    ai_timeline_enrichment_enabled: booleanWithDefault(
+      input?.ai_timeline_enrichment_enabled ?? input?.aiTimelineEnrichmentEnabled,
+      true,
+    ),
+    transcript_redact_pii: booleanWithDefault(input?.transcript_redact_pii ?? input?.transcriptRedactPii, true),
+    transcript_speaker_labels: booleanWithDefault(input?.transcript_speaker_labels ?? input?.transcriptSpeakerLabels, true),
+    transcript_default_view: string(input?.transcript_default_view, input?.transcriptDefaultView, "redacted"),
+    transcript_prompt_preset: string(input?.transcript_prompt_preset, input?.transcriptPromptPreset, "unclear"),
+    transcript_remove_audio_tags: booleanWithDefault(
+      input?.transcript_remove_audio_tags ?? input?.transcriptRemoveAudioTags,
+      true,
+    ),
+    export_default_format: string(input?.export_default_format, input?.exportDefaultFormat, "pdf"),
+    export_include_exhibits: booleanWithDefault(input?.export_include_exhibits ?? input?.exportIncludeExhibits, true),
+    export_include_qc_report: booleanWithDefault(input?.export_include_qc_report ?? input?.exportIncludeQcReport, true),
+  }
+}
+
+function normalizeCaseBuilderUserSettingsResponse(input: any): CaseBuilderUserSettingsResponse {
+  return {
+    principal: normalizeCaseBuilderSettingsPrincipal(input?.principal ?? {}),
+    settings: normalizeCaseBuilderUserSettings(input?.settings ?? {}),
+  }
+}
+
+function normalizeCaseBuilderMatterSettingsResponse(input: any): CaseBuilderMatterSettingsResponse {
+  return {
+    matter: normalizeMatterSummary(input?.matter ?? {}),
+    settings: normalizeCaseBuilderMatterSettings(input?.settings ?? {}),
+    effective: normalizeCaseBuilderEffectiveSettings(input?.effective ?? {}),
+  }
+}
+
 function normalizeDocument(input: any): CaseDocument {
   const documentId = string(input.document_id, input.id)
   const bytes = number(input.bytes)
@@ -2950,6 +3366,22 @@ function normalizeDocumentWorkspace(input: any): DocumentWorkspace {
     capabilities: array(input.capabilities).map(normalizeDocumentCapability),
     annotations: array(input.annotations).map(normalizeDocumentAnnotation),
     source_spans: array(input.source_spans, input.sourceSpans).map(normalizeSourceSpan),
+    markdown_ast_document:
+      input.markdown_ast_document || input.markdownAstDocument
+        ? normalizeMarkdownAstDocument(input.markdown_ast_document ?? input.markdownAstDocument)
+        : null,
+    markdown_ast_nodes: array(input.markdown_ast_nodes, input.markdownAstNodes).map(normalizeMarkdownAstNode),
+    markdown_semantic_units: array(input.markdown_semantic_units, input.markdownSemanticUnits).map(normalizeMarkdownSemanticUnit),
+    text_chunks: array(input.text_chunks, input.textChunks).map(normalizeTextChunk),
+    evidence_spans: array(input.evidence_spans, input.evidenceSpans).map(normalizeEvidenceSpan),
+    entity_mentions: array(input.entity_mentions, input.entityMentions).map(normalizeEntityMention),
+    entities: array(input.entities).map(normalizeCaseEntity),
+    search_index_records: array(input.search_index_records, input.searchIndexRecords).map(normalizeSearchIndexRecord),
+    embedding_runs: array(input.embedding_runs, input.embeddingRuns).map(normalizeCaseBuilderEmbeddingRun),
+    embedding_records: array(input.embedding_records, input.embeddingRecords).map(normalizeCaseBuilderEmbeddingRecord),
+    embedding_coverage: normalizeCaseBuilderEmbeddingCoverage(input.embedding_coverage ?? input.embeddingCoverage ?? {}),
+    proposed_facts: array(input.proposed_facts, input.proposedFacts).map(normalizeFact),
+    timeline_suggestions: array(input.timeline_suggestions, input.timelineSuggestions).map(normalizeTimelineSuggestion),
     transcriptions: array(input.transcriptions).map(normalizeTranscriptionJobResponse),
     docx_manifest: input.docx_manifest ? normalizeDocxPackageManifest(input.docx_manifest) : null,
     text_content: input.text_content ?? input.textContent ?? null,
@@ -3081,6 +3513,7 @@ function normalizeFact(input: any): ExtractedFact {
     tags: array(input.tags),
     sourceDocumentIds: array(input.sourceDocumentIds, input.source_document_ids),
     source_evidence_ids: array(input.source_evidence_ids),
+    markdown_ast_node_ids: array(input.markdown_ast_node_ids, input.markdownAstNodeIds),
     citations: array(input.citations),
     source_spans: array(input.source_spans, input.sourceSpans).map(normalizeSourceSpan),
   }
@@ -3117,6 +3550,7 @@ function normalizeExtractionChunk(input: any) {
     byte_end: chunk.byte_end,
     char_start: chunk.char_start,
     char_end: chunk.char_end,
+    markdown_ast_node_ids: array(input.markdown_ast_node_ids, input.markdownAstNodeIds),
   }
 }
 
@@ -3243,6 +3677,7 @@ function normalizeTextChunk(input: any): TextChunk {
     token_count: number(input.token_count, input.tokenCount),
     unit_type: input.unit_type ?? input.unitType ?? null,
     structure_path: input.structure_path ?? input.structurePath ?? null,
+    markdown_ast_node_ids: array(input.markdown_ast_node_ids, input.markdownAstNodeIds),
     byte_start: nullableNumber(input.byte_start, input.byteStart),
     byte_end: nullableNumber(input.byte_end, input.byteEnd),
     char_start: nullableNumber(input.char_start, input.charStart),
@@ -3262,6 +3697,7 @@ function normalizeEvidenceSpan(input: any): EvidenceSpan {
     object_blob_id: input.object_blob_id ?? input.objectBlobId ?? null,
     text_chunk_id: input.text_chunk_id ?? input.textChunkId ?? null,
     source_span_id: input.source_span_id ?? input.sourceSpanId ?? null,
+    markdown_ast_node_ids: array(input.markdown_ast_node_ids, input.markdownAstNodeIds),
     ingestion_run_id: input.ingestion_run_id ?? input.ingestionRunId ?? null,
     index_run_id: input.index_run_id ?? input.indexRunId ?? null,
     quote_hash: string(input.quote_hash, input.quoteHash),
@@ -3283,6 +3719,8 @@ function normalizeEntityMention(input: any): EntityMention {
     document_id: string(input.document_id),
     text_chunk_id: input.text_chunk_id ?? input.textChunkId ?? null,
     source_span_id: input.source_span_id ?? input.sourceSpanId ?? null,
+    entity_id: input.entity_id ?? input.entityId ?? null,
+    markdown_ast_node_ids: array(input.markdown_ast_node_ids, input.markdownAstNodeIds),
     mention_text: string(input.mention_text, input.mentionText),
     entity_type: string(input.entity_type, input.entityType, "unknown"),
     confidence: number(input.confidence),
@@ -3291,6 +3729,142 @@ function normalizeEntityMention(input: any): EntityMention {
     char_start: nullableNumber(input.char_start, input.charStart),
     char_end: nullableNumber(input.char_end, input.charEnd),
     review_status: string(input.review_status, input.reviewStatus, "unreviewed"),
+  }
+}
+
+function normalizeMarkdownAstDocument(input: any): MarkdownAstDocument {
+  return {
+    ...input,
+    id: string(input.id, input.markdown_ast_document_id),
+    markdown_ast_document_id: string(input.markdown_ast_document_id, input.markdownAstDocumentId, input.id),
+    matter_id: string(input.matter_id, input.matterId),
+    document_id: string(input.document_id, input.documentId),
+    document_version_id: input.document_version_id ?? input.documentVersionId ?? null,
+    object_blob_id: input.object_blob_id ?? input.objectBlobId ?? null,
+    ingestion_run_id: input.ingestion_run_id ?? input.ingestionRunId ?? null,
+    index_run_id: input.index_run_id ?? input.indexRunId ?? null,
+    parser_id: string(input.parser_id, input.parserId, "pulldown-cmark"),
+    parser_version: string(input.parser_version, input.parserVersion),
+    source_sha256: string(input.source_sha256, input.sourceSha256),
+    root_node_id: string(input.root_node_id, input.rootNodeId),
+    node_count: number(input.node_count, input.nodeCount),
+    semantic_unit_count: number(input.semantic_unit_count, input.semanticUnitCount),
+    heading_count: number(input.heading_count, input.headingCount),
+    block_count: number(input.block_count, input.blockCount),
+    inline_count: number(input.inline_count, input.inlineCount),
+    reference_count: number(input.reference_count, input.referenceCount),
+    max_depth: number(input.max_depth, input.maxDepth),
+    entity_mention_count: number(input.entity_mention_count, input.entityMentionCount),
+    citation_count: number(input.citation_count, input.citationCount),
+    date_count: number(input.date_count, input.dateCount),
+    money_count: number(input.money_count, input.moneyCount),
+    graph_schema_version: string(input.graph_schema_version, input.graphSchemaVersion),
+    status: string(input.status, "indexed"),
+    created_at: string(input.created_at, input.createdAt),
+  }
+}
+
+function normalizeMarkdownAstNode(input: any): MarkdownAstNode {
+  return {
+    ...input,
+    id: string(input.id, input.markdown_ast_node_id),
+    markdown_ast_node_id: string(input.markdown_ast_node_id, input.markdownAstNodeId, input.id),
+    matter_id: string(input.matter_id, input.matterId),
+    document_id: string(input.document_id, input.documentId),
+    document_version_id: input.document_version_id ?? input.documentVersionId ?? null,
+    object_blob_id: input.object_blob_id ?? input.objectBlobId ?? null,
+    ingestion_run_id: input.ingestion_run_id ?? input.ingestionRunId ?? null,
+    index_run_id: input.index_run_id ?? input.indexRunId ?? null,
+    markdown_ast_document_id: string(input.markdown_ast_document_id, input.markdownAstDocumentId),
+    parent_ast_node_id: input.parent_ast_node_id ?? input.parentAstNodeId ?? null,
+    previous_ast_node_id: input.previous_ast_node_id ?? input.previousAstNodeId ?? null,
+    semantic_unit_id: input.semantic_unit_id ?? input.semanticUnitId ?? null,
+    node_kind: string(input.node_kind, input.nodeKind, "text"),
+    tag: string(input.tag, "text"),
+    ordinal: number(input.ordinal),
+    depth: number(input.depth),
+    ast_path: string(input.ast_path, input.astPath),
+    sibling_index: number(input.sibling_index, input.siblingIndex),
+    child_count: number(input.child_count, input.childCount),
+    structure_path: input.structure_path ?? input.structurePath ?? null,
+    section_ast_node_id: input.section_ast_node_id ?? input.sectionAstNodeId ?? null,
+    section_path: input.section_path ?? input.sectionPath ?? null,
+    heading_level: nullableNumber(input.heading_level, input.headingLevel),
+    heading_text: input.heading_text ?? input.headingText ?? null,
+    semantic_role: input.semantic_role ?? input.semanticRole ?? null,
+    semantic_fingerprint: input.semantic_fingerprint ?? input.semanticFingerprint ?? null,
+    text_hash: input.text_hash ?? input.textHash ?? null,
+    text_excerpt: input.text_excerpt ?? input.textExcerpt ?? null,
+    byte_start: nullableNumber(input.byte_start, input.byteStart),
+    byte_end: nullableNumber(input.byte_end, input.byteEnd),
+    char_start: nullableNumber(input.char_start, input.charStart),
+    char_end: nullableNumber(input.char_end, input.charEnd),
+    source_span_ids: array(input.source_span_ids, input.sourceSpanIds),
+    text_chunk_ids: array(input.text_chunk_ids, input.textChunkIds),
+    evidence_span_ids: array(input.evidence_span_ids, input.evidenceSpanIds),
+    search_index_record_ids: array(input.search_index_record_ids, input.searchIndexRecordIds),
+    entity_mention_ids: array(input.entity_mention_ids, input.entityMentionIds),
+    fact_ids: array(input.fact_ids, input.factIds),
+    timeline_suggestion_ids: array(input.timeline_suggestion_ids, input.timelineSuggestionIds),
+    citation_texts: array(input.citation_texts, input.citationTexts),
+    date_texts: array(input.date_texts, input.dateTexts),
+    money_texts: array(input.money_texts, input.moneyTexts),
+    contains_entity_mention: Boolean(input.contains_entity_mention ?? input.containsEntityMention ?? false),
+    contains_citation: Boolean(input.contains_citation ?? input.containsCitation ?? false),
+    contains_date: Boolean(input.contains_date ?? input.containsDate ?? false),
+    contains_money: Boolean(input.contains_money ?? input.containsMoney ?? false),
+    review_status: string(input.review_status, input.reviewStatus, "unreviewed"),
+  }
+}
+
+function normalizeMarkdownSemanticUnit(input: any): MarkdownSemanticUnit {
+  return {
+    ...input,
+    id: string(input.id, input.semantic_unit_id),
+    semantic_unit_id: string(input.semantic_unit_id, input.semanticUnitId, input.id),
+    matter_id: string(input.matter_id, input.matterId),
+    document_id: string(input.document_id, input.documentId),
+    document_version_id: input.document_version_id ?? input.documentVersionId ?? null,
+    markdown_ast_document_id: string(input.markdown_ast_document_id, input.markdownAstDocumentId),
+    unit_kind: string(input.unit_kind, input.unitKind, "markdown"),
+    semantic_role: string(input.semantic_role, input.semanticRole, "markdown_node"),
+    canonical_label: string(input.canonical_label, input.canonicalLabel),
+    normalized_key: string(input.normalized_key, input.normalizedKey),
+    structure_path: input.structure_path ?? input.structurePath ?? null,
+    section_path: input.section_path ?? input.sectionPath ?? null,
+    section_ast_node_id: input.section_ast_node_id ?? input.sectionAstNodeId ?? null,
+    text_hash: input.text_hash ?? input.textHash ?? null,
+    semantic_fingerprint: string(input.semantic_fingerprint, input.semanticFingerprint),
+    markdown_ast_node_ids: array(input.markdown_ast_node_ids, input.markdownAstNodeIds),
+    entity_mention_ids: array(input.entity_mention_ids, input.entityMentionIds),
+    citation_texts: array(input.citation_texts, input.citationTexts),
+    date_texts: array(input.date_texts, input.dateTexts),
+    money_texts: array(input.money_texts, input.moneyTexts),
+    occurrence_count: number(input.occurrence_count, input.occurrenceCount),
+    evidence_span_count: number(input.evidence_span_count, input.evidenceSpanCount),
+    text_chunk_count: number(input.text_chunk_count, input.textChunkCount),
+    source_span_count: number(input.source_span_count, input.sourceSpanCount),
+    review_status: string(input.review_status, input.reviewStatus, "unreviewed"),
+    created_at: string(input.created_at, input.createdAt),
+    updated_at: string(input.updated_at, input.updatedAt),
+  }
+}
+
+function normalizeCaseEntity(input: any): CaseEntity {
+  return {
+    ...input,
+    id: string(input.id, input.entity_id),
+    entity_id: string(input.entity_id, input.entityId, input.id),
+    matter_id: string(input.matter_id, input.matterId),
+    entity_type: string(input.entity_type, input.entityType, "unknown"),
+    canonical_name: string(input.canonical_name, input.canonicalName, input.name),
+    normalized_key: string(input.normalized_key, input.normalizedKey),
+    confidence: number(input.confidence),
+    review_status: string(input.review_status, input.reviewStatus, "unreviewed"),
+    mention_ids: array(input.mention_ids, input.mentionIds),
+    party_match_ids: array(input.party_match_ids, input.partyMatchIds),
+    created_at: string(input.created_at, input.createdAt),
+    updated_at: string(input.updated_at, input.updatedAt),
   }
 }
 
@@ -3311,6 +3885,138 @@ function normalizeSearchIndexRecord(input: any): SearchIndexRecord {
     stale: Boolean(input.stale),
     created_at: string(input.created_at, input.createdAt),
     indexed_at: input.indexed_at ?? input.indexedAt ?? null,
+  }
+}
+
+function normalizeCaseBuilderEmbeddingRun(input: any): CaseBuilderEmbeddingRun {
+  return {
+    ...input,
+    id: string(input.id, input.embedding_run_id, input.embeddingRunId),
+    embedding_run_id: string(input.embedding_run_id, input.embeddingRunId, input.id),
+    matter_id: string(input.matter_id, input.matterId),
+    document_id: input.document_id ?? input.documentId ?? null,
+    document_version_id: input.document_version_id ?? input.documentVersionId ?? null,
+    index_run_id: input.index_run_id ?? input.indexRunId ?? null,
+    model: string(input.model, "voyage-4-large"),
+    profile: string(input.profile, "casebuilder_markdown_v1"),
+    dimension: number(input.dimension, 1024),
+    vector_index_name: string(input.vector_index_name, input.vectorIndexName, "casebuilder_markdown_embedding_1024"),
+    status: string(input.status, "queued"),
+    stage: string(input.stage, "queued"),
+    target_count: number(input.target_count, input.targetCount),
+    embedded_count: number(input.embedded_count, input.embeddedCount),
+    skipped_count: number(input.skipped_count, input.skippedCount),
+    stale_count: number(input.stale_count, input.staleCount),
+    produced_embedding_record_ids: array(input.produced_embedding_record_ids, input.producedEmbeddingRecordIds),
+    warnings: array(input.warnings),
+    error_code: input.error_code ?? input.errorCode ?? null,
+    error_message: input.error_message ?? input.errorMessage ?? null,
+    retryable: Boolean(input.retryable),
+    started_at: string(input.started_at, input.startedAt),
+    completed_at: input.completed_at ?? input.completedAt ?? null,
+  }
+}
+
+function normalizeCaseBuilderEmbeddingRecord(input: any): CaseBuilderEmbeddingRecord {
+  return {
+    ...input,
+    id: string(input.id, input.embedding_record_id, input.embeddingRecordId),
+    embedding_record_id: string(input.embedding_record_id, input.embeddingRecordId, input.id),
+    matter_id: string(input.matter_id, input.matterId),
+    document_id: string(input.document_id, input.documentId),
+    document_version_id: input.document_version_id ?? input.documentVersionId ?? null,
+    index_run_id: input.index_run_id ?? input.indexRunId ?? null,
+    embedding_run_id: input.embedding_run_id ?? input.embeddingRunId ?? null,
+    target_kind: string(input.target_kind, input.targetKind),
+    target_id: string(input.target_id, input.targetId),
+    target_label: string(input.target_label, input.targetLabel),
+    model: string(input.model, "voyage-4-large"),
+    profile: string(input.profile, "casebuilder_markdown_v1"),
+    dimension: number(input.dimension, 1024),
+    vector_index_name: string(input.vector_index_name, input.vectorIndexName, "casebuilder_markdown_embedding_1024"),
+    input_hash: string(input.input_hash, input.inputHash),
+    source_text_hash: string(input.source_text_hash, input.sourceTextHash),
+    chunker_version: input.chunker_version ?? input.chunkerVersion ?? null,
+    graph_schema_version: input.graph_schema_version ?? input.graphSchemaVersion ?? null,
+    embedding_strategy: string(input.embedding_strategy, input.embeddingStrategy, "direct"),
+    embedding_input_type: string(input.embedding_input_type, input.embeddingInputType, "document"),
+    embedding_output_dtype: string(input.embedding_output_dtype, input.embeddingOutputDtype, "float"),
+    status: string(input.status, "queued"),
+    stale: Boolean(input.stale),
+    review_status: string(input.review_status, input.reviewStatus, "system"),
+    text_excerpt: input.text_excerpt ?? input.textExcerpt ?? null,
+    source_span_ids: array(input.source_span_ids, input.sourceSpanIds),
+    text_chunk_ids: array(input.text_chunk_ids, input.textChunkIds),
+    markdown_ast_node_ids: array(input.markdown_ast_node_ids, input.markdownAstNodeIds),
+    markdown_semantic_unit_ids: array(input.markdown_semantic_unit_ids, input.markdownSemanticUnitIds),
+    centroid_source_record_ids: array(input.centroid_source_record_ids, input.centroidSourceRecordIds),
+    created_at: string(input.created_at, input.createdAt),
+    embedded_at: input.embedded_at ?? input.embeddedAt ?? null,
+  }
+}
+
+function normalizeCaseBuilderEmbeddingCoverage(input: any): CaseBuilderEmbeddingCoverage {
+  return {
+    enabled: Boolean(input?.enabled),
+    model: input?.model ?? null,
+    profile: input?.profile ?? null,
+    dimension: input?.dimension ?? null,
+    vector_index_name: input?.vector_index_name ?? input?.vectorIndexName ?? null,
+    target_count: number(input?.target_count, input?.targetCount),
+    embedded_count: number(input?.embedded_count, input?.embeddedCount),
+    current_count: number(input?.current_count, input?.currentCount),
+    stale_count: number(input?.stale_count, input?.staleCount),
+    skipped_count: number(input?.skipped_count, input?.skippedCount),
+    failed_count: number(input?.failed_count, input?.failedCount),
+    full_file_embedded: Boolean(input?.full_file_embedded ?? input?.fullFileEmbedded),
+    chunk_embedded: number(input?.chunk_embedded, input?.chunkEmbedded),
+    semantic_unit_embedded: number(input?.semantic_unit_embedded, input?.semanticUnitEmbedded),
+  }
+}
+
+function normalizeRunCaseBuilderEmbeddingsResponse(input: any): RunCaseBuilderEmbeddingsResponse {
+  return {
+    matter_id: string(input.matter_id, input.matterId),
+    requested: number(input.requested),
+    processed: number(input.processed),
+    skipped: number(input.skipped),
+    failed: number(input.failed),
+    runs: array(input.runs).map(normalizeCaseBuilderEmbeddingRun),
+    warnings: array(input.warnings),
+  }
+}
+
+function normalizeCaseBuilderEmbeddingSearchResponse(input: any): CaseBuilderEmbeddingSearchResponse {
+  return {
+    enabled: Boolean(input.enabled),
+    mode: string(input.mode, "markdown_embeddings"),
+    query: string(input.query),
+    total: number(input.total),
+    results: array(input.results).map((result: any) => {
+      const record = normalizeCaseBuilderEmbeddingRecord(result.embedding_record ?? result.embeddingRecord ?? {})
+      return {
+        score: number(result.score),
+        embedding_record: record,
+        target_kind: string(result.target_kind, result.targetKind, record.target_kind),
+        target_id: string(result.target_id, result.targetId, record.target_id),
+        document_id: string(result.document_id, result.documentId, record.document_id),
+        document_version_id: result.document_version_id ?? result.documentVersionId ?? record.document_version_id ?? null,
+        text_excerpt: result.text_excerpt ?? result.textExcerpt ?? record.text_excerpt ?? null,
+        source_span_ids: array(result.source_span_ids, result.sourceSpanIds, record.source_span_ids),
+        text_chunk_ids: array(result.text_chunk_ids, result.textChunkIds, record.text_chunk_ids),
+        markdown_ast_node_ids: array(result.markdown_ast_node_ids, result.markdownAstNodeIds, record.markdown_ast_node_ids),
+        markdown_semantic_unit_ids: array(
+          result.markdown_semantic_unit_ids,
+          result.markdownSemanticUnitIds,
+          record.markdown_semantic_unit_ids,
+        ),
+        stale: Boolean(result.stale ?? record.stale),
+      }
+    }),
+    model: input.model ?? null,
+    profile: input.profile ?? null,
+    dimension: input.dimension ?? null,
+    warnings: array(input.warnings),
   }
 }
 
@@ -3403,8 +4109,58 @@ function normalizeMatterIndexRunResponse(input: any): MatterIndexRunResponse {
       produced_chunks: number(result.produced_chunks, result.producedChunks),
       produced_facts: number(result.produced_facts, result.producedFacts),
       produced_timeline_suggestions: number(result.produced_timeline_suggestions, result.producedTimelineSuggestions),
+      produced_markdown_ast_nodes: number(result.produced_markdown_ast_nodes, result.producedMarkdownAstNodes),
+      produced_markdown_semantic_units: number(
+        result.produced_markdown_semantic_units,
+        result.producedMarkdownSemanticUnits,
+      ),
+      produced_embedding_records: number(result.produced_embedding_records, result.producedEmbeddingRecords),
+      produced_entities: number(result.produced_entities, result.producedEntities),
     })),
     summary: normalizeMatterIndexSummary(input.summary ?? {}),
+  }
+}
+
+function normalizeMatterIndexJob(input: any): MatterIndexJob {
+  return {
+    ...input,
+    id: string(input.id, input.index_job_id, input.indexJobId),
+    index_job_id: string(input.index_job_id, input.indexJobId, input.id),
+    matter_id: string(input.matter_id, input.matterId),
+    upload_batch_id: input.upload_batch_id ?? input.uploadBatchId ?? null,
+    document_ids: array(input.document_ids, input.documentIds),
+    limit: number(input.limit, 250),
+    status: string(input.status, "queued"),
+    stage: string(input.stage, "queued"),
+    requested: number(input.requested),
+    processed: number(input.processed),
+    skipped: number(input.skipped),
+    failed: number(input.failed),
+    produced_timeline_suggestions: number(input.produced_timeline_suggestions, input.producedTimelineSuggestions),
+    results: array(input.results).map((result: any): MatterIndexRunDocumentResult => ({
+      document_id: string(result.document_id, result.documentId),
+      status: string(result.status, "skipped"),
+      extraction_status: result.extraction_status ?? result.extractionStatus ?? null,
+      message: string(result.message),
+      produced_chunks: number(result.produced_chunks, result.producedChunks),
+      produced_facts: number(result.produced_facts, result.producedFacts),
+      produced_timeline_suggestions: number(result.produced_timeline_suggestions, result.producedTimelineSuggestions),
+      produced_markdown_ast_nodes: number(result.produced_markdown_ast_nodes, result.producedMarkdownAstNodes),
+      produced_markdown_semantic_units: number(
+        result.produced_markdown_semantic_units,
+        result.producedMarkdownSemanticUnits,
+      ),
+      produced_embedding_records: number(result.produced_embedding_records, result.producedEmbeddingRecords),
+      produced_entities: number(result.produced_entities, result.producedEntities),
+    })),
+    summary: input.summary ? normalizeMatterIndexSummary(input.summary) : null,
+    warnings: array(input.warnings),
+    error_code: input.error_code ?? input.errorCode ?? null,
+    error_message: input.error_message ?? input.errorMessage ?? null,
+    retryable: Boolean(input.retryable),
+    created_at: string(input.created_at, input.createdAt),
+    started_at: input.started_at ?? input.startedAt ?? null,
+    completed_at: input.completed_at ?? input.completedAt ?? null,
   }
 }
 
@@ -3622,6 +4378,7 @@ function normalizeTimelineEvent(input: any): TimelineEvent {
     source_document_id: input.source_document_id ?? input.sourceDocumentId ?? null,
     source_span_ids: array(input.source_span_ids, input.sourceSpanIds),
     text_chunk_ids: array(input.text_chunk_ids, input.textChunkIds),
+    markdown_ast_node_ids: array(input.markdown_ast_node_ids, input.markdownAstNodeIds),
     linked_fact_ids: array(input.linked_fact_ids, input.linkedFactIds),
     linked_claim_ids: array(input.linked_claim_ids, input.linkedClaimIds),
     suggestion_id: input.suggestion_id ?? input.suggestionId ?? null,
@@ -3685,6 +4442,7 @@ function normalizeTimelineSuggestion(input: any): TimelineSuggestion {
     source_document_id: input.source_document_id ?? input.sourceDocumentId ?? null,
     source_span_ids: array(input.source_span_ids, input.sourceSpanIds),
     text_chunk_ids: array(input.text_chunk_ids, input.textChunkIds),
+    markdown_ast_node_ids: array(input.markdown_ast_node_ids, input.markdownAstNodeIds),
     linked_fact_ids: array(input.linked_fact_ids, input.linkedFactIds),
     linked_claim_ids: array(input.linked_claim_ids, input.linkedClaimIds),
     work_product_id: input.work_product_id ?? input.workProductId ?? null,
@@ -4757,6 +5515,14 @@ function string(...values: any[]): string {
 function optionalString(...values: any[]): string | undefined {
   const value = string(...values)
   return value || undefined
+}
+
+function booleanWithDefault(value: any, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback
+}
+
+function nullableBoolean(value: any): boolean | null {
+  return typeof value === "boolean" ? value : null
 }
 
 function number(...values: any[]): number {

@@ -126,6 +126,10 @@ impl CaseBuilderService {
         };
 
         self.merge_matter(&matter).await?;
+        if let Some(settings) = request.settings {
+            self.create_initial_matter_settings(&matter_id, settings, auth)
+                .await?;
+        }
         self.get_matter(&matter_id).await
     }
 
@@ -220,7 +224,35 @@ impl CaseBuilderService {
 
     pub async fn get_matter_graph(&self, matter_id: &str) -> ApiResult<CaseGraphResponse> {
         let matter = self.get_matter(matter_id).await?;
-        Ok(build_case_graph(&matter))
+        let artifacts = CaseGraphArtifacts {
+            document_versions: self.list_nodes(matter_id, document_version_spec()).await?,
+            index_runs: self.list_nodes(matter_id, index_run_spec()).await?,
+            source_spans: self.list_nodes(matter_id, source_span_spec()).await?,
+            text_chunks: self.list_nodes(matter_id, text_chunk_spec()).await?,
+            evidence_spans: self.list_nodes(matter_id, evidence_span_spec()).await?,
+            entity_mentions: self.list_nodes(matter_id, entity_mention_spec()).await?,
+            entities: self.list_nodes(matter_id, case_entity_spec()).await?,
+            search_index_records: self
+                .list_nodes(matter_id, search_index_record_spec())
+                .await?,
+            extraction_manifests: self
+                .list_nodes(matter_id, extraction_artifact_manifest_spec())
+                .await?,
+            markdown_ast_documents: self
+                .list_nodes(matter_id, markdown_ast_document_spec())
+                .await?,
+            markdown_ast_nodes: self.list_nodes(matter_id, markdown_ast_node_spec()).await?,
+            markdown_semantic_units: self
+                .list_nodes(matter_id, markdown_semantic_unit_spec())
+                .await?,
+            embedding_runs: self
+                .list_nodes(matter_id, casebuilder_embedding_run_spec())
+                .await?,
+            embedding_records: self
+                .list_nodes(matter_id, casebuilder_embedding_record_spec())
+                .await?,
+        };
+        Ok(build_case_graph(&matter, &artifacts))
     }
 
     pub async fn run_matter_qc(&self, matter_id: &str) -> ApiResult<QcRun> {
@@ -494,6 +526,7 @@ impl CaseBuilderService {
             used_in_draft_ids: Vec::new(),
             needs_verification: true,
             source_spans,
+            markdown_ast_node_ids: request.markdown_ast_node_ids.unwrap_or_default(),
             notes: request.notes,
         };
         let fact = self
@@ -573,6 +606,7 @@ impl CaseBuilderService {
             linked_claim_ids: request.linked_claim_ids.unwrap_or_default(),
             source_span_ids: request.source_span_ids.unwrap_or_default(),
             text_chunk_ids: request.text_chunk_ids.unwrap_or_default(),
+            markdown_ast_node_ids: request.markdown_ast_node_ids.unwrap_or_default(),
             suggestion_id: request.suggestion_id,
             agent_run_id: request.agent_run_id,
             date_confidence: 1.0,
@@ -980,6 +1014,7 @@ struct NormalizedCreateMatterRequest {
     jurisdiction: String,
     court: String,
     case_number: Option<String>,
+    settings: Option<PatchCaseBuilderMatterSettingsRequest>,
 }
 
 struct NormalizedPatchMatterRequest {
@@ -1012,6 +1047,7 @@ fn normalize_create_matter_request(
         jurisdiction: optional_text_or_default(request.jurisdiction, "Oregon"),
         court: optional_text_or_default(request.court, "Unassigned"),
         case_number: optional_trimmed(request.case_number),
+        settings: request.settings,
     })
 }
 
@@ -1122,6 +1158,7 @@ mod tests {
             jurisdiction: Some("  ".to_string()),
             court: Some("  Multnomah County Circuit Court  ".to_string()),
             case_number: Some("  24CV12345  ".to_string()),
+            settings: None,
         })
         .expect("valid matter input");
 
@@ -1143,6 +1180,7 @@ mod tests {
                 jurisdiction: None,
                 court: None,
                 case_number: None,
+                settings: None,
             })
             .is_err()
         );
@@ -1154,6 +1192,7 @@ mod tests {
                 jurisdiction: None,
                 court: None,
                 case_number: None,
+                settings: None,
             })
             .is_err()
         );
@@ -1165,6 +1204,7 @@ mod tests {
                 jurisdiction: None,
                 court: None,
                 case_number: None,
+                settings: None,
             })
             .is_err()
         );

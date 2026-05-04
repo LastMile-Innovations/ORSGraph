@@ -28,6 +28,9 @@ Work in phase order unless a dependency blocks progress. A feature is not Done j
 - [../legal-corpora/court-rules-registry-layer.md](../legal-corpora/court-rules-registry-layer.md): Court rules registry/currentness ingestion for SLR/CJO/PJO indexes.
 - [../legal-corpora/local-slr-pdf-ingestion.md](../legal-corpora/local-slr-pdf-ingestion.md): Source-backed local SLR PDF ingestion.
 - [../legal-corpora/top-down-expansion-roadmap.md](../legal-corpora/top-down-expansion-roadmap.md): Oregon-first, then all states and federal expansion plan.
+- [../casebuilder/README.md](../casebuilder/README.md): Live CaseBuilder product and implementation docs.
+- [../casebuilder/markdown-file-graph-user-guide.md](../casebuilder/markdown-file-graph-user-guide.md): User-facing guide for Markdown-only indexing and the Markdown Graph panel.
+- [../casebuilder/markdown-file-graph-internal.md](../casebuilder/markdown-file-graph-internal.md): Internal reference for the Markdown AST graph and provenance pipeline.
 - [00-current-status.md](00-current-status.md): What exists today and what is still not real.
 - [01-v0-foundation.md](01-v0-foundation.md): Canonical routes, backend contracts, storage, graph persistence, and data state.
 - [02-v0-mvp-workflows.md](02-v0-mvp-workflows.md): Matter workspace, upload, extraction, facts, timeline, claims, evidence, legacy drafting, fact-checking, authority search, and the complaint profile entry point.
@@ -52,6 +55,7 @@ Work in phase order unless a dependency blocks progress. A feature is not Done j
 - Frontend pages use a CaseBuilder data adapter with `live`, `demo`, and `error` states.
 - Demo fallback is visibly labeled.
 - Rust API includes CaseBuilder models, service, routes, local/R2 object storage, binary multipart upload, Neo4j constraints, first-pass provenance DTOs/graph nodes, deterministic text extraction with source spans, deterministic draft/fact/citation checks, authority search bridge to ORSGraph search, authority attach/detach endpoints, canonical `WorkProduct.document_ast` persistence, AST patch/validate/conversion routes, structured complaint/work-product editing, canonical WorkProduct routes, graph-native Case History V0 foundations, hybrid graph/R2 AST storage for snapshots/exports, bounded legal layer diffs, scoped AST restore, and matter-scoped AST reference validation.
+- CaseBuilder Markdown indexing now persists review-first Markdown AST graph records, canonical entity candidates, source-span/chunk/evidence/search provenance links, and Markdown-aware matter graph modes while preserving non-Markdown files as `view_only`.
 - ORSGraph now has a first-class 2025 UTCR corpus parser/export path, procedural requirement nodes, WorkProduct rule packs, UTCR-aware search parsing, a Court Rules Registry layer for SLR/CJO/PJO currentness, a local SLR PDF parser, and CaseBuilder rule profile resolution for active UTCR/SLR/order overlays by filing date.
 - Route-ready shells exist for parties, graph, QC, export, authorities, and tasks; the Complaint workspace has a structured profile editor and Case History screen.
 - The V0 single-user path is wired: create matter, upload files, extract supported text, review facts, create events/claims/evidence, attach ORS authority, create/generate legacy drafts, create and patch AST-backed WorkProducts, link matter-owned support, run checks, view QC findings, edit a complaint-profile work product, view history, compare text/legal layers, restore scoped AST state, and see changed-since-export status.

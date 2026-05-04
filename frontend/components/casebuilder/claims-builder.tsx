@@ -35,17 +35,17 @@ const KIND_META: Record<Claim["kind"], { label: string; icon: typeof Scale; colo
   claim: {
     label: "Cause of Action",
     icon: Scale,
-    color: "text-blue-700 dark:text-blue-300 border-blue-500/40 bg-blue-500/10",
+    color: "text-case-claim border-case-claim/40 bg-case-claim/10",
   },
   counterclaim: {
     label: "Counterclaim",
     icon: Gavel,
-    color: "text-purple-700 dark:text-purple-300 border-purple-500/40 bg-purple-500/10",
+    color: "text-case-counterclaim border-case-counterclaim/40 bg-case-counterclaim/10",
   },
   defense: {
     label: "Affirmative Defense",
     icon: Shield,
-    color: "text-emerald-700 dark:text-emerald-300 border-emerald-500/40 bg-emerald-500/10",
+    color: "text-case-defense border-case-defense/40 bg-case-defense/10",
   },
 }
 
@@ -268,7 +268,7 @@ function ProgressBar({ supported, total }: { supported: number; total: number })
       <div
         className={cn(
           "absolute inset-y-0 left-0 transition-all",
-          pct === 100 ? "bg-emerald-600" : pct >= 50 ? "bg-amber-500" : "bg-rose-500",
+          pct === 100 ? "bg-success" : pct >= 50 ? "bg-warning" : "bg-destructive",
         )}
         style={{ width: `${pct}%` }}
       />
@@ -349,12 +349,12 @@ function ClaimDetail({ claim, matter }: { claim: Claim; matter: Matter }) {
                 </p>
               </div>
               {allSupported ? (
-                <Badge className="gap-1 bg-emerald-600/15 text-emerald-700 hover:bg-emerald-600/15 dark:text-emerald-300">
+                <Badge className="gap-1 bg-success/15 text-success hover:bg-success/15">
                   <CheckCircle2 className="h-3 w-3" />
                   Trial-ready
                 </Badge>
               ) : (
-                <Badge variant="outline" className="gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400">
+                <Badge variant="outline" className="gap-1 border-warning/40 text-warning">
                   <AlertTriangle className="h-3 w-3" />
                   Has gaps
                 </Badge>
@@ -415,7 +415,7 @@ function ClaimDetail({ claim, matter }: { claim: Claim; matter: Matter }) {
               {claim.counterArguments.map((c, i) => (
                 <li
                   key={i}
-                  className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs"
+                  className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs"
                 >
                   <p className="font-medium text-foreground">{c.argument}</p>
                   <p className="mt-1 leading-relaxed text-muted-foreground">
@@ -456,11 +456,11 @@ function ElementCard({
 
   const statusColor =
     element.status === "supported"
-      ? "text-emerald-600 dark:text-emerald-400"
+      ? "text-success"
       : element.status === "weak"
-        ? "text-amber-600 dark:text-amber-400"
+        ? "text-warning"
         : element.status === "rebutted"
-          ? "text-rose-600 dark:text-rose-400"
+          ? "text-destructive"
           : "text-muted-foreground"
 
   return (

@@ -23,6 +23,8 @@ export default function GlobalError({
       <body>
         <main
           style={{
+            background: "var(--background)",
+            color: "var(--foreground)",
             display: "grid",
             minHeight: "100vh",
             placeItems: "center",
@@ -30,12 +32,12 @@ export default function GlobalError({
             fontFamily: "var(--font-inter), system-ui, sans-serif",
           }}
         >
-          <section style={{ maxWidth: 520, border: "1px solid #d4d4d8", borderRadius: 6, padding: 24 }}>
-            <p style={{ margin: 0, fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: "#dc2626" }}>
+          <section style={{ maxWidth: 520, border: "1px solid var(--border)", borderRadius: 6, padding: 24 }}>
+            <p style={{ margin: 0, fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: "var(--destructive)" }}>
               Application error
             </p>
             <h1 style={{ margin: "8px 0 0", fontSize: 20 }}>ORSGraph could not recover the root shell.</h1>
-            <p style={{ color: "#52525b", lineHeight: 1.6 }}>
+            <p style={{ color: "var(--muted-foreground)", lineHeight: 1.6 }}>
               {message}
             </p>
             <button
@@ -45,8 +47,8 @@ export default function GlobalError({
                 minHeight: 40,
                 border: 0,
                 borderRadius: 6,
-                background: "#18181b",
-                color: "white",
+                background: "var(--primary)",
+                color: "var(--primary-foreground)",
                 cursor: "pointer",
                 padding: "0 14px",
               }}

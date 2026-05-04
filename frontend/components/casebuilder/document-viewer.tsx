@@ -44,15 +44,15 @@ import { ConfidenceBadge, ProcessingBadge } from "./badges"
 import { cn } from "@/lib/utils"
 
 const ENTITY_COLORS: Partial<Record<ExtractedEntity["type"], string>> = {
-  person: "bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30",
-  org: "bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-500/30",
-  address: "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30",
-  date: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30",
-  money: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
-  location: "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30",
-  legalCitation: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/30",
-  obligation: "bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-500/30",
-  party: "bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-500/30",
+  person: "bg-case-party/15 text-case-party border-case-party/30",
+  org: "bg-case-entity/15 text-case-entity border-case-entity/30",
+  address: "bg-case-entity/15 text-case-entity border-case-entity/30",
+  date: "bg-case-deadline/15 text-case-deadline border-case-deadline/30",
+  money: "bg-case-evidence/15 text-case-evidence border-case-evidence/30",
+  location: "bg-case-entity/15 text-case-entity border-case-entity/30",
+  legalCitation: "bg-case-authority/15 text-case-authority border-case-authority/30",
+  obligation: "bg-case-deadline/15 text-case-deadline border-case-deadline/30",
+  party: "bg-case-party/15 text-case-party border-case-party/30",
 }
 
 const ENTITY_ICONS: Partial<Record<ExtractedEntity["type"], typeof User>> = {
@@ -694,10 +694,10 @@ function IssuesPanel({ document }: { document: MatterDocument }) {
       {issues.map((issue) => (
         <div
           key={issue.id}
-          className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs"
+          className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs"
         >
           <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
             <div className="min-w-0 flex-1">
               <p className="font-medium text-foreground">{issue.title}</p>
               <p className="mt-1 leading-relaxed text-muted-foreground">{issue.detail}</p>

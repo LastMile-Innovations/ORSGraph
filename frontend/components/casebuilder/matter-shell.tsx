@@ -3,6 +3,7 @@ import type { MatterSummary } from "@/lib/casebuilder/types"
 import type { LoadSource } from "@/lib/casebuilder/api"
 import { TopNavBoundary } from "@/components/orsg/top-nav-boundary"
 import { MatterSidebar, MatterSidebarSheet } from "./matter-sidebar"
+import { MatterUploadControls } from "./matter-upload-controls"
 import { DataStateBanner } from "./data-state-banner"
 
 interface MatterShellProps {
@@ -29,6 +30,7 @@ export function MatterShell({ matter, children, rightPanel, counts, dataState }:
           <Suspense fallback={<div className="border-b border-border bg-card px-3 py-2 md:hidden" aria-hidden="true" />}>
             <MatterSidebarSheet matter={matter} counts={counts} />
           </Suspense>
+          <MatterUploadControls matterId={matter.matter_id} />
           {children}
         </main>
         {rightPanel && (

@@ -115,6 +115,8 @@ pub struct ApiConfig {
     pub vector_min_score: f32,
     #[serde(default = "default_vector_profile")]
     pub vector_profile: String,
+    #[serde(default)]
+    pub casebuilder_embeddings_enabled: bool,
 
     // Authority Release / Cost Controls
     #[serde(default = "default_corpus_release_manifest_path")]
@@ -487,6 +489,9 @@ impl ApiConfig {
             self.vector_search_enabled = value;
             self.vector_enabled = value;
         }
+        if let Some(value) = read_bool("ORS_CASEBUILDER_EMBEDDINGS_ENABLED") {
+            self.casebuilder_embeddings_enabled = value;
+        }
         if let Some(value) = read_string("ORS_VECTOR_INDEX") {
             self.vector_index = value;
         }
@@ -832,6 +837,7 @@ mod tests {
             vector_top_k: 100,
             vector_min_score: 0.55,
             vector_profile: "legal_chunk_primary_v1".to_string(),
+            casebuilder_embeddings_enabled: false,
             corpus_release_manifest_path: "data/graph/corpus_release.json".to_string(),
             authority_cache_ttl_seconds: 86_400,
             authority_cache_max_capacity: 20_000,
@@ -907,6 +913,7 @@ mod tests {
             vector_top_k: 100,
             vector_min_score: 0.55,
             vector_profile: "legal_chunk_primary_v1".to_string(),
+            casebuilder_embeddings_enabled: false,
             corpus_release_manifest_path: "data/graph/corpus_release.json".to_string(),
             authority_cache_ttl_seconds: 86_400,
             authority_cache_max_capacity: 20_000,

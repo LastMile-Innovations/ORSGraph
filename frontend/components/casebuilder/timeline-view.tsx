@@ -69,27 +69,27 @@ const EVENT_KINDS = ["other", "communication", "filing", "service", "payment", "
 
 const KIND_CONFIG: Record<TimelineEntry["kind"], { color: string; icon: typeof FileText; label: string }> = {
   event: {
-    color: "border-cyan-500/40 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
+    color: "border-case-timeline/40 bg-case-timeline/10 text-case-timeline",
     icon: CalendarClock,
     label: "Event",
   },
   fact: {
-    color: "border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300",
+    color: "border-case-evidence/40 bg-case-evidence/10 text-case-evidence",
     icon: CheckCircle2,
     label: "Fact",
   },
   document: {
-    color: "border-purple-500/40 bg-purple-500/10 text-purple-700 dark:text-purple-300",
+    color: "border-case-document/40 bg-case-document/10 text-case-document",
     icon: FileText,
     label: "Document",
   },
   deadline: {
-    color: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    color: "border-case-deadline/40 bg-case-deadline/10 text-case-deadline",
     icon: AlertTriangle,
     label: "Deadline",
   },
   milestone: {
-    color: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+    color: "border-case-authority/40 bg-case-authority/10 text-case-authority",
     icon: Gavel,
     label: "Milestone",
   },
@@ -509,7 +509,7 @@ export function TimelineView({ matter }: TimelineViewProps) {
                   </div>
                   <p className="mt-1 truncate text-muted-foreground">{latestAgentRun.message}</p>
                   {latestAgentRun.warnings.length > 0 && (
-                    <p className="mt-1 text-amber-600 dark:text-amber-400">{latestAgentRun.warnings[0]}</p>
+                    <p className="mt-1 text-warning">{latestAgentRun.warnings[0]}</p>
                   )}
                 </div>
                 <div className="flex flex-wrap gap-1.5 font-mono text-[11px] text-muted-foreground md:justify-end">
@@ -750,7 +750,7 @@ function TimelineSuggestionCard({
               </Badge>
             )}
             {suggestion.warnings.length > 0 && (
-              <Badge variant="outline" className="border-amber-500/40 text-[9px] text-amber-600 dark:text-amber-400">
+              <Badge variant="outline" className="border-warning/40 text-[9px] text-warning">
                 review
               </Badge>
             )}
@@ -823,12 +823,12 @@ function TimelineSuggestionCard({
               </blockquote>
             )}
             {suggestion.warnings.length > 0 && (
-              <div className="rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              <div className="rounded border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
                 {suggestion.warnings.join(" · ")}
               </div>
             )}
             {(suggestion.agent_explanation || suggestion.cluster_id || suggestion.agent_confidence != null) && (
-              <div className="rounded border border-cyan-500/30 bg-cyan-500/5 px-3 py-2 text-xs text-cyan-800 dark:text-cyan-200">
+              <div className="rounded border border-info/30 bg-info/5 px-3 py-2 text-xs text-info">
                 <div className="flex flex-wrap gap-2 font-mono text-[10px] uppercase">
                   {suggestion.cluster_id && <span>cluster {shortId(suggestion.cluster_id)}</span>}
                   {suggestion.agent_confidence != null && <span>agent {Math.round(suggestion.agent_confidence * 100)}%</span>}
@@ -923,7 +923,7 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
           {cfg.label}
         </Badge>
         {entry.disputed && (
-          <Badge variant="outline" className="border-amber-500/40 text-[9px] text-amber-600 dark:text-amber-400">
+          <Badge variant="outline" className="border-warning/40 text-[9px] text-warning">
             Disputed
           </Badge>
         )}

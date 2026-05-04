@@ -534,6 +534,19 @@ impl CaseBuilderService {
             "timeline-agent-run",
             &format!("{}:{}:{input_hash}", input.matter_id, input.scope_type),
         );
+        if !self
+            .timeline_suggestions_enabled_for_matter(&input.matter_id)
+            .await?
+        {
+            return Ok(disabled_timeline_agent_outcome(
+                input,
+                agent_run_id,
+                input_hash,
+                started,
+                self.timeline_agent.harness_version.clone(),
+                timer.elapsed().as_millis() as u64,
+            ));
+        }
         let mut warnings =
             vec!["Deterministic timeline extraction ran before provider enrichment.".to_string()];
         let mut candidates = Vec::new();
@@ -571,7 +584,21 @@ impl CaseBuilderService {
 
         let deterministic_candidate_count = candidates.len() as u64;
         let (mut suggestions, duplicate_candidate_count) = dedupe_timeline_candidates(candidates);
-        let (provider, mut provider_warnings) = self.timeline_enrichment_provider();
+        let ai_enrichment_enabled = self
+            .ai_timeline_enrichment_enabled_for_matter(&input.matter_id)
+            .await?;
+        let (provider, mut provider_warnings) = if ai_enrichment_enabled {
+            self.timeline_enrichment_provider()
+        } else {
+            (
+                Box::new(DisabledTimelineProvider {
+                    warning: "Timeline AI enrichment is disabled in CaseBuilder settings; deterministic suggestions only.".to_string(),
+                }) as Box<dyn TimelineEnrichmentProvider + Send + Sync>,
+                vec![
+                    "Timeline AI enrichment is disabled in CaseBuilder settings.".to_string(),
+                ],
+            )
+        };
         warnings.append(&mut provider_warnings);
         if let Some(warning) = provider.disabled_warning() {
             push_unique(&mut warnings, warning);
@@ -725,6 +752,58 @@ impl CaseBuilderService {
 struct ReviewPreserveResult {
     suggestions: Vec<TimelineSuggestion>,
     preserved_review_count: u64,
+}
+
+fn disabled_timeline_agent_outcome(
+    input: TimelineAgentInput,
+    agent_run_id: String,
+    input_hash: String,
+    started: String,
+    harness_version: String,
+    duration_ms: u64,
+) -> TimelineAgentOutcome {
+    let completed = now_string();
+    let run = TimelineAgentRun {
+        agent_run_id: agent_run_id.clone(),
+        id: agent_run_id,
+        matter_id: input.matter_id,
+        subject_type: input.subject_type,
+        subject_id: input.subject_id,
+        agent_type: TIMELINE_AGENT_TYPE.to_string(),
+        scope_type: input.scope_type,
+        scope_ids: input.scope_ids,
+        input_hash: Some(input_hash),
+        pipeline_version: harness_version,
+        extractor_version: TIMELINE_EXTRACTOR_VERSION.to_string(),
+        prompt_template_id: Some(TIMELINE_PROMPT_TEMPLATE_ID.to_string()),
+        provider: "disabled".to_string(),
+        model: None,
+        mode: input.mode,
+        provider_mode: "settings_disabled".to_string(),
+        status: "skipped".to_string(),
+        message: "Timeline suggestions are disabled in CaseBuilder settings.".to_string(),
+        produced_suggestion_ids: Vec::new(),
+        warnings: vec![
+            "Timeline suggestions are disabled in CaseBuilder settings; no suggestions were generated."
+                .to_string(),
+        ],
+        started_at: Some(started.clone()),
+        completed_at: Some(completed),
+        duration_ms: Some(duration_ms),
+        error_code: None,
+        error_message: None,
+        deterministic_candidate_count: 0,
+        provider_enriched_count: 0,
+        provider_rejected_count: 0,
+        duplicate_candidate_count: 0,
+        stored_suggestion_count: 0,
+        preserved_review_count: 0,
+        created_at: started,
+    };
+    TimelineAgentOutcome {
+        run,
+        suggestions: Vec::new(),
+    }
 }
 
 struct ProviderApplyResult {
@@ -1082,6 +1161,7 @@ mod tests {
             source_document_id: Some("doc:test".to_string()),
             source_span_ids: vec!["source-span:test".to_string()],
             text_chunk_ids: vec!["chunk:test".to_string()],
+            markdown_ast_node_ids: Vec::new(),
             linked_fact_ids: vec!["fact:test".to_string()],
             linked_claim_ids: Vec::new(),
             work_product_id: None,

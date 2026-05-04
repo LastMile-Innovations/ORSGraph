@@ -11,8 +11,8 @@ This backlog implements the case-file indexing harness described in [08-case-fil
 - Acceptance checks: Contract tests cover serialization, frontend normalization, Neo4j constraints, and no raw filename leakage in IDs/object keys.
 - Dependencies: `CB-V0F-014`, `CB-V0F-015`, `CB-X-013`.
 - Status: Partial
-- Progress: Provenance DTOs now cover `ObjectBlob`, `DocumentVersion`, `IngestionRun`, `IndexRun`, `Page`, `TextChunk`, `EvidenceSpan`, `EntityMention`, `SearchIndexRecord`, `SourceSpan`, and object-backed normalized artifacts.
-- Still needed: Expand parser registry/search adapters beyond the active Markdown-only path, add stale-index/reindex controls, and deepen provenance UI for chunk/entity/artifact inspection.
+- Progress: Provenance DTOs now cover `ObjectBlob`, `DocumentVersion`, `IngestionRun`, `IndexRun`, `Page`, `TextChunk`, `EvidenceSpan`, `EntityMention`, `SearchIndexRecord`, `SourceSpan`, `MarkdownAstDocument`, `MarkdownAstNode`, `MarkdownSemanticUnit`, `CaseEntity`, `CaseBuilderEmbeddingRun`, `CaseBuilderEmbeddingRecord`, and object-backed normalized artifacts. Markdown documents now build a persisted AST graph, reviewable canonical entity candidates, and optional Voyage-backed embedding records.
+- Still needed: Expand parser registry/search adapters beyond the active Markdown-only path and add stale-index/reindex controls.
 
 ## CB-IDX-002 - Parser registry and file classifier
 - Priority: P0
@@ -53,7 +53,8 @@ This backlog implements the case-file indexing harness described in [08-case-fil
 - Implementation notes: Use stable IDs derived from document version, page/unit, chunk ordinal, and span coordinates, not raw text.
 - Acceptance checks: Replaying the same manifest produces the same node IDs and relationship counts.
 - Dependencies: `CB-IDX-004`, `CB-V0-027`.
-- Status: Todo
+- Status: Partial
+- Progress: Markdown indexing now upserts `Page`, `TextChunk`, `EvidenceSpan`, `EntityMention`, `SearchIndexRecord`, `MarkdownAstDocument`, `MarkdownAstNode`, `CaseEntity`, proposed facts, timeline suggestions, and provenance relationships with stable version-aware IDs. Manifest replay hardening and non-Markdown parser manifests remain.
 
 ## CB-IDX-006 - Full-text index adapter
 - Priority: P1
@@ -73,7 +74,9 @@ This backlog implements the case-file indexing harness described in [08-case-fil
 - Implementation notes: Reuse existing vector search infrastructure where practical; abstract provider/store selection behind an adapter.
 - Acceptance checks: Semantic search returns provenance-backed chunks, can be filtered by matter/file/status, and marks stale embeddings after model/chunker changes.
 - Dependencies: `CB-IDX-005`, `CB-X-004`, `CB-X-010`.
-- Status: Todo
+- Status: Partial
+- Progress: Active Markdown path now embeds full Markdown files, `TextChunk`, and `MarkdownSemanticUnit` records through Voyage when enabled. Vectors live on `CaseBuilderEmbeddingRecord.embedding` with model/profile/dimension/source hashes, stale flags, graph provenance, and `casebuilder_markdown_embedding_1024` search. Oversized full-file embeddings use `centroid_from_chunks`.
+- Still needed: Hybrid full-text/vector ranking UI across all matter documents, non-Markdown adapters, background job queue durability, and richer stale-index controls.
 
 ## CB-IDX-008 - OCR-needed and OCR result workflow
 - Priority: P1

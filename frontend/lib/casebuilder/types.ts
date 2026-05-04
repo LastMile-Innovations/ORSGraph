@@ -75,6 +75,102 @@ export interface MatterSummary {
   next_deadline: { description: string; due_date: string; days_remaining: number } | null
 }
 
+export interface CaseBuilderSettingsPrincipal {
+  subject: string
+  email?: string | null
+  name?: string | null
+  roles: string[]
+  is_service: boolean
+}
+
+export interface CaseBuilderUserSettings {
+  settings_id: string
+  subject: string
+  workspace_label?: string | null
+  display_name?: string | null
+  default_matter_type: MatterType
+  default_user_role: MatterSide
+  default_jurisdiction: string
+  default_court: string
+  default_confidentiality: "private" | "filed" | "public" | "sealed" | string
+  default_document_type: DocumentKind
+  auto_index_uploads: boolean
+  auto_import_complaints: boolean
+  preserve_folder_paths: boolean
+  timeline_suggestions_enabled: boolean
+  ai_timeline_enrichment_enabled: boolean
+  transcript_redact_pii: boolean
+  transcript_speaker_labels: boolean
+  transcript_default_view: "redacted" | "raw" | string
+  transcript_prompt_preset: string
+  transcript_remove_audio_tags: boolean
+  export_default_format: "pdf" | "docx" | "html" | "markdown" | "text" | "json" | string
+  export_include_exhibits: boolean
+  export_include_qc_report: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type PatchCaseBuilderUserSettingsInput = Partial<
+  Omit<CaseBuilderUserSettings, "settings_id" | "subject" | "created_at" | "updated_at">
+>
+
+export interface CaseBuilderMatterSettings {
+  settings_id: string
+  matter_id: string
+  owner_subject?: string | null
+  default_confidentiality?: CaseBuilderUserSettings["default_confidentiality"] | null
+  default_document_type?: DocumentKind | null
+  auto_index_uploads?: boolean | null
+  auto_import_complaints?: boolean | null
+  preserve_folder_paths?: boolean | null
+  timeline_suggestions_enabled?: boolean | null
+  ai_timeline_enrichment_enabled?: boolean | null
+  transcript_redact_pii?: boolean | null
+  transcript_speaker_labels?: boolean | null
+  transcript_default_view?: CaseBuilderUserSettings["transcript_default_view"] | null
+  transcript_prompt_preset?: string | null
+  transcript_remove_audio_tags?: boolean | null
+  export_default_format?: CaseBuilderUserSettings["export_default_format"] | null
+  export_include_exhibits?: boolean | null
+  export_include_qc_report?: boolean | null
+  created_at: string
+  updated_at: string
+}
+
+export type PatchCaseBuilderMatterSettingsInput = Partial<
+  Omit<CaseBuilderMatterSettings, "settings_id" | "matter_id" | "owner_subject" | "created_at" | "updated_at">
+>
+
+export interface CaseBuilderEffectiveSettings {
+  default_confidentiality: CaseBuilderUserSettings["default_confidentiality"]
+  default_document_type: DocumentKind
+  auto_index_uploads: boolean
+  auto_import_complaints: boolean
+  preserve_folder_paths: boolean
+  timeline_suggestions_enabled: boolean
+  ai_timeline_enrichment_enabled: boolean
+  transcript_redact_pii: boolean
+  transcript_speaker_labels: boolean
+  transcript_default_view: CaseBuilderUserSettings["transcript_default_view"]
+  transcript_prompt_preset: string
+  transcript_remove_audio_tags: boolean
+  export_default_format: CaseBuilderUserSettings["export_default_format"]
+  export_include_exhibits: boolean
+  export_include_qc_report: boolean
+}
+
+export interface CaseBuilderUserSettingsResponse {
+  principal: CaseBuilderSettingsPrincipal
+  settings: CaseBuilderUserSettings
+}
+
+export interface CaseBuilderMatterSettingsResponse {
+  matter: MatterSummary
+  settings: CaseBuilderMatterSettings
+  effective: CaseBuilderEffectiveSettings
+}
+
 export interface AuthorityRef {
   citation: string
   canonical_id: string
@@ -415,6 +511,7 @@ export interface TextChunk {
   token_count: number
   unit_type?: string | null
   structure_path?: string | null
+  markdown_ast_node_ids: string[]
   byte_start?: number | null
   byte_end?: number | null
   char_start?: number | null
@@ -431,6 +528,7 @@ export interface EvidenceSpan {
   object_blob_id?: string | null
   text_chunk_id?: string | null
   source_span_id?: string | null
+  markdown_ast_node_ids: string[]
   ingestion_run_id?: string | null
   index_run_id?: string | null
   quote_hash: string
@@ -449,6 +547,8 @@ export interface EntityMention {
   document_id: string
   text_chunk_id?: string | null
   source_span_id?: string | null
+  entity_id?: string | null
+  markdown_ast_node_ids: string[]
   mention_text: string
   entity_type: string
   confidence: number
@@ -457,6 +557,130 @@ export interface EntityMention {
   char_start?: number | null
   char_end?: number | null
   review_status: "unreviewed" | "approved" | "rejected" | string
+}
+
+export interface MarkdownAstDocument {
+  markdown_ast_document_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  document_version_id?: string | null
+  object_blob_id?: string | null
+  ingestion_run_id?: string | null
+  index_run_id?: string | null
+  parser_id: string
+  parser_version: string
+  source_sha256: string
+  root_node_id: string
+  node_count: number
+  semantic_unit_count?: number
+  heading_count?: number
+  block_count?: number
+  inline_count?: number
+  reference_count?: number
+  max_depth?: number
+  entity_mention_count?: number
+  citation_count?: number
+  date_count?: number
+  money_count?: number
+  graph_schema_version?: string
+  status: string
+  created_at: string
+}
+
+export interface MarkdownAstNode {
+  markdown_ast_node_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  document_version_id?: string | null
+  object_blob_id?: string | null
+  ingestion_run_id?: string | null
+  index_run_id?: string | null
+  markdown_ast_document_id: string
+  parent_ast_node_id?: string | null
+  previous_ast_node_id?: string | null
+  semantic_unit_id?: string | null
+  node_kind: string
+  tag: string
+  ordinal: number
+  depth: number
+  ast_path?: string
+  sibling_index?: number
+  child_count?: number
+  structure_path?: string | null
+  section_ast_node_id?: string | null
+  section_path?: string | null
+  heading_level?: number | null
+  heading_text?: string | null
+  semantic_role?: string | null
+  semantic_fingerprint?: string | null
+  text_hash?: string | null
+  text_excerpt?: string | null
+  byte_start?: number | null
+  byte_end?: number | null
+  char_start?: number | null
+  char_end?: number | null
+  source_span_ids: string[]
+  text_chunk_ids: string[]
+  evidence_span_ids: string[]
+  search_index_record_ids: string[]
+  entity_mention_ids?: string[]
+  fact_ids?: string[]
+  timeline_suggestion_ids?: string[]
+  citation_texts?: string[]
+  date_texts?: string[]
+  money_texts?: string[]
+  contains_entity_mention?: boolean
+  contains_citation?: boolean
+  contains_date?: boolean
+  contains_money?: boolean
+  review_status: string
+}
+
+export interface MarkdownSemanticUnit {
+  semantic_unit_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  document_version_id?: string | null
+  markdown_ast_document_id: string
+  unit_kind: string
+  semantic_role: string
+  canonical_label: string
+  normalized_key: string
+  structure_path?: string | null
+  section_path?: string | null
+  section_ast_node_id?: string | null
+  text_hash?: string | null
+  semantic_fingerprint: string
+  markdown_ast_node_ids: string[]
+  entity_mention_ids: string[]
+  citation_texts: string[]
+  date_texts: string[]
+  money_texts: string[]
+  occurrence_count: number
+  evidence_span_count: number
+  text_chunk_count: number
+  source_span_count: number
+  review_status: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CaseEntity {
+  entity_id: string
+  id: string
+  matter_id: string
+  entity_type: string
+  canonical_name: string
+  normalized_key: string
+  confidence: number
+  review_status: "unreviewed" | "approved" | "rejected" | string
+  mention_ids: string[]
+  party_match_ids: string[]
+  created_at: string
+  updated_at: string
 }
 
 export interface SearchIndexRecord {
@@ -474,6 +698,134 @@ export interface SearchIndexRecord {
   stale: boolean
   created_at: string
   indexed_at?: string | null
+}
+
+export interface CaseBuilderEmbeddingRun {
+  embedding_run_id: string
+  id: string
+  matter_id: string
+  document_id?: string | null
+  document_version_id?: string | null
+  index_run_id?: string | null
+  model: string
+  profile: string
+  dimension: number
+  vector_index_name: string
+  status: string
+  stage: string
+  target_count: number
+  embedded_count: number
+  skipped_count: number
+  stale_count: number
+  produced_embedding_record_ids: string[]
+  warnings: string[]
+  error_code?: string | null
+  error_message?: string | null
+  retryable: boolean
+  started_at: string
+  completed_at?: string | null
+}
+
+export interface CaseBuilderEmbeddingRecord {
+  embedding_record_id: string
+  id: string
+  matter_id: string
+  document_id: string
+  document_version_id?: string | null
+  index_run_id?: string | null
+  embedding_run_id?: string | null
+  target_kind: "markdown_file" | "text_chunk" | "markdown_semantic_unit" | string
+  target_id: string
+  target_label: string
+  model: string
+  profile: string
+  dimension: number
+  vector_index_name: string
+  input_hash: string
+  source_text_hash: string
+  chunker_version?: string | null
+  graph_schema_version?: string | null
+  embedding_strategy: "direct" | "centroid_from_chunks" | string
+  embedding_input_type: string
+  embedding_output_dtype: string
+  status: string
+  stale: boolean
+  review_status: string
+  text_excerpt?: string | null
+  source_span_ids: string[]
+  text_chunk_ids: string[]
+  markdown_ast_node_ids: string[]
+  markdown_semantic_unit_ids: string[]
+  centroid_source_record_ids: string[]
+  created_at: string
+  embedded_at?: string | null
+}
+
+export interface CaseBuilderEmbeddingCoverage {
+  enabled: boolean
+  model?: string | null
+  profile?: string | null
+  dimension?: number | null
+  vector_index_name?: string | null
+  target_count: number
+  embedded_count: number
+  current_count: number
+  stale_count: number
+  skipped_count: number
+  failed_count: number
+  full_file_embedded: boolean
+  chunk_embedded: number
+  semantic_unit_embedded: number
+}
+
+export interface RunCaseBuilderEmbeddingsInput {
+  document_ids?: string[]
+  limit?: number
+}
+
+export interface RunCaseBuilderEmbeddingsResponse {
+  matter_id: string
+  requested: number
+  processed: number
+  skipped: number
+  failed: number
+  runs: CaseBuilderEmbeddingRun[]
+  warnings: string[]
+}
+
+export interface CaseBuilderEmbeddingSearchInput {
+  query: string
+  limit?: number
+  document_ids?: string[]
+  target_kinds?: string[]
+  include_stale?: boolean
+}
+
+export interface CaseBuilderEmbeddingSearchResult {
+  score: number
+  embedding_record: CaseBuilderEmbeddingRecord
+  target_kind: string
+  target_id: string
+  document_id: string
+  document_version_id?: string | null
+  text_excerpt?: string | null
+  source_span_ids: string[]
+  text_chunk_ids: string[]
+  markdown_ast_node_ids: string[]
+  markdown_semantic_unit_ids: string[]
+  stale: boolean
+}
+
+export interface CaseBuilderEmbeddingSearchResponse {
+  enabled: boolean
+  mode: string
+  query: string
+  total: number
+  results: CaseBuilderEmbeddingSearchResult[]
+  model?: string | null
+  profile?: string | null
+  dimension?: number | null
+  warnings: string[]
 }
 
 export interface ExtractionArtifactManifest {
@@ -557,6 +909,10 @@ export interface MatterIndexRunDocumentResult {
   produced_chunks: number
   produced_facts: number
   produced_timeline_suggestions: number
+  produced_markdown_ast_nodes: number
+  produced_markdown_semantic_units: number
+  produced_embedding_records: number
+  produced_entities: number
 }
 
 export interface MatterIndexRunResponse {
@@ -568,6 +924,37 @@ export interface MatterIndexRunResponse {
   produced_timeline_suggestions: number
   results: MatterIndexRunDocumentResult[]
   summary: MatterIndexSummary
+}
+
+export interface CreateMatterIndexJobInput {
+  document_ids?: string[]
+  upload_batch_id?: string
+  limit?: number
+}
+
+export interface MatterIndexJob {
+  index_job_id: string
+  id: string
+  matter_id: string
+  upload_batch_id?: string | null
+  document_ids: string[]
+  limit: number
+  status: string
+  stage: string
+  requested: number
+  processed: number
+  skipped: number
+  failed: number
+  produced_timeline_suggestions: number
+  results: MatterIndexRunDocumentResult[]
+  summary?: MatterIndexSummary | null
+  warnings: string[]
+  error_code?: string | null
+  error_message?: string | null
+  retryable: boolean
+  created_at: string
+  started_at?: string | null
+  completed_at?: string | null
 }
 
 export interface ComplaintImportProvenance {
@@ -699,6 +1086,19 @@ export interface DocumentWorkspace {
   capabilities: DocumentCapability[]
   annotations: DocumentAnnotation[]
   source_spans: SourceSpan[]
+  markdown_ast_document?: MarkdownAstDocument | null
+  markdown_ast_nodes: MarkdownAstNode[]
+  markdown_semantic_units: MarkdownSemanticUnit[]
+  text_chunks: TextChunk[]
+  evidence_spans: EvidenceSpan[]
+  entity_mentions: EntityMention[]
+  entities: CaseEntity[]
+  search_index_records: SearchIndexRecord[]
+  embedding_runs: CaseBuilderEmbeddingRun[]
+  embedding_records: CaseBuilderEmbeddingRecord[]
+  embedding_coverage: CaseBuilderEmbeddingCoverage
+  proposed_facts: ExtractedFact[]
+  timeline_suggestions: TimelineSuggestion[]
   transcriptions: TranscriptionJobResponse[]
   docx_manifest?: DocxPackageManifest | null
   text_content?: string | null
@@ -1041,6 +1441,7 @@ export interface ExtractedFact {
   needs_verification?: boolean
   citations: FactCitation[]
   source_spans?: SourceSpan[]
+  markdown_ast_node_ids?: string[]
   notes?: string
 }
 
@@ -1065,6 +1466,7 @@ export interface TimelineEvent {
   linked_claim_ids?: string[]
   source_span_ids?: string[]
   text_chunk_ids?: string[]
+  markdown_ast_node_ids?: string[]
   suggestion_id?: string | null
   agent_run_id?: string | null
   date_confidence?: number
@@ -1120,6 +1522,7 @@ export interface TimelineSuggestion {
   source_document_id?: string | null
   source_span_ids: string[]
   text_chunk_ids: string[]
+  markdown_ast_node_ids: string[]
   linked_fact_ids: string[]
   linked_claim_ids: string[]
   work_product_id?: string | null

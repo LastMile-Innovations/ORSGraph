@@ -11,6 +11,12 @@
 
 - [Full Data Model](data-model/full-data-model.md): Top-down legal graph model for jurisdictions, courts, corpora, legal text, registry/currentness overlays, procedural rule packs, CaseBuilder matters, WorkProduct ASTs, history, JSONL files, API surfaces, and expansion rules for Oregon, other states, and federal law.
 
+## CaseBuilder
+
+- [CaseBuilder Docs](casebuilder/README.md): Product and implementation docs for live CaseBuilder behavior.
+- [Markdown File Graph User Guide](casebuilder/markdown-file-graph-user-guide.md): User-facing guide for Markdown-only indexing, the Markdown Graph panel, Markdown embedding search, reviewable entities/facts/timeline suggestions, and `view_only` files.
+- [Markdown File Graph Internal Reference](casebuilder/markdown-file-graph-internal.md): Engineering reference for the Markdown AST graph and Voyage embedding pipeline, provenance contract, Neo4j graph shape, API fields, UI wiring, and verification commands.
+
 ## Data Sources
 
 - [Free Public Data Source Registry](data/source-registry.md): Master registry of free public Oregon, federal, case-law, legislative, business, evidence, GIS, and expansion sources for ORSGraph, NeighborOS, and CaseBuilder ingestion.

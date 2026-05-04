@@ -254,17 +254,17 @@ function DraftStatus({ status }: { status: string }) {
     },
     review: {
       label: "In review",
-      className: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+      className: "bg-warning/15 text-warning",
       icon: Clock,
     },
     final: {
       label: "Final",
-      className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+      className: "bg-success/15 text-success",
       icon: CheckCircle2,
     },
     filed: {
       label: "Filed",
-      className: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
+      className: "bg-case-authority/15 text-case-authority",
       icon: CheckCircle2,
     },
   }

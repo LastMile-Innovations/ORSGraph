@@ -324,12 +324,12 @@ function KpiCard({
 }) {
   const toneClass =
     tone === "ok"
-      ? "text-emerald-500"
+      ? "text-success"
       : tone === "warn"
-      ? "text-amber-500"
+      ? "text-warning"
       : tone === "fail"
-      ? "text-rose-500"
-      : "text-sky-500"
+      ? "text-destructive"
+      : "text-info"
   return (
     <div className="rounded-lg border border-border bg-background/40 p-3">
       <div className="flex items-center gap-1.5">
@@ -345,7 +345,7 @@ function KpiCard({
 function CountBadge({ status, count }: { status: QCPanel["status"]; count: number }) {
   if (count === 0) {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-emerald-500">
+      <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-success">
         <CheckCircle2 className="h-3 w-3" />
         clean
       </span>
@@ -353,10 +353,10 @@ function CountBadge({ status, count }: { status: QCPanel["status"]; count: numbe
   }
   const cls =
     status === "fail"
-      ? "bg-rose-500/15 text-rose-500 border-rose-500/30"
+      ? "bg-destructive/15 text-destructive border-destructive/30"
       : status === "warning"
-      ? "bg-amber-500/15 text-amber-500 border-amber-500/30"
-      : "bg-sky-500/15 text-sky-500 border-sky-500/30"
+      ? "bg-warning/15 text-warning border-warning/30"
+      : "bg-info/15 text-info border-info/30"
   return (
     <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border tabular-nums ${cls}`}>
       {count.toLocaleString()}
@@ -387,8 +387,8 @@ function PanelView({ panel }: { panel: QCPanel }) {
 
       <div className="mt-6">
         {panel.rows.length === 0 ? (
-          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-6 flex items-center gap-3">
-            <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
+          <div className="rounded-lg border border-success/20 bg-success/5 p-6 flex items-center gap-3">
+            <CheckCircle2 className="h-5 w-5 text-success shrink-0" />
             <div>
               <div className="text-sm font-medium text-foreground">No issues detected</div>
               <p className="text-xs text-muted-foreground font-mono mt-0.5">
@@ -429,9 +429,9 @@ function PanelView({ panel }: { panel: QCPanel }) {
 
 function LevelBadge({ level }: { level: "info" | "warning" | "fail" }) {
   const map = {
-    info: { cls: "bg-sky-500/15 text-sky-500 border-sky-500/30", Icon: CheckCircle2 },
-    warning: { cls: "bg-amber-500/15 text-amber-500 border-amber-500/30", Icon: AlertTriangle },
-    fail: { cls: "bg-rose-500/15 text-rose-500 border-rose-500/30", Icon: XCircle },
+    info: { cls: "bg-info/15 text-info border-info/30", Icon: CheckCircle2 },
+    warning: { cls: "bg-warning/15 text-warning border-warning/30", Icon: AlertTriangle },
+    fail: { cls: "bg-destructive/15 text-destructive border-destructive/30", Icon: XCircle },
   } as const
   const { cls, Icon } = map[level]
   return (

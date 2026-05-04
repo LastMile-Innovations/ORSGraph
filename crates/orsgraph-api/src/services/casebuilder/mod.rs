@@ -1,5 +1,6 @@
 use crate::error::{ApiError, ApiResult};
 use crate::models::casebuilder::*;
+use crate::services::embedding::EmbeddingService;
 use crate::services::neo4j::Neo4jService;
 use crate::services::object_store::{
     ObjectStore, PutOptions, StoredObject, build_document_object_key, clean_etag, normalize_sha256,
@@ -26,17 +27,20 @@ mod citation_resolver;
 mod complaints;
 mod documents;
 mod docx_renderer;
+mod embeddings;
 mod graph_projection;
 mod html_renderer;
 mod ids;
 mod indexes;
 mod markdown_adapter;
+mod markdown_graph;
 mod markdown_policy;
 mod matters;
 mod parsing;
 mod pdf_renderer;
 mod repository;
 mod rule_engine;
+mod settings;
 mod storage;
 mod support_linker;
 mod timeline;
@@ -70,6 +74,8 @@ pub struct CaseBuilderService {
     ast_storage_policy: AstStoragePolicy,
     assemblyai: AssemblyAiProviderConfig,
     timeline_agent: TimelineAgentProviderConfig,
+    embeddings: Option<Arc<EmbeddingService>>,
+    embeddings_enabled: bool,
     http_client: reqwest::Client,
 }
 
@@ -325,6 +331,8 @@ pub struct CaseBuilderServiceConfig {
     pub ast_block_inline_bytes: u64,
     pub assemblyai: AssemblyAiProviderConfig,
     pub timeline_agent: TimelineAgentProviderConfig,
+    pub embeddings: Option<Arc<EmbeddingService>>,
+    pub embeddings_enabled: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -346,6 +354,24 @@ struct SourceContext {
     document_version_id: Option<String>,
     object_blob_id: Option<String>,
     ingestion_run_id: Option<String>,
+}
+
+#[derive(Default)]
+struct CaseGraphArtifacts {
+    document_versions: Vec<DocumentVersion>,
+    index_runs: Vec<IndexRun>,
+    source_spans: Vec<SourceSpan>,
+    text_chunks: Vec<TextChunk>,
+    evidence_spans: Vec<EvidenceSpan>,
+    entity_mentions: Vec<EntityMention>,
+    entities: Vec<CaseEntity>,
+    search_index_records: Vec<SearchIndexRecord>,
+    extraction_manifests: Vec<ExtractionArtifactManifest>,
+    markdown_ast_documents: Vec<MarkdownAstDocument>,
+    markdown_ast_nodes: Vec<MarkdownAstNode>,
+    markdown_semantic_units: Vec<MarkdownSemanticUnit>,
+    embedding_runs: Vec<CaseBuilderEmbeddingRun>,
+    embedding_records: Vec<CaseBuilderEmbeddingRecord>,
 }
 
 #[derive(Clone)]
@@ -526,6 +552,8 @@ impl CaseBuilderService {
             },
             assemblyai: config.assemblyai,
             timeline_agent: config.timeline_agent,
+            embeddings: config.embeddings,
+            embeddings_enabled: config.embeddings_enabled,
             http_client: reqwest::Client::new(),
         }
     }
@@ -657,6 +685,13 @@ fn index_run_spec() -> NodeSpec {
         edge: "HAS_INDEX_RUN",
     }
 }
+fn matter_index_job_spec() -> NodeSpec {
+    NodeSpec {
+        label: "MatterIndexJob",
+        id_key: "index_job_id",
+        edge: "HAS_INDEX_JOB",
+    }
+}
 fn page_spec() -> NodeSpec {
     NodeSpec {
         label: "Page",
@@ -685,11 +720,53 @@ fn entity_mention_spec() -> NodeSpec {
         edge: "HAS_ENTITY_MENTION",
     }
 }
+fn case_entity_spec() -> NodeSpec {
+    NodeSpec {
+        label: "CaseEntity",
+        id_key: "entity_id",
+        edge: "HAS_CASE_ENTITY",
+    }
+}
+fn markdown_ast_document_spec() -> NodeSpec {
+    NodeSpec {
+        label: "MarkdownAstDocument",
+        id_key: "markdown_ast_document_id",
+        edge: "HAS_MARKDOWN_AST_DOCUMENT",
+    }
+}
+fn markdown_ast_node_spec() -> NodeSpec {
+    NodeSpec {
+        label: "MarkdownAstNode",
+        id_key: "markdown_ast_node_id",
+        edge: "HAS_MARKDOWN_AST_NODE",
+    }
+}
+fn markdown_semantic_unit_spec() -> NodeSpec {
+    NodeSpec {
+        label: "MarkdownSemanticUnit",
+        id_key: "semantic_unit_id",
+        edge: "HAS_MARKDOWN_SEMANTIC_UNIT",
+    }
+}
 fn search_index_record_spec() -> NodeSpec {
     NodeSpec {
         label: "SearchIndexRecord",
         id_key: "search_index_record_id",
         edge: "HAS_SEARCH_INDEX_RECORD",
+    }
+}
+fn casebuilder_embedding_run_spec() -> NodeSpec {
+    NodeSpec {
+        label: "CaseBuilderEmbeddingRun",
+        id_key: "embedding_run_id",
+        edge: "HAS_CASEBUILDER_EMBEDDING_RUN",
+    }
+}
+fn casebuilder_embedding_record_spec() -> NodeSpec {
+    NodeSpec {
+        label: "CaseBuilderEmbeddingRecord",
+        id_key: "embedding_record_id",
+        edge: "HAS_CASEBUILDER_EMBEDDING_RECORD",
     }
 }
 fn extraction_artifact_manifest_spec() -> NodeSpec {
@@ -1505,7 +1582,7 @@ fn slug_casebuilder_id(value: &str) -> String {
         .join("_")
 }
 
-fn build_case_graph(matter: &MatterBundle) -> CaseGraphResponse {
+fn build_case_graph(matter: &MatterBundle, artifacts: &CaseGraphArtifacts) -> CaseGraphResponse {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     let mut seen_nodes = HashSet::new();
@@ -1661,6 +1738,17 @@ fn build_case_graph(matter: &MatterBundle) -> CaseGraphResponse {
                 "contradicts_fact",
                 "contradicts",
                 Some("open"),
+            );
+        }
+        for markdown_ast_node_id in &fact.markdown_ast_node_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                markdown_ast_node_id,
+                &fact.fact_id,
+                "supports_fact",
+                "supports fact",
+                Some(fact.status.as_str()),
             );
         }
     }
@@ -1908,6 +1996,17 @@ fn build_case_graph(matter: &MatterBundle) -> CaseGraphResponse {
                 None,
             );
         }
+        for markdown_ast_node_id in &event.markdown_ast_node_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                markdown_ast_node_id,
+                &event.event_id,
+                "supports_event",
+                "supports event",
+                None,
+            );
+        }
     }
 
     for run in &matter.timeline_agent_runs {
@@ -2018,6 +2117,17 @@ fn build_case_graph(matter: &MatterBundle) -> CaseGraphResponse {
                 &mut edges,
                 &mut seen_edges,
                 fact_id,
+                &suggestion.suggestion_id,
+                "proposes_timeline",
+                "proposes",
+                Some(suggestion.status.as_str()),
+            );
+        }
+        for markdown_ast_node_id in &suggestion.markdown_ast_node_ids {
+            add_case_graph_edge(
+                &mut edges,
+                &mut seen_edges,
+                markdown_ast_node_id,
                 &suggestion.suggestion_id,
                 "proposes_timeline",
                 "proposes",
@@ -2175,6 +2285,15 @@ fn build_case_graph(matter: &MatterBundle) -> CaseGraphResponse {
         }
     }
 
+    add_markdown_artifact_graph(
+        artifacts,
+        &base,
+        &mut nodes,
+        &mut edges,
+        &mut seen_nodes,
+        &mut seen_edges,
+    );
+
     CaseGraphResponse {
         matter_id: matter.summary.matter_id.clone(),
         generated_at: now_string(),
@@ -2186,12 +2305,722 @@ fn build_case_graph(matter: &MatterBundle) -> CaseGraphResponse {
             "authority".to_string(),
             "work_product".to_string(),
             "tasks".to_string(),
+            "markdown".to_string(),
+            "markdown_ast".to_string(),
+            "markdown_semantic".to_string(),
+            "markdown_embeddings".to_string(),
+            "entities".to_string(),
+            "provenance".to_string(),
         ],
         nodes,
         edges,
         warnings: vec![
             "Graph is derived from current matter records; large-matter paging and graph persistence remain future hardening.".to_string(),
         ],
+    }
+}
+
+fn add_markdown_artifact_graph(
+    artifacts: &CaseGraphArtifacts,
+    base: &str,
+    nodes: &mut Vec<CaseGraphNode>,
+    edges: &mut Vec<CaseGraphEdge>,
+    seen_nodes: &mut HashSet<String>,
+    seen_edges: &mut HashSet<String>,
+) {
+    for version in &artifacts.document_versions {
+        add_case_graph_node(
+            nodes,
+            seen_nodes,
+            CaseGraphNode {
+                id: version.document_version_id.clone(),
+                kind: "document_version".to_string(),
+                label: version.role.clone(),
+                subtitle: Some(version.created_at.clone()),
+                status: Some(
+                    if version.current {
+                        "current"
+                    } else {
+                        "version"
+                    }
+                    .to_string(),
+                ),
+                risk: None,
+                href: Some(format!("{base}/documents/{}", version.document_id)),
+                metadata: graph_metadata([
+                    ("document_id", version.document_id.clone()),
+                    ("object_blob_id", version.object_blob_id.clone()),
+                    ("sha256", version.sha256.clone().unwrap_or_default()),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            edges,
+            seen_edges,
+            &version.document_id,
+            &version.document_version_id,
+            "has_version",
+            "has version",
+            None,
+        );
+    }
+
+    for run in &artifacts.index_runs {
+        add_case_graph_node(
+            nodes,
+            seen_nodes,
+            CaseGraphNode {
+                id: run.index_run_id.clone(),
+                kind: "index_run".to_string(),
+                label: run.stage.clone(),
+                subtitle: Some(run.mode.clone()),
+                status: Some(run.status.clone()),
+                risk: run.error_code.clone(),
+                href: Some(format!("{base}/documents/{}", run.document_id)),
+                metadata: graph_metadata([
+                    ("document_id", run.document_id.clone()),
+                    (
+                        "document_version_id",
+                        run.document_version_id.clone().unwrap_or_default(),
+                    ),
+                    (
+                        "index_version",
+                        run.index_version.clone().unwrap_or_default(),
+                    ),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            edges,
+            seen_edges,
+            &run.document_id,
+            &run.index_run_id,
+            "has_index_run",
+            "has index run",
+            Some(run.status.as_str()),
+        );
+        if let Some(version_id) = &run.document_version_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                &run.index_run_id,
+                version_id,
+                "indexed_version",
+                "indexed version",
+                Some(run.status.as_str()),
+            );
+        }
+    }
+
+    for run in &artifacts.embedding_runs {
+        add_case_graph_node(
+            nodes,
+            seen_nodes,
+            CaseGraphNode {
+                id: run.embedding_run_id.clone(),
+                kind: "embedding_run".to_string(),
+                label: run.stage.clone(),
+                subtitle: Some(run.model.clone()),
+                status: Some(run.status.clone()),
+                risk: run.error_code.clone(),
+                href: run
+                    .document_id
+                    .as_ref()
+                    .map(|document_id| format!("{base}/documents/{document_id}")),
+                metadata: graph_metadata([
+                    ("profile", run.profile.clone()),
+                    ("dimension", run.dimension.to_string()),
+                    ("embedded_count", run.embedded_count.to_string()),
+                    ("stale_count", run.stale_count.to_string()),
+                ]),
+            },
+        );
+        if let Some(document_id) = &run.document_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                document_id,
+                &run.embedding_run_id,
+                "has_embedding_run",
+                "has embedding run",
+                Some(run.status.as_str()),
+            );
+        }
+        if let Some(index_run_id) = &run.index_run_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                index_run_id,
+                &run.embedding_run_id,
+                "produced_embedding_run",
+                "produced embedding run",
+                Some(run.status.as_str()),
+            );
+        }
+    }
+
+    for record in &artifacts.embedding_records {
+        add_case_graph_node(
+            nodes,
+            seen_nodes,
+            CaseGraphNode {
+                id: record.embedding_record_id.clone(),
+                kind: "embedding_record".to_string(),
+                label: record.target_label.clone(),
+                subtitle: Some(format!(
+                    "{} / {}",
+                    record.target_kind, record.embedding_strategy
+                )),
+                status: Some(if record.stale {
+                    "stale".to_string()
+                } else {
+                    record.status.clone()
+                }),
+                risk: record.stale.then(|| "stale".to_string()),
+                href: Some(format!("{base}/documents/{}", record.document_id)),
+                metadata: graph_metadata([
+                    ("target_id", record.target_id.clone()),
+                    ("model", record.model.clone()),
+                    ("profile", record.profile.clone()),
+                    ("dimension", record.dimension.to_string()),
+                    ("source_spans", record.source_span_ids.len().to_string()),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            edges,
+            seen_edges,
+            &record.document_id,
+            &record.embedding_record_id,
+            "has_embedding_record",
+            "has embedding",
+            Some(record.status.as_str()),
+        );
+        if let Some(run_id) = &record.embedding_run_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                run_id,
+                &record.embedding_record_id,
+                "produced_embedding",
+                "produced embedding",
+                Some(record.status.as_str()),
+            );
+        }
+        add_case_graph_edge(
+            edges,
+            seen_edges,
+            &record.target_id,
+            &record.embedding_record_id,
+            "has_embedding_record",
+            "has embedding",
+            Some(record.target_kind.as_str()),
+        );
+        for source_record_id in &record.centroid_source_record_ids {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                &record.embedding_record_id,
+                source_record_id,
+                "centroid_of",
+                "centroid of",
+                None,
+            );
+        }
+    }
+
+    for manifest in &artifacts.extraction_manifests {
+        add_case_graph_node(
+            nodes,
+            seen_nodes,
+            CaseGraphNode {
+                id: manifest.manifest_id.clone(),
+                kind: "extraction_manifest".to_string(),
+                label: "Extraction manifest".to_string(),
+                subtitle: Some(manifest.created_at.clone()),
+                status: Some("stored".to_string()),
+                risk: None,
+                href: Some(format!("{base}/documents/{}", manifest.document_id)),
+                metadata: graph_metadata([
+                    ("document_id", manifest.document_id.clone()),
+                    ("text_chunks", manifest.text_chunk_ids.len().to_string()),
+                    (
+                        "object_keys",
+                        manifest.produced_object_keys.len().to_string(),
+                    ),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            edges,
+            seen_edges,
+            &manifest.document_id,
+            &manifest.manifest_id,
+            "has_extraction_manifest",
+            "has manifest",
+            None,
+        );
+        if let Some(run_id) = &manifest.index_run_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                run_id,
+                &manifest.manifest_id,
+                "produced_manifest",
+                "produced",
+                None,
+            );
+        }
+    }
+
+    for ast_document in &artifacts.markdown_ast_documents {
+        add_case_graph_node(
+            nodes,
+            seen_nodes,
+            CaseGraphNode {
+                id: ast_document.markdown_ast_document_id.clone(),
+                kind: "markdown_ast_document".to_string(),
+                label: "Markdown AST".to_string(),
+                subtitle: Some(ast_document.parser_version.clone()),
+                status: Some(ast_document.status.clone()),
+                risk: None,
+                href: Some(format!("{base}/documents/{}", ast_document.document_id)),
+                metadata: graph_metadata([
+                    ("document_id", ast_document.document_id.clone()),
+                    ("root_node_id", ast_document.root_node_id.clone()),
+                    ("node_count", ast_document.node_count.to_string()),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            edges,
+            seen_edges,
+            &ast_document.document_id,
+            &ast_document.markdown_ast_document_id,
+            "has_markdown_ast",
+            "has markdown ast",
+            Some(ast_document.status.as_str()),
+        );
+        add_case_graph_edge(
+            edges,
+            seen_edges,
+            &ast_document.markdown_ast_document_id,
+            &ast_document.root_node_id,
+            "has_ast_root",
+            "root",
+            None,
+        );
+        if let Some(version_id) = &ast_document.document_version_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                version_id,
+                &ast_document.markdown_ast_document_id,
+                "has_markdown_ast",
+                "has markdown ast",
+                None,
+            );
+        }
+        if let Some(index_run_id) = &ast_document.index_run_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                index_run_id,
+                &ast_document.markdown_ast_document_id,
+                "produced_markdown_ast",
+                "produced",
+                None,
+            );
+        }
+    }
+
+    for unit in &artifacts.markdown_semantic_units {
+        add_case_graph_node(
+            nodes,
+            seen_nodes,
+            CaseGraphNode {
+                id: unit.semantic_unit_id.clone(),
+                kind: "markdown_semantic_unit".to_string(),
+                label: truncate_graph_label(&unit.canonical_label),
+                subtitle: unit
+                    .section_path
+                    .clone()
+                    .or_else(|| unit.structure_path.clone()),
+                status: Some(unit.review_status.clone()),
+                risk: None,
+                href: Some(format!("{base}/documents/{}", unit.document_id)),
+                metadata: graph_metadata([
+                    ("unit_kind", unit.unit_kind.clone()),
+                    ("semantic_role", unit.semantic_role.clone()),
+                    ("occurrences", unit.occurrence_count.to_string()),
+                    ("entity_mentions", unit.entity_mention_ids.len().to_string()),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            edges,
+            seen_edges,
+            &unit.document_id,
+            &unit.semantic_unit_id,
+            "has_markdown_semantic_unit",
+            "semantic unit",
+            Some(unit.review_status.as_str()),
+        );
+        add_case_graph_edge(
+            edges,
+            seen_edges,
+            &unit.markdown_ast_document_id,
+            &unit.semantic_unit_id,
+            "has_semantic_unit",
+            "semantic unit",
+            None,
+        );
+        if let Some(section_id) = &unit.section_ast_node_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                section_id,
+                &unit.semantic_unit_id,
+                "contains_semantic_unit",
+                "contains",
+                None,
+            );
+        }
+    }
+
+    for node in &artifacts.markdown_ast_nodes {
+        add_case_graph_node(
+            nodes,
+            seen_nodes,
+            CaseGraphNode {
+                id: node.markdown_ast_node_id.clone(),
+                kind: "markdown_ast_node".to_string(),
+                label: node
+                    .text_excerpt
+                    .as_deref()
+                    .map(truncate_graph_label)
+                    .unwrap_or_else(|| node.node_kind.clone()),
+                subtitle: node.structure_path.clone(),
+                status: Some(node.review_status.clone()),
+                risk: None,
+                href: Some(format!("{base}/documents/{}", node.document_id)),
+                metadata: graph_metadata([
+                    ("node_kind", node.node_kind.clone()),
+                    ("ordinal", node.ordinal.to_string()),
+                    ("depth", node.depth.to_string()),
+                    ("tag", node.tag.clone()),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            edges,
+            seen_edges,
+            &node.markdown_ast_document_id,
+            &node.markdown_ast_node_id,
+            "contains_ast_node",
+            "contains",
+            None,
+        );
+        if let Some(parent_id) = &node.parent_ast_node_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                parent_id,
+                &node.markdown_ast_node_id,
+                "parent_of",
+                "parent",
+                None,
+            );
+        }
+        if let Some(previous_id) = &node.previous_ast_node_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                previous_id,
+                &node.markdown_ast_node_id,
+                "next_ast_node",
+                "next",
+                None,
+            );
+        }
+        if let Some(semantic_unit_id) = &node.semantic_unit_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                &node.markdown_ast_node_id,
+                semantic_unit_id,
+                "realizes_semantic_unit",
+                "semantic unit",
+                None,
+            );
+        }
+        for source_span_id in &node.source_span_ids {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                &node.markdown_ast_node_id,
+                source_span_id,
+                "overlaps_source_span",
+                "source span",
+                None,
+            );
+        }
+        for text_chunk_id in &node.text_chunk_ids {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                &node.markdown_ast_node_id,
+                text_chunk_id,
+                "overlaps_text_chunk",
+                "chunk",
+                None,
+            );
+        }
+        for evidence_span_id in &node.evidence_span_ids {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                &node.markdown_ast_node_id,
+                evidence_span_id,
+                "overlaps_evidence_span",
+                "evidence span",
+                None,
+            );
+        }
+        for search_record_id in &node.search_index_record_ids {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                &node.markdown_ast_node_id,
+                search_record_id,
+                "indexed_as",
+                "indexed as",
+                None,
+            );
+        }
+    }
+
+    for span in &artifacts.source_spans {
+        add_case_graph_node(
+            nodes,
+            seen_nodes,
+            CaseGraphNode {
+                id: span.source_span_id.clone(),
+                kind: "source_span".to_string(),
+                label: span
+                    .quote
+                    .as_deref()
+                    .map(truncate_graph_label)
+                    .unwrap_or_else(|| "Source span".to_string()),
+                subtitle: span.page.map(|page| format!("page {page}")),
+                status: Some(span.review_status.clone()),
+                risk: None,
+                href: Some(format!("{base}/documents/{}", span.document_id)),
+                metadata: graph_metadata([
+                    ("document_id", span.document_id.clone()),
+                    ("method", span.extraction_method.clone()),
+                    ("confidence", format!("{:.0}%", span.confidence * 100.0)),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            edges,
+            seen_edges,
+            &span.document_id,
+            &span.source_span_id,
+            "has_source_span",
+            "source span",
+            Some(span.review_status.as_str()),
+        );
+    }
+
+    for chunk in &artifacts.text_chunks {
+        add_case_graph_node(
+            nodes,
+            seen_nodes,
+            CaseGraphNode {
+                id: chunk.text_chunk_id.clone(),
+                kind: "text_chunk".to_string(),
+                label: truncate_graph_label(&chunk.text_excerpt),
+                subtitle: chunk.structure_path.clone(),
+                status: Some(chunk.status.clone()),
+                risk: None,
+                href: Some(format!("{base}/documents/{}", chunk.document_id)),
+                metadata: graph_metadata([
+                    ("document_id", chunk.document_id.clone()),
+                    ("unit_type", chunk.unit_type.clone().unwrap_or_default()),
+                    ("token_count", chunk.token_count.to_string()),
+                ]),
+            },
+        );
+        add_case_graph_edge(
+            edges,
+            seen_edges,
+            &chunk.document_id,
+            &chunk.text_chunk_id,
+            "has_text_chunk",
+            "text chunk",
+            Some(chunk.status.as_str()),
+        );
+    }
+
+    for span in &artifacts.evidence_spans {
+        add_case_graph_node(
+            nodes,
+            seen_nodes,
+            CaseGraphNode {
+                id: span.evidence_span_id.clone(),
+                kind: "evidence_span".to_string(),
+                label: truncate_graph_label(&span.quote_excerpt),
+                subtitle: span.text_chunk_id.clone(),
+                status: Some(span.review_status.clone()),
+                risk: None,
+                href: Some(format!("{base}/documents/{}", span.document_id)),
+                metadata: graph_metadata([
+                    ("document_id", span.document_id.clone()),
+                    ("quote_hash", span.quote_hash.clone()),
+                    (
+                        "source_span_id",
+                        span.source_span_id.clone().unwrap_or_default(),
+                    ),
+                ]),
+            },
+        );
+        if let Some(chunk_id) = &span.text_chunk_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                chunk_id,
+                &span.evidence_span_id,
+                "has_evidence_span",
+                "evidence span",
+                Some(span.review_status.as_str()),
+            );
+        }
+    }
+
+    for record in &artifacts.search_index_records {
+        add_case_graph_node(
+            nodes,
+            seen_nodes,
+            CaseGraphNode {
+                id: record.search_index_record_id.clone(),
+                kind: "search_index_record".to_string(),
+                label: record.index_name.clone(),
+                subtitle: Some(record.index_version.clone()),
+                status: Some(record.status.clone()),
+                risk: record.stale.then(|| "stale".to_string()),
+                href: Some(format!("{base}/documents/{}", record.document_id)),
+                metadata: graph_metadata([
+                    ("document_id", record.document_id.clone()),
+                    ("index_type", record.index_type.clone()),
+                    (
+                        "text_chunk_id",
+                        record.text_chunk_id.clone().unwrap_or_default(),
+                    ),
+                ]),
+            },
+        );
+        if let Some(chunk_id) = &record.text_chunk_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                chunk_id,
+                &record.search_index_record_id,
+                "indexed_as",
+                "indexed as",
+                Some(record.status.as_str()),
+            );
+        }
+    }
+
+    for entity in &artifacts.entities {
+        add_case_graph_node(
+            nodes,
+            seen_nodes,
+            CaseGraphNode {
+                id: entity.entity_id.clone(),
+                kind: "case_entity".to_string(),
+                label: entity.canonical_name.clone(),
+                subtitle: Some(entity.entity_type.clone()),
+                status: Some(entity.review_status.clone()),
+                risk: None,
+                href: Some(format!("{base}/parties")),
+                metadata: graph_metadata([
+                    ("normalized_key", entity.normalized_key.clone()),
+                    ("mentions", entity.mention_ids.len().to_string()),
+                    ("confidence", format!("{:.0}%", entity.confidence * 100.0)),
+                ]),
+            },
+        );
+        for party_id in &entity.party_match_ids {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                &entity.entity_id,
+                party_id,
+                "may_match_party",
+                "may match",
+                Some(entity.review_status.as_str()),
+            );
+        }
+    }
+
+    for mention in &artifacts.entity_mentions {
+        add_case_graph_node(
+            nodes,
+            seen_nodes,
+            CaseGraphNode {
+                id: mention.entity_mention_id.clone(),
+                kind: "entity_mention".to_string(),
+                label: mention.mention_text.clone(),
+                subtitle: Some(mention.entity_type.clone()),
+                status: Some(mention.review_status.clone()),
+                risk: None,
+                href: Some(format!("{base}/documents/{}", mention.document_id)),
+                metadata: graph_metadata([
+                    ("document_id", mention.document_id.clone()),
+                    (
+                        "text_chunk_id",
+                        mention.text_chunk_id.clone().unwrap_or_default(),
+                    ),
+                    ("confidence", format!("{:.0}%", mention.confidence * 100.0)),
+                ]),
+            },
+        );
+        if let Some(chunk_id) = &mention.text_chunk_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                chunk_id,
+                &mention.entity_mention_id,
+                "mentions",
+                "mentions",
+                Some(mention.review_status.as_str()),
+            );
+        }
+        if let Some(entity_id) = &mention.entity_id {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                &mention.entity_mention_id,
+                entity_id,
+                "resolves_to",
+                "resolves to",
+                Some(mention.review_status.as_str()),
+            );
+        }
+        for markdown_ast_node_id in &mention.markdown_ast_node_ids {
+            add_case_graph_edge(
+                edges,
+                seen_edges,
+                markdown_ast_node_id,
+                &mention.entity_mention_id,
+                "has_entity_mention",
+                "mention",
+                Some(mention.review_status.as_str()),
+            );
+        }
     }
 }
 
@@ -10839,6 +11668,7 @@ fn push_indexed_chunk(
         document_version_id: document_version_id.map(str::to_string),
         object_blob_id: None,
         source_span_id: None,
+        markdown_ast_node_ids: Vec::new(),
         byte_start: Some(bs as u64),
         byte_end: Some(be as u64),
         char_start: Some(char_start),
@@ -11022,6 +11852,7 @@ fn propose_facts(
                 used_in_draft_ids: Vec::new(),
                 needs_verification: true,
                 source_spans: vec![source_span],
+                markdown_ast_node_ids: Vec::new(),
                 notes: Some(
                     "Deterministic Markdown extraction from indexed source text; user review required."
                         .to_string(),
@@ -11146,6 +11977,7 @@ fn timeline_suggestions_from_facts(
             source_document_id,
             source_span_ids,
             text_chunk_ids,
+            markdown_ast_node_ids: Vec::new(),
             linked_fact_ids: vec![fact.fact_id.clone()],
             linked_claim_ids: fact.supports_claim_ids.clone(),
             work_product_id: work_product_id.map(str::to_string),
@@ -11218,6 +12050,7 @@ fn timeline_suggestions_from_text(
             source_document_id: source_document_id.map(str::to_string),
             source_span_ids: source_span_ids.clone(),
             text_chunk_ids: text_chunk_ids.clone(),
+            markdown_ast_node_ids: Vec::new(),
             linked_fact_ids: linked_fact_ids.clone(),
             linked_claim_ids: linked_claim_ids.clone(),
             work_product_id: work_product_id.map(str::to_string),
@@ -11653,6 +12486,8 @@ fn push_entity_mention(
         document_id: document_id.to_string(),
         text_chunk_id: Some(chunk.chunk_id.clone()),
         source_span_id: chunk.source_span_id.clone(),
+        entity_id: None,
+        markdown_ast_node_ids: Vec::new(),
         mention_text: mention_text.to_string(),
         entity_type: entity_type.to_string(),
         confidence,

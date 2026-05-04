@@ -1994,6 +1994,7 @@ mod tests {
             vector_top_k: 100,
             vector_min_score: 0.55,
             vector_profile: "legal_chunk_primary_v1".to_string(),
+            casebuilder_embeddings_enabled: false,
             corpus_release_manifest_path: "data/graph/corpus_release.json".to_string(),
             authority_cache_ttl_seconds: 86_400,
             authority_cache_max_capacity: 20_000,

@@ -44,6 +44,20 @@ impl CaseBuilderService {
                 )
                 .await?;
         }
+        for markdown_ast_node_id in &fact.markdown_ast_node_ids {
+            self.neo4j
+                .run_rows(
+                    query(
+                        "MATCH (f:Fact {fact_id: $fact_id})
+                         MATCH (n:MarkdownAstNode {markdown_ast_node_id: $markdown_ast_node_id})
+                         MERGE (n)-[:SUPPORTS_FACT]->(f)
+                         MERGE (f)-[:SUPPORTED_BY_AST_NODE]->(n)",
+                    )
+                    .param("fact_id", fact.fact_id.clone())
+                    .param("markdown_ast_node_id", markdown_ast_node_id.clone()),
+                )
+                .await?;
+        }
         Ok(())
     }
 

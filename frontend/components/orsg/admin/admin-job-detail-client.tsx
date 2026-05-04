@@ -233,12 +233,12 @@ export function AdminJobDetailClient({ jobId }: { jobId: string }) {
 function JobStatusBadge({ job }: { job: AdminJob }) {
   const cls =
     job.status === "succeeded"
-      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600"
+      ? "border-success/30 bg-success/10 text-success"
       : job.status === "failed"
-      ? "border-rose-500/30 bg-rose-500/10 text-rose-600"
+      ? "border-destructive/30 bg-destructive/10 text-destructive"
       : job.status === "cancelled" || job.status === "cancel_requested"
-      ? "border-amber-500/30 bg-amber-500/10 text-amber-600"
-      : "border-sky-500/30 bg-sky-500/10 text-sky-600"
+      ? "border-warning/30 bg-warning/10 text-warning"
+      : "border-info/30 bg-info/10 text-info"
   return <Badge variant="outline" className={cn("font-mono text-[10px]", cls)}>{job.status.replace("_", " ")}</Badge>
 }
 
