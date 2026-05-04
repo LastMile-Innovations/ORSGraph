@@ -12,7 +12,7 @@ interface PageProps {
 
 export default async function ComplaintWorkspacePage({ params }: PageProps) {
   const { id, workspace } = await params
-  if (!WORKSPACES.includes(workspace as ComplaintWorkspaceSection)) notFound()
+  if (!isComplaintWorkspaceSection(workspace)) notFound()
   const [matterState, complaintState] = await Promise.all([
     getMatterState(id),
     getComplaintState(id),
@@ -25,8 +25,12 @@ export default async function ComplaintWorkspacePage({ params }: PageProps) {
       <ComplaintEditorWorkbench
         matter={matter}
         complaint={complaintState.data}
-        mode={workspace as ComplaintWorkspaceSection}
+        mode={workspace}
       />
     </MatterShell>
   )
+}
+
+function isComplaintWorkspaceSection(value: string): value is ComplaintWorkspaceSection {
+  return WORKSPACES.includes(value as ComplaintWorkspaceSection)
 }

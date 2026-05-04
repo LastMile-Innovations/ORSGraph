@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   casebuilderHomeHref,
   decodeMatterRouteId,
+  decodeRouteSegment,
   encodeMatterId,
   encodeMatterSlug,
   matterClaimsHref,
@@ -27,6 +28,8 @@ describe("casebuilder route helpers", () => {
     expect(decodeMatterRouteId("smith-abc")).toBe("matter:smith-abc")
     expect(decodeMatterRouteId("matter%3Asmith-abc")).toBe("matter:smith-abc")
     expect(decodeMatterRouteId("%E0%A4%A")).toBe("matter:%E0%A4%A")
+    expect(decodeRouteSegment("draft%3A1")).toBe("draft:1")
+    expect(decodeRouteSegment("%E0%A4%A")).toBe("%E0%A4%A")
   })
 
   it("encodes ids, query params, and hashes for nested workspaces", () => {

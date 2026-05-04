@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { getMatterState, getMatterSummariesState } from "./api"
+import { archiveDocument, getMatterState, getMatterSummariesState, patchDocument, restoreDocument } from "./api"
 
 describe("CaseBuilder API request loading", () => {
   afterEach(() => {
@@ -32,6 +32,37 @@ describe("CaseBuilder API request loading", () => {
     expect(state.source).toBe("live")
     expect(state.data).toHaveLength(1)
     expect((fetchMock.mock.calls[0][1]?.headers as Headers).get("cookie")).toBe("next-auth.session-token=abc")
+  })
+
+  it("patches document metadata through the non-destructive document endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(documentResponse({ library_path: "Evidence/notice.txt" })))
+    vi.stubGlobal("fetch", fetchMock)
+
+    const state = await patchDocument("matter:intake-test", "doc:notice", {
+      title: "Notice",
+      library_path: "Evidence/notice.txt",
+    })
+
+    expect(state.data?.library_path).toBe("Evidence/notice.txt")
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/ors/matters/matter%3Aintake-test/documents/doc%3Anotice")
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("PATCH")
+    expect(fetchMock.mock.calls[0][1]?.body).toBe(JSON.stringify({ title: "Notice", library_path: "Evidence/notice.txt" }))
+  })
+
+  it("archives and restores documents without calling the destructive delete endpoint", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(documentResponse({ archived_at: "2026-05-04T00:00:00Z" })))
+      .mockResolvedValueOnce(jsonResponse(documentResponse({ archived_at: null })))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await archiveDocument("matter:intake-test", "doc:notice", { reason: "superseded" })
+    await restoreDocument("matter:intake-test", "doc:notice")
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/ors/matters/matter%3Aintake-test/documents/doc%3Anotice/archive")
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("POST")
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/ors/matters/matter%3Aintake-test/documents/doc%3Anotice/restore")
+    expect(fetchMock.mock.calls[1][1]?.method).toBe("POST")
   })
 })
 
@@ -86,5 +117,35 @@ function matterBundle() {
     chatHistory: [],
     recentThreads: [],
     milestones: [],
+  }
+}
+
+function documentResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    document_id: "doc:notice",
+    id: "doc:notice",
+    matter_id: "matter:intake-test",
+    filename: "notice.txt",
+    title: "Notice",
+    document_type: "notice",
+    mime_type: "text/plain",
+    pages: 1,
+    bytes: 10,
+    uploaded_at: "2026-05-04T00:00:00Z",
+    source: "user_upload",
+    confidentiality: "private",
+    processing_status: "queued",
+    is_exhibit: false,
+    summary: "Uploaded.",
+    parties_mentioned: [],
+    entities_mentioned: [],
+    facts_extracted: 0,
+    citations_found: 0,
+    contradictions_flagged: 0,
+    linked_claim_ids: [],
+    folder: "Evidence",
+    storage_status: "stored",
+    library_path: "Evidence/notice.txt",
+    ...overrides,
   }
 }

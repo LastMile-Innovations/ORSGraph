@@ -107,6 +107,10 @@ export function decodeMatterRouteId(routeId: string) {
   return decoded.startsWith("matter:") ? decoded : `matter:${decoded}`
 }
 
+export function decodeRouteSegment(routeSegment: string) {
+  return safeDecode(routeSegment)
+}
+
 function safeDecode(value: string) {
   try {
     return decodeURIComponent(value)

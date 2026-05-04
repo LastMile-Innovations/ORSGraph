@@ -96,7 +96,7 @@ import type {
 } from "./types"
 import { getMatterById as getDemoMatterById, matters as demoMatters } from "./mock-matters"
 import { orsApiBaseUrl } from "../ors-api-url"
-import { decodeMatterRouteId } from "./routes"
+import { decodeMatterRouteId, decodeRouteSegment } from "./routes"
 
 const API_BASE_URL = orsApiBaseUrl()
 const DEMO_MODE = process.env.NEXT_PUBLIC_ORS_DEMO_MODE === "true"
@@ -4720,14 +4720,6 @@ function array(...values: any[]): any[] {
     if (Array.isArray(value)) return value
   }
   return []
-}
-
-function decodeRouteSegment(value: string) {
-  try {
-    return decodeURIComponent(value)
-  } catch {
-    return value
-  }
 }
 
 function string(...values: any[]): string {

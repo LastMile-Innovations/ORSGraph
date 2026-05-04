@@ -2,6 +2,7 @@ import { notFound } from "next/navigation"
 import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { DraftEditor } from "@/components/casebuilder/draft-editor"
 import { getMatterState } from "@/lib/casebuilder/server-api"
+import { decodeRouteSegment } from "@/lib/casebuilder/routes"
 
 interface PageProps {
   params: Promise<{ id: string; draftId: string }>
@@ -21,12 +22,4 @@ export default async function DraftPage({ params }: PageProps) {
       <DraftEditor matter={matter} draft={draft} />
     </MatterShell>
   )
-}
-
-function decodeRouteSegment(value: string) {
-  try {
-    return decodeURIComponent(value)
-  } catch {
-    return value
-  }
 }
