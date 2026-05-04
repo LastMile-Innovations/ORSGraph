@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("server-only", () => ({}))
@@ -7,6 +10,7 @@ vi.mock("next/cache", () => ({
 }))
 
 import {
+  authorityServerCacheMode,
   getCachedSearchWithParamsState,
   getCachedStatuteIndexState,
   getCachedStatutePageDataState,
@@ -125,5 +129,12 @@ describe("authority server cache wrappers", () => {
     expect(recovered.source).toBe("live")
     expect(recovered.data?.query).toBe("tenant")
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("documents that authority reads use the local cache plus hotset layer, not remote cache handlers", () => {
+    const source = readFileSync(join(process.cwd(), "lib/authority-server-cache.ts"), "utf8")
+
+    expect(authorityServerCacheMode()).toBe("memory-with-authority-hotset")
+    expect(source).not.toContain("use cache: remote")
   })
 })

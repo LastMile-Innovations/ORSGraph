@@ -4,17 +4,18 @@ import { authOptions } from "@/lib/auth"
 import { orsBackendApiBaseUrl } from "@/lib/ors-backend-api-url"
 
 const API_KEY = process.env.ORS_API_KEY
+const NO_STORE_HEADERS = { "cache-control": "no-store" }
 
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session?.accessToken && !API_KEY) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 })
+    return Response.json({ error: "Unauthorized" }, { status: 401, headers: NO_STORE_HEADERS })
   }
 
   const matterId = request.nextUrl.searchParams.get("matterId")
   const documentId = request.nextUrl.searchParams.get("documentId")
   if (!matterId || !documentId) {
-    return Response.json({ error: "matterId and documentId are required" }, { status: 400 })
+    return Response.json({ error: "matterId and documentId are required" }, { status: 400, headers: NO_STORE_HEADERS })
   }
 
   const headers = new Headers()
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
     const body = await upstream.json().catch(() => ({}))
     return Response.json(
       { error: body.error || `Document content unavailable: ${upstream.status}` },
-      { status: upstream.status },
+      { status: upstream.status, headers: NO_STORE_HEADERS },
     )
   }
 

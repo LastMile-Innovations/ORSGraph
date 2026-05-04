@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect } from "react"
+import { fontVariables } from "./fonts"
 
 export default function GlobalError({
   error,
@@ -18,9 +19,17 @@ export default function GlobalError({
   const retry = unstable_retry ?? reset
 
   return (
-    <html lang="en">
+    <html lang="en" className={fontVariables}>
       <body>
-        <main style={{ display: "grid", minHeight: "100vh", placeItems: "center", padding: 24, fontFamily: "sans-serif" }}>
+        <main
+          style={{
+            display: "grid",
+            minHeight: "100vh",
+            placeItems: "center",
+            padding: 24,
+            fontFamily: "var(--font-inter), system-ui, sans-serif",
+          }}
+        >
           <section style={{ maxWidth: 520, border: "1px solid #d4d4d8", borderRadius: 6, padding: 24 }}>
             <p style={{ margin: 0, fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: "#dc2626" }}>
               Application error

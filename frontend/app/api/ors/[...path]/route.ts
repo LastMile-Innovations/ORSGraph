@@ -5,11 +5,7 @@ import { authOptions } from "@/lib/auth"
 import { authorityCacheTags } from "@/lib/authority-hotset.mjs"
 import { orsBackendApiBaseUrl } from "@/lib/ors-backend-api-url"
 
-type RouteContext = {
-  params: Promise<{
-    path?: string[]
-  }>
-}
+type OrsRouteContext = RouteContext<"/api/ors/[...path]">
 
 const HOP_BY_HOP_HEADERS = new Set([
   "accept-encoding",
@@ -27,32 +23,36 @@ const HOP_BY_HOP_HEADERS = new Set([
 ])
 const AUTHORITY_RELEASE_ID = releaseIdFromHotsetBaseUrl(process.env.ORS_AUTHORITY_HOTSET_BASE_URL || "")
 
-export async function GET(request: NextRequest, context: RouteContext) {
+export async function GET(request: NextRequest, context: OrsRouteContext) {
   return forwardRequest(request, context)
 }
 
-export async function POST(request: NextRequest, context: RouteContext) {
+export async function HEAD(request: NextRequest, context: OrsRouteContext) {
   return forwardRequest(request, context)
 }
 
-export async function PATCH(request: NextRequest, context: RouteContext) {
+export async function POST(request: NextRequest, context: OrsRouteContext) {
   return forwardRequest(request, context)
 }
 
-export async function DELETE(request: NextRequest, context: RouteContext) {
+export async function PATCH(request: NextRequest, context: OrsRouteContext) {
   return forwardRequest(request, context)
 }
 
-export async function PUT(request: NextRequest, context: RouteContext) {
+export async function DELETE(request: NextRequest, context: OrsRouteContext) {
   return forwardRequest(request, context)
 }
 
-async function forwardRequest(request: NextRequest, context: RouteContext) {
+export async function PUT(request: NextRequest, context: OrsRouteContext) {
+  return forwardRequest(request, context)
+}
+
+async function forwardRequest(request: NextRequest, context: OrsRouteContext) {
   const { path = [] } = await context.params
   const publicAuthRequest = isPublicAuthRequest(request.method, path)
   const session = await getServerSession(authOptions)
   if (!session?.accessToken && !publicAuthRequest) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: { "cache-control": "no-store" } })
   }
 
   const upstreamUrl = new URL(`${orsBackendApiBaseUrl()}/${path.map(encodeURIComponent).join("/")}`)
@@ -87,8 +87,9 @@ async function forwardRequest(request: NextRequest, context: RouteContext) {
   responseHeaders.delete("content-encoding")
   responseHeaders.delete("content-length")
   responseHeaders.delete("transfer-encoding")
+  responseHeaders.set("cache-control", "no-store")
 
-  return new NextResponse(response.body, {
+  return new NextResponse(request.method === "HEAD" ? null : response.body, {
     status: response.status,
     statusText: response.statusText,
     headers: responseHeaders,

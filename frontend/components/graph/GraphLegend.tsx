@@ -1,5 +1,3 @@
-"use client"
-
 import { NODE_COLORS } from "./constants"
 
 const EDGE_LEGEND = [

@@ -1,5 +1,3 @@
-"use client"
-
 export function ClusterPanel() {
   return (
     <div className="rounded border border-border bg-card p-3 text-sm text-muted-foreground">

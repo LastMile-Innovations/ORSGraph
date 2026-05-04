@@ -16,6 +16,11 @@ import type { DataState } from "./data-state"
 import { authorityCacheTags } from "./authority-hotset.mjs"
 
 const AUTHORITY_RELEASE_ID = releaseIdFromHotsetBaseUrl(process.env.ORS_AUTHORITY_HOTSET_BASE_URL || "") || "release:unversioned"
+const AUTHORITY_CACHE_MODE = "memory-with-authority-hotset"
+
+export function authorityServerCacheMode() {
+  return AUTHORITY_CACHE_MODE
+}
 
 export async function getCachedHomePageState() {
   "use cache"

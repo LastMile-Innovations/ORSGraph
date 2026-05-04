@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getToken } from "next-auth/jwt"
 
+const PUBLIC_PATH_PREFIXES = [
+  "/marketing/",
+  "/auth/signin",
+  "/auth/request-access",
+  "/auth/error",
+  "/auth/invite",
+]
+
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl
 
@@ -8,16 +16,9 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next()
   }
 
-  if (pathname === "/matters") {
-    return redirect(request, `/casebuilder${search}`)
-  }
-
-  if (pathname === "/matters/new") {
-    return redirect(request, `/casebuilder/new${search}`)
-  }
-
-  if (pathname.startsWith("/matters/")) {
-    return redirect(request, `/casebuilder/matters${pathname.slice("/matters".length)}${search}`)
+  const legacyMatterPath = canonicalMatterPath(pathname, search)
+  if (legacyMatterPath) {
+    return redirect(request, legacyMatterPath)
   }
 
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
@@ -25,7 +26,7 @@ export async function proxy(request: NextRequest) {
     const url = request.nextUrl.clone()
     url.pathname = "/auth/signin"
     url.search = ""
-    url.searchParams.set("callbackUrl", publicCallbackUrl(request))
+    url.searchParams.set("callbackUrl", callbackPath(request))
     return NextResponse.redirect(url)
   }
 
@@ -35,7 +36,7 @@ export async function proxy(request: NextRequest) {
     const url = request.nextUrl.clone()
     url.pathname = "/auth/pending"
     url.search = ""
-    url.searchParams.set("callbackUrl", publicCallbackUrl(request))
+    url.searchParams.set("callbackUrl", callbackPath(request))
     return NextResponse.redirect(url)
   }
 
@@ -43,14 +44,14 @@ export async function proxy(request: NextRequest) {
 }
 
 function isPublicPath(pathname: string) {
-  return (
-    pathname === "/" ||
-    pathname.startsWith("/marketing/") ||
-    pathname.startsWith("/auth/signin") ||
-    pathname.startsWith("/auth/request-access") ||
-    pathname.startsWith("/auth/error") ||
-    pathname.startsWith("/auth/invite")
-  )
+  return pathname === "/" || PUBLIC_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+}
+
+function canonicalMatterPath(pathname: string, search: string) {
+  if (pathname === "/matters") return `/casebuilder${search}`
+  if (pathname === "/matters/new") return `/casebuilder/new${search}`
+  if (pathname.startsWith("/matters/")) return `/casebuilder/matters${pathname.slice("/matters".length)}${search}`
+  return null
 }
 
 function redirect(request: NextRequest, pathname: string) {
@@ -60,11 +61,8 @@ function redirect(request: NextRequest, pathname: string) {
   return NextResponse.redirect(url)
 }
 
-function publicCallbackUrl(request: NextRequest) {
-  const origin =
-    process.env.NEXTAUTH_URL?.replace(/\/$/, "") ||
-    `${request.headers.get("x-forwarded-proto") || request.nextUrl.protocol.replace(":", "")}://${request.headers.get("x-forwarded-host") || request.headers.get("host") || request.nextUrl.host}`
-  return new URL(`${request.nextUrl.pathname}${request.nextUrl.search}`, origin).href
+function callbackPath(request: NextRequest) {
+  return `${request.nextUrl.pathname}${request.nextUrl.search}`
 }
 
 export const config = {

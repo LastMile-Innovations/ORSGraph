@@ -418,35 +418,50 @@ export async function getStatuteIndexState(paramsInput: StatuteIndexParams = {})
 
 export async function getSourcesState(paramsInput: SourceIndexParams = {}): Promise<DataState<SourceIndexResult>> {
   try {
-    const params = new URLSearchParams({
-      limit: String(paramsInput.limit ?? 50),
-      offset: String(paramsInput.offset ?? 0),
-    })
-    if (paramsInput.q) params.set("q", paramsInput.q)
-    if (paramsInput.status && paramsInput.status !== "all") params.set("status", paramsInput.status)
-    if (paramsInput.edition_year) params.set("edition_year", String(paramsInput.edition_year))
-
-    const response = await fetchAuthorityApi<SourceIndexResult>(`/sources?${params}`)
-    return { source: response.items.length > 0 ? "live" : "empty", data: response }
+    return await getLiveSourcesState(paramsInput)
   } catch (error) {
-    if (DEMO_MODE) {
-      return fallbackState(
-        "/sources",
-        {
-          items: demoSourceIndex,
-          total: demoSourceIndex.length,
-          limit: paramsInput.limit ?? demoSourceIndex.length,
-          offset: paramsInput.offset ?? 0,
-        },
-        error,
-        "demo",
-      )
-    }
-    return {
-      source: classifyFallbackSource(error) === "offline" ? "offline" : "error",
-      data: { items: [], total: 0, limit: paramsInput.limit ?? 50, offset: paramsInput.offset ?? 0 },
-      error: dataErrorMessage(error),
-    }
+    return getSourcesFallbackState(paramsInput, error)
+  }
+}
+
+export async function getLiveSourcesState(paramsInput: SourceIndexParams = {}): Promise<DataState<SourceIndexResult>> {
+  const params = new URLSearchParams({
+    limit: String(paramsInput.limit ?? 50),
+    offset: String(paramsInput.offset ?? 0),
+  })
+  if (paramsInput.q) params.set("q", paramsInput.q)
+  if (paramsInput.status && paramsInput.status !== "all") params.set("status", paramsInput.status)
+  if (paramsInput.edition_year) params.set("edition_year", String(paramsInput.edition_year))
+
+  const response = await fetchAuthorityApi<SourceIndexResult>(`/sources?${params}`)
+  return { source: response.items.length > 0 ? "live" : "empty", data: response }
+}
+
+export function getSourcesFallbackState(paramsInput: SourceIndexParams = {}, error: unknown): DataState<SourceIndexResult> {
+  const limit = paramsInput.limit ?? 50
+  const offset = paramsInput.offset ?? 0
+  const empty = { items: [], total: 0, limit, offset }
+  const source = classifyFallbackSource(error)
+
+  if (DEMO_MODE) {
+    return fallbackState(
+      "/sources",
+      {
+        items: demoSourceIndex,
+        total: demoSourceIndex.length,
+        limit: paramsInput.limit ?? demoSourceIndex.length,
+        offset,
+      },
+      error,
+      "demo",
+    )
+  }
+
+  reportApiFailure("/sources", error)
+  return {
+    source: source === "offline" ? "offline" : "error",
+    data: empty,
+    error: dataErrorMessage(error),
   }
 }
 

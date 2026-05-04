@@ -10,11 +10,7 @@ import {
 import { authOptions } from "@/lib/auth"
 import { orsBackendApiBaseUrl } from "@/lib/ors-backend-api-url"
 
-type RouteContext = {
-  params: Promise<{
-    path?: string[]
-  }>
-}
+type AuthorityRouteContext = RouteContext<"/api/authority/[...path]">
 
 const HOP_BY_HOP_HEADERS = new Set([
   "accept-encoding",
@@ -35,15 +31,15 @@ const HOTSET_BASE_URL = (process.env.ORS_AUTHORITY_HOTSET_BASE_URL || "").replac
 const HOTSET_RELEASE_ID = releaseIdFromHotsetBaseUrl(HOTSET_BASE_URL)
 const API_KEY = process.env.ORS_API_KEY
 
-export async function GET(request: NextRequest, context: RouteContext) {
+export async function GET(request: NextRequest, context: AuthorityRouteContext) {
   return forwardAuthorityRead(request, context)
 }
 
-export async function HEAD(request: NextRequest, context: RouteContext) {
+export async function HEAD(request: NextRequest, context: AuthorityRouteContext) {
   return forwardAuthorityRead(request, context)
 }
 
-async function forwardAuthorityRead(request: NextRequest, context: RouteContext) {
+async function forwardAuthorityRead(request: NextRequest, context: AuthorityRouteContext) {
   const startedAt = Date.now()
   const { path = [] } = await context.params
   const policy = authorityReadPolicy(path, request.nextUrl.searchParams)
@@ -68,7 +64,7 @@ async function forwardAuthorityRead(request: NextRequest, context: RouteContext)
   const upstreamUrl = new URL(`${orsBackendApiBaseUrl()}/${normalized.encodedPath}`)
   upstreamUrl.search = normalized.normalizedSearch
 
-  const session = await getServerSession(authOptions)
+  const session = policy.cacheable ? null : await getServerSession(authOptions)
   const headers = new Headers()
   request.headers.forEach((value, key) => {
     const normalized = key.toLowerCase()
