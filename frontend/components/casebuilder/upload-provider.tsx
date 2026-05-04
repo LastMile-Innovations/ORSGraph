@@ -25,12 +25,18 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
+  abortFileUpload,
   completeFileUpload,
   createFileUpload,
+  createFileUploadParts,
   createMatterIndexJob,
   getMatterIndexJob,
   importDocumentComplaint,
+  listFileUploadParts,
   putSignedUploadFile,
+  type CompletedUploadPart,
+  type FileUploadIntent,
+  type FileUploadPartIntent,
 } from "@/lib/casebuilder/api"
 import { isMarkdownIndexableFile } from "@/lib/casebuilder/document-tree"
 import { matterComplaintHref, matterHref } from "@/lib/casebuilder/routes"
@@ -63,6 +69,11 @@ export interface CaseBuilderUploadRow {
   uploadStartedAt?: number
   uploadUpdatedAt?: number
   documentId?: string
+  uploadId?: string
+  uploadMode?: "single" | "multipart" | string
+  multipartPartSizeBytes?: number | null
+  multipartTotalParts?: number | null
+  multipartUploadedParts?: CompletedUploadPart[]
   indexJobId?: string
   error?: string
   importedComplaintHref?: string
@@ -137,6 +148,8 @@ interface UploadContextValue {
 
 const CaseBuilderUploadContext = createContext<UploadContextValue | null>(null)
 const UPLOAD_SNAPSHOT_KEY = "casebuilder.uploads.v1"
+const MULTIPART_CONCURRENCY = 3
+const MULTIPART_RETRIES = 2
 
 interface PersistedUploadSnapshot {
   batches: CaseBuilderUploadBatch[]
@@ -281,51 +294,88 @@ export function CaseBuilderUploadProvider({ children }: { children: ReactNode })
       const mimeType = file.type || guessMimeType(file.name)
       const documentType = guessDocumentType(file.name, mimeType, options.defaultDocumentType)
       const markdownIndexable = isMarkdownIndexableFile(file.name, mimeType)
+      let activeUploadId = row.uploadId
 
       try {
         updateRow(row.id, { status: "preparing", message: "Preparing signed upload", error: undefined })
-        const intent = await createFileUpload(row.matterId, {
-          filename: file.name,
-          mime_type: mimeType,
-          bytes: file.size,
-          document_type: documentType,
-          folder: row.folder,
-          confidentiality: options.defaultConfidentiality,
-          relative_path: row.relativePath,
-          upload_batch_id: uploadBatchId,
-        })
+        const existingMultipartIntent =
+          row.uploadMode === "multipart" && row.uploadId && row.documentId
+            ? ({
+                upload_id: row.uploadId,
+                document_id: row.documentId,
+                mode: "multipart",
+                method: "",
+                url: "",
+                expires_at: "",
+                headers: {},
+                part_size_bytes: row.multipartPartSizeBytes ?? null,
+                total_parts: row.multipartTotalParts ?? null,
+                parts: [],
+              } as FileUploadIntent)
+            : null
+        const intent = existingMultipartIntent
+          ? { data: existingMultipartIntent, error: null }
+          : await createFileUpload(row.matterId, {
+              filename: file.name,
+              mime_type: mimeType,
+              bytes: file.size,
+              document_type: documentType,
+              folder: row.folder,
+              confidentiality: options.defaultConfidentiality,
+              relative_path: row.relativePath,
+              upload_batch_id: uploadBatchId,
+            })
         if (!intent.data) throw new Error(intent.error || "Could not create signed upload.")
+        activeUploadId = intent.data.upload_id
         if (canceledRowsRef.current.has(row.id)) throw new DOMException("Upload canceled", "AbortError")
 
         updateRow(row.id, {
           status: "uploading",
           documentId: intent.data.document_id,
+          uploadId: intent.data.upload_id,
+          uploadMode: intent.data.mode,
+          multipartPartSizeBytes: intent.data.part_size_bytes ?? null,
+          multipartTotalParts: intent.data.total_parts ?? null,
           message: "Uploading to private storage",
           uploadedBytes: 0,
           uploadSpeedBps: 0,
           uploadStartedAt: Date.now(),
           uploadUpdatedAt: Date.now(),
         })
-        const put = await putSignedUploadFile(intent.data, file, {
-          signal: controller.signal,
-          onProgress: (progress) => {
-            const now = Date.now()
-            updateRow(row.id, {
-              uploadedBytes: Math.min(progress.loaded, file.size),
-              uploadSpeedBps: progress.speedBps,
-              uploadStartedAt: now - progress.elapsedMs,
-              uploadUpdatedAt: now,
-            })
-          },
-        })
-        if (!put.data) throw new Error(put.error || "Signed upload failed.")
+        const onProgress = (progress: { loaded: number; speedBps?: number | null; elapsedMs: number }) => {
+          const now = Date.now()
+          updateRow(row.id, {
+            uploadedBytes: Math.min(progress.loaded, file.size),
+            uploadSpeedBps: progress.speedBps ?? null,
+            uploadStartedAt: now - progress.elapsedMs,
+            uploadUpdatedAt: now,
+          })
+        }
+        const completedParts =
+          intent.data.mode === "multipart"
+            ? await putMultipartUploadFile(row.matterId, intent.data, file, {
+                signal: controller.signal,
+                onProgress,
+                onUploadedParts: (parts) => updateRow(row.id, { multipartUploadedParts: parts }),
+              })
+            : null
+        let etag: string | null | undefined = null
+        if (!completedParts) {
+          const put = await putSignedUploadFile(intent.data, file, {
+            signal: controller.signal,
+            onProgress,
+          })
+          if (!put.data) throw new Error(put.error || "Signed upload failed.")
+          etag = put.data.etag
+        }
         if (canceledRowsRef.current.has(row.id)) throw new DOMException("Upload canceled", "AbortError")
 
         updateRow(row.id, { status: "stored", message: "Finalizing document" })
         const completed = await completeFileUpload(row.matterId, intent.data.upload_id, {
           document_id: intent.data.document_id,
-          etag: put.data.etag,
+          etag,
           bytes: file.size,
+          parts: completedParts ?? undefined,
         })
         if (!completed.data) throw new Error(completed.error || "Could not finalize upload.")
 
@@ -355,6 +405,9 @@ export function CaseBuilderUploadProvider({ children }: { children: ReactNode })
         return { ok: true, documentId: completed.data.document_id, markdownIndexable }
       } catch (error) {
         const canceled = isAbortError(error) || canceledRowsRef.current.has(row.id)
+        if (canceled && activeUploadId) {
+          void abortFileUpload(row.matterId, activeUploadId)
+        }
         updateRow(row.id, {
           status: canceled ? "canceled" : "failed",
           message: canceled ? "Canceled" : errorMessage(error),
@@ -417,7 +470,46 @@ export function CaseBuilderUploadProvider({ children }: { children: ReactNode })
       const batchId = uploadBatchId
       const processingOptions = normalizeUploadProcessingOptions(options)
       const normalizedCandidates = candidates.map((candidate) => normalizeUploadCandidate(candidate))
-      const nextRows = normalizedCandidates.map((candidate, index): CaseBuilderUploadRow => ({
+      const newCandidates: UploadCandidate[] = []
+      const resumedBatchIds: string[] = []
+      for (const candidate of normalizedCandidates) {
+        const existing = rowsRef.current.find(
+          (row) =>
+            row.matterId === matterId &&
+            row.uploadMode === "multipart" &&
+            row.uploadId &&
+            row.documentId &&
+            !row.file &&
+            row.status === "failed" &&
+            row.relativePath === candidate.relativePath &&
+            row.bytes === candidate.file.size,
+        )
+        const existingBatch = existing
+          ? batchesRef.current.find((candidateBatch) => candidateBatch.id === existing.batchId)
+          : null
+        if (!existing || !existingBatch) {
+          newCandidates.push(candidate)
+          continue
+        }
+        const resumedRow: CaseBuilderUploadRow = {
+          ...existing,
+          file: candidate.file,
+          status: "queued",
+          message: "Queued",
+          error: undefined,
+          uploadedBytes: 0,
+          uploadSpeedBps: null,
+        }
+        updateBatch(existingBatch.id, { status: "queued", message: "Resuming upload" })
+        updateRow(existing.id, resumedRow)
+        resumedBatchIds.push(existingBatch.id)
+        void processBatch(existingBatch, [resumedRow], processingOptions)
+      }
+      if (newCandidates.length === 0) {
+        setCollapsed(false)
+        return resumedBatchIds[0] ?? null
+      }
+      const nextRows = newCandidates.map((candidate, index): CaseBuilderUploadRow => ({
         id: `${batchId}:row:${index}`,
         batchId,
         matterId,
@@ -449,13 +541,17 @@ export function CaseBuilderUploadProvider({ children }: { children: ReactNode })
       void processBatch(batch, nextRows, processingOptions)
       return batchId
     },
-    [processBatch],
+    [processBatch, updateBatch, updateRow],
   )
 
   const cancelRow = useCallback(
     (rowId: string) => {
+      const row = rowsRef.current.find((candidate) => candidate.id === rowId)
       canceledRowsRef.current.add(rowId)
       controllersRef.current.get(rowId)?.abort()
+      if (row?.uploadId && ["preparing", "uploading", "stored"].includes(row.status)) {
+        void abortFileUpload(row.matterId, row.uploadId)
+      }
       updateRow(rowId, { status: "canceled", message: "Canceled", error: undefined })
     },
     [updateRow],
@@ -472,10 +568,16 @@ export function CaseBuilderUploadProvider({ children }: { children: ReactNode })
         return
       }
       canceledRowsRef.current.delete(rowId)
+      const preserveMultipart = row.uploadMode === "multipart" && row.uploadId && row.documentId
       updateRow(rowId, {
         status: "queued",
         message: "Queued",
-        documentId: undefined,
+        documentId: preserveMultipart ? row.documentId : undefined,
+        uploadId: preserveMultipart ? row.uploadId : undefined,
+        uploadMode: preserveMultipart ? row.uploadMode : undefined,
+        multipartPartSizeBytes: preserveMultipart ? row.multipartPartSizeBytes : undefined,
+        multipartTotalParts: preserveMultipart ? row.multipartTotalParts : undefined,
+        multipartUploadedParts: preserveMultipart ? row.multipartUploadedParts : undefined,
         indexJobId: undefined,
         uploadedBytes: 0,
         uploadSpeedBps: null,
@@ -783,6 +885,123 @@ function recoverPersistedBatch(batch: CaseBuilderUploadBatch, rows: CaseBuilderU
     return { ...batch, status: "failed", message: "Upload interrupted by refresh." }
   }
   return batch
+}
+
+async function putMultipartUploadFile(
+  matterId: string,
+  intent: FileUploadIntent,
+  file: File,
+  options: {
+    signal: AbortSignal
+    onProgress: (progress: { loaded: number; speedBps?: number | null; elapsedMs: number }) => void
+    onUploadedParts?: (parts: CompletedUploadPart[]) => void
+  },
+): Promise<CompletedUploadPart[]> {
+  const partSize = intent.part_size_bytes ?? 0
+  const totalParts = intent.total_parts ?? (partSize > 0 ? Math.ceil(file.size / partSize) : 0)
+  if (!partSize || !totalParts) {
+    throw new Error("Multipart upload intent is missing part sizing.")
+  }
+
+  const startedAt = performance.now()
+  const completedParts = new Map<number, CompletedUploadPart>()
+  const loadedByPart = new Map<number, number>()
+  const intentByPart = new Map<number, FileUploadPartIntent>(
+    (intent.parts ?? []).map((part) => [part.part_number, part]),
+  )
+
+  const listed = await listFileUploadParts(matterId, intent.upload_id)
+  if (!listed.data) throw new Error(listed.error || "Could not recover multipart upload state.")
+  for (const part of listed.data.uploaded_parts) {
+    completedParts.set(part.part_number, part)
+    loadedByPart.set(part.part_number, multipartPartLength(file.size, partSize, part.part_number))
+  }
+
+  function emitProgress() {
+    const loaded = Array.from(loadedByPart.values()).reduce((sum, value) => sum + value, 0)
+    const elapsedMs = Math.max(performance.now() - startedAt, 1)
+    const speedBps = loaded > 0 ? loaded / (elapsedMs / 1000) : 0
+    options.onProgress({ loaded, speedBps, elapsedMs })
+    options.onUploadedParts?.(sortedCompletedParts(completedParts))
+  }
+
+  async function getPartIntent(partNumber: number) {
+    const cached = intentByPart.get(partNumber)
+    if (cached) return cached
+    const refreshed = await createFileUploadParts(matterId, intent.upload_id, [partNumber])
+    if (!refreshed.data) throw new Error(refreshed.error || `Could not sign upload part ${partNumber}.`)
+    for (const part of refreshed.data.uploaded_parts) {
+      completedParts.set(part.part_number, part)
+      loadedByPart.set(part.part_number, multipartPartLength(file.size, partSize, part.part_number))
+    }
+    for (const part of refreshed.data.parts) {
+      intentByPart.set(part.part_number, part)
+    }
+    const signed = intentByPart.get(partNumber)
+    if (!signed) throw new Error(`Upload part ${partNumber} was not signed.`)
+    return signed
+  }
+
+  async function uploadPart(partNumber: number) {
+    if (completedParts.has(partNumber)) return
+    const start = (partNumber - 1) * partSize
+    const end = Math.min(start + partSize, file.size)
+    const blob = file.slice(start, end, file.type)
+    for (let attempt = 0; attempt <= MULTIPART_RETRIES; attempt += 1) {
+      if (options.signal.aborted) throw new DOMException("Upload canceled", "AbortError")
+      try {
+        const signed = await getPartIntent(partNumber)
+        const put = await putSignedUploadFile(signed, blob, {
+          signal: options.signal,
+          onProgress: (progress) => {
+            loadedByPart.set(partNumber, progress.loaded)
+            emitProgress()
+          },
+        })
+        if (!put.data) throw new Error(put.error || `Upload part ${partNumber} failed.`)
+        if (!put.data.etag) throw new Error(`Upload part ${partNumber} did not return an ETag.`)
+        const completed = { part_number: partNumber, etag: put.data.etag }
+        completedParts.set(partNumber, completed)
+        loadedByPart.set(partNumber, blob.size)
+        emitProgress()
+        return
+      } catch (error) {
+        if (isAbortError(error) || options.signal.aborted || attempt >= MULTIPART_RETRIES) throw error
+        intentByPart.delete(partNumber)
+        await sleep(500 * (attempt + 1))
+      }
+    }
+  }
+
+  const pending = Array.from({ length: totalParts }, (_, index) => index + 1).filter(
+    (partNumber) => !completedParts.has(partNumber),
+  )
+  let cursor = 0
+  async function worker() {
+    for (;;) {
+      const partNumber = pending[cursor]
+      cursor += 1
+      if (!partNumber) return
+      await uploadPart(partNumber)
+    }
+  }
+
+  emitProgress()
+  await Promise.all(Array.from({ length: Math.min(MULTIPART_CONCURRENCY, pending.length) }, worker))
+  const completed = sortedCompletedParts(completedParts)
+  if (completed.length !== totalParts) {
+    throw new Error(`Multipart upload completed ${completed.length} of ${totalParts} parts.`)
+  }
+  return completed
+}
+
+function sortedCompletedParts(parts: Map<number, CompletedUploadPart>) {
+  return Array.from(parts.values()).sort((left, right) => left.part_number - right.part_number)
+}
+
+function multipartPartLength(totalBytes: number, partSize: number, partNumber: number) {
+  const start = (partNumber - 1) * partSize
+  return Math.max(0, Math.min(partSize, totalBytes - start))
 }
 
 function rowUploadedBytes(row: CaseBuilderUploadRow) {

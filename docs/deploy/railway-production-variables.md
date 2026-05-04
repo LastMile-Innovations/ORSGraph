@@ -57,6 +57,12 @@ spawn.
   - `ORS_R2_ACCESS_KEY_ID` / `ORS_R2_SECRET_ACCESS_KEY`: Cloudflare R2 S3 API token, `Object Read & Write`, scoped to `orsgraph-casebuilder-production`.
   - Bucket CORS must allow origin `https://frontend-production-090c.up.railway.app`, methods `PUT`, `GET`, `HEAD`, request headers `*`, and expose `ETag`.
   - Production smoke should include `ORS_SMOKE_UPLOAD_ORIGIN=https://frontend-production-090c.up.railway.app` so the signed upload path probes preflight and verifies the `ETag` CORS exposure.
+- `ORS_CASEBUILDER_API_UPLOAD_MAX_BYTES`: maximum size accepted by legacy API/body upload paths. Keep production at `52428800` so multipart/form-data paths do not accept giant in-memory bodies.
+- `ORS_CASEBUILDER_DIRECT_UPLOAD_MAX_BYTES`: maximum browser-to-bucket upload size for signed direct uploads. Production CaseBuilder direct uploads use `21474836480` for a 20 GiB cap.
+- `ORS_CASEBUILDER_SINGLE_UPLOAD_MAX_BYTES`: maximum size routed through one signed `PUT`. Production uses `104857600`; larger files use multipart.
+- `ORS_CASEBUILDER_MULTIPART_PART_BYTES`: S3 multipart part size. Production uses `67108864`, which keeps a 20 GiB upload at 320 parts.
+- `ORS_CASEBUILDER_MULTIPART_SESSION_TTL_SECONDS`: pending multipart upload-session retention window. Production uses `604800`.
+- `ORS_R2_MAX_UPLOAD_BYTES`: legacy fallback for CaseBuilder API/direct limits only when the newer `ORS_CASEBUILDER_*_MAX_BYTES` variables are unset. Prefer the explicit CaseBuilder variables above.
 - `ORS_ASSEMBLYAI_ENABLED`, `ASSEMBLYAI_API_KEY`, `ORS_ASSEMBLYAI_WEBHOOK_URL`, `ORS_ASSEMBLYAI_WEBHOOK_SECRET`: optional transcription settings.
 - Deprecated duplicates to avoid: `ORS_NEO4J_*` and double-underscore `ORS__*`.
 

@@ -8,11 +8,14 @@ import {
 } from "./upload-provider"
 
 const mocks = vi.hoisted(() => ({
+  abortFileUpload: vi.fn(),
   completeFileUpload: vi.fn(),
   createFileUpload: vi.fn(),
+  createFileUploadParts: vi.fn(),
   createMatterIndexJob: vi.fn(),
   getMatterIndexJob: vi.fn(),
   importDocumentComplaint: vi.fn(),
+  listFileUploadParts: vi.fn(),
   putSignedUploadFile: vi.fn(),
   router: {
     refresh: vi.fn(),
@@ -24,26 +27,34 @@ vi.mock("next/navigation", () => ({
 }))
 
 vi.mock("@/lib/casebuilder/api", () => ({
+  abortFileUpload: (...args: unknown[]) => mocks.abortFileUpload(...args),
   completeFileUpload: (...args: unknown[]) => mocks.completeFileUpload(...args),
   createFileUpload: (...args: unknown[]) => mocks.createFileUpload(...args),
+  createFileUploadParts: (...args: unknown[]) => mocks.createFileUploadParts(...args),
   createMatterIndexJob: (...args: unknown[]) => mocks.createMatterIndexJob(...args),
   getMatterIndexJob: (...args: unknown[]) => mocks.getMatterIndexJob(...args),
   importDocumentComplaint: (...args: unknown[]) => mocks.importDocumentComplaint(...args),
+  listFileUploadParts: (...args: unknown[]) => mocks.listFileUploadParts(...args),
   putSignedUploadFile: (...args: unknown[]) => mocks.putSignedUploadFile(...args),
 }))
 
 describe("CaseBuilderUploadProvider", () => {
   beforeEach(() => {
+    mocks.abortFileUpload.mockReset()
     mocks.completeFileUpload.mockReset()
     mocks.createFileUpload.mockReset()
+    mocks.createFileUploadParts.mockReset()
     mocks.createMatterIndexJob.mockReset()
     mocks.getMatterIndexJob.mockReset()
     mocks.importDocumentComplaint.mockReset()
+    mocks.listFileUploadParts.mockReset()
     mocks.putSignedUploadFile.mockReset()
     mocks.router.refresh.mockReset()
     window.sessionStorage.clear()
 
     mocks.createFileUpload.mockResolvedValue({ data: uploadIntent("upload:one", "doc:one") })
+    mocks.createFileUploadParts.mockResolvedValue({ data: uploadPartsResponse("upload:one", "doc:one", []) })
+    mocks.listFileUploadParts.mockResolvedValue({ data: uploadPartsResponse("upload:one", "doc:one", []) })
     mocks.putSignedUploadFile.mockResolvedValue({ data: { etag: "etag-one" } })
     mocks.completeFileUpload.mockResolvedValue({ data: { document_id: "doc:one" } })
     mocks.createMatterIndexJob.mockResolvedValue({ data: indexJob("running") })
@@ -153,6 +164,40 @@ describe("CaseBuilderUploadProvider", () => {
         document_ids: ["doc:one"],
         upload_batch_id: expect.stringMatching(/^folder:/),
       })
+    })
+  })
+
+  it("uploads large files through multipart signed part URLs", async () => {
+    mocks.createFileUpload.mockResolvedValue({ data: multipartUploadIntent("upload:multi", "doc:multi") })
+    mocks.listFileUploadParts.mockResolvedValue({ data: uploadPartsResponse("upload:multi", "doc:multi", []) })
+    mocks.putSignedUploadFile
+      .mockResolvedValueOnce({ data: { etag: "etag-part-1" } })
+      .mockResolvedValueOnce({ data: { etag: "etag-part-2" } })
+    mocks.completeFileUpload.mockResolvedValue({ data: { document_id: "doc:multi" } })
+
+    render(
+      <CaseBuilderUploadProvider>
+        <UploadHarness file={new File(["0123456789"], "clip.mp4", { type: "video/mp4" })} />
+      </CaseBuilderUploadProvider>,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: /start upload/i }))
+
+    await waitFor(() => {
+      expect(mocks.listFileUploadParts).toHaveBeenCalledWith("matter:test", "upload:multi")
+      expect(mocks.putSignedUploadFile).toHaveBeenCalledTimes(2)
+      expect(mocks.completeFileUpload).toHaveBeenCalledWith(
+        "matter:test",
+        "upload:multi",
+        expect.objectContaining({
+          document_id: "doc:multi",
+          parts: [
+            { part_number: 1, etag: "etag-part-1" },
+            { part_number: 2, etag: "etag-part-2" },
+          ],
+        }),
+      )
+      expect(mocks.createMatterIndexJob).not.toHaveBeenCalled()
     })
   })
 
@@ -340,10 +385,41 @@ function uploadIntent(uploadId: string, documentId: string) {
   return {
     upload_id: uploadId,
     document_id: documentId,
+    mode: "single",
     method: "PUT",
     url: `https://r2.example/${uploadId}`,
     expires_at: "999999",
     headers: { "content-type": "application/octet-stream" },
+    parts: [],
+  }
+}
+
+function multipartUploadIntent(uploadId: string, documentId: string) {
+  return {
+    ...uploadIntent(uploadId, documentId),
+    mode: "multipart",
+    method: "",
+    url: "",
+    headers: {},
+    part_size_bytes: 5,
+    total_parts: 2,
+    parts: [
+      { part_number: 1, method: "PUT", url: "https://r2.example/part-1", expires_at: "999999", headers: {} },
+      { part_number: 2, method: "PUT", url: "https://r2.example/part-2", expires_at: "999999", headers: {} },
+    ],
+  }
+}
+
+function uploadPartsResponse(uploadId: string, documentId: string, uploadedParts: Array<{ part_number: number; etag: string }>) {
+  return {
+    upload_id: uploadId,
+    document_id: documentId,
+    mode: "multipart",
+    part_size_bytes: 5,
+    total_parts: 2,
+    expires_at: "999999",
+    parts: [],
+    uploaded_parts: uploadedParts,
   }
 }
 

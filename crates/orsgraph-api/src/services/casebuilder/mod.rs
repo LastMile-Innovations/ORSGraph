@@ -3,7 +3,8 @@ use crate::models::casebuilder::*;
 use crate::services::embedding::EmbeddingService;
 use crate::services::neo4j::Neo4jService;
 use crate::services::object_store::{
-    ObjectStore, PutOptions, StoredObject, build_document_object_key, clean_etag, normalize_sha256,
+    CompletedMultipartPart, MultipartPart, ObjectStore, PutOptions, StoredObject,
+    build_document_object_key, clean_etag, normalize_sha256,
 };
 use bytes::Bytes;
 use flate2::read::DeflateDecoder;
@@ -70,7 +71,11 @@ pub struct CaseBuilderService {
     object_store: Arc<dyn ObjectStore>,
     upload_ttl_seconds: u64,
     download_ttl_seconds: u64,
-    max_upload_bytes: u64,
+    api_upload_max_bytes: u64,
+    direct_upload_max_bytes: u64,
+    single_upload_max_bytes: u64,
+    multipart_part_bytes: u64,
+    multipart_session_ttl_seconds: u64,
     ast_storage_policy: AstStoragePolicy,
     assemblyai: AssemblyAiProviderConfig,
     timeline_agent: TimelineAgentProviderConfig,
@@ -325,7 +330,11 @@ pub struct CaseBuilderServiceConfig {
     pub object_store: Arc<dyn ObjectStore>,
     pub upload_ttl_seconds: u64,
     pub download_ttl_seconds: u64,
-    pub max_upload_bytes: u64,
+    pub api_upload_max_bytes: u64,
+    pub direct_upload_max_bytes: u64,
+    pub single_upload_max_bytes: u64,
+    pub multipart_part_bytes: u64,
+    pub multipart_session_ttl_seconds: u64,
     pub ast_entity_inline_bytes: u64,
     pub ast_snapshot_inline_bytes: u64,
     pub ast_block_inline_bytes: u64,
@@ -544,7 +553,11 @@ impl CaseBuilderService {
             object_store: config.object_store,
             upload_ttl_seconds: config.upload_ttl_seconds,
             download_ttl_seconds: config.download_ttl_seconds,
-            max_upload_bytes: config.max_upload_bytes,
+            api_upload_max_bytes: config.api_upload_max_bytes,
+            direct_upload_max_bytes: config.direct_upload_max_bytes,
+            single_upload_max_bytes: config.single_upload_max_bytes,
+            multipart_part_bytes: config.multipart_part_bytes,
+            multipart_session_ttl_seconds: config.multipart_session_ttl_seconds,
             ast_storage_policy: AstStoragePolicy {
                 entity_inline_bytes: config.ast_entity_inline_bytes,
                 snapshot_inline_bytes: config.ast_snapshot_inline_bytes,
@@ -662,6 +675,13 @@ fn document_version_spec() -> NodeSpec {
         label: "DocumentVersion",
         id_key: "document_version_id",
         edge: "HAS_DOCUMENT_VERSION",
+    }
+}
+fn upload_session_spec() -> NodeSpec {
+    NodeSpec {
+        label: "UploadSession",
+        id_key: "upload_session_id",
+        edge: "HAS_UPLOAD_SESSION",
     }
 }
 fn ingestion_run_spec() -> NodeSpec {

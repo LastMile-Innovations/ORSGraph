@@ -54,13 +54,41 @@ impl CaseBuilderService {
     }
 
     pub(super) fn ensure_upload_size(&self, bytes: u64) -> ApiResult<()> {
-        if bytes > self.max_upload_bytes {
+        if bytes > self.api_upload_max_bytes {
             Err(ApiError::BadRequest(format!(
                 "Upload is {bytes} bytes; maximum is {} bytes",
-                self.max_upload_bytes
+                self.api_upload_max_bytes
             )))
         } else {
             Ok(())
         }
+    }
+
+    pub(super) fn ensure_direct_upload_size(&self, bytes: u64) -> ApiResult<()> {
+        if bytes > self.direct_upload_max_bytes {
+            Err(ApiError::BadRequest(format!(
+                "Upload is {bytes} bytes; maximum is {} bytes",
+                self.direct_upload_max_bytes
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(super) fn multipart_total_parts(&self, bytes: u64) -> u32 {
+        bytes.div_ceil(self.multipart_part_bytes) as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn multipart_part_count_uses_ceil_division() {
+        let part_bytes = 64 * 1024 * 1024_u64;
+
+        assert_eq!(0_u64.div_ceil(part_bytes), 0);
+        assert_eq!(1_u64.div_ceil(part_bytes), 1);
+        assert_eq!(part_bytes.div_ceil(part_bytes), 1);
+        assert_eq!((part_bytes + 1).div_ceil(part_bytes), 2);
     }
 }

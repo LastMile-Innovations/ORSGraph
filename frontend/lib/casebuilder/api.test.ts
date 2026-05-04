@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   DEFAULT_CASEBUILDER_API_TIMEOUT_MS,
+  abortFileUpload,
   archiveDocument,
   createFileUpload,
+  createFileUploadParts,
   createMatterIndexJob,
   deleteMatter,
   getCaseBuilderSettingsState,
   getMatterSettingsState,
   getMatterState,
   getMatterSummariesState,
+  listFileUploadParts,
   patchMatterConfig,
   patchDocument,
   putSignedUploadFile,
@@ -207,6 +210,77 @@ describe("CaseBuilder API request loading", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("https://r2.example/upload")
     expect(fetchMock.mock.calls[0][1]?.body).toBeInstanceOf(File)
     expect(timeoutSpy).not.toHaveBeenCalled()
+  })
+
+  it("normalizes multipart upload intents and requests part URLs", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          upload_id: "upload:multi",
+          document_id: "doc:multi",
+          mode: "multipart",
+          method: "",
+          url: "",
+          expires_at: "999999",
+          headers: null,
+          part_size_bytes: 5,
+          total_parts: 2,
+          parts: [{ part_number: 1, method: "PUT", url: "https://r2.example/part-1", expires_at: "999999" }],
+          document: { document_id: "doc:multi" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          upload_id: "upload:multi",
+          document_id: "doc:multi",
+          mode: "multipart",
+          expires_at: "999999",
+          parts: [{ part_number: 2, method: "PUT", url: "https://r2.example/part-2", expires_at: "999999" }],
+          uploaded_parts: [{ part_number: 1, etag: "etag-1" }],
+        }),
+      )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const intent = await createFileUpload("matter:intake-test", {
+      filename: "clip.mp4",
+      mime_type: "video/mp4",
+      bytes: 10,
+    })
+    const parts = await createFileUploadParts("matter:intake-test", "upload:multi", [2])
+
+    expect(intent.data?.mode).toBe("multipart")
+    expect(intent.data?.parts?.[0].headers).toEqual({})
+    expect(parts.data?.parts[0].part_number).toBe(2)
+    expect(parts.data?.uploaded_parts[0]).toEqual({ part_number: 1, etag: "etag-1" })
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/api/ors/matters/matter%3Aintake-test/files/uploads/upload%3Amulti/parts",
+    )
+  })
+
+  it("lists uploaded parts and aborts pending uploads", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          upload_id: "upload:multi",
+          document_id: "doc:multi",
+          mode: "multipart",
+          expires_at: "999999",
+          parts: [],
+          uploaded_parts: [{ part_number: 1, etag: "etag-1" }],
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ document_id: "doc:multi" }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    const listed = await listFileUploadParts("matter:intake-test", "upload:multi")
+    const aborted = await abortFileUpload("matter:intake-test", "upload:multi")
+
+    expect(listed.data?.uploaded_parts).toEqual([{ part_number: 1, etag: "etag-1" }])
+    expect(aborted.data?.document_id).toBe("doc:multi")
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("GET")
+    expect(fetchMock.mock.calls[1][1]?.method).toBe("DELETE")
   })
 
   it("reports signed upload progress with XMLHttpRequest when requested", async () => {

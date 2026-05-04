@@ -220,11 +220,39 @@ export interface CreateFileUploadInput {
 export interface FileUploadIntent {
   upload_id: string
   document_id: string
+  mode: "single" | "multipart" | string
   method: "PUT" | string
   url: string
   expires_at: string
   headers: Record<string, string>
-  document: CaseDocument
+  part_size_bytes?: number | null
+  total_parts?: number | null
+  parts?: FileUploadPartIntent[]
+  document?: CaseDocument
+}
+
+export interface CompletedUploadPart {
+  part_number: number
+  etag: string
+}
+
+export interface FileUploadPartIntent {
+  part_number: number
+  method: "PUT" | string
+  url: string
+  expires_at: string
+  headers: Record<string, string>
+}
+
+export interface FileUploadPartsResponse {
+  upload_id: string
+  document_id: string
+  mode: "multipart" | string
+  part_size_bytes?: number | null
+  total_parts?: number | null
+  expires_at: string
+  parts: FileUploadPartIntent[]
+  uploaded_parts: CompletedUploadPart[]
 }
 
 export interface CompleteFileUploadInput {
@@ -232,6 +260,7 @@ export interface CompleteFileUploadInput {
   etag?: string | null
   bytes?: number
   sha256?: string
+  parts?: CompletedUploadPart[]
 }
 
 export interface DownloadUrlResponse {
@@ -901,11 +930,48 @@ export function createFileUpload(
       const response = raw as any
       return {
         ...response,
+        mode: response.mode ?? "single",
         headers: response.headers ?? {},
+        parts: Array.isArray(response.parts)
+          ? response.parts.map((part: any) => ({
+              ...part,
+              headers: part.headers ?? {},
+            }))
+          : [],
         document: normalizeDocument(response.document),
       } as FileUploadIntent
     },
   })
+}
+
+export function createFileUploadParts(
+  matterId: string,
+  uploadId: string,
+  partNumbers: number[],
+): Promise<ActionState<FileUploadPartsResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/files/uploads/${encodeURIComponent(uploadId)}/parts`,
+    {
+      method: "POST",
+      body: JSON.stringify({ part_numbers: partNumbers }),
+      timeoutMs: null,
+      normalize: normalizeFileUploadPartsResponse,
+    },
+  )
+}
+
+export function listFileUploadParts(
+  matterId: string,
+  uploadId: string,
+): Promise<ActionState<FileUploadPartsResponse>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/files/uploads/${encodeURIComponent(uploadId)}/parts`,
+    {
+      method: "GET",
+      timeoutMs: null,
+      normalize: normalizeFileUploadPartsResponse,
+    },
+  )
 }
 
 export function completeFileUpload(
@@ -924,9 +990,46 @@ export function completeFileUpload(
   )
 }
 
+function normalizeFileUploadPartsResponse(raw: unknown): FileUploadPartsResponse {
+  const response = raw as any
+  return {
+    ...response,
+    mode: response.mode ?? "multipart",
+    part_size_bytes: response.part_size_bytes ?? response.partSizeBytes ?? null,
+    total_parts: response.total_parts ?? response.totalParts ?? null,
+    parts: Array.isArray(response.parts)
+      ? response.parts.map((part: any) => ({
+          ...part,
+          part_number: number(part.part_number, part.partNumber, 0),
+          headers: part.headers ?? {},
+        }))
+      : [],
+    uploaded_parts: Array.isArray(response.uploaded_parts ?? response.uploadedParts)
+      ? (response.uploaded_parts ?? response.uploadedParts).map((part: any) => ({
+          part_number: number(part.part_number, part.partNumber, 0),
+          etag: string(part.etag, ""),
+        }))
+      : [],
+  } as FileUploadPartsResponse
+}
+
+export function abortFileUpload(
+  matterId: string,
+  uploadId: string,
+): Promise<ActionState<CaseDocument>> {
+  return runCaseBuilderAction(
+    `/matters/${encodeURIComponent(decodeMatterRouteId(matterId))}/files/uploads/${encodeURIComponent(uploadId)}`,
+    {
+      method: "DELETE",
+      timeoutMs: null,
+      normalize: normalizeDocument,
+    },
+  )
+}
+
 export async function putSignedUploadFile(
   intent: Pick<FileUploadIntent, "method" | "url" | "headers">,
-  file: File,
+  file: Blob,
   options: Pick<RequestInit, "signal"> & {
     onProgress?: (progress: SignedUploadProgress) => void
   } = {},
@@ -953,7 +1056,7 @@ export async function putSignedUploadFile(
 
 function putSignedUploadFileWithProgress(
   intent: Pick<FileUploadIntent, "method" | "url" | "headers">,
-  file: File,
+  file: Blob,
   options: Pick<RequestInit, "signal"> & {
     onProgress?: (progress: SignedUploadProgress) => void
   },

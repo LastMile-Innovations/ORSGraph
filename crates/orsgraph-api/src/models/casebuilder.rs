@@ -1554,22 +1554,81 @@ pub struct CreateFileUploadRequest {
     pub sha256: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct CompletedUploadPart {
+    pub part_number: u32,
+    pub etag: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseUploadSession {
+    pub upload_session_id: String,
+    pub id: String,
+    pub matter_id: String,
+    pub document_id: String,
+    pub upload_id: String,
+    pub mode: String,
+    pub storage_key: String,
+    pub provider_upload_id: Option<String>,
+    pub bytes: u64,
+    pub part_size_bytes: Option<u64>,
+    pub total_parts: Option<u32>,
+    pub uploaded_parts: Vec<CompletedUploadPart>,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FileUploadPartRequest {
+    #[serde(default)]
+    pub part_numbers: Vec<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FileUploadPartIntent {
+    pub part_number: u32,
+    pub method: String,
+    pub url: String,
+    pub expires_at: String,
+    pub headers: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FileUploadPartsResponse {
+    pub upload_id: String,
+    pub document_id: String,
+    pub mode: String,
+    pub part_size_bytes: Option<u64>,
+    pub total_parts: Option<u32>,
+    pub expires_at: String,
+    pub parts: Vec<FileUploadPartIntent>,
+    pub uploaded_parts: Vec<CompletedUploadPart>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CompleteFileUploadRequest {
     pub document_id: String,
     pub etag: Option<String>,
     pub bytes: Option<u64>,
     pub sha256: Option<String>,
+    #[serde(default)]
+    pub parts: Vec<CompletedUploadPart>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct FileUploadResponse {
     pub upload_id: String,
     pub document_id: String,
+    pub mode: String,
     pub method: String,
     pub url: String,
     pub expires_at: String,
     pub headers: BTreeMap<String, String>,
+    pub part_size_bytes: Option<u64>,
+    pub total_parts: Option<u32>,
+    pub parts: Vec<FileUploadPartIntent>,
     pub document: CaseDocument,
 }
 

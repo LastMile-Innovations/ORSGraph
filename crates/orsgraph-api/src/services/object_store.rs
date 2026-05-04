@@ -4,9 +4,14 @@ use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::presigning::PresigningConfig;
-use aws_sdk_s3::{Client, primitives::ByteStream};
+use aws_sdk_s3::{
+    Client,
+    primitives::ByteStream,
+    types::{CompletedMultipartUpload, CompletedPart},
+};
 use aws_types::region::Region;
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -38,6 +43,19 @@ pub struct PresignedOperation {
     pub headers: BTreeMap<String, String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompletedMultipartPart {
+    pub part_number: u32,
+    pub etag: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultipartPart {
+    pub part_number: u32,
+    pub etag: String,
+    pub size: u64,
+}
+
 #[async_trait]
 pub trait ObjectStore: Send + Sync {
     fn provider(&self) -> &'static str;
@@ -54,6 +72,26 @@ pub trait ObjectStore: Send + Sync {
         options: PutOptions,
         expires_in: Duration,
     ) -> ApiResult<PresignedOperation>;
+    async fn create_multipart_upload(&self, key: &str, options: PutOptions) -> ApiResult<String>;
+    async fn presign_upload_part(
+        &self,
+        key: &str,
+        upload_id: &str,
+        part_number: u32,
+        expires_in: Duration,
+    ) -> ApiResult<PresignedOperation>;
+    async fn list_multipart_parts(
+        &self,
+        key: &str,
+        upload_id: &str,
+    ) -> ApiResult<Vec<MultipartPart>>;
+    async fn complete_multipart_upload(
+        &self,
+        key: &str,
+        upload_id: &str,
+        parts: Vec<CompletedMultipartPart>,
+    ) -> ApiResult<StoredObject>;
+    async fn abort_multipart_upload(&self, key: &str, upload_id: &str) -> ApiResult<()>;
     async fn presign_get(&self, key: &str, expires_in: Duration) -> ApiResult<PresignedOperation>;
     async fn head(&self, key: &str) -> ApiResult<StoredObject>;
     async fn get_bytes(&self, key: &str) -> ApiResult<Bytes>;
@@ -131,6 +169,51 @@ impl ObjectStore for LocalObjectStore {
     ) -> ApiResult<PresignedOperation> {
         Err(ApiError::BadRequest(
             "Signed browser uploads require ORS_STORAGE_BACKEND=r2".to_string(),
+        ))
+    }
+
+    async fn create_multipart_upload(&self, _key: &str, _options: PutOptions) -> ApiResult<String> {
+        Err(ApiError::BadRequest(
+            "Multipart browser uploads require ORS_STORAGE_BACKEND=r2".to_string(),
+        ))
+    }
+
+    async fn presign_upload_part(
+        &self,
+        _key: &str,
+        _upload_id: &str,
+        _part_number: u32,
+        _expires_in: Duration,
+    ) -> ApiResult<PresignedOperation> {
+        Err(ApiError::BadRequest(
+            "Multipart browser uploads require ORS_STORAGE_BACKEND=r2".to_string(),
+        ))
+    }
+
+    async fn list_multipart_parts(
+        &self,
+        _key: &str,
+        _upload_id: &str,
+    ) -> ApiResult<Vec<MultipartPart>> {
+        Err(ApiError::BadRequest(
+            "Multipart browser uploads require ORS_STORAGE_BACKEND=r2".to_string(),
+        ))
+    }
+
+    async fn complete_multipart_upload(
+        &self,
+        _key: &str,
+        _upload_id: &str,
+        _parts: Vec<CompletedMultipartPart>,
+    ) -> ApiResult<StoredObject> {
+        Err(ApiError::BadRequest(
+            "Multipart browser uploads require ORS_STORAGE_BACKEND=r2".to_string(),
+        ))
+    }
+
+    async fn abort_multipart_upload(&self, _key: &str, _upload_id: &str) -> ApiResult<()> {
+        Err(ApiError::BadRequest(
+            "Multipart browser uploads require ORS_STORAGE_BACKEND=r2".to_string(),
         ))
     }
 
@@ -299,6 +382,137 @@ impl ObjectStore for R2ObjectStore {
             url: presigned.uri().to_string(),
             headers,
         })
+    }
+
+    async fn create_multipart_upload(&self, key: &str, options: PutOptions) -> ApiResult<String> {
+        let mut request = self
+            .client
+            .create_multipart_upload()
+            .bucket(&self.bucket)
+            .key(key);
+        if let Some(content_type) = &options.content_type {
+            request = request.content_type(content_type);
+        }
+        for (name, value) in &options.metadata {
+            request = request.metadata(name, value);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|_| ApiError::External("R2 create_multipart_upload failed".to_string()))?;
+        response.upload_id().map(str::to_string).ok_or_else(|| {
+            ApiError::External("R2 multipart upload returned no upload id".to_string())
+        })
+    }
+
+    async fn presign_upload_part(
+        &self,
+        key: &str,
+        upload_id: &str,
+        part_number: u32,
+        expires_in: Duration,
+    ) -> ApiResult<PresignedOperation> {
+        let presigning_config = PresigningConfig::expires_in(expires_in).map_err(|error| {
+            ApiError::BadRequest(format!("Invalid upload part URL expiry: {error}"))
+        })?;
+        let presigned = self
+            .client
+            .upload_part()
+            .bucket(&self.bucket)
+            .key(key)
+            .upload_id(upload_id)
+            .part_number(part_number as i32)
+            .presigned(presigning_config)
+            .await
+            .map_err(|_| ApiError::External("R2 presign UploadPart failed".to_string()))?;
+        Ok(PresignedOperation {
+            method: presigned.method().to_string(),
+            url: presigned.uri().to_string(),
+            headers: headers_to_map(presigned.headers()),
+        })
+    }
+
+    async fn list_multipart_parts(
+        &self,
+        key: &str,
+        upload_id: &str,
+    ) -> ApiResult<Vec<MultipartPart>> {
+        let mut marker = None;
+        let mut parts = Vec::new();
+        loop {
+            let mut request = self
+                .client
+                .list_parts()
+                .bucket(&self.bucket)
+                .key(key)
+                .upload_id(upload_id)
+                .max_parts(1000);
+            if let Some(value) = marker.take() {
+                request = request.part_number_marker(value);
+            }
+            let response = request
+                .send()
+                .await
+                .map_err(|_| ApiError::External("R2 list_parts failed".to_string()))?;
+            for part in response.parts() {
+                let part_number = part.part_number().unwrap_or_default();
+                if part_number <= 0 {
+                    continue;
+                }
+                parts.push(MultipartPart {
+                    part_number: part_number as u32,
+                    etag: part.e_tag().map(clean_etag).unwrap_or_default(),
+                    size: part.size().unwrap_or_default().max(0) as u64,
+                });
+            }
+            marker = response.next_part_number_marker().map(str::to_string);
+            if marker.is_none() {
+                break;
+            }
+        }
+        Ok(parts)
+    }
+
+    async fn complete_multipart_upload(
+        &self,
+        key: &str,
+        upload_id: &str,
+        parts: Vec<CompletedMultipartPart>,
+    ) -> ApiResult<StoredObject> {
+        let completed_parts = parts
+            .into_iter()
+            .map(|part| {
+                CompletedPart::builder()
+                    .part_number(part.part_number as i32)
+                    .e_tag(clean_etag(&part.etag))
+                    .build()
+            })
+            .collect();
+        let completed_upload = CompletedMultipartUpload::builder()
+            .set_parts(Some(completed_parts))
+            .build();
+        self.client
+            .complete_multipart_upload()
+            .bucket(&self.bucket)
+            .key(key)
+            .upload_id(upload_id)
+            .multipart_upload(completed_upload)
+            .send()
+            .await
+            .map_err(|_| ApiError::External("R2 complete_multipart_upload failed".to_string()))?;
+        self.head(key).await
+    }
+
+    async fn abort_multipart_upload(&self, key: &str, upload_id: &str) -> ApiResult<()> {
+        self.client
+            .abort_multipart_upload()
+            .bucket(&self.bucket)
+            .key(key)
+            .upload_id(upload_id)
+            .send()
+            .await
+            .map_err(|_| ApiError::External("R2 abort_multipart_upload failed".to_string()))?;
+        Ok(())
     }
 
     async fn presign_get(&self, key: &str, expires_in: Duration) -> ApiResult<PresignedOperation> {

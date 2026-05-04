@@ -63,7 +63,7 @@ impl CaseBuilderService {
             pages: 1,
             bytes,
             file_hash: hash,
-            uploaded_at: now,
+            uploaded_at: now.clone(),
             source: "user_upload".to_string(),
             confidentiality: request
                 .confidentiality
@@ -192,7 +192,7 @@ impl CaseBuilderService {
             pages: 1,
             bytes: stored_object.content_length,
             file_hash: Some(hash),
-            uploaded_at: now,
+            uploaded_at: now.clone(),
             source: "user_upload".to_string(),
             confidentiality: request
                 .confidentiality
@@ -256,7 +256,7 @@ impl CaseBuilderService {
                 "Upload intent bytes must be greater than 0".to_string(),
             ));
         }
-        self.ensure_upload_size(request.bytes)?;
+        self.ensure_direct_upload_size(request.bytes)?;
         validate_mime_type(request.mime_type.as_deref())?;
 
         let normalized_hash = match request.sha256.as_deref() {
@@ -279,15 +279,40 @@ impl CaseBuilderService {
         let library_path =
             library_path_from_upload(relative_path.as_deref(), &folder, &request.filename)?;
         let object_key = build_document_object_key(&document_id, &request.filename);
-        let expires_at = timestamp_after(self.upload_ttl_seconds);
-        let presigned = self
-            .object_store
-            .presign_put(
-                &object_key,
-                put_options(request.mime_type.clone(), normalized_hash.clone()),
-                Duration::from_secs(self.upload_ttl_seconds),
-            )
-            .await?;
+        let multipart = request.bytes > self.single_upload_max_bytes;
+        let mode = if multipart { "multipart" } else { "single" }.to_string();
+        let expires_at = if multipart {
+            timestamp_after(self.multipart_session_ttl_seconds)
+        } else {
+            timestamp_after(self.upload_ttl_seconds)
+        };
+        let upload_options = put_options(request.mime_type.clone(), normalized_hash.clone());
+        let mut method = String::new();
+        let mut url = String::new();
+        let mut headers = BTreeMap::new();
+        let mut provider_upload_id = None;
+        let mut parts = Vec::new();
+        let part_size_bytes = multipart.then_some(self.multipart_part_bytes);
+        let total_parts = multipart.then_some(self.multipart_total_parts(request.bytes));
+        if multipart {
+            let upload_id_value = self
+                .object_store
+                .create_multipart_upload(&object_key, upload_options)
+                .await?;
+            provider_upload_id = Some(upload_id_value);
+        } else {
+            let presigned = self
+                .object_store
+                .presign_put(
+                    &object_key,
+                    upload_options,
+                    Duration::from_secs(self.upload_ttl_seconds),
+                )
+                .await?;
+            method = presigned.method;
+            url = presigned.url;
+            headers = presigned.headers;
+        }
 
         let document = CaseDocument {
             id: document_id.clone(),
@@ -302,7 +327,7 @@ impl CaseBuilderService {
             pages: 1,
             bytes: request.bytes,
             file_hash: normalized_hash,
-            uploaded_at: now,
+            uploaded_at: now.clone(),
             source: "user_upload".to_string(),
             confidentiality: request
                 .confidentiality
@@ -331,7 +356,7 @@ impl CaseBuilderService {
             storage_provider: self.object_store.provider().to_string(),
             storage_status: "pending".to_string(),
             storage_bucket: self.object_store.bucket().map(str::to_string),
-            storage_key: Some(object_key),
+            storage_key: Some(object_key.clone()),
             content_etag: None,
             upload_expires_at: Some(expires_at.clone()),
             deleted_at: None,
@@ -349,16 +374,75 @@ impl CaseBuilderService {
         let document = self
             .merge_node(matter_id, document_spec(), &document.document_id, &document)
             .await?;
+        let session = CaseUploadSession {
+            upload_session_id: upload_session_id_for_upload(&upload_id),
+            id: upload_session_id_for_upload(&upload_id),
+            matter_id: matter_id.to_string(),
+            document_id: document.document_id.clone(),
+            upload_id: upload_id.clone(),
+            mode: mode.clone(),
+            storage_key: object_key,
+            provider_upload_id,
+            bytes: request.bytes,
+            part_size_bytes,
+            total_parts,
+            uploaded_parts: Vec::new(),
+            status: "pending".to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+            expires_at: expires_at.clone(),
+        };
+        let session = self
+            .merge_node(
+                matter_id,
+                upload_session_spec(),
+                &session.upload_session_id,
+                &session,
+            )
+            .await?;
+        if session.mode == "multipart" {
+            let total = session.total_parts.unwrap_or(0);
+            let initial_parts = (1..=total.min(3)).collect::<Vec<_>>();
+            parts = self
+                .presign_upload_parts_for_session(matter_id, &session, initial_parts)
+                .await?
+                .parts;
+        }
 
         Ok(FileUploadResponse {
             upload_id,
             document_id,
-            method: presigned.method,
-            url: presigned.url,
+            mode,
+            method,
+            url,
             expires_at,
-            headers: presigned.headers,
+            headers,
+            part_size_bytes,
+            total_parts,
+            parts,
             document,
         })
+    }
+
+    pub async fn create_file_upload_parts(
+        &self,
+        matter_id: &str,
+        upload_id: &str,
+        request: FileUploadPartRequest,
+    ) -> ApiResult<FileUploadPartsResponse> {
+        let session = self.get_upload_session(matter_id, upload_id).await?;
+        self.presign_upload_parts_for_session(matter_id, &session, request.part_numbers)
+            .await
+    }
+
+    pub async fn list_file_upload_parts(
+        &self,
+        matter_id: &str,
+        upload_id: &str,
+    ) -> ApiResult<FileUploadPartsResponse> {
+        let session = self.get_upload_session(matter_id, upload_id).await?;
+        self.presign_upload_parts_for_session(matter_id, &session, Vec::new())
+            .await
     }
 
     pub async fn complete_file_upload(
@@ -388,7 +472,7 @@ impl CaseBuilderService {
             }
         }
         if let Some(bytes) = request.bytes {
-            self.ensure_upload_size(bytes)?;
+            self.ensure_direct_upload_size(bytes)?;
             if bytes != document.bytes {
                 return Err(ApiError::BadRequest(
                     "Completed upload size does not match intent".to_string(),
@@ -415,7 +499,73 @@ impl CaseBuilderService {
             .storage_key
             .clone()
             .ok_or_else(|| ApiError::BadRequest("Document has no storage key".to_string()))?;
-        let object = self.object_store.head(&key).await?;
+        let mut session = self.get_upload_session(matter_id, upload_id).await.ok();
+        let object = if session
+            .as_ref()
+            .is_some_and(|upload| upload.mode == "multipart")
+        {
+            let upload = session.as_mut().ok_or_else(|| {
+                ApiError::BadRequest("Missing multipart upload session".to_string())
+            })?;
+            if parse_timestamp(&upload.expires_at).is_some_and(|expires| expires < now_secs()) {
+                document.storage_status = "failed".to_string();
+                document.summary =
+                    "Multipart upload session expired before completion.".to_string();
+                upload.status = "failed".to_string();
+                upload.updated_at = now_string();
+                self.merge_node(matter_id, document_spec(), &document.document_id, &document)
+                    .await?;
+                self.merge_node(
+                    matter_id,
+                    upload_session_spec(),
+                    &upload.upload_session_id,
+                    upload,
+                )
+                .await?;
+                return Err(ApiError::BadRequest(
+                    "Multipart upload session expired".to_string(),
+                ));
+            }
+            let completed_parts =
+                normalize_completed_upload_parts(&request.parts, upload.total_parts.unwrap_or(0))?;
+            let provider_upload_id = upload.provider_upload_id.as_deref().ok_or_else(|| {
+                ApiError::BadRequest(
+                    "Multipart upload session has no provider upload id".to_string(),
+                )
+            })?;
+            let object = self
+                .object_store
+                .complete_multipart_upload(
+                    &key,
+                    provider_upload_id,
+                    completed_parts
+                        .iter()
+                        .map(|part| CompletedMultipartPart {
+                            part_number: part.part_number,
+                            etag: part.etag.clone(),
+                        })
+                        .collect(),
+                )
+                .await?;
+            upload.uploaded_parts = completed_parts;
+            upload.status = "completed".to_string();
+            upload.updated_at = now_string();
+            self.merge_node(
+                matter_id,
+                upload_session_spec(),
+                &upload.upload_session_id,
+                upload,
+            )
+            .await?;
+            object
+        } else {
+            if !request.parts.is_empty() {
+                return Err(ApiError::BadRequest(
+                    "Multipart parts were provided for a single-part upload".to_string(),
+                ));
+            }
+            self.object_store.head(&key).await?
+        };
         if object.content_length != document.bytes {
             document.storage_status = "failed".to_string();
             document.summary = "Uploaded object size did not match the upload intent.".to_string();
@@ -473,6 +623,126 @@ impl CaseBuilderService {
         self.persist_document_provenance(matter_id, &provenance)
             .await?;
         Ok(document)
+    }
+
+    pub async fn abort_file_upload(
+        &self,
+        matter_id: &str,
+        upload_id: &str,
+    ) -> ApiResult<CaseDocument> {
+        let mut session = self.get_upload_session(matter_id, upload_id).await?;
+        let mut document = self.get_document(matter_id, &session.document_id).await?;
+        if session.mode == "multipart" {
+            if let Some(provider_upload_id) = session.provider_upload_id.as_deref() {
+                self.object_store
+                    .abort_multipart_upload(&session.storage_key, provider_upload_id)
+                    .await?;
+            }
+        }
+        session.status = "canceled".to_string();
+        session.updated_at = now_string();
+        document.storage_status = "canceled".to_string();
+        document.processing_status = "view_only".to_string();
+        document.summary = "Upload canceled before storage completed.".to_string();
+        document.upload_expires_at = None;
+        self.merge_node(
+            matter_id,
+            upload_session_spec(),
+            &session.upload_session_id,
+            &session,
+        )
+        .await?;
+        self.merge_node(matter_id, document_spec(), &document.document_id, &document)
+            .await
+    }
+
+    async fn get_upload_session(
+        &self,
+        matter_id: &str,
+        upload_id: &str,
+    ) -> ApiResult<CaseUploadSession> {
+        self.get_node::<CaseUploadSession>(
+            matter_id,
+            upload_session_spec(),
+            &upload_session_id_for_upload(upload_id),
+        )
+        .await
+    }
+
+    async fn presign_upload_parts_for_session(
+        &self,
+        matter_id: &str,
+        session: &CaseUploadSession,
+        part_numbers: Vec<u32>,
+    ) -> ApiResult<FileUploadPartsResponse> {
+        if session.mode != "multipart" {
+            return Err(ApiError::BadRequest(
+                "Upload session is not multipart".to_string(),
+            ));
+        }
+        if session.status != "pending" {
+            return Err(ApiError::BadRequest(format!(
+                "Upload session is {}",
+                session.status
+            )));
+        }
+        if parse_timestamp(&session.expires_at).is_some_and(|expires| expires < now_secs()) {
+            return Err(ApiError::BadRequest(
+                "Multipart upload session expired".to_string(),
+            ));
+        }
+        let total_parts = session.total_parts.unwrap_or(0);
+        let provider_upload_id = session.provider_upload_id.as_deref().ok_or_else(|| {
+            ApiError::BadRequest("Multipart upload session has no provider upload id".to_string())
+        })?;
+        let uploaded_parts = self
+            .object_store
+            .list_multipart_parts(&session.storage_key, provider_upload_id)
+            .await
+            .map(completed_upload_parts_from_store)?;
+        let mut session = session.clone();
+        session.uploaded_parts = uploaded_parts.clone();
+        session.updated_at = now_string();
+        self.merge_node(
+            matter_id,
+            upload_session_spec(),
+            &session.upload_session_id,
+            &session,
+        )
+        .await?;
+
+        let part_expires_at = timestamp_after(self.upload_ttl_seconds);
+        let mut parts = Vec::new();
+        for part_number in part_numbers {
+            validate_upload_part_number(part_number, total_parts)?;
+            let presigned = self
+                .object_store
+                .presign_upload_part(
+                    &session.storage_key,
+                    provider_upload_id,
+                    part_number,
+                    Duration::from_secs(self.upload_ttl_seconds),
+                )
+                .await?;
+            parts.push(FileUploadPartIntent {
+                part_number,
+                method: presigned.method,
+                url: presigned.url,
+                expires_at: part_expires_at.clone(),
+                headers: presigned.headers,
+            });
+        }
+
+        Ok(FileUploadPartsResponse {
+            upload_id: session.upload_id,
+            document_id: session.document_id,
+            mode: session.mode,
+            part_size_bytes: session.part_size_bytes,
+            total_parts: session.total_parts,
+            expires_at: session.expires_at,
+            parts,
+            uploaded_parts,
+        })
     }
 
     pub async fn list_documents(&self, matter_id: &str) -> ApiResult<Vec<CaseDocument>> {
@@ -2631,6 +2901,68 @@ fn build_matter_index_summary(
     }
 }
 
+fn upload_session_id_for_upload(upload_id: &str) -> String {
+    format!("upload-session:{}", sanitize_path_segment(upload_id))
+}
+
+fn completed_upload_parts_from_store(parts: Vec<MultipartPart>) -> Vec<CompletedUploadPart> {
+    let mut parts = parts
+        .into_iter()
+        .filter(|part| part.part_number > 0 && !part.etag.trim().is_empty())
+        .map(|part| CompletedUploadPart {
+            part_number: part.part_number,
+            etag: clean_etag(&part.etag),
+        })
+        .collect::<Vec<_>>();
+    parts.sort_by_key(|part| part.part_number);
+    parts
+}
+
+fn validate_upload_part_number(part_number: u32, total_parts: u32) -> ApiResult<()> {
+    if part_number == 0 || part_number > total_parts {
+        return Err(ApiError::BadRequest(format!(
+            "Multipart part number {part_number} is outside 1..={total_parts}"
+        )));
+    }
+    Ok(())
+}
+
+fn normalize_completed_upload_parts(
+    parts: &[CompletedUploadPart],
+    total_parts: u32,
+) -> ApiResult<Vec<CompletedUploadPart>> {
+    if total_parts == 0 {
+        return Err(ApiError::BadRequest(
+            "Multipart upload has no expected parts".to_string(),
+        ));
+    }
+    if parts.len() != total_parts as usize {
+        return Err(ApiError::BadRequest(format!(
+            "Multipart upload requires {total_parts} completed parts"
+        )));
+    }
+    let mut normalized = Vec::with_capacity(parts.len());
+    for (index, part) in parts.iter().enumerate() {
+        let expected = (index + 1) as u32;
+        if part.part_number != expected {
+            return Err(ApiError::BadRequest(format!(
+                "Multipart parts must be ordered and contiguous; expected part {expected}"
+            )));
+        }
+        if part.etag.trim().is_empty() {
+            return Err(ApiError::BadRequest(format!(
+                "Multipart part {} is missing an ETag",
+                part.part_number
+            )));
+        }
+        normalized.push(CompletedUploadPart {
+            part_number: part.part_number,
+            etag: clean_etag(&part.etag),
+        });
+    }
+    Ok(normalized)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2646,6 +2978,29 @@ mod tests {
         assert!(normalize_upload_relative_path(Some("../secret.txt".to_string())).is_err());
         assert!(normalize_upload_relative_path(Some("/tmp/secret.txt".to_string())).is_err());
         assert!(normalize_upload_relative_path(Some("C:/secret.txt".to_string())).is_err());
+    }
+
+    #[test]
+    fn completed_multipart_parts_must_be_ordered_and_complete() {
+        let parts = vec![
+            CompletedUploadPart {
+                part_number: 1,
+                etag: "\"one\"".to_string(),
+            },
+            CompletedUploadPart {
+                part_number: 2,
+                etag: "two".to_string(),
+            },
+        ];
+
+        let normalized = normalize_completed_upload_parts(&parts, 2).unwrap();
+
+        assert_eq!(normalized[0].etag, "one");
+        assert!(normalize_completed_upload_parts(&parts[..1], 2).is_err());
+        assert!(
+            normalize_completed_upload_parts(&parts.iter().rev().cloned().collect::<Vec<_>>(), 2)
+                .is_err()
+        );
     }
 
     #[test]

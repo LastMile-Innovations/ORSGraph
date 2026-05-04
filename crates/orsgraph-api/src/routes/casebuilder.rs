@@ -78,6 +78,14 @@ pub fn routes() -> Router<AppState> {
             post(create_file_upload),
         )
         .route(
+            "/matters/{matter_id}/files/uploads/{upload_id}",
+            delete(abort_file_upload),
+        )
+        .route(
+            "/matters/{matter_id}/files/uploads/{upload_id}/parts",
+            get(list_file_upload_parts).post(create_file_upload_parts),
+        )
+        .route(
             "/matters/{matter_id}/files/uploads/{upload_id}/complete",
             post(complete_file_upload),
         )
@@ -739,6 +747,31 @@ async fn create_file_upload(
     ))
 }
 
+async fn create_file_upload_parts(
+    State(state): State<AppState>,
+    Path((matter_id, upload_id)): Path<(String, String)>,
+    Json(request): Json<FileUploadPartRequest>,
+) -> ApiResult<Json<FileUploadPartsResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .create_file_upload_parts(&matter_id, &upload_id, request)
+            .await?,
+    ))
+}
+
+async fn list_file_upload_parts(
+    State(state): State<AppState>,
+    Path((matter_id, upload_id)): Path<(String, String)>,
+) -> ApiResult<Json<FileUploadPartsResponse>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .list_file_upload_parts(&matter_id, &upload_id)
+            .await?,
+    ))
+}
+
 async fn complete_file_upload(
     State(state): State<AppState>,
     Path((matter_id, upload_id)): Path<(String, String)>,
@@ -748,6 +781,18 @@ async fn complete_file_upload(
         state
             .casebuilder_service
             .complete_file_upload(&matter_id, &upload_id, request)
+            .await?,
+    ))
+}
+
+async fn abort_file_upload(
+    State(state): State<AppState>,
+    Path((matter_id, upload_id)): Path<(String, String)>,
+) -> ApiResult<Json<CaseDocument>> {
+    Ok(Json(
+        state
+            .casebuilder_service
+            .abort_file_upload(&matter_id, &upload_id)
             .await?,
     ))
 }

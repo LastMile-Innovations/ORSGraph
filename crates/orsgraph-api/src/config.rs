@@ -45,6 +45,16 @@ pub struct ApiConfig {
     pub r2_download_ttl_seconds: u64,
     #[serde(default = "default_r2_max_upload_bytes")]
     pub r2_max_upload_bytes: u64,
+    #[serde(default = "default_casebuilder_api_upload_max_bytes")]
+    pub casebuilder_api_upload_max_bytes: u64,
+    #[serde(default = "default_casebuilder_direct_upload_max_bytes")]
+    pub casebuilder_direct_upload_max_bytes: u64,
+    #[serde(default = "default_casebuilder_single_upload_max_bytes")]
+    pub casebuilder_single_upload_max_bytes: u64,
+    #[serde(default = "default_casebuilder_multipart_part_bytes")]
+    pub casebuilder_multipart_part_bytes: u64,
+    #[serde(default = "default_casebuilder_multipart_session_ttl_seconds")]
+    pub casebuilder_multipart_session_ttl_seconds: u64,
     #[serde(default = "default_casebuilder_ast_entity_inline_bytes")]
     pub casebuilder_ast_entity_inline_bytes: u64,
     #[serde(default = "default_casebuilder_ast_snapshot_inline_bytes")]
@@ -175,6 +185,26 @@ fn default_r2_download_ttl_seconds() -> u64 {
 
 fn default_r2_max_upload_bytes() -> u64 {
     50 * 1024 * 1024
+}
+
+fn default_casebuilder_api_upload_max_bytes() -> u64 {
+    default_r2_max_upload_bytes()
+}
+
+fn default_casebuilder_direct_upload_max_bytes() -> u64 {
+    default_r2_max_upload_bytes()
+}
+
+fn default_casebuilder_single_upload_max_bytes() -> u64 {
+    100 * 1024 * 1024
+}
+
+fn default_casebuilder_multipart_part_bytes() -> u64 {
+    64 * 1024 * 1024
+}
+
+fn default_casebuilder_multipart_session_ttl_seconds() -> u64 {
+    604_800
 }
 
 fn default_casebuilder_ast_entity_inline_bytes() -> u64 {
@@ -408,8 +438,26 @@ impl ApiConfig {
         if let Some(value) = read_u64("ORS_R2_DOWNLOAD_TTL_SECONDS") {
             self.r2_download_ttl_seconds = value;
         }
-        if let Some(value) = read_u64("ORS_R2_MAX_UPLOAD_BYTES") {
+        let legacy_upload_max = read_u64("ORS_R2_MAX_UPLOAD_BYTES");
+        if let Some(value) = legacy_upload_max {
             self.r2_max_upload_bytes = value;
+            self.casebuilder_api_upload_max_bytes = value;
+            self.casebuilder_direct_upload_max_bytes = value;
+        }
+        if let Some(value) = read_u64("ORS_CASEBUILDER_API_UPLOAD_MAX_BYTES") {
+            self.casebuilder_api_upload_max_bytes = value;
+        }
+        if let Some(value) = read_u64("ORS_CASEBUILDER_DIRECT_UPLOAD_MAX_BYTES") {
+            self.casebuilder_direct_upload_max_bytes = value;
+        }
+        if let Some(value) = read_u64("ORS_CASEBUILDER_SINGLE_UPLOAD_MAX_BYTES") {
+            self.casebuilder_single_upload_max_bytes = value;
+        }
+        if let Some(value) = read_u64("ORS_CASEBUILDER_MULTIPART_PART_BYTES") {
+            self.casebuilder_multipart_part_bytes = value;
+        }
+        if let Some(value) = read_u64("ORS_CASEBUILDER_MULTIPART_SESSION_TTL_SECONDS") {
+            self.casebuilder_multipart_session_ttl_seconds = value;
         }
         if let Some(value) = read_u64("ORS_CASEBUILDER_AST_ENTITY_INLINE_BYTES") {
             self.casebuilder_ast_entity_inline_bytes = value;
@@ -610,6 +658,47 @@ impl ApiConfig {
                 "ORS_R2_MAX_UPLOAD_BYTES must be greater than 0".to_string(),
             ));
         }
+        if self.casebuilder_api_upload_max_bytes == 0 {
+            return Err(ConfigError::Message(
+                "ORS_CASEBUILDER_API_UPLOAD_MAX_BYTES must be greater than 0".to_string(),
+            ));
+        }
+        if self.casebuilder_direct_upload_max_bytes == 0 {
+            return Err(ConfigError::Message(
+                "ORS_CASEBUILDER_DIRECT_UPLOAD_MAX_BYTES must be greater than 0".to_string(),
+            ));
+        }
+        if self.casebuilder_single_upload_max_bytes == 0 {
+            return Err(ConfigError::Message(
+                "ORS_CASEBUILDER_SINGLE_UPLOAD_MAX_BYTES must be greater than 0".to_string(),
+            ));
+        }
+        if self.casebuilder_multipart_part_bytes < 5 * 1024 * 1024
+            || self.casebuilder_multipart_part_bytes > 5 * 1024 * 1024 * 1024
+        {
+            return Err(ConfigError::Message(
+                "ORS_CASEBUILDER_MULTIPART_PART_BYTES must be between 5242880 and 5368709120"
+                    .to_string(),
+            ));
+        }
+        if self
+            .casebuilder_direct_upload_max_bytes
+            .div_ceil(self.casebuilder_multipart_part_bytes)
+            > 10_000
+        {
+            return Err(ConfigError::Message(
+                "ORS_CASEBUILDER_DIRECT_UPLOAD_MAX_BYTES requires more than 10000 multipart parts"
+                    .to_string(),
+            ));
+        }
+        if self.casebuilder_multipart_session_ttl_seconds == 0
+            || self.casebuilder_multipart_session_ttl_seconds > 604_800
+        {
+            return Err(ConfigError::Message(
+                "ORS_CASEBUILDER_MULTIPART_SESSION_TTL_SECONDS must be between 1 and 604800"
+                    .to_string(),
+            ));
+        }
         if self.casebuilder_ast_entity_inline_bytes == 0 {
             return Err(ConfigError::Message(
                 "ORS_CASEBUILDER_AST_ENTITY_INLINE_BYTES must be greater than 0".to_string(),
@@ -796,6 +885,9 @@ fn read_u16(name: &str) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::ApiConfig;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_config() -> ApiConfig {
         ApiConfig {
@@ -819,6 +911,11 @@ mod tests {
             r2_upload_ttl_seconds: 900,
             r2_download_ttl_seconds: 300,
             r2_max_upload_bytes: 10,
+            casebuilder_api_upload_max_bytes: 10,
+            casebuilder_direct_upload_max_bytes: 10,
+            casebuilder_single_upload_max_bytes: 100 * 1024 * 1024,
+            casebuilder_multipart_part_bytes: 64 * 1024 * 1024,
+            casebuilder_multipart_session_ttl_seconds: 604_800,
             casebuilder_ast_entity_inline_bytes: 64 * 1024,
             casebuilder_ast_snapshot_inline_bytes: 256 * 1024,
             casebuilder_ast_block_inline_bytes: 64 * 1024,
@@ -911,6 +1008,60 @@ mod tests {
             config.r2_endpoint.as_deref(),
             Some("https://account-id.r2.cloudflarestorage.com")
         );
+    }
+
+    #[test]
+    fn legacy_r2_upload_limit_applies_to_casebuilder_upload_limits() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("ORS_R2_MAX_UPLOAD_BYTES", "12345");
+        }
+        let mut config = test_config();
+        config.apply_explicit_env_overrides();
+        unsafe {
+            std::env::remove_var("ORS_R2_MAX_UPLOAD_BYTES");
+        }
+
+        assert_eq!(config.r2_max_upload_bytes, 12_345);
+        assert_eq!(config.casebuilder_api_upload_max_bytes, 12_345);
+        assert_eq!(config.casebuilder_direct_upload_max_bytes, 12_345);
+    }
+
+    #[test]
+    fn casebuilder_specific_upload_limits_override_legacy_limit() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("ORS_R2_MAX_UPLOAD_BYTES", "12345");
+            std::env::set_var("ORS_CASEBUILDER_API_UPLOAD_MAX_BYTES", "50");
+            std::env::set_var("ORS_CASEBUILDER_DIRECT_UPLOAD_MAX_BYTES", "200");
+            std::env::set_var("ORS_CASEBUILDER_SINGLE_UPLOAD_MAX_BYTES", "100");
+            std::env::set_var("ORS_CASEBUILDER_MULTIPART_PART_BYTES", "5242880");
+        }
+        let mut config = test_config();
+        config.apply_explicit_env_overrides();
+        unsafe {
+            std::env::remove_var("ORS_R2_MAX_UPLOAD_BYTES");
+            std::env::remove_var("ORS_CASEBUILDER_API_UPLOAD_MAX_BYTES");
+            std::env::remove_var("ORS_CASEBUILDER_DIRECT_UPLOAD_MAX_BYTES");
+            std::env::remove_var("ORS_CASEBUILDER_SINGLE_UPLOAD_MAX_BYTES");
+            std::env::remove_var("ORS_CASEBUILDER_MULTIPART_PART_BYTES");
+        }
+
+        assert_eq!(config.r2_max_upload_bytes, 12_345);
+        assert_eq!(config.casebuilder_api_upload_max_bytes, 50);
+        assert_eq!(config.casebuilder_direct_upload_max_bytes, 200);
+        assert_eq!(config.casebuilder_single_upload_max_bytes, 100);
+        assert_eq!(config.casebuilder_multipart_part_bytes, 5 * 1024 * 1024);
+    }
+
+    #[test]
+    fn multipart_part_size_must_respect_s3_limits() {
+        let mut config = test_config();
+        config.casebuilder_multipart_part_bytes = 1024;
+
+        let error = config.normalize_and_validate().unwrap_err().to_string();
+
+        assert!(error.contains("ORS_CASEBUILDER_MULTIPART_PART_BYTES"));
     }
 }
 
