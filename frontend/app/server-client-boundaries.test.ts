@@ -18,10 +18,6 @@ const appConventionFilenames = new Set([
   "global-error.tsx",
 ])
 
-const allowedClientNotFoundFiles = new Set([
-  "app/matters/[id]/documents/@modal/(.)[docId]/not-found.tsx",
-])
-
 const serverOnlyImportPatterns = [
   /from\s+["']next\/headers["']/,
   /from\s+["']next\/cache["']/,
@@ -40,7 +36,6 @@ describe("server/client component boundaries", () => {
       .map((file) => relative(frontendDir, file))
       .filter((file) => {
         if (file.endsWith("/error.tsx") || file === "app/global-error.tsx") return false
-        if (file.endsWith("/not-found.tsx")) return !allowedClientNotFoundFiles.has(file)
         return true
       })
 

@@ -6,6 +6,7 @@ These docs describe the live CaseBuilder product behavior and implementation con
 
 - [Markdown File Graph User Guide](markdown-file-graph-user-guide.md): User-facing guide for uploading Markdown files, opening the Markdown Graph panel, reviewing extracted entities/facts/timeline suggestions, using Markdown embedding search, and understanding `view_only` files.
 - [Markdown File Graph Internal Reference](markdown-file-graph-internal.md): Engineering reference for the Markdown-only AST/indexing pipeline, Voyage embeddings, Neo4j graph contract, provenance rules, API response fields, UI wiring, and verification commands.
+- [Upload Process and Storage](upload-process-storage.md): Diagrams for single and multipart direct uploads, bucket storage, upload sessions, resume/cancel behavior, and document processing states.
 
 ## Current Mode
 

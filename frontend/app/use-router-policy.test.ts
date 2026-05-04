@@ -18,10 +18,6 @@ const routeConventionFiles = new Set([
   "global-error.tsx",
   "not-found.tsx",
 ])
-const allowedClientRouteConventionFiles = new Set([
-  "app/matters/[id]/documents/@modal/(.)[docId]/not-found.tsx",
-])
-
 describe("useRouter() policy", () => {
   it("imports useRouter only from next/navigation", () => {
     const invalidImports = sourceFiles
@@ -56,7 +52,6 @@ describe("useRouter() policy", () => {
       .filter((file) => file.startsWith(appDir))
       .filter((file) => routeConventionFiles.has(basename(file)))
       .map((file) => relative(frontendDir, file))
-      .filter((file) => !allowedClientRouteConventionFiles.has(file))
 
     expect(routeConventionHookCalls).toEqual([])
   })

@@ -26,6 +26,14 @@ describe("route group policy", () => {
 
     expect(rootLayouts.map((file) => relative(appDir, file))).toEqual(["layout.tsx"])
   })
+
+  it("keeps CaseBuilder documents on full pages instead of intercepted modals", () => {
+    const documentModalRoutes = allFiles(appDir)
+      .map((file) => relative(appDir, file))
+      .filter((file) => file.includes("documents/@modal/"))
+
+    expect(documentModalRoutes).toEqual([])
+  })
 })
 
 function publicRouteFiles(dir: string): string[] {
@@ -43,6 +51,15 @@ function layoutFiles(dir: string): string[] {
     const stat = statSync(path)
     if (stat.isDirectory()) return layoutFiles(path)
     return entry === "layout.tsx" ? [path] : []
+  })
+}
+
+function allFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const path = join(dir, entry)
+    const stat = statSync(path)
+    if (stat.isDirectory()) return allFiles(path)
+    return [path]
   })
 }
 

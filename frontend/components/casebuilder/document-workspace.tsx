@@ -703,8 +703,8 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace, setting
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="flex min-h-0 flex-1 flex-col bg-background">
-        <header className="border-b bg-card px-4 py-3">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+        <header className="shrink-0 border-b bg-card px-4 py-3">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Link href={matterHref(matter.id, "documents")} className="inline-flex items-center gap-1 hover:text-foreground">
               <ArrowLeft className="h-3.5 w-3.5" />
@@ -776,8 +776,8 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace, setting
           )}
         </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <main className="min-h-0 border-r bg-background">
+        <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(18rem,40vh)] overflow-hidden lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[minmax(0,1fr)] xl:grid-cols-[minmax(0,1fr)_24rem]">
+          <main className="min-h-0 overflow-hidden border-r bg-background">
             <DocumentCenterPane
               canEdit={canEdit}
               canExtract={canExtract}
@@ -818,8 +818,8 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace, setting
             />
           </main>
 
-          <aside className="min-h-0 bg-card">
-            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as WorkspaceTab)} className="flex h-full flex-col">
+          <aside className="min-h-0 overflow-hidden bg-card">
+            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as WorkspaceTab)} className="flex h-full min-h-0 flex-col">
               <div className="border-b px-3 pt-3">
                 <TabsList className={cn("grid w-full", isMedia ? "grid-cols-6" : "grid-cols-4")}>
                   <TabsTrigger value="links" aria-label="Links"><Link2 className="h-3.5 w-3.5" /></TabsTrigger>
@@ -1071,12 +1071,12 @@ function DocumentCenterPane({
   onSave: () => void
 }) {
   if (isPdf && contentUrl) {
-    return <iframe title={documentTitle} src={`${contentUrl}#view=FitH`} className="h-full min-h-[640px] w-full bg-background" />
+    return <iframe title={documentTitle} src={`${contentUrl}#view=FitH`} className="h-full min-h-0 w-full bg-background" />
   }
   if (isImage && contentUrl) {
     return (
-      <div className="flex h-full min-h-[640px] items-center justify-center bg-muted/30 p-6">
-        <div className="relative h-full min-h-[520px] w-full max-w-5xl">
+      <div className="flex h-full min-h-0 items-center justify-center overflow-hidden bg-muted/30 p-6">
+        <div className="relative h-full min-h-0 w-full max-w-5xl">
           <Image
             src={contentUrl}
             alt={documentTitle}
@@ -1121,7 +1121,7 @@ function DocumentCenterPane({
   }
   if (isMarkdown || (canEdit && textDraft)) {
     return (
-      <div className="flex h-full min-h-[640px] flex-col">
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
         <div className="flex items-center justify-between border-b px-4 py-2 text-xs text-muted-foreground">
           <span>{isMarkdown ? "Markdown source" : "Text source"}</span>
           <Badge variant={canEdit ? "default" : "outline"}>{canEdit ? "Editable" : "Read only"}</Badge>
@@ -1149,7 +1149,7 @@ function DocumentCenterPane({
     )
   }
   return (
-    <div className="flex h-full min-h-[640px] items-center justify-center p-8">
+    <div className="flex h-full min-h-0 items-center justify-center overflow-hidden p-8">
       <div className="max-w-md text-center text-sm text-muted-foreground">
         <FileText className="mx-auto mb-3 h-10 w-10" />
         <div className="font-medium text-foreground">Stored source</div>
@@ -1236,8 +1236,8 @@ function MediaTranscriptPane({
   }
 
   return (
-    <div className="grid h-full min-h-[640px] grid-rows-[auto_minmax(0,1fr)] bg-background">
-      <div className="space-y-3 border-b bg-muted/30 p-4">
+    <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-background">
+      <div className="space-y-3 overflow-y-auto border-b bg-muted/30 p-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
           <div className="min-w-0 flex-1">
             {isAudio ? (
