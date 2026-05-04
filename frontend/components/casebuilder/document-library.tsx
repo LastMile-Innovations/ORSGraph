@@ -408,9 +408,10 @@ export function DocumentLibrary({ matter, documents }: Props) {
       setActionMessage(result.error || "Document update failed.")
       return
     }
+    const updatedDocument = result.data
     setEditingDocument(null)
     setActionMessage("Document metadata updated.")
-    setExpandedPaths((current) => expandPath(current, documentLibraryPath(result.data)))
+    setExpandedPaths((current) => expandPath(current, documentLibraryPath(updatedDocument)))
     router.refresh()
   }
 
@@ -1612,7 +1613,7 @@ function DocumentEditDialog({
 }) {
   const [title, setTitle] = useState(document.title || document.filename)
   const [libraryPath, setLibraryPath] = useState(documentLibraryPath(document))
-  const [documentType, setDocumentType] = useState(document.document_type)
+  const [documentType, setDocumentType] = useState<DocumentType>(document.document_type)
   const [confidentiality, setConfidentiality] = useState(document.confidentiality || "private")
   const [isExhibit, setIsExhibit] = useState(document.is_exhibit)
   const [exhibitLabel, setExhibitLabel] = useState(document.exhibit_label || "")
@@ -1638,7 +1639,7 @@ function DocumentEditDialog({
           </Field>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="type">
-              <select value={documentType} onChange={(event) => setDocumentType(event.target.value)} className="h-9 rounded border border-border bg-background px-2 text-sm">
+              <select value={documentType} onChange={(event) => setDocumentType(event.target.value as DocumentType)} className="h-9 rounded border border-border bg-background px-2 text-sm">
                 {Object.entries(TYPE_LABEL).map(([value, label]) => (
                   <option key={value} value={value}>{label}</option>
                 ))}

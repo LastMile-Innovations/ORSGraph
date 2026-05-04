@@ -16,7 +16,8 @@ impl CaseBuilderService {
             .folder
             .or_else(|| folder_from_relative_path(relative_path.as_deref()))
             .unwrap_or_else(|| "Uploads".to_string());
-        let library_path = library_path_from_upload(relative_path.as_deref(), &folder, &request.filename)?;
+        let library_path =
+            library_path_from_upload(relative_path.as_deref(), &folder, &request.filename)?;
         let bytes = request
             .text
             .as_ref()
@@ -139,7 +140,8 @@ impl CaseBuilderService {
             .folder
             .or_else(|| folder_from_relative_path(relative_path.as_deref()))
             .unwrap_or_else(|| "Uploads".to_string());
-        let library_path = library_path_from_upload(relative_path.as_deref(), &folder, &request.filename)?;
+        let library_path =
+            library_path_from_upload(relative_path.as_deref(), &folder, &request.filename)?;
         let object_key = build_document_object_key(&document_id, &request.filename);
         let hash = sha256_hex(&request.bytes);
         let stored_object = self
@@ -250,7 +252,8 @@ impl CaseBuilderService {
             .folder
             .or_else(|| folder_from_relative_path(relative_path.as_deref()))
             .unwrap_or_else(|| "Uploads".to_string());
-        let library_path = library_path_from_upload(relative_path.as_deref(), &folder, &request.filename)?;
+        let library_path =
+            library_path_from_upload(relative_path.as_deref(), &folder, &request.filename)?;
         let object_key = build_document_object_key(&document_id, &request.filename);
         let expires_at = timestamp_after(self.upload_ttl_seconds);
         let presigned = self
@@ -466,8 +469,8 @@ impl CaseBuilderService {
                 .iter()
                 .filter(|document| {
                     document.archived_at.is_none()
-                        &&
-                    document_can_attempt_index(document) && document_needs_index(document)
+                        && document_can_attempt_index(document)
+                        && document_needs_index(document)
                 })
                 .take(limit)
                 .map(|document| document.document_id.clone())
@@ -608,7 +611,8 @@ impl CaseBuilderService {
             document.confidentiality = confidentiality;
         }
         if let Some(library_path) = request.library_path {
-            let normalized = normalize_document_library_path(Some(library_path), &document.filename)?;
+            let normalized =
+                normalize_document_library_path(Some(library_path), &document.filename)?;
             document.folder = folder_from_library_path(&normalized);
             document.library_path = Some(normalized);
         }
@@ -2070,8 +2074,10 @@ mod tests {
             library_path_from_upload(Some("rent.txt"), "Uploads", "rent.txt").unwrap(),
             "Uploads/rent.txt"
         );
-        assert!(normalize_document_library_path(Some("../secret.txt".to_string()), "secret.txt")
-            .is_err());
+        assert!(
+            normalize_document_library_path(Some("../secret.txt".to_string()), "secret.txt")
+                .is_err()
+        );
     }
 
     #[test]
