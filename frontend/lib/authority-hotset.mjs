@@ -2,6 +2,8 @@ import { createHash } from "node:crypto"
 
 const IGNORED_QUERY_KEYS = new Set(["_", "t", "ts", "cache_bust", "cacheBust"])
 const PRIVATE_PREFIXES = new Set(["admin", "api", "ask", "auth", "casebuilder", "matters", "qc", "sidebar"])
+const MAX_CACHE_TAG_LENGTH = 256
+const MAX_CACHE_TAGS = 128
 const HOTSET_EXACT_PATHS = new Set([
   "analytics/home",
   "featured-statutes",
@@ -106,7 +108,14 @@ export function authorityCacheControl(cacheSeconds, swrSeconds, cacheable = true
 
 export function authorityCacheTags(releaseId, keys = []) {
   const release = releaseId?.trim() || "release:unversioned"
-  return [`authority:${release}`, ...keys.filter(Boolean)]
+  const releaseTag = boundedCacheTag(`authority:${release}`)
+  const tags = [
+    releaseTag,
+    ...keys
+      .filter(Boolean)
+      .map((key) => boundedCacheTag(`${releaseTag}:${String(key).trim()}`)),
+  ]
+  return [...new Set(tags)].slice(0, MAX_CACHE_TAGS)
 }
 
 export function joinUrlPath(baseUrl, path) {
@@ -115,6 +124,13 @@ export function joinUrlPath(baseUrl, path) {
 
 function shortHash(value) {
   return createHash("sha256").update(value).digest("hex").slice(0, 16)
+}
+
+function boundedCacheTag(value) {
+  const normalized = String(value).replace(/\s+/g, " ").trim()
+  if (normalized.length <= MAX_CACHE_TAG_LENGTH) return normalized
+  const hash = shortHash(normalized)
+  return `${normalized.slice(0, MAX_CACHE_TAG_LENGTH - hash.length - 1)}:${hash}`
 }
 
 function positiveNumber(value, fallback) {

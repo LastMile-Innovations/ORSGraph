@@ -288,6 +288,7 @@ export type ProcessingStatus =
   | "unsupported"
   | "ocr_required"
   | "transcription_deferred"
+  | "view_only"
 export type StorageStatus = "pending" | "stored" | "metadata_only" | "failed" | "deleted" | string
 
 export interface ObjectBlob {

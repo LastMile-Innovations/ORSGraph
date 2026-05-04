@@ -733,3 +733,145 @@ pub struct AskRetrievedChunk {
     pub score: f32,
     pub preview: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_statute_page_serialization_omits_qc_payload() {
+        let response = StatutePageResponse {
+            identity: StatuteIdentity {
+                canonical_id: "or:ors:3.130".to_string(),
+                citation: "ORS 3.130".to_string(),
+                title: Some("Powers of court".to_string()),
+                chapter: "3".to_string(),
+                status: "active".to_string(),
+            },
+            current_version: StatuteVersion {
+                version_id: "v1".to_string(),
+                effective_date: "2025-01-01".to_string(),
+                end_date: None,
+                is_current: true,
+                text: "Text".to_string(),
+            },
+            source_document: SourceDocument {
+                source_id: "src".to_string(),
+                url: "https://example.test".to_string(),
+                edition_year: 2025,
+            },
+            provision_count: 0,
+            citation_counts: CitationCounts {
+                outbound: 0,
+                inbound: 0,
+            },
+            semantic_counts: SemanticCounts {
+                obligations: 0,
+                exceptions: 0,
+                deadlines: 0,
+                penalties: 0,
+                definitions: 0,
+            },
+            source_notes: vec!["source note".to_string()],
+            provisions: Vec::new(),
+            qc: StatutePageQcSummary {
+                status: "warning".to_string(),
+                passed_checks: 1,
+                total_checks: 2,
+                notes: vec![QCNoteItem {
+                    note_id: "note".to_string(),
+                    level: "warning".to_string(),
+                    category: "source".to_string(),
+                    message: "hidden".to_string(),
+                    related_id: Some("or:ors:3.130".to_string()),
+                }],
+            },
+        };
+
+        let value = serde_json::to_value(response).expect("serialize statute page");
+
+        assert!(value.get("qc").is_none());
+    }
+
+    #[test]
+    fn public_provision_and_graph_serialization_omit_qc_fields() {
+        let provision_response = ProvisionDetailResponse {
+            parent_statute: StatuteIndexItem {
+                canonical_id: "or:ors:3.130".to_string(),
+                citation: "ORS 3.130".to_string(),
+                title: None,
+                chapter: "3".to_string(),
+                status: "active".to_string(),
+                edition_year: 2025,
+            },
+            provision: ProvisionDetail {
+                provision_id: "prov".to_string(),
+                display_citation: "ORS 3.130(1)".to_string(),
+                provision_type: "subsection".to_string(),
+                parent_id: None,
+                text: "Text".to_string(),
+                text_preview: "Text".to_string(),
+                signals: Vec::new(),
+                cites_count: 0,
+                cited_by_count: 0,
+                chunk_count: 0,
+                status: "active".to_string(),
+            },
+            ancestors: Vec::new(),
+            children: Vec::new(),
+            siblings: Vec::new(),
+            chunks: Vec::new(),
+            outbound_citations: Vec::new(),
+            inbound_citations: Vec::new(),
+            definitions: Vec::new(),
+            exceptions: Vec::new(),
+            deadlines: Vec::new(),
+        };
+        let provision_value =
+            serde_json::to_value(provision_response).expect("serialize provision response");
+        assert!(provision_value.get("qc_notes").is_none());
+        assert!(provision_value["provision"].get("qc_status").is_none());
+
+        let graph_node = GraphNode {
+            id: "or:ors:3.130".to_string(),
+            label: "ORS 3.130".to_string(),
+            node_type: "LegalTextIdentity".to_string(),
+            labels: vec!["LegalTextIdentity".to_string()],
+            citation: Some("ORS 3.130".to_string()),
+            title: None,
+            chapter: Some("3".to_string()),
+            status: Some("active".to_string()),
+            text_snippet: None,
+            size: None,
+            score: None,
+            similarity_score: None,
+            confidence: None,
+            source_backed: Some(true),
+            metrics: None,
+            href: None,
+        };
+        let graph_value = serde_json::to_value(graph_node).expect("serialize graph node");
+        assert!(graph_value.get("qcWarnings").is_none());
+    }
+
+    #[test]
+    fn public_ask_serialization_omits_qc_notes() {
+        let response = AskAnswerResponse {
+            question: "What is ORS 3.130?".to_string(),
+            mode: "research".to_string(),
+            short_answer: "Test answer.".to_string(),
+            controlling_law: Vec::new(),
+            relevant_provisions: Vec::new(),
+            definitions: Vec::new(),
+            exceptions: Vec::new(),
+            deadlines: Vec::new(),
+            citations: Vec::new(),
+            caveats: Vec::new(),
+            retrieved_chunks: Vec::new(),
+        };
+
+        let value = serde_json::to_value(response).expect("serialize ask response");
+
+        assert!(value.get("qc_notes").is_none());
+    }
+}

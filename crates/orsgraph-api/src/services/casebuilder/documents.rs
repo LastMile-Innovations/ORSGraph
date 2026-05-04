@@ -12,6 +12,8 @@ impl CaseBuilderService {
         let title = title_from_filename(&request.filename);
         let relative_path = normalize_upload_relative_path(request.relative_path)?;
         let upload_batch_id = normalize_upload_batch_id(request.upload_batch_id)?;
+        let markdown_indexable =
+            filename_mime_is_markdown_indexable(&request.filename, request.mime_type.as_deref());
         let folder = request
             .folder
             .or_else(|| folder_from_relative_path(relative_path.as_deref()))
@@ -62,15 +64,21 @@ impl CaseBuilderService {
             confidentiality: request
                 .confidentiality
                 .unwrap_or_else(|| "private".to_string()),
-            processing_status: if request.text.is_some() {
+            processing_status: if request.text.is_some() && markdown_indexable {
                 "processed".to_string()
-            } else {
+            } else if markdown_indexable {
                 "queued".to_string()
+            } else {
+                "view_only".to_string()
             },
             is_exhibit: false,
             exhibit_label: None,
-            summary: "Uploaded to CaseBuilder. Run extraction to populate facts and evidence."
-                .to_string(),
+            summary: if markdown_indexable {
+                "Uploaded to CaseBuilder. Run extraction to populate facts and evidence."
+                    .to_string()
+            } else {
+                markdown_only_view_only_summary()
+            },
             date_observed: None,
             parties_mentioned: Vec::new(),
             entities_mentioned: Vec::new(),
@@ -103,7 +111,7 @@ impl CaseBuilderService {
             current_version_id: None,
             ingestion_run_ids: Vec::new(),
             source_spans: Vec::new(),
-            extracted_text: request.text,
+            extracted_text: request.text.filter(|_| markdown_indexable),
         };
 
         let provenance = stored_object
@@ -136,6 +144,8 @@ impl CaseBuilderService {
         let document_id = generate_opaque_id("doc");
         let relative_path = normalize_upload_relative_path(request.relative_path)?;
         let upload_batch_id = normalize_upload_batch_id(request.upload_batch_id)?;
+        let markdown_indexable =
+            filename_mime_is_markdown_indexable(&request.filename, request.mime_type.as_deref());
         let folder = request
             .folder
             .or_else(|| folder_from_relative_path(relative_path.as_deref()))
@@ -152,11 +162,15 @@ impl CaseBuilderService {
                 put_options(request.mime_type.clone(), Some(hash.clone())),
             )
             .await?;
-        let parser = parse_document_bytes(
-            &request.filename,
-            request.mime_type.as_deref(),
-            &request.bytes,
-        );
+        let parser = if markdown_indexable {
+            parse_document_bytes(
+                &request.filename,
+                request.mime_type.as_deref(),
+                &request.bytes,
+            )
+        } else {
+            markdown_only_view_only_parser()
+        };
         let parser_id = parser.parser_id.clone();
         let processing_status = parser.status.clone();
 
@@ -248,6 +262,8 @@ impl CaseBuilderService {
         let upload_id = upload_id_for_document(&document_id);
         let relative_path = normalize_upload_relative_path(request.relative_path)?;
         let upload_batch_id = normalize_upload_batch_id(request.upload_batch_id)?;
+        let markdown_indexable =
+            filename_mime_is_markdown_indexable(&request.filename, request.mime_type.as_deref());
         let folder = request
             .folder
             .or_else(|| folder_from_relative_path(relative_path.as_deref()))
@@ -281,11 +297,18 @@ impl CaseBuilderService {
             confidentiality: request
                 .confidentiality
                 .unwrap_or_else(|| "private".to_string()),
-            processing_status: "queued".to_string(),
+            processing_status: if markdown_indexable {
+                "queued".to_string()
+            } else {
+                "view_only".to_string()
+            },
             is_exhibit: false,
             exhibit_label: None,
-            summary: "Upload pending. Complete the direct R2 upload to queue extraction."
-                .to_string(),
+            summary: if markdown_indexable {
+                "Upload pending. Complete the direct R2 upload to queue extraction.".to_string()
+            } else {
+                "Upload pending. After storage, this file will remain view-only because Markdown-only indexing is enabled.".to_string()
+            },
             date_observed: None,
             parties_mentioned: Vec::new(),
             entities_mentioned: Vec::new(),
@@ -415,6 +438,7 @@ impl CaseBuilderService {
                 .and_then(|hash| normalize_sha256(hash));
         }
 
+        let markdown_indexable = document_is_markdown_indexable(&document);
         document.storage_status = "stored".to_string();
         document.storage_bucket = object
             .bucket
@@ -422,9 +446,15 @@ impl CaseBuilderService {
             .or_else(|| self.object_store.bucket().map(str::to_string));
         document.content_etag = object.etag.clone();
         document.upload_expires_at = None;
-        document.summary =
-            "Uploaded to private object storage. Run extraction to populate facts and evidence."
-                .to_string();
+        if markdown_indexable {
+            document.processing_status = "queued".to_string();
+            document.summary =
+                "Uploaded to private object storage. Run extraction to populate facts and evidence."
+                    .to_string();
+        } else {
+            document.processing_status = "view_only".to_string();
+            document.summary = markdown_only_view_only_summary();
+        }
         let provenance = build_original_provenance(matter_id, &document, &object, "stored");
         apply_document_provenance(&mut document, &provenance);
         let document = self
@@ -809,36 +839,16 @@ impl CaseBuilderService {
         request: SaveDocumentTextRequest,
     ) -> ApiResult<SaveDocumentTextResponse> {
         let document = self.get_document(matter_id, document_id).await?;
-        let mut warnings = Vec::new();
-        let (bytes, mime_type, extension) = if document_is_docx(&document) {
-            let existing = self.document_bytes(&document).await?;
-            let (updated, docx_warnings) =
-                docx_with_replaced_document_xml(&existing, &request.text)?;
-            warnings.extend(docx_warnings);
-            (
-                Bytes::from(updated),
-                Some(
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        .to_string(),
-                ),
-                "docx".to_string(),
-            )
-        } else if document_is_markdown(&document) || document_is_text(&document) {
+        let warnings = Vec::new();
+        let (bytes, mime_type, extension) = if document_is_markdown_indexable(&document) {
             (
                 Bytes::from(request.text.into_bytes()),
-                Some(if document_is_markdown(&document) {
-                    "text/markdown".to_string()
-                } else {
-                    document
-                        .mime_type
-                        .clone()
-                        .unwrap_or_else(|| "text/plain".to_string())
-                }),
-                document_file_extension(&document).unwrap_or_else(|| "txt".to_string()),
+                Some("text/markdown".to_string()),
+                document_file_extension(&document).unwrap_or_else(|| "md".to_string()),
             )
         } else {
             return Err(ApiError::BadRequest(format!(
-                "{} cannot be edited as structured text in the OSS document workspace.",
+                "{} cannot be edited as structured text while Markdown-only indexing is enabled.",
                 document.filename
             )));
         };
@@ -867,12 +877,9 @@ impl CaseBuilderService {
         request: PromoteDocumentWorkProductRequest,
     ) -> ApiResult<PromoteDocumentWorkProductResponse> {
         let document = self.get_document(matter_id, document_id).await?;
-        if !(document_is_markdown(&document)
-            || document_is_text(&document)
-            || document_is_docx(&document))
-        {
+        if !document_is_markdown_indexable(&document) {
             return Err(ApiError::BadRequest(
-                "Only Markdown, text, and supported DOCX text can be promoted into WorkProduct.document_ast in v1."
+                "Only Markdown documents can be promoted into WorkProduct.document_ast while Markdown-only indexing is enabled."
                     .to_string(),
             ));
         }
@@ -927,6 +934,34 @@ impl CaseBuilderService {
         document_id: &str,
     ) -> ApiResult<DocumentExtractionResponse> {
         let mut document = self.get_document(matter_id, document_id).await?;
+        if !document_is_markdown_indexable(&document) {
+            document.processing_status = "view_only".to_string();
+            document.summary = markdown_only_view_only_summary();
+            let document = self
+                .merge_node(matter_id, document_spec(), document_id, &document)
+                .await?;
+            return Ok(DocumentExtractionResponse {
+                enabled: true,
+                mode: "deterministic".to_string(),
+                status: "view_only".to_string(),
+                message: document.summary.clone(),
+                document,
+                chunks: Vec::new(),
+                proposed_facts: Vec::new(),
+                ingestion_run: None,
+                index_run: None,
+                document_version: None,
+                index_artifacts: Vec::new(),
+                artifact_manifest: None,
+                pages: Vec::new(),
+                text_chunks: Vec::new(),
+                evidence_spans: Vec::new(),
+                entity_mentions: Vec::new(),
+                search_index_records: Vec::new(),
+                source_spans: Vec::new(),
+                timeline_suggestions: Vec::new(),
+            });
+        }
         let provenance = self
             .ensure_document_original_provenance(matter_id, &mut document)
             .await?;
@@ -1860,7 +1895,8 @@ fn document_is_indexed(document: &CaseDocument) -> bool {
 }
 
 fn document_needs_index(document: &CaseDocument) -> bool {
-    !document_is_indexed(document)
+    document_is_markdown_indexable(document)
+        && !document_is_indexed(document)
         && matches!(
             document.processing_status.as_str(),
             "queued" | "processed" | "processing" | "failed"
@@ -1869,13 +1905,17 @@ fn document_needs_index(document: &CaseDocument) -> bool {
 
 fn document_can_attempt_index(document: &CaseDocument) -> bool {
     document.storage_status == "stored"
+        && document_is_markdown_indexable(document)
         && !matches!(
             document.processing_status.as_str(),
-            "ocr_required" | "transcription_deferred" | "unsupported"
+            "ocr_required" | "transcription_deferred" | "unsupported" | "view_only"
         )
 }
 
 fn index_skip_message(document: &CaseDocument) -> String {
+    if !document_is_markdown_indexable(document) {
+        return markdown_only_view_only_summary();
+    }
     match document.processing_status.as_str() {
         "ocr_required" => "OCR is required before this document can be indexed.".to_string(),
         "transcription_deferred" => {
@@ -2085,7 +2125,7 @@ mod tests {
         let docs = vec![
             test_document(
                 "doc:1",
-                "rent.txt",
+                "rent.md",
                 "processed",
                 2,
                 Some("sha256:one"),
@@ -2093,7 +2133,7 @@ mod tests {
             ),
             test_document(
                 "doc:2",
-                "notice.txt",
+                "notice.md",
                 "processed",
                 0,
                 Some("sha256:dup"),
@@ -2102,7 +2142,7 @@ mod tests {
             test_document(
                 "doc:3",
                 "notice-copy.txt",
-                "queued",
+                "view_only",
                 0,
                 Some("sha256:dup"),
                 Some("batch:1"),
@@ -2123,14 +2163,14 @@ mod tests {
         assert_eq!(summary.active_documents, 4);
         assert_eq!(summary.archived_documents, 0);
         assert_eq!(summary.indexed_documents, 1);
-        assert_eq!(summary.pending_documents, 2);
-        assert_eq!(summary.extractable_pending_documents, 2);
+        assert_eq!(summary.pending_documents, 1);
+        assert_eq!(summary.extractable_pending_documents, 1);
         assert_eq!(summary.ocr_required_documents, 1);
         assert_eq!(summary.duplicate_groups.len(), 1);
         assert_eq!(summary.upload_batches[0].upload_batch_id, "batch:1");
         assert_eq!(
             summary.extractable_pending_document_ids,
-            vec!["doc:2".to_string(), "doc:3".to_string()]
+            vec!["doc:2".to_string()]
         );
     }
 
@@ -2166,6 +2206,25 @@ mod tests {
         assert_eq!(summary.pending_documents, 0);
         assert!(summary.duplicate_groups.is_empty());
         assert_eq!(summary.upload_batches[0].count, 1);
+    }
+
+    #[test]
+    fn markdown_only_index_gate_skips_stored_non_markdown_documents() {
+        let markdown = test_document("doc:md", "facts.md", "queued", 0, Some("sha256:md"), None);
+        let pdf = test_document(
+            "doc:pdf",
+            "lease.pdf",
+            "view_only",
+            0,
+            Some("sha256:pdf"),
+            None,
+        );
+
+        assert!(document_can_attempt_index(&markdown));
+        assert!(document_needs_index(&markdown));
+        assert!(!document_can_attempt_index(&pdf));
+        assert!(!document_needs_index(&pdf));
+        assert_eq!(index_skip_message(&pdf), markdown_only_view_only_summary());
     }
 
     #[test]

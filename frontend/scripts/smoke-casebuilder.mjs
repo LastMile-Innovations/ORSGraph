@@ -49,13 +49,13 @@ async function main() {
     "file",
     new Blob([
       "Tenant reported mold on April 1, 2026. Landlord accepted rent after notice. Repairs were not completed for two weeks.",
-    ], { type: "text/plain" }),
-    "smoke-narrative.txt",
+    ], { type: "text/markdown" }),
+    "smoke-narrative.md",
   )
   form.append("document_type", "evidence")
   form.append("folder", "Smoke")
   form.append("confidentiality", "private")
-  form.append("relative_path", "Smoke/Narratives/smoke-narrative.txt")
+  form.append("relative_path", "Smoke/Narratives/smoke-narrative.md")
   form.append("upload_batch_id", `smoke:${Date.now()}`)
 
   const document = await request(`/matters/${encodeURIComponent(matterId)}/files/binary`, {
@@ -64,7 +64,22 @@ async function main() {
   })
   assert(document.document_id, "binary upload returned document")
   assert(document.storage_status === "stored", "document stored")
-  assert(document.original_relative_path === "Smoke/Narratives/smoke-narrative.txt", "document preserved private relative path")
+  assert(document.original_relative_path === "Smoke/Narratives/smoke-narrative.md", "document preserved private relative path")
+
+  const pdfForm = new FormData()
+  pdfForm.append("file", new Blob(["%PDF-1.4\nstored only"], { type: "application/pdf" }), "stored-only.pdf")
+  pdfForm.append("document_type", "evidence")
+  pdfForm.append("folder", "Smoke")
+  pdfForm.append("confidentiality", "private")
+  pdfForm.append("relative_path", "Smoke/Narratives/stored-only.pdf")
+  pdfForm.append("upload_batch_id", `smoke:${Date.now()}:view`)
+
+  const viewOnlyDocument = await request(`/matters/${encodeURIComponent(matterId)}/files/binary`, {
+    method: "POST",
+    body: pdfForm,
+  })
+  assert(viewOnlyDocument.storage_status === "stored", "non-Markdown document stored")
+  assert(viewOnlyDocument.processing_status === "view_only", "non-Markdown document stays view-only")
 
   const indexRun = await request(`/matters/${encodeURIComponent(matterId)}/index/run`, {
     method: "POST",
@@ -88,6 +103,14 @@ async function main() {
   assert(extraction.timeline_suggestions?.length > 0, "reviewable timeline suggestions returned")
   assert(extraction.timeline_suggestions[0].status === "suggested", "timeline suggestion is review-first")
   assert(extraction.timeline_suggestions[0].agent_run_id, "indexed suggestion points to a timeline agent run")
+
+  const skippedIndexRun = await request(`/matters/${encodeURIComponent(matterId)}/index/run`, {
+    method: "POST",
+    body: JSON.stringify({ document_ids: [viewOnlyDocument.document_id] }),
+  })
+  assert(skippedIndexRun.processed === 0, "non-Markdown document is not indexed")
+  assert(skippedIndexRun.skipped === 1, "non-Markdown document is reported as skipped")
+
   const fact = extraction.proposed_facts[0]
 
   const approvedFact = await request(

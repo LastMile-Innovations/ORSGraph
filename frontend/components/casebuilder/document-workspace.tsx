@@ -146,13 +146,13 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
   const filename = document.filename.toLowerCase()
   const mime = (document.mime_type ?? "").toLowerCase()
   const isPdf = filename.endsWith(".pdf") || mime === "application/pdf"
-  const isDocx = filename.endsWith(".docx")
   const isMarkdown = filename.endsWith(".md") || filename.endsWith(".markdown") || mime === "text/markdown"
   const isImage = mime.startsWith("image/") || /\.(png|jpe?g|gif|webp|heic|tiff?)$/.test(filename)
   const isMedia = mime.startsWith("audio/") || mime.startsWith("video/") || /\.(mp3|m4a|wav|mp4|mov|webm)$/.test(filename)
   const canEdit = capabilityEnabled(workspace, "edit")
   const canPromote = capabilityEnabled(workspace, "promote")
   const canAnnotate = capabilityEnabled(workspace, "annotate")
+  const canExtract = capabilityEnabled(workspace, "extract")
   const contentUrl = workspace.content_url ?? null
   const dirty = textDraft !== (workspace.text_content ?? "")
   const canSave = canEdit && dirty && busy !== "save"
@@ -244,6 +244,7 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
   }
 
   async function onExtract() {
+    if (!canExtract) return
     await runAction(
       "extract",
       () => extractDocument(matter.id, document.document_id),
@@ -262,6 +263,7 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
   }
 
   async function onSuggestTimeline() {
+    if (!canExtract) return
     await runAction(
       "timeline suggestions",
       () => suggestTimeline(matter.id, { document_ids: [document.document_id], limit: 50 }),
@@ -585,6 +587,7 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
   }
 
   async function onPromote() {
+    if (!canPromote) return
     await runAction(
       "promote",
       () => promoteDocumentWorkProduct(matter.id, document.document_id, { title: document.title, product_type: "memo" }),
@@ -656,29 +659,29 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
               </IconButton>
               {isMedia ? (
                 <>
-                  <IconButton label="Transcribe media" onClick={onStartTranscription} disabled={busy === "transcribe"}>
+                  <IconButton label="Transcribe media" onClick={onStartTranscription} disabled={!canExtract || busy === "transcribe"}>
                     <Mic className="h-4 w-4" />
                   </IconButton>
-                  <IconButton label="Sync transcript" onClick={onSyncTranscription} disabled={!activeTranscription || busy === "sync transcript"}>
+                  <IconButton label="Sync transcript" onClick={onSyncTranscription} disabled={!canExtract || !activeTranscription || busy === "sync transcript"}>
                     <RefreshCw className="h-4 w-4" />
                   </IconButton>
                   <IconButton
                     label={transcriptView === "raw" ? "Review raw transcript" : "Review redacted transcript"}
                     onClick={onReviewTranscript}
-                    disabled={!activeTranscription || activeTranscription.segments.length === 0 || busy === "review transcript"}
+                    disabled={!canExtract || !activeTranscription || activeTranscription.segments.length === 0 || busy === "review transcript"}
                   >
                     <CheckCircle2 className="h-4 w-4" />
                   </IconButton>
                 </>
               ) : (
-                <IconButton label="Extract text" onClick={onExtract} disabled={busy === "extract"}>
+                <IconButton label="Extract text" onClick={onExtract} disabled={!canExtract || busy === "extract"}>
                   <Sparkles className="h-4 w-4" />
                 </IconButton>
               )}
-              <IconButton label="Suggest timeline" onClick={onSuggestTimeline} disabled={busy === "timeline suggestions"}>
+              <IconButton label="Suggest timeline" onClick={onSuggestTimeline} disabled={!canExtract || busy === "timeline suggestions"}>
                 <CalendarClock className="h-4 w-4" />
               </IconButton>
-              {(isDocx || isMarkdown || canEdit) && (
+              {canEdit && (
                 <IconButton label="Save text" onClick={onSave} disabled={!canSave}>
                   <Save className="h-4 w-4" />
                 </IconButton>
@@ -704,9 +707,9 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace }: Docum
           <main className="min-h-0 border-r bg-background">
             <DocumentCenterPane
               canEdit={canEdit}
+              canExtract={canExtract}
               contentUrl={contentUrl}
               documentTitle={document.title}
-              isDocx={isDocx}
               isImage={isImage}
               isMarkdown={isMarkdown}
               isMedia={isMedia}
@@ -916,9 +919,9 @@ function DocumentCenterPane({
   activeTranscription,
   busy,
   canEdit,
+  canExtract,
   contentUrl,
   documentTitle,
-  isDocx,
   isImage,
   isMarkdown,
   isMedia,
@@ -950,9 +953,9 @@ function DocumentCenterPane({
   activeTranscription: TranscriptionJobResponse | null
   busy: string | null
   canEdit: boolean
+  canExtract: boolean
   contentUrl: string | null
   documentTitle: string
-  isDocx: boolean
   isImage: boolean
   isMarkdown: boolean
   isMedia: boolean
@@ -1005,6 +1008,7 @@ function DocumentCenterPane({
       <MediaTranscriptPane
         activeTranscription={activeTranscription}
         busy={busy}
+        canExtract={canExtract}
         contentUrl={contentUrl}
         documentTitle={documentTitle}
         selectedSegmentId={selectedSegmentId}
@@ -1029,11 +1033,11 @@ function DocumentCenterPane({
       />
     )
   }
-  if (isDocx || isMarkdown || textDraft) {
+  if (isMarkdown || (canEdit && textDraft)) {
     return (
       <div className="flex h-full min-h-[640px] flex-col">
         <div className="flex items-center justify-between border-b px-4 py-2 text-xs text-muted-foreground">
-          <span>{isDocx ? "DOCX OOXML text map" : isMarkdown ? "Markdown source" : "Text source"}</span>
+          <span>{isMarkdown ? "Markdown source" : "Text source"}</span>
           <Badge variant={canEdit ? "default" : "outline"}>{canEdit ? "Editable" : "Read only"}</Badge>
         </div>
         <Textarea
@@ -1061,8 +1065,18 @@ function DocumentCenterPane({
     <div className="flex h-full min-h-[640px] items-center justify-center p-8">
       <div className="max-w-md text-center text-sm text-muted-foreground">
         <FileText className="mx-auto mb-3 h-10 w-10" />
-        <div className="font-medium text-foreground">Unsupported preview</div>
-        <p className="mt-2">The original file is stored and can still be annotated, extracted when supported, or downloaded.</p>
+        <div className="font-medium text-foreground">Stored source</div>
+        <p className="mt-2">This file is stored privately and available for viewing or annotation. Markdown-only indexing is enabled, so extraction is skipped for this source.</p>
+        {contentUrl && (
+          <a
+            href={contentUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-4 inline-flex rounded border border-border px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-foreground hover:bg-muted"
+          >
+            Open source
+          </a>
+        )}
       </div>
     </div>
   )
@@ -1071,6 +1085,7 @@ function DocumentCenterPane({
 function MediaTranscriptPane({
   activeTranscription,
   busy,
+  canExtract,
   contentUrl,
   documentTitle,
   selectedSegmentId,
@@ -1095,6 +1110,7 @@ function MediaTranscriptPane({
 }: {
   activeTranscription: TranscriptionJobResponse | null
   busy: string | null
+  canExtract: boolean
   contentUrl: string
   documentTitle: string
   selectedSegmentId: string | null
@@ -1121,7 +1137,7 @@ function MediaTranscriptPane({
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const isAudio = workspace.document.mime_type?.startsWith("audio/")
   const segments = activeTranscription?.segments ?? []
-  const canCreateCaseItems = activeTranscription?.job.status === "processed"
+  const canCreateCaseItems = canExtract && activeTranscription?.job.status === "processed"
 
   function jump(segment: TranscriptSegment) {
     onSelectSegment(segment.segment_id)
@@ -1144,15 +1160,15 @@ function MediaTranscriptPane({
             )}
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
-            <Button size="sm" onClick={onStartTranscription} disabled={busy === "transcribe"}>
+            <Button size="sm" onClick={onStartTranscription} disabled={!canExtract || busy === "transcribe"}>
               <Mic className="mr-2 h-4 w-4" />
               Transcribe
             </Button>
-            <Button size="sm" variant="outline" onClick={onSyncTranscription} disabled={!activeTranscription || busy === "sync transcript"}>
+            <Button size="sm" variant="outline" onClick={onSyncTranscription} disabled={!canExtract || !activeTranscription || busy === "sync transcript"}>
               <RefreshCw className="mr-2 h-4 w-4" />
               Sync
             </Button>
-            <Button size="sm" variant="outline" onClick={onReviewTranscription} disabled={!activeTranscription || segments.length === 0 || busy === "review transcript"}>
+            <Button size="sm" variant="outline" onClick={onReviewTranscription} disabled={!canExtract || !activeTranscription || segments.length === 0 || busy === "review transcript"}>
               <CheckCircle2 className="mr-2 h-4 w-4" />
               {transcriptView === "raw" ? "Review raw" : "Review redacted"}
             </Button>

@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation"
+import { permanentRedirect } from "next/navigation"
 
 export default function QCPage() {
-  redirect("/admin/qc")
+  permanentRedirect("/admin/qc")
 }

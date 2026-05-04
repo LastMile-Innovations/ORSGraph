@@ -1,6 +1,18 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   cacheComponents: true,
+  cacheLife: {
+    authorityShell: {
+      stale: 300,
+      revalidate: 60,
+      expire: 3600,
+    },
+    authorityDetail: {
+      stale: 300,
+      revalidate: 3600,
+      expire: 86400,
+    },
+  },
   experimental: {
     optimizePackageImports: [
       "@radix-ui/react-accordion",

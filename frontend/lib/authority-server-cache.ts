@@ -25,7 +25,7 @@ export function authorityServerCacheMode() {
 export async function getCachedHomePageState() {
   "use cache"
   tagAuthorityRead("home")
-  cacheLife("minutes")
+  cacheLife("authorityShell")
   return getHomePageState()
 }
 
@@ -44,14 +44,14 @@ export async function getCachedSearchWithParamsState(params: SearchParams) {
 export async function getCachedSourceDetailState(sourceId: string): Promise<DataState<SourceDetailResult | null>> {
   "use cache"
   tagAuthorityRead("source", sourceId)
-  cacheLife("hours")
+  cacheLife("authorityDetail")
   return getSourceDetailState(sourceId)
 }
 
 export async function getCachedProvisionInspectorDataState(provisionId: string) {
   "use cache"
   tagAuthorityRead("provision", provisionId)
-  cacheLife("hours")
+  cacheLife("authorityDetail")
   return getProvisionInspectorDataState(provisionId)
 }
 

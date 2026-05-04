@@ -347,6 +347,32 @@ impl CaseBuilderService {
     ) -> ApiResult<ComplaintImportResponse> {
         let matter = self.get_matter_summary(matter_id).await?;
         let mut document = self.get_document(matter_id, document_id).await?;
+        let parser_id = parser_id_for_document(&document);
+        let mode = request
+            .mode
+            .clone()
+            .unwrap_or_else(|| "structured_import".to_string());
+        if !document_is_markdown_indexable(&document) {
+            document.processing_status = "view_only".to_string();
+            document.summary = markdown_only_view_only_summary();
+            self.merge_node(matter_id, document_spec(), &document.document_id, &document)
+                .await?;
+            return Ok(ComplaintImportResponse {
+                matter_id: matter_id.to_string(),
+                mode,
+                imported: Vec::new(),
+                skipped: vec![ComplaintImportResult {
+                    document_id: document_id.to_string(),
+                    complaint_id: None,
+                    status: "view_only".to_string(),
+                    message: "Only Markdown documents can be imported as structured complaints while Markdown-only indexing is enabled.".to_string(),
+                    parser_id,
+                    likely_complaint: false,
+                    complaint: None,
+                }],
+                warnings: vec![markdown_only_view_only_summary()],
+            });
+        }
         let provenance = self
             .ensure_document_original_provenance(matter_id, &mut document)
             .await?;
@@ -354,13 +380,8 @@ impl CaseBuilderService {
             Some(text) if !text.trim().is_empty() => text,
             _ => self.document_bytes_as_text(&document).await?,
         };
-        let parser_id = parser_id_for_document(&document);
         let likely_complaint = looks_like_complaint(&document.filename, &text);
         let force = request.force.unwrap_or(false);
-        let mode = request
-            .mode
-            .clone()
-            .unwrap_or_else(|| "structured_import".to_string());
 
         if text.trim().is_empty() {
             return Ok(ComplaintImportResponse {

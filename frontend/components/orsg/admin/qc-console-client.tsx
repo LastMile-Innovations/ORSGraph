@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { AlertTriangle, CheckCircle2, ChevronRight, Database, Download, FileSearch, GitBranch, Hash, Layers, RotateCcw, ShieldCheck, Sparkles, XCircle } from "lucide-react"
-import { getQCReport, getQCSummary, runQCRun, type QCSummary } from "@/lib/api"
+import { getAdminQCReport, getAdminQCSummary, runAdminQCRun, type AdminQCSummary } from "@/lib/admin-api"
 import { Button } from "@/components/ui/button"
 import type { QCPanel, QCRunSummary } from "@/lib/types"
 
@@ -25,7 +25,7 @@ export function QCConsoleClient() {
 
   useEffect(() => {
     let cancelled = false
-    getQCSummary()
+    getAdminQCSummary()
       .then((summary) => {
         if (cancelled) return
         const next = buildQCRun(summary)
@@ -48,7 +48,7 @@ export function QCConsoleClient() {
     setError(null)
     setMessage(null)
     try {
-      const run = await runQCRun()
+      const run = await runAdminQCRun()
       const next = buildQCRun(run.summary, run.run_id)
       setQCCorpus(next)
       setActivePanel(next.panels[0]?.panel_id ?? "")
@@ -65,7 +65,7 @@ export function QCConsoleClient() {
     setError(null)
     setMessage(null)
     try {
-      const report = await getQCReport("csv")
+      const report = await getAdminQCReport("csv")
       const blob = new Blob([report.content], { type: report.mime_type })
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement("a")
@@ -207,7 +207,7 @@ export function QCConsoleClient() {
   )
 }
 
-function buildQCRun(summary: QCSummary, runId = `qc:run:${Date.now()}`): QCRunSummary {
+function buildQCRun(summary: AdminQCSummary, runId = `qc:run:${Date.now()}`): QCRunSummary {
   const panels: QCPanel[] = [
     {
       panel_id: "qc:panel:orphan",

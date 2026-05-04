@@ -1,3 +1,5 @@
+import "server-only"
+
 import { TopNav } from "./top-nav"
 import { LeftRail } from "./left-rail"
 import { MobileLeftRailSheet } from "./mobile-left-rail-sheet"

@@ -209,6 +209,13 @@ pub(crate) fn markdown_to_work_product_ast(
             }
             continue;
         }
+        // Flush an auto-detected quote block when a non-quote line arrives.
+        if current.meta.is_none()
+            && current.block_type.as_deref() == Some("quote")
+            && markdown_blockquote_line(line).is_none()
+        {
+            flush_pending(product, &mut blocks, &mut current, &mut ordinal);
+        }
         if let Some((level, heading)) = markdown_heading(line) {
             if level == 1
                 && blocks.is_empty()
@@ -246,11 +253,32 @@ pub(crate) fn markdown_to_work_product_ast(
             flush_pending(product, &mut blocks, &mut current, &mut ordinal);
             continue;
         }
-        if current.meta.is_none() && current.block_type.is_none() {
-            current.block_type = Some("paragraph".to_string());
-            current.role = Some("custom".to_string());
+        if let Some(quote_text) = markdown_blockquote_line(line) {
+            // Start a new auto-detected quote block if we are not already in one.
+            if current.meta.is_none() && current.block_type.as_deref() != Some("quote") {
+                flush_pending(product, &mut blocks, &mut current, &mut ordinal);
+                current.block_type = Some("quote".to_string());
+                current.role = Some("quote".to_string());
+            }
+            // Strip the `> ` prefix when a meta-declared quote block is active too.
+            current.text.push(quote_text.to_string());
+        } else {
+            if current.meta.is_none() && current.block_type.is_none() {
+                current.block_type = Some("paragraph".to_string());
+                current.role = Some("custom".to_string());
+            }
+            // For meta-declared quote blocks, strip any residual `> ` prefix so
+            // the stored text matches what render_markdown_block will re-emit.
+            let push_text =
+                if current.meta.as_ref().map(|m| m.block_type == "quote").unwrap_or(false) {
+                    markdown_blockquote_line(line)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| line.trim().to_string())
+                } else {
+                    line.trim().to_string()
+                };
+            current.text.push(push_text);
         }
-        current.text.push(line.trim().to_string());
     }
     flush_pending(product, &mut blocks, &mut current, &mut ordinal);
 
@@ -533,6 +561,17 @@ fn non_empty(value: &str, fallback: &str) -> String {
     }
 }
 
+fn markdown_blockquote_line(line: &str) -> Option<&str> {
+    let t = line.trim_start();
+    if let Some(rest) = t.strip_prefix("> ") {
+        return Some(rest);
+    }
+    if t == ">" {
+        return Some("");
+    }
+    None
+}
+
 fn markdown_heading(line: &str) -> Option<(usize, &str)> {
     let trimmed = line.trim_start();
     let level = trimmed.chars().take_while(|value| *value == '#').count();
@@ -559,20 +598,26 @@ fn roman_or_number_after_count(text: &str) -> Option<u64> {
     let rest = text.trim_start_matches(|c: char| c != ' ').trim();
     let token = rest.split_whitespace().next().unwrap_or_default();
     token.parse::<u64>().ok().or_else(|| {
-        match token
-            .trim_matches(|c: char| !c.is_ascii_alphabetic())
-            .to_uppercase()
-            .as_str()
-        {
-            "I" => Some(1),
-            "II" => Some(2),
-            "III" => Some(3),
-            "IV" => Some(4),
-            "V" => Some(5),
-            "VI" => Some(6),
-            _ => None,
-        }
+        roman_numeral_to_u64(token.trim_matches(|c: char| !c.is_ascii_alphabetic()))
     })
+}
+
+fn roman_numeral_to_u64(s: &str) -> Option<u64> {
+    match s.to_uppercase().as_str() {
+        "I" => Some(1),
+        "II" => Some(2),
+        "III" => Some(3),
+        "IV" => Some(4),
+        "V" => Some(5),
+        "VI" => Some(6),
+        "VII" => Some(7),
+        "VIII" => Some(8),
+        "IX" => Some(9),
+        "X" => Some(10),
+        "XI" => Some(11),
+        "XII" => Some(12),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -708,6 +753,67 @@ mod tests {
         let (document, warnings) = markdown_to_work_product_ast(&product, &markdown);
         assert!(warnings.is_empty());
         assert_eq!(document.blocks[0].citations, vec!["cite:1".to_string()]);
+    }
+
+    #[test]
+    fn markdown_quote_block_round_trips_without_double_prefix() {
+        let mut product = product();
+        let quote_block = WorkProductBlock {
+            block_id: "wp:test:block:2".to_string(),
+            id: "wp:test:block:2".to_string(),
+            matter_id: "matter:test".to_string(),
+            work_product_id: "wp:test".to_string(),
+            block_type: "quote".to_string(),
+            role: "quote".to_string(),
+            title: "Quote".to_string(),
+            text: "The landlord shall maintain the premises.".to_string(),
+            ordinal: 2,
+            ..WorkProductBlock::default()
+        };
+        product.document_ast.blocks.push(quote_block);
+        let markdown = work_product_markdown(&product);
+        let (document, warnings) = markdown_to_work_product_ast(&product, &markdown);
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        let quote = document.blocks.iter().find(|b| b.block_type == "quote");
+        assert!(quote.is_some(), "quote block should survive round trip");
+        assert_eq!(
+            quote.unwrap().text,
+            "The landlord shall maintain the premises.",
+            "quote text should not gain > prefixes on round trip"
+        );
+    }
+
+    #[test]
+    fn markdown_bare_blockquote_parses_as_quote_block() {
+        let product = product();
+        let markdown = "# Test\n\n> Quoted passage here.\n> Second quoted line.";
+        let (document, _) = markdown_to_work_product_ast(&product, markdown);
+        let quote = document.blocks.iter().find(|b| b.block_type == "quote");
+        assert!(quote.is_some(), "bare > lines should become a quote block");
+        let text = &quote.unwrap().text;
+        assert!(
+            !text.contains("> "),
+            "quote text should not contain > prefix, got: {text:?}"
+        );
+    }
+
+    #[test]
+    fn roman_numerals_up_to_xii_resolve_count_numbers() {
+        for (label, expected) in [
+            ("COUNT VII: Breach", 7u64),
+            ("COUNT VIII", 8),
+            ("COUNT IX: Negligence", 9),
+            ("COUNT X", 10),
+            ("COUNT XI: Relief", 11),
+            ("COUNT XII", 12),
+        ] {
+            let result = roman_or_number_after_count(label);
+            assert_eq!(
+                result,
+                Some(expected),
+                "expected count_number {expected} for {label:?}"
+            );
+        }
     }
 
     #[test]

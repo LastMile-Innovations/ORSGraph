@@ -9,7 +9,7 @@ interface RouteStateProps {
   message?: string
   homeHref?: string
   homeLabel?: string
-  reset?: () => void
+  retry?: () => void
 }
 
 export function RouteLoadingState({ title = "Loading", message }: Partial<RouteStateProps>) {
@@ -29,7 +29,7 @@ export function RouteErrorState({
   message = "The page hit an unexpected error while loading.",
   homeHref = "/dashboard",
   homeLabel = "Home",
-  reset,
+  retry,
 }: RouteStateProps) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-background p-6">
@@ -40,8 +40,8 @@ export function RouteErrorState({
             <h1 className="text-base font-semibold text-foreground">{title}</h1>
             <p className="mt-1 text-sm text-muted-foreground">{message}</p>
             <div className="mt-4 flex flex-wrap gap-2">
-              {reset && (
-                <Button type="button" size="sm" onClick={reset}>
+              {retry && (
+                <Button type="button" size="sm" onClick={retry}>
                   Try again
                 </Button>
               )}

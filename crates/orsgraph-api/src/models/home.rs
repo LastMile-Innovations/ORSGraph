@@ -115,3 +115,72 @@ pub struct BuildInfo {
     pub graph_edition: Option<String>,
     pub environment: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_home_serialization_omits_qc_status_fields() {
+        let data = HomePageData {
+            corpus: CorpusStatus {
+                edition_year: 2025,
+                source: "Oregon Revised Statutes".to_string(),
+                last_updated: None,
+                counts: CorpusCounts {
+                    sections: 1,
+                    versions: 1,
+                    provisions: 1,
+                    retrieval_chunks: 1,
+                    citation_mentions: 1,
+                    cites_edges: 1,
+                    semantic_nodes: 1,
+                    source_notes: 0,
+                    amendments: 0,
+                    session_laws: 0,
+                    neo4j_nodes: 1,
+                    neo4j_relationships: 1,
+                },
+                citations: CitationCoverage {
+                    total: 1,
+                    resolved: 1,
+                    unresolved: 0,
+                    cites_edges: 1,
+                    coverage_percent: 100.0,
+                },
+                embeddings: EmbeddingStatus {
+                    model: None,
+                    profile: None,
+                    embedded: 0,
+                    total_eligible: 1,
+                    coverage_percent: 0.0,
+                    status: "not_started".to_string(),
+                },
+            },
+            health: SystemHealth {
+                api: "connected".to_string(),
+                neo4j: "connected".to_string(),
+                graph_materialization: "complete".to_string(),
+                embeddings: "not_started".to_string(),
+                rerank: "disabled".to_string(),
+                last_seeded_at: None,
+                last_checked_at: None,
+            },
+            actions: Vec::new(),
+            insights: Vec::new(),
+            featured_statutes: Vec::new(),
+            build: BuildInfo {
+                app_version: "test".to_string(),
+                api_version: Some("test".to_string()),
+                graph_edition: Some("test".to_string()),
+                environment: "test".to_string(),
+            },
+        };
+
+        let value = serde_json::to_value(data).expect("serialize home data");
+
+        assert!(value["corpus"].get("qcStatus").is_none());
+        assert!(value["corpus"].get("lastQcRun").is_none());
+        assert!(value["health"].get("qc").is_none());
+    }
+}

@@ -138,21 +138,6 @@ export interface Penalty {
   source_provision: string
 }
 
-export interface QCNote {
-  note_id: string
-  level: "info" | "warning" | "fail"
-  category: string
-  message: string
-  related_id: string | null
-}
-
-export interface QCSummary {
-  status: QCStatus
-  passed_checks: number
-  total_checks: number
-  notes: QCNote[]
-}
-
 export interface StatuteSummaryCounts {
   provision_count: number
   citation_counts: {

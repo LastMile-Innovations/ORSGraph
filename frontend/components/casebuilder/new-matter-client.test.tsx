@@ -82,8 +82,9 @@ describe("NewMatterClient intake flow", () => {
       expect(uploadTextFile).toHaveBeenCalledWith(
         "matter:intake-test",
         expect.objectContaining({
-          filename: "case-narrative.txt",
-          relative_path: "Intake/case-narrative.txt",
+          filename: "case-narrative.md",
+          mime_type: "text/markdown",
+          relative_path: "Intake/case-narrative.md",
           upload_batch_id: expect.stringMatching(/^batch:/),
           text: "Tenant reported mold on April 1.",
         }),
@@ -97,9 +98,9 @@ describe("NewMatterClient intake flow", () => {
     const user = userEvent.setup()
     uploadBinaryFile.mockResolvedValue({ data: document("doc:receipt") })
     const { container } = render(<NewMatterClient initialIntent="blank" />)
-    const file = new File(["rent"], "receipt.txt", { type: "text/plain" })
+    const file = new File(["rent"], "receipt.pdf", { type: "application/pdf" })
     Object.defineProperty(file, "webkitRelativePath", {
-      value: "Receipts/April/receipt.txt",
+      value: "Receipts/April/receipt.pdf",
     })
 
     const input = container.querySelector<HTMLInputElement>("#file-input")
@@ -115,10 +116,11 @@ describe("NewMatterClient intake flow", () => {
         file,
         expect.objectContaining({
           confidentiality: "private",
-          relative_path: "Receipts/April/receipt.txt",
+          relative_path: "Receipts/April/receipt.pdf",
           upload_batch_id: expect.stringMatching(/^folder:/),
         }),
       )
+      expect(runMatterIndex).not.toHaveBeenCalled()
       expect(router.push).toHaveBeenCalledWith("/casebuilder/matters/intake-test")
     })
   })
@@ -131,8 +133,8 @@ describe("NewMatterClient intake flow", () => {
       .mockResolvedValueOnce({ data: document("doc:retry") })
     const { container } = render(<NewMatterClient initialIntent="blank" />)
     const files = [
-      new File(["ok"], "ok.txt", { type: "text/plain" }),
-      new File(["large"], "large.txt", { type: "text/plain" }),
+      new File(["ok"], "ok.md", { type: "text/markdown" }),
+      new File(["large"], "large.md", { type: "text/markdown" }),
     ]
 
     fireEvent.change(container.querySelector<HTMLInputElement>("#file-input") as HTMLInputElement, {
@@ -148,7 +150,7 @@ describe("NewMatterClient intake flow", () => {
       "/casebuilder/matters/intake-test",
     )
 
-    const failedRow = within(screen.getAllByText("large.txt").at(-1)?.closest("div") as HTMLElement)
+    const failedRow = within(screen.getAllByText("large.md").at(-1)?.closest("div") as HTMLElement)
     await user.click(failedRow.getByRole("button", { name: /retry/i }))
 
     await waitFor(() => {
@@ -171,7 +173,7 @@ describe("NewMatterClient intake flow", () => {
     const { container } = render(<NewMatterClient initialIntent="blank" />)
 
     fireEvent.change(container.querySelector<HTMLInputElement>("#file-input") as HTMLInputElement, {
-      target: { files: [new File(["text"], "index.txt", { type: "text/plain" })] },
+      target: { files: [new File(["text"], "index.md", { type: "text/markdown" })] },
     })
     await user.type(screen.getByLabelText(/matter name/i), "Index matter")
     await user.click(screen.getByRole("button", { name: /create matter/i }))
@@ -199,7 +201,7 @@ describe("NewMatterClient intake flow", () => {
     const { container } = render(<NewMatterClient initialIntent="blank" />)
 
     fireEvent.change(container.querySelector<HTMLInputElement>("#file-input") as HTMLInputElement, {
-      target: { files: [new File(["text"], "unknown-index.txt", { type: "text/plain" })] },
+      target: { files: [new File(["text"], "unknown-index.md", { type: "text/markdown" })] },
     })
     await user.type(screen.getByLabelText(/matter name/i), "Missing result matter")
     await user.click(screen.getByRole("button", { name: /create matter/i }))

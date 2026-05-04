@@ -1,17 +1,48 @@
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import { Analytics } from "@vercel/analytics/next"
 import { AuthSessionProvider } from "@/components/auth-session-provider"
 import { ThemeProvider } from "@/components/theme-provider"
+import { siteOrigin } from "./metadata"
 import { fontVariables } from "./fonts"
 import "./globals.css"
 
 const enableVercelAnalytics = process.env.VERCEL === "1"
 
 export const metadata: Metadata = {
-  title: "ORSGraph - Legal Operating Environment",
+  metadataBase: new URL(siteOrigin()),
+  title: {
+    default: "ORSGraph - Legal Operating Environment",
+    template: "%s | ORSGraph",
+  },
   description:
     "Source-first legal graph for controlling, persuasive, and official analytical authorities.",
-  generator: "v0.app",
+  applicationName: "ORSGraph",
+  generator: "Next.js",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    title: "ORSGraph - Legal Operating Environment",
+    description:
+      "Source-first legal graph for controlling, persuasive, and official analytical authorities.",
+    url: "/",
+    siteName: "ORSGraph",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "ORSGraph - Legal Operating Environment",
+    description:
+      "Source-first legal graph for controlling, persuasive, and official analytical authorities.",
+  },
+}
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f8fafc" },
+    { media: "(prefers-color-scheme: dark)", color: "#020617" },
+  ],
+  colorScheme: "dark light",
 }
 
 export default function RootLayout({

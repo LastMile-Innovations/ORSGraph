@@ -109,6 +109,7 @@ export function ProcessingBadge({
     unsupported: { label: "unsupported", cls: "bg-warning/15 text-warning" },
     ocr_required: { label: "ocr needed", cls: "bg-warning/15 text-warning" },
     transcription_deferred: { label: "transcribe", cls: "bg-warning/15 text-warning" },
+    view_only: { label: "view only", cls: "bg-muted text-muted-foreground" },
   }
   return <span className={cn(BASE, map[status].cls, className)}>{map[status].label}</span>
 }

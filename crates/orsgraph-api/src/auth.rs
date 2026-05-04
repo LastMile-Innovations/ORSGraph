@@ -380,7 +380,9 @@ impl UnauthorizedLog for ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_auth_access_bootstrap_path, is_public_path, roles_from_claims};
+    use super::{
+        is_admin_operation, is_auth_access_bootstrap_path, is_public_path, roles_from_claims,
+    };
     use axum::http::Method;
     use serde_json::json;
     use std::collections::{BTreeMap, BTreeSet};
@@ -435,6 +437,24 @@ mod tests {
             assert!(
                 !is_public_path(&Method::GET, path),
                 "{path} should remain private"
+            );
+        }
+    }
+
+    #[test]
+    fn corpus_qc_routes_are_admin_operations() {
+        for (method, path) in [
+            (Method::GET, "/api/v1/qc/summary"),
+            (Method::GET, "/api/v1/qc/reports/latest"),
+            (Method::POST, "/api/v1/qc/runs"),
+        ] {
+            assert!(
+                is_admin_operation(&method, path),
+                "{path} should be admin-only"
+            );
+            assert!(
+                !is_public_path(&method, path),
+                "{path} should not be public"
             );
         }
     }

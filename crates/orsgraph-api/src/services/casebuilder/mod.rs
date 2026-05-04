@@ -368,12 +368,14 @@ struct DateCandidate {
     warnings: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 struct ZipPackage {
     entries: Vec<ZipEntryRecord>,
     central_directory_offset: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 struct ZipEntryRecord {
     name: String,
@@ -391,6 +393,7 @@ struct ZipEntryRecord {
     local_header_offset: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 struct ZipCentralRecord {
     name: String,
@@ -428,7 +431,7 @@ struct WorkProductHashes {
 }
 
 const PARSER_REGISTRY_VERSION: &str = "casebuilder-parser-registry-v1";
-const CHUNKER_VERSION: &str = "casebuilder-line-chunker-v1";
+const CHUNKER_VERSION: &str = "casebuilder-semantic-chunker-v2";
 const CITATION_RESOLVER_VERSION: &str = "casebuilder-citation-resolver-v1";
 const CASE_INDEX_VERSION: &str = "casebuilder-case-graph-index-v1";
 const ORS_2025_SOURCE_URL: &str = "https://www.oregonlegislature.gov/bills_laws/pages/ors.aspx";
@@ -9626,7 +9629,31 @@ fn document_is_pdf(document: &CaseDocument) -> bool {
 
 fn document_is_markdown(document: &CaseDocument) -> bool {
     let (lower, mime) = document_lower_parts(document);
+    filename_mime_is_markdown_indexable(&lower, Some(mime.as_str()))
+}
+
+fn document_is_markdown_indexable(document: &CaseDocument) -> bool {
+    document_is_markdown(document)
+}
+
+fn filename_mime_is_markdown_indexable(filename: &str, mime_type: Option<&str>) -> bool {
+    let lower = filename.to_ascii_lowercase();
+    let mime = mime_type.unwrap_or_default().to_ascii_lowercase();
     lower.ends_with(".md") || lower.ends_with(".markdown") || mime == "text/markdown"
+}
+
+fn markdown_only_view_only_summary() -> String {
+    "Stored privately. Markdown-only indexing is enabled; this file is available to view and annotate but will not be extracted or indexed."
+        .to_string()
+}
+
+fn markdown_only_view_only_parser() -> ParserOutcome {
+    ParserOutcome {
+        parser_id: "casebuilder-markdown-only-view-v1".to_string(),
+        status: "view_only".to_string(),
+        message: markdown_only_view_only_summary(),
+        text: None,
+    }
 }
 
 fn document_is_text(document: &CaseDocument) -> bool {
@@ -9661,19 +9688,15 @@ fn document_is_spreadsheet(document: &CaseDocument) -> bool {
 }
 
 fn workspace_text_content(document: &CaseDocument, bytes: Option<&Bytes>) -> Option<String> {
+    if !document_is_markdown_indexable(document) {
+        return None;
+    }
     if let Some(text) = document
         .extracted_text
         .as_deref()
         .filter(|text| !text.trim().is_empty())
     {
         return Some(text.to_string());
-    }
-    if !(document_is_docx(document)
-        || document_is_markdown(document)
-        || document_is_text(document)
-        || document_is_pdf(document))
-    {
-        return None;
     }
     bytes.and_then(|bytes| {
         parse_document_bytes(&document.filename, document.mime_type.as_deref(), bytes)
@@ -9684,37 +9707,9 @@ fn workspace_text_content(document: &CaseDocument, bytes: Option<&Bytes>) -> Opt
 
 fn document_capabilities(
     document: &CaseDocument,
-    docx_manifest: Option<&DocxPackageManifest>,
+    _docx_manifest: Option<&DocxPackageManifest>,
 ) -> Vec<DocumentCapability> {
-    if document_is_docx(document) {
-        let editable = docx_manifest
-            .map(|manifest| manifest.editable)
-            .unwrap_or(true);
-        return vec![
-            capability("view", true, "custom_docx", None),
-            capability(
-                "edit",
-                editable,
-                "ooxml_round_trip_text",
-                (!editable).then(|| {
-                    "Complex DOCX objects are read-only until they are mapped safely.".to_string()
-                }),
-            ),
-            capability("annotate", true, "graph_sidecar", None),
-            capability("extract", true, "deterministic_docx_text", None),
-            capability("promote", editable, "work_product_ast", None),
-        ];
-    }
-    if document_is_pdf(document) {
-        return vec![
-            capability("view", true, "pdfjs", None),
-            capability("edit", false, "immutable_pdf_bytes", Some("PDF v1 keeps original bytes immutable and stores redactions/notes as CaseBuilder sidecar annotations.".to_string())),
-            capability("annotate", true, "graph_sidecar", None),
-            capability("extract", true, "embedded_text_or_ocr", None),
-            capability("promote", false, "pdf_text_review_required", None),
-        ];
-    }
-    if document_is_markdown(document) {
+    if document_is_markdown_indexable(document) {
         return vec![
             capability("view", true, "markdown_source", None),
             capability("edit", true, "markdown_ast_source", None),
@@ -9723,13 +9718,67 @@ fn document_capabilities(
             capability("promote", true, "work_product_ast", None),
         ];
     }
+    if document_is_docx(document) {
+        let editable = false;
+        return vec![
+            capability("view", true, "custom_docx", None),
+            capability(
+                "edit",
+                editable,
+                "markdown_only_disabled",
+                Some(
+                    "DOCX text editing is disabled while Markdown-only indexing is enabled."
+                        .to_string(),
+                ),
+            ),
+            capability("annotate", true, "graph_sidecar", None),
+            capability(
+                "extract",
+                false,
+                "markdown_only_disabled",
+                Some(markdown_only_view_only_summary()),
+            ),
+            capability(
+                "promote",
+                false,
+                "markdown_only_disabled",
+                Some(markdown_only_view_only_summary()),
+            ),
+        ];
+    }
+    if document_is_pdf(document) {
+        return vec![
+            capability("view", true, "pdfjs", None),
+            capability("edit", false, "immutable_pdf_bytes", Some("PDF v1 keeps original bytes immutable and stores redactions/notes as CaseBuilder sidecar annotations.".to_string())),
+            capability("annotate", true, "graph_sidecar", None),
+            capability("extract", false, "markdown_only_disabled", Some(markdown_only_view_only_summary())),
+            capability("promote", false, "markdown_only_disabled", Some(markdown_only_view_only_summary())),
+        ];
+    }
     if document_is_text(document) {
         return vec![
             capability("view", true, "plain_text", None),
-            capability("edit", true, "plain_text", None),
+            capability(
+                "edit",
+                false,
+                "markdown_only_disabled",
+                Some(
+                    "Text editing is disabled while Markdown-only indexing is enabled.".to_string(),
+                ),
+            ),
             capability("annotate", true, "graph_sidecar", None),
-            capability("extract", true, "deterministic_text", None),
-            capability("promote", true, "work_product_ast", None),
+            capability(
+                "extract",
+                false,
+                "markdown_only_disabled",
+                Some(markdown_only_view_only_summary()),
+            ),
+            capability(
+                "promote",
+                false,
+                "markdown_only_disabled",
+                Some(markdown_only_view_only_summary()),
+            ),
         ];
     }
     if document_is_image(document) {
@@ -9737,8 +9786,18 @@ fn document_capabilities(
             capability("view", true, "image_preview", None),
             capability("edit", false, "immutable_source", None),
             capability("annotate", true, "graph_sidecar", None),
-            capability("extract", true, "ocr_deferred", None),
-            capability("promote", false, "ocr_required", None),
+            capability(
+                "extract",
+                false,
+                "markdown_only_disabled",
+                Some(markdown_only_view_only_summary()),
+            ),
+            capability(
+                "promote",
+                false,
+                "markdown_only_disabled",
+                Some(markdown_only_view_only_summary()),
+            ),
         ];
     }
     if document_is_media(document) {
@@ -9746,25 +9805,55 @@ fn document_capabilities(
             capability("view", true, "media_preview", None),
             capability("edit", false, "immutable_source", None),
             capability("annotate", true, "graph_sidecar", None),
-            capability("extract", true, "transcription_deferred", None),
-            capability("promote", false, "transcript_required", None),
+            capability(
+                "extract",
+                false,
+                "markdown_only_disabled",
+                Some(markdown_only_view_only_summary()),
+            ),
+            capability(
+                "promote",
+                false,
+                "markdown_only_disabled",
+                Some(markdown_only_view_only_summary()),
+            ),
         ];
     }
     if document_is_spreadsheet(document) {
         return vec![
-            capability("view", false, "spreadsheet_preview_pending", None),
+            capability("view", true, "stored_file", None),
             capability("edit", false, "unsupported_binary", None),
             capability("annotate", true, "graph_sidecar", None),
-            capability("extract", false, "spreadsheet_parser_pending", None),
-            capability("promote", false, "unsupported_binary", None),
+            capability(
+                "extract",
+                false,
+                "markdown_only_disabled",
+                Some(markdown_only_view_only_summary()),
+            ),
+            capability(
+                "promote",
+                false,
+                "markdown_only_disabled",
+                Some(markdown_only_view_only_summary()),
+            ),
         ];
     }
     vec![
-        capability("view", false, "unsupported_binary", None),
+        capability("view", true, "stored_file", None),
         capability("edit", false, "unsupported_binary", None),
         capability("annotate", true, "graph_sidecar", None),
-        capability("extract", false, "unsupported_binary", None),
-        capability("promote", false, "unsupported_binary", None),
+        capability(
+            "extract",
+            false,
+            "markdown_only_disabled",
+            Some(markdown_only_view_only_summary()),
+        ),
+        capability(
+            "promote",
+            false,
+            "markdown_only_disabled",
+            Some(markdown_only_view_only_summary()),
+        ),
     ]
 }
 
@@ -10122,6 +10211,7 @@ fn docx_package_manifest(
     })
 }
 
+#[allow(dead_code)]
 fn docx_with_replaced_document_xml(bytes: &[u8], text: &str) -> ApiResult<(Vec<u8>, Vec<String>)> {
     let package = read_zip_package(bytes).ok_or_else(|| {
         ApiError::BadRequest("DOCX package central directory is not readable.".to_string())
@@ -10294,6 +10384,7 @@ fn read_zip_entry(bytes: &[u8], entry: &ZipEntryRecord) -> Option<Vec<u8>> {
     }
 }
 
+#[allow(dead_code)]
 fn zip_local_entry_end(
     package: &ZipPackage,
     ordered_entries: &[ZipEntryRecord],
@@ -10332,6 +10423,7 @@ fn docx_unsupported_features(document_xml: &str) -> Vec<String> {
     features
 }
 
+#[allow(dead_code)]
 fn docx_document_xml_from_text(text: &str) -> String {
     let mut body = String::new();
     for line in text.lines() {
@@ -10354,6 +10446,7 @@ fn docx_document_xml_from_text(text: &str) -> String {
     )
 }
 
+#[allow(dead_code)]
 fn write_stored_zip_local_entry(out: &mut Vec<u8>, name: &str, payload: &[u8]) {
     out.extend_from_slice(&0x0403_4b50_u32.to_le_bytes());
     push_le_u16(out, 20);
@@ -10370,6 +10463,7 @@ fn write_stored_zip_local_entry(out: &mut Vec<u8>, name: &str, payload: &[u8]) {
     out.extend_from_slice(payload);
 }
 
+#[allow(dead_code)]
 fn write_zip_central_directory(out: &mut Vec<u8>, records: &[ZipCentralRecord]) -> ApiResult<()> {
     let central_start = out.len();
     for record in records {
@@ -10437,14 +10531,17 @@ fn le_u32(bytes: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
+#[allow(dead_code)]
 fn push_le_u16(out: &mut Vec<u8>, value: u16) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
+#[allow(dead_code)]
 fn push_le_u32(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
+#[allow(dead_code)]
 fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = 0xffff_ffff_u32;
     for byte in bytes {
@@ -10465,6 +10562,7 @@ fn decode_xml_text(text: &str) -> String {
         .replace("&apos;", "'")
 }
 
+#[allow(dead_code)]
 fn encode_xml_text(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -10486,81 +10584,224 @@ fn summarize_text(text: &str) -> String {
     }
 }
 
+struct TextParagraph {
+    text: String,
+    is_heading: bool,
+    byte_start: usize,
+    byte_end: usize,
+}
+
+fn strip_sidecar_comments(text: &str) -> String {
+    text.lines()
+        .filter(|line| !line.trim_start().starts_with("<!--"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn is_markdown_heading_line(line: &str) -> bool {
+    let t = line.trim_start();
+    let n = t.chars().take_while(|c| *c == '#').count();
+    (1..=4).contains(&n) && t.chars().nth(n) == Some(' ')
+}
+
+fn normalize_line_for_indexing(line: &str) -> String {
+    let t = line.trim_start();
+    let n = t.chars().take_while(|c| *c == '#').count();
+    if (1..=4).contains(&n) && t.chars().nth(n) == Some(' ') {
+        return t[n + 1..].trim().to_string();
+    }
+    if let Some(rest) = t.strip_prefix("> ") {
+        return rest.to_string();
+    }
+    if t == ">" {
+        return String::new();
+    }
+    line.trim_end().to_string()
+}
+
+fn collect_text_paragraphs(text: &str) -> Vec<TextParagraph> {
+    let mut result = Vec::new();
+    let mut current_lines: Vec<String> = Vec::new();
+    let mut first_line_is_heading = false;
+    let mut para_start = 0usize;
+    let mut para_end = 0usize;
+    let mut cursor = 0usize;
+
+    for line in text.split_inclusive('\n') {
+        let line_end = cursor + line.len();
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() {
+            if !current_lines.is_empty() {
+                result.push(TextParagraph {
+                    is_heading: first_line_is_heading,
+                    text: current_lines.join("\n"),
+                    byte_start: para_start,
+                    byte_end: para_end,
+                });
+                current_lines.clear();
+                first_line_is_heading = false;
+            }
+            cursor = line_end;
+            continue;
+        }
+
+        if is_markdown_heading_line(trimmed) && !current_lines.is_empty() {
+            result.push(TextParagraph {
+                is_heading: first_line_is_heading,
+                text: current_lines.join("\n"),
+                byte_start: para_start,
+                byte_end: para_end,
+            });
+            current_lines.clear();
+            first_line_is_heading = false;
+            para_start = cursor;
+        }
+
+        if current_lines.is_empty() {
+            para_start = cursor;
+            first_line_is_heading = is_markdown_heading_line(trimmed);
+        }
+        current_lines.push(normalize_line_for_indexing(line.trim_end()));
+        para_end = line_end;
+        cursor = line_end;
+    }
+
+    if !current_lines.is_empty() {
+        result.push(TextParagraph {
+            is_heading: first_line_is_heading,
+            text: current_lines.join("\n"),
+            byte_start: para_start,
+            byte_end: para_end,
+        });
+    }
+
+    result
+}
+
+fn push_indexed_chunk(
+    chunks: &mut Vec<ExtractedTextChunk>,
+    document_id: &str,
+    index: &mut u64,
+    clean_text: &str,
+    content: &str,
+    byte_start: usize,
+    byte_end: usize,
+) {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let bs = byte_start.min(clean_text.len());
+    let be = byte_end.min(clean_text.len());
+    let char_start = clean_text[..bs].chars().count() as u64;
+    let char_end = clean_text[..be].chars().count() as u64;
+    chunks.push(ExtractedTextChunk {
+        chunk_id: format!("chunk:{document_id}:{index}"),
+        document_id: document_id.to_string(),
+        page: *index,
+        text: trimmed.to_string(),
+        document_version_id: None,
+        object_blob_id: None,
+        source_span_id: None,
+        byte_start: Some(bs as u64),
+        byte_end: Some(be as u64),
+        char_start: Some(char_start),
+        char_end: Some(char_end),
+    });
+    *index += 1;
+}
+
 fn chunk_text(document_id: &str, text: &str) -> Vec<ExtractedTextChunk> {
+    // Strip hidden sidecar metadata comments that pollute the search index.
+    let clean = strip_sidecar_comments(text);
+    let paragraphs = collect_text_paragraphs(&clean);
+
     let mut chunks = Vec::new();
     let mut current = String::new();
     let mut current_start = 0usize;
     let mut current_end = 0usize;
-    let mut cursor = 0usize;
-    let mut index = 1;
-    for line in text.split_inclusive('\n') {
-        if current.len() + line.len() > 1800 && !current.is_empty() {
-            let (chunk_text, byte_start, byte_end, char_start, char_end) =
-                trim_offsets(text, &current, current_start, current_end);
-            chunks.push(ExtractedTextChunk {
-                chunk_id: format!("chunk:{document_id}:{index}"),
-                document_id: document_id.to_string(),
-                page: index,
-                text: chunk_text,
-                document_version_id: None,
-                object_blob_id: None,
-                source_span_id: None,
-                byte_start: Some(byte_start),
-                byte_end: Some(byte_end),
-                char_start: Some(char_start),
-                char_end: Some(char_end),
-            });
-            current.clear();
-            index += 1;
-        }
-        if current.is_empty() {
-            current_start = cursor;
-        }
-        current.push_str(line);
-        cursor += line.len();
-        current_end = cursor;
-    }
-    if !current.trim().is_empty() {
-        let (chunk_text, byte_start, byte_end, char_start, char_end) =
-            trim_offsets(text, &current, current_start, current_end);
-        chunks.push(ExtractedTextChunk {
-            chunk_id: format!("chunk:{document_id}:{index}"),
-            document_id: document_id.to_string(),
-            page: index,
-            text: chunk_text,
-            document_version_id: None,
-            object_blob_id: None,
-            source_span_id: None,
-            byte_start: Some(byte_start),
-            byte_end: Some(byte_end),
-            char_start: Some(char_start),
-            char_end: Some(char_end),
-        });
-    }
-    chunks
-}
+    let mut index = 1u64;
+    let mut section_heading: Option<String> = None;
 
-fn trim_offsets(
-    text: &str,
-    current: &str,
-    start: usize,
-    end: usize,
-) -> (String, u64, u64, u64, u64) {
-    let leading = current.len() - current.trim_start().len();
-    let trailing = current.len() - current.trim_end().len();
-    let byte_start = start + leading;
-    let byte_end = end.saturating_sub(trailing);
-    let chunk_text = text
-        .get(byte_start..byte_end)
-        .unwrap_or_else(|| current.trim())
-        .to_string();
-    (
-        chunk_text,
-        byte_start as u64,
-        byte_end as u64,
-        text[..byte_start].chars().count() as u64,
-        text[..byte_end].chars().count() as u64,
-    )
+    for para in &paragraphs {
+        if para.text.trim().is_empty() {
+            continue;
+        }
+
+        // Headings flush the current chunk and establish heading context for
+        // continuation chunks so every chunk is self-describing for search.
+        if para.is_heading {
+            if !current.trim().is_empty() {
+                push_indexed_chunk(
+                    &mut chunks,
+                    document_id,
+                    &mut index,
+                    &clean,
+                    &current,
+                    current_start,
+                    current_end,
+                );
+                current.clear();
+            }
+            section_heading = Some(para.text.trim().to_string());
+            if current.is_empty() {
+                current_start = para.byte_start;
+            }
+            if !current.is_empty() && !current.ends_with('\n') {
+                current.push('\n');
+            }
+            current.push_str(&para.text);
+            current_end = para.byte_end;
+            continue;
+        }
+
+        let would_exceed =
+            !current.is_empty() && current.len() + 1 + para.text.len() > 1800;
+
+        if would_exceed {
+            push_indexed_chunk(
+                &mut chunks,
+                document_id,
+                &mut index,
+                &clean,
+                &current,
+                current_start,
+                current_end,
+            );
+            current.clear();
+            // Re-prefix with the section heading so the continuation chunk
+            // remains self-describing without re-reading prior chunks.
+            if let Some(h) = &section_heading {
+                current.push_str(h);
+                current.push('\n');
+            }
+            current_start = para.byte_start;
+        }
+
+        if current.is_empty() {
+            current_start = para.byte_start;
+        }
+        if !current.is_empty() && !current.ends_with('\n') {
+            current.push('\n');
+        }
+        current.push_str(&para.text);
+        current_end = para.byte_end;
+    }
+
+    if !current.trim().is_empty() {
+        push_indexed_chunk(
+            &mut chunks,
+            document_id,
+            &mut index,
+            &clean,
+            &current,
+            current_start,
+            current_end,
+        );
+    }
+
+    chunks
 }
 
 fn propose_facts(
@@ -12838,6 +13079,78 @@ mod tests {
             chunks[0].char_end,
             Some("first\nsecond".chars().count() as u64)
         );
+    }
+
+    #[test]
+    fn chunks_strip_sidecar_comment_lines() {
+        let text = "<!-- wp-ast-block {\"block_id\":\"b:1\"} -->\nReal content here.\n<!-- wp-ast-document {} -->\nMore content.";
+        let chunks = chunk_text("doc:2", text);
+        assert_eq!(chunks.len(), 1);
+        assert!(
+            !chunks[0].text.contains("<!--"),
+            "chunk text should not contain sidecar comments"
+        );
+        assert!(chunks[0].text.contains("Real content here."));
+        assert!(chunks[0].text.contains("More content."));
+    }
+
+    #[test]
+    fn chunks_split_at_paragraph_boundaries() {
+        let para_a = "a".repeat(900);
+        let para_b = "b".repeat(900);
+        let text = format!("{para_a}\n\n{para_b}");
+        let chunks = chunk_text("doc:3", &text);
+        assert_eq!(
+            chunks.len(),
+            2,
+            "paragraphs exceeding 1800 chars combined should split into two chunks"
+        );
+        assert!(chunks[0].text.starts_with('a'));
+        assert!(chunks[1].text.starts_with('b'));
+    }
+
+    #[test]
+    fn chunks_heading_starts_fresh_chunk_and_carries_context() {
+        let body = "x".repeat(900);
+        let text = format!("## Section One\n\n{body}\n\n## Section Two\n\nshort");
+        let chunks = chunk_text("doc:4", &text);
+        // Section One heading + body is one chunk, Section Two heading + short is another
+        assert!(chunks.len() >= 2);
+        let last = chunks.last().unwrap();
+        assert!(
+            last.text.contains("Section Two"),
+            "last chunk should contain the heading that started it"
+        );
+    }
+
+    #[test]
+    fn chunks_carry_heading_context_into_continuation() {
+        let body_a = "a".repeat(1000);
+        let body_b = "b".repeat(1000);
+        let text = format!("## My Section\n\n{body_a}\n\n{body_b}");
+        let chunks = chunk_text("doc:5", &text);
+        // body_a and body_b together exceed 1800, so there should be a continuation chunk
+        let continuation = chunks.iter().skip(1).find(|c| c.text.starts_with('b'));
+        assert!(
+            continuation.is_some(),
+            "should produce a continuation chunk for body_b"
+        );
+        assert!(
+            continuation.unwrap().text.starts_with("My Section"),
+            "continuation chunk should be prefixed with the section heading for context"
+        );
+    }
+
+    #[test]
+    fn chunks_normalize_blockquote_markers() {
+        let text = "> This is a quoted passage.\n> Second quoted line.";
+        let chunks = chunk_text("doc:6", text);
+        assert_eq!(chunks.len(), 1);
+        assert!(
+            !chunks[0].text.contains("> "),
+            "blockquote markers should be stripped from indexed text"
+        );
+        assert!(chunks[0].text.contains("This is a quoted passage."));
     }
 
     #[test]

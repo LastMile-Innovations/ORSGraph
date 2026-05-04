@@ -266,7 +266,7 @@ export function DocumentLibrary({ matter, documents }: Props) {
     let imported = 0
     const importedLinks: Array<{ title: string; href: string }> = []
     const failures: string[] = []
-    const uploadedDocumentIds: string[] = []
+    const markdownDocumentIds: string[] = []
     const uploadBatchId = createUploadBatchId(candidates.some((item) => item.relativePath.includes("/")) ? "folder" : "batch")
     setBatchFilter(uploadBatchId)
     setExpandedPaths((current) => expandUploadAncestors(current, candidates))
@@ -308,18 +308,26 @@ export function DocumentLibrary({ matter, documents }: Props) {
         }
 
         stored += 1
-        uploadedDocumentIds.push(result.data.document_id)
+        const markdownIndexable = isMarkdownIndexableFile(file.name, result.data.mime_type || mimeType)
+        if (markdownIndexable) {
+          markdownDocumentIds.push(result.data.document_id)
+        }
         setUploadRows((rows) =>
           rows.map((row) =>
             row.id === rowId
-              ? { ...row, status: "indexing", documentId: result.data?.document_id, message: "Queued for indexing" }
+              ? {
+                  ...row,
+                  status: markdownIndexable ? "indexing" : "stored",
+                  documentId: result.data?.document_id,
+                  message: markdownIndexable ? "Queued for indexing" : "Stored privately; Markdown-only indexing skipped",
+                }
               : row,
           ),
         )
         if (result.data.storage_status === "stored") {
           binaryStored += 1
         }
-        if (shouldImportAsComplaint(file.name, documentType)) {
+        if (markdownIndexable && shouldImportAsComplaint(file.name, documentType)) {
           const importedComplaint = await importDocumentComplaint(matter.matter_id, result.data.document_id, {
             force: true,
             mode: "structured_import",
@@ -352,13 +360,13 @@ export function DocumentLibrary({ matter, documents }: Props) {
       }
     }
 
-    const indexRun = uploadedDocumentIds.length ? await indexDocuments(uploadedDocumentIds) : null
+    const indexRun = markdownDocumentIds.length ? await indexDocuments(markdownDocumentIds) : null
     if (indexRun) {
       const byDocument = new Map(indexRun.results.map((result) => [result.document_id, result]))
       setUploadRows((rows) =>
         rows.map((row) => {
           const result = row.documentId ? byDocument.get(row.documentId) : null
-          if (!result) return row.status === "failed" ? row : { ...row, status: "stored", message: "Stored privately" }
+          if (!result) return row.status === "failed" ? row : { ...row, status: "stored", message: row.message || "Stored privately" }
           return {
             ...row,
             status: result.status === "indexed" ? "indexed" : result.status === "failed" ? "failed" : "stored",
@@ -1115,7 +1123,7 @@ function MediaQueue({
           <div>
             <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">media operations queue</div>
             <div className="mt-1 text-xs text-muted-foreground">
-              {documents.length} media file{documents.length === 1 ? "" : "s"} awaiting transcription, sync, or redacted review.
+              {documents.length} media file{documents.length === 1 ? "" : "s"} stored for viewing. Transcription is disabled while Markdown-only indexing is enabled.
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -1163,6 +1171,7 @@ function MediaQueue({
                 const latest = latestTranscription(transcriptions[document.document_id] ?? [])
                 const status = latest?.job.status ?? "not_started"
                 const failed = latest?.job.status === "failed" || latest?.job.status === "provider_disabled"
+                const processingDisabled = !isMarkdownIndexableFile(document.filename, document.mime_type)
                 const canStart = !latest
                 const canRetry = Boolean(latest && (latest.job.retryable || latest.job.status === "failed" || latest.job.status === "provider_disabled"))
                 const canReview = Boolean(latest && latest.segments.length > 0)
@@ -1197,7 +1206,7 @@ function MediaQueue({
                         <button
                           type="button"
                           onClick={() => void onStart(document, canRetry)}
-                          disabled={!(canStart || canRetry) || busy === `${document.document_id}:transcribe`}
+                          disabled={processingDisabled || !(canStart || canRetry) || busy === `${document.document_id}:transcribe`}
                           className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <Mic className="h-3 w-3" />
@@ -1206,7 +1215,7 @@ function MediaQueue({
                         <button
                           type="button"
                           onClick={() => latest && void onSync(document, latest)}
-                          disabled={!latest || busy === `${document.document_id}:sync`}
+                          disabled={processingDisabled || !latest || busy === `${document.document_id}:sync`}
                           className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <RefreshCcw className="h-3 w-3" />
@@ -1214,10 +1223,10 @@ function MediaQueue({
                         </button>
                         <Link
                           href={documentHref}
-                          aria-disabled={!canReview}
+                          aria-disabled={processingDisabled || !canReview}
                           className={cn(
                             "inline-flex items-center gap-1 rounded border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:bg-muted",
-                            !canReview && "pointer-events-none opacity-50",
+                            (processingDisabled || !canReview) && "pointer-events-none opacity-50",
                           )}
                         >
                           <CheckCircle2 className="h-3 w-3" />
@@ -1750,6 +1759,7 @@ function ConflictPill({ conflict }: { conflict: UploadPreviewRow["conflict"] }) 
 }
 
 function guessMimeType(filename: string) {
+  if (/\.(md|markdown)$/i.test(filename)) return "text/markdown"
   if (/\.csv$/i.test(filename)) return "text/csv"
   if (/\.html?$/i.test(filename)) return "text/html"
   if (/\.json$/i.test(filename)) return "application/json"
@@ -1761,6 +1771,10 @@ function guessMimeType(filename: string) {
   if (/\.(mp3|m4a|wav|aac|flac)$/i.test(filename)) return "audio/*"
   if (/\.(mp4|mov|m4v|webm)$/i.test(filename)) return "video/*"
   return "application/octet-stream"
+}
+
+function isMarkdownIndexableFile(filename: string, mimeType?: string | null) {
+  return /\.(md|markdown)$/i.test(filename) || mimeType?.toLowerCase() === "text/markdown"
 }
 
 function guessDocumentType(filename: string, mimeType: string): DocumentType {

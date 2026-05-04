@@ -313,6 +313,64 @@ pub struct RerankInfo {
     pub total_tokens: Option<usize>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_search_serialization_omits_qc_fields() {
+        let result = SearchResult {
+            id: "or:ors:3.130".to_string(),
+            kind: "statute".to_string(),
+            authority_family: None,
+            authority_type: None,
+            authority_level: None,
+            authority_tier: None,
+            jurisdiction_id: None,
+            source_role: None,
+            primary_law: Some(true),
+            official_commentary: None,
+            controlling_weight: None,
+            corpus_id: Some("or:ors".to_string()),
+            citation: Some("ORS 3.130".to_string()),
+            title: Some("Powers of court".to_string()),
+            chapter: Some("3".to_string()),
+            status: Some("active".to_string()),
+            snippet: "Text".to_string(),
+            score: 1.0,
+            vector_score: None,
+            fulltext_score: None,
+            graph_score: None,
+            rerank_score: None,
+            pre_rerank_score: None,
+            rank_source: None,
+            score_breakdown: None,
+            semantic_types: Vec::new(),
+            source_backed: true,
+            qc_warnings: vec!["hidden".to_string()],
+            href: "/statutes/or%3Aors%3A3.130".to_string(),
+            source: None,
+            graph: None,
+        };
+        let result_value = serde_json::to_value(result).expect("serialize search result");
+        assert!(result_value.get("qc_warnings").is_none());
+
+        let facets = SearchFacets {
+            kinds: std::collections::HashMap::new(),
+            chapters: std::collections::HashMap::new(),
+            statuses: std::collections::HashMap::new(),
+            semantic_types: std::collections::HashMap::new(),
+            source_backed: SourceBackedFacet {
+                r#true: 1,
+                r#false: 0,
+            },
+            qc_warnings: std::collections::HashMap::from([("hidden".to_string(), 1)]),
+        };
+        let facets_value = serde_json::to_value(facets).expect("serialize search facets");
+        assert!(facets_value.get("qc_warnings").is_none());
+    }
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct SearchResult {
     pub id: String,

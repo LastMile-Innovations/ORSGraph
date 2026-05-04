@@ -30,7 +30,7 @@ export function RouteErrorBoundary({
     <RouteErrorState
       title={title}
       message={message}
-      reset={unstable_retry}
+      retry={unstable_retry}
       homeHref={homeHref}
       homeLabel={homeLabel}
     />

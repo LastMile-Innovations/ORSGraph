@@ -208,6 +208,34 @@ export interface AdminSourceDetail {
   }>
 }
 
+export interface AdminQCSummary {
+  node_counts_by_label: Array<{ label: string; count: number }>
+  relationship_counts_by_type: Array<{ rel_type: string; count: number }>
+  orphan_counts: { provisions: number; chunks: number; citations: number }
+  duplicate_counts: { legal_text_identities: number; provisions: number; cites_relationships: number }
+  embedding_readiness: { total_chunks: number; embedded_chunks: number; coverage: number }
+  cites_coverage: { total_citations: number; resolved_citations: number; coverage: number }
+  last_qc_status: string | null
+}
+
+export interface AdminQCRun {
+  run_id: string
+  status: string
+  started_at: string
+  completed_at: string
+  summary: AdminQCSummary
+  warnings: string[]
+}
+
+export interface AdminQCReport {
+  report_id: string
+  format: string
+  mime_type: string
+  generated_at: string
+  summary: AdminQCSummary
+  content: string
+}
+
 const API_BASE_URL = orsApiBaseUrl()
 const API_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_ORS_API_TIMEOUT_MS || 5000)
 
@@ -264,6 +292,18 @@ function isAbortError(error: unknown) {
 
 export function getAdminOverview() {
   return fetchAdmin<AdminOverview>("/admin/overview")
+}
+
+export function getAdminQCSummary() {
+  return fetchAdmin<AdminQCSummary>("/qc/summary")
+}
+
+export function runAdminQCRun() {
+  return fetchAdmin<AdminQCRun>("/qc/runs", { method: "POST" })
+}
+
+export function getAdminQCReport(format: "json" | "csv" = "json") {
+  return fetchAdmin<AdminQCReport>(`/qc/reports/latest?format=${encodeURIComponent(format)}`)
 }
 
 export function listAdminSources(params: { priority?: string; connector_status?: string } = {}) {

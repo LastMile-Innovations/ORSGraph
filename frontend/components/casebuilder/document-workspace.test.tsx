@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type {
+  CaseDocument,
   DocumentWorkspace as DocumentWorkspaceState,
   Matter,
   TranscriptionJobResponse,
@@ -256,6 +257,22 @@ describe("DocumentWorkspace transcript review", () => {
   })
 })
 
+describe("DocumentWorkspace Markdown-only processing", () => {
+  it("shows stored non-Markdown files as view-only and disables processing actions", () => {
+    render(<DocumentWorkspace matter={matter} workspace={viewOnlyWorkspace(docxDocument())} />)
+
+    expect(screen.getByText("Stored source")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /open source/i })).toHaveAttribute(
+      "href",
+      "/api/casebuilder/document-content?matterId=matter%3Asmith-abc&documentId=doc%3Alease",
+    )
+    expect(screen.getByRole("button", { name: /extract text/i })).toBeDisabled()
+    expect(screen.getByRole("button", { name: /suggest timeline/i })).toBeDisabled()
+    expect(screen.getByRole("button", { name: /promote to work product/i })).toBeDisabled()
+    expect(screen.queryByRole("button", { name: /save text/i })).not.toBeInTheDocument()
+  })
+})
+
 function makeTranscription(): TranscriptionJobResponse {
   return {
     job: {
@@ -360,6 +377,7 @@ function makeWorkspace(activeTranscription: TranscriptionJobResponse): DocumentW
     capabilities: [
       { capability: "view", enabled: true, mode: "media" },
       { capability: "annotate", enabled: true, mode: "graph_sidecar" },
+      { capability: "extract", enabled: true, mode: "transcript_review" },
       { capability: "edit", enabled: false, mode: "transcript_review" },
       { capability: "promote", enabled: false, mode: "disabled" },
     ],
@@ -384,5 +402,61 @@ function makeWorkspace(activeTranscription: TranscriptionJobResponse): DocumentW
     text_content: null,
     content_url: "/media/call-recording.mp3",
     warnings: [],
+  }
+}
+
+function viewOnlyWorkspace(document: CaseDocument): DocumentWorkspaceState {
+  return {
+    matter_id: "matter:smith-abc",
+    document,
+    current_version: null,
+    capabilities: [
+      { capability: "view", enabled: true, mode: "stored_file" },
+      { capability: "edit", enabled: false, mode: "markdown_only_disabled" },
+      { capability: "annotate", enabled: true, mode: "graph_sidecar" },
+      { capability: "extract", enabled: false, mode: "markdown_only_disabled" },
+      { capability: "promote", enabled: false, mode: "markdown_only_disabled" },
+    ],
+    annotations: [],
+    source_spans: [],
+    transcriptions: [],
+    docx_manifest: null,
+    text_content: null,
+    content_url: "/api/casebuilder/document-content?matterId=matter%3Asmith-abc&documentId=doc%3Alease",
+    warnings: [],
+  }
+}
+
+function docxDocument(): CaseDocument {
+  return {
+    id: "doc:lease",
+    document_id: "doc:lease",
+    title: "Lease ledger",
+    filename: "Lease ledger.docx",
+    kind: "lease",
+    document_type: "lease",
+    pages: 1,
+    pageCount: 1,
+    bytes: 1024,
+    fileSize: "1 KB",
+    dateUploaded: "2026-05-03",
+    uploaded_at: "2026-05-03T00:00:00Z",
+    summary: "Stored privately.",
+    status: "view_only",
+    processing_status: "view_only",
+    is_exhibit: false,
+    facts_extracted: 0,
+    citations_found: 0,
+    contradictions_flagged: 0,
+    entities: [],
+    chunks: [],
+    clauses: [],
+    linkedFacts: [],
+    issues: [],
+    parties_mentioned: [],
+    entities_mentioned: [],
+    folder: "Uploads",
+    storage_status: "stored",
+    mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   }
 }

@@ -14,7 +14,7 @@ export default async function ProvisionPage({ params }: PageProps<"/provisions/[
   const decoded = decodeURIComponent(id)
   const state = await getCachedProvisionInspectorDataState(decoded)
   const data = state.data
-  if (!data) return notFound()
+  if (!data) notFound()
   return (
     <Shell>
       <DataStateBanner source={state.source} error={state.error} label="Provision data" />

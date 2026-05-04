@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   authorityCacheControl,
+  authorityCacheTags,
   authorityHotsetObjectPath,
   authorityReadPolicy,
   normalizeAuthoritySearchParams,
@@ -39,5 +40,22 @@ describe("authority hotset helpers", () => {
   it("uses no-store for non-cacheable authority interactions", () => {
     expect(authorityCacheControl(3600, 86400, false)).toBe("no-store")
     expect(authorityCacheControl(120, 240, true)).toBe("public, max-age=0, s-maxage=120, stale-while-revalidate=240")
+  })
+
+  it("builds bounded release-scoped cache tags for selective invalidation", () => {
+    const tags = authorityCacheTags("release:2026-05-02", ["home", "source", "source"])
+
+    expect(tags).toEqual([
+      "authority:release:2026-05-02",
+      "authority:release:2026-05-02:home",
+      "authority:release:2026-05-02:source",
+    ])
+  })
+
+  it("keeps generated cache tags within Next limits", () => {
+    const tags = authorityCacheTags("release:2026-05-02", Array.from({ length: 140 }, (_, index) => `key-${index}-${"x".repeat(300)}`))
+
+    expect(tags).toHaveLength(128)
+    expect(tags.every((tag) => tag.length <= 256)).toBe(true)
   })
 })

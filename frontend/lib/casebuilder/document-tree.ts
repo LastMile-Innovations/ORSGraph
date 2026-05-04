@@ -190,9 +190,9 @@ function rollupCounts(node: DocumentTreeNode): DocumentTreeCounts {
   for (const document of node.documents) {
     counts.total += 1
     counts.active += 1
-    if (document.processing_status === "processed" || document.facts_extracted > 0) counts.indexed += 1
+    if (document.processing_status === "processed") counts.indexed += 1
     if (document.processing_status === "failed") counts.failed += 1
-    if (!["processed", "failed", "unsupported", "ocr_required", "transcription_deferred"].includes(document.processing_status)) {
+    if (!["processed", "failed", "unsupported", "ocr_required", "transcription_deferred", "view_only"].includes(document.processing_status)) {
       counts.pending += 1
     }
     if (documentIsMedia(document)) counts.media += 1

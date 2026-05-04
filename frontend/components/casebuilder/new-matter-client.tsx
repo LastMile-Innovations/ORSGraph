@@ -204,7 +204,7 @@ export function NewMatterClient({ initialIntent }: { initialIntent: Intent }) {
   }
 
   async function processUploadRows(matterId: string, rows: IntakeUploadRow[]) {
-    const uploadedDocumentIds: string[] = []
+    const markdownDocumentIds: string[] = []
     let stored = 0
     let indexed = 0
     let skipped = 0
@@ -225,16 +225,18 @@ export function NewMatterClient({ initialIntent }: { initialIntent: Intent }) {
       }
 
       stored += 1
-      uploadedDocumentIds.push(result.data.document_id)
+      if (rowIsMarkdownIndexable(row)) {
+        markdownDocumentIds.push(result.data.document_id)
+      }
       updateUploadRow(row.id, {
         status: "stored",
         documentId: result.data.document_id,
-        message: "Stored privately",
+        message: rowIsMarkdownIndexable(row) ? "Stored privately" : "Stored privately; Markdown-only indexing skipped",
       })
     }
 
-    if (uploadedDocumentIds.length > 0) {
-      const indexSummary = await indexUploadedDocuments(matterId, uploadedDocumentIds)
+    if (markdownDocumentIds.length > 0) {
+      const indexSummary = await indexUploadedDocuments(matterId, markdownDocumentIds)
       indexed += indexSummary.indexed
       skipped += indexSummary.skipped
       failed += indexSummary.failed
@@ -401,8 +403,7 @@ export function NewMatterClient({ initialIntent }: { initialIntent: Intent }) {
               <Upload className="h-8 w-8 text-muted-foreground" />
               <div className="text-sm font-medium text-foreground">Drag & drop or browse</div>
               <p className="max-w-md text-[11px] text-muted-foreground">
-                PDFs, Word, emails, images, screenshots, audio transcripts, court filings, contracts, leases,
-                medical records, police reports, agency records, spreadsheets, calendars, chat logs.
+                Upload any matter file for private storage and viewing. Markdown files are indexed now; other formats stay view-only.
               </p>
               <input
                 ref={fileInputRef}
@@ -476,7 +477,7 @@ export function NewMatterClient({ initialIntent }: { initialIntent: Intent }) {
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
                 <Sparkles className="h-3.5 w-3.5 text-primary" />
-                Live matter creation. Text files can be extracted now; binary files are stored privately for later parsing/OCR.
+                Live matter creation. Markdown files are indexed now; other formats are stored privately for viewing.
               </div>
               <div className="flex items-center gap-2">
                 <Link
@@ -571,12 +572,12 @@ async function uploadIntakeRow(matterId: string, row: IntakeUploadRow) {
   try {
     if (row.kind === "story") {
       return await uploadTextFile(matterId, {
-        filename: "case-narrative.txt",
-        mime_type: "text/plain",
+        filename: "case-narrative.md",
+        mime_type: "text/markdown",
         document_type: "evidence",
         folder: "Intake",
         confidentiality: "private",
-        relative_path: "Intake/case-narrative.txt",
+        relative_path: "Intake/case-narrative.md",
         upload_batch_id: batchIdFromRow(row.id),
         text: row.storyText ?? "",
       })
@@ -602,7 +603,7 @@ function buildUploadRows(uploadBatchId: string, story: string, files: UploadCand
       id: `${uploadBatchId}:story`,
       kind: "story",
       label: "Case narrative",
-      relativePath: "Intake/case-narrative.txt",
+      relativePath: "Intake/case-narrative.md",
       status: "queued",
       message: "Ready",
       storyText: story.trim(),
@@ -620,6 +621,15 @@ function buildUploadRows(uploadBatchId: string, story: string, files: UploadCand
     })
   })
   return rows
+}
+
+function rowIsMarkdownIndexable(row: IntakeUploadRow) {
+  if (row.kind === "story") return true
+  return Boolean(row.file && isMarkdownIndexableFile(row.file.name, row.file.type))
+}
+
+function isMarkdownIndexableFile(filename: string, mimeType?: string | null) {
+  return /\.(md|markdown)$/i.test(filename) || mimeType?.toLowerCase() === "text/markdown"
 }
 
 function resetUploadRow(row: IntakeUploadRow): IntakeUploadRow {

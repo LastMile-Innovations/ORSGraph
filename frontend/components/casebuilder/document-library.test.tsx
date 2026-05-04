@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { CaseDocument, MatterSummary, TranscriptionJobResponse } from "@/lib/casebuilder/types"
@@ -70,11 +70,12 @@ describe("DocumentLibrary media queue", () => {
 
     expect(mediaRow.getByText("review_ready")).toBeInTheDocument()
     expect(mediaRow.getByRole("button", { name: /retry/i })).toBeDisabled()
-    expect(mediaRow.getByRole("button", { name: /sync/i })).toBeInTheDocument()
+    expect(mediaRow.getByRole("button", { name: /sync/i })).toBeDisabled()
     expect(mediaRow.getByRole("link", { name: /review/i })).toHaveAttribute(
       "href",
       "/casebuilder/matters/smith-abc/documents/doc%3Aaudio",
     )
+    expect(mediaRow.getByRole("link", { name: /review/i })).toHaveAttribute("aria-disabled", "true")
     expect(mediaRow.getByRole("link", { name: /open/i })).toHaveAttribute(
       "href",
       "/casebuilder/matters/smith-abc/documents/doc%3Aaudio",
@@ -82,7 +83,7 @@ describe("DocumentLibrary media queue", () => {
     expect(screen.getByRole("button", { name: /bulk sync pending/i })).toBeDisabled()
   })
 
-  it("enables retry only for failed or retryable transcript jobs", async () => {
+  it("keeps media transcription retry disabled while Markdown-only processing is enabled", async () => {
     const user = userEvent.setup()
     listTranscriptions.mockResolvedValue({ data: [transcription({ status: "failed", retryable: true })] })
     createTranscription.mockResolvedValue({ data: transcription({ status: "queued", retryable: false }) })
@@ -92,14 +93,49 @@ describe("DocumentLibrary media queue", () => {
 
     const row = await screen.findByText("Interview_audio.mp3")
     const mediaRow = within(row.closest("tr") as HTMLElement)
-    await user.click(mediaRow.getByRole("button", { name: /retry/i }))
+    expect(mediaRow.getByRole("button", { name: /retry/i })).toBeDisabled()
+    expect(createTranscription).not.toHaveBeenCalled()
+  })
+
+  it("uploads mixed folders but indexes only Markdown files", async () => {
+    const user = userEvent.setup()
+    uploadBinaryFile.mockImplementation((_matterId: string, file: File) => ({
+      data: {
+        document_id: `doc:${file.name}`,
+        storage_status: "stored",
+        mime_type: file.type,
+      },
+    }))
+    runMatterIndex.mockResolvedValue({
+      data: {
+        processed: 1,
+        skipped: 0,
+        failed: 0,
+        results: [
+          {
+            document_id: "doc:facts.md",
+            status: "indexed",
+            message: "Indexed Markdown",
+          },
+        ],
+        summary: indexSummary(),
+      },
+    })
+    const { container } = render(<DocumentLibrary matter={matter} documents={[]} />)
+    const markdown = new File(["# Facts"], "facts.md", { type: "text/markdown" })
+    const pdf = new File(["pdf"], "lease.pdf", { type: "application/pdf" })
+    const image = new File(["img"], "photo.png", { type: "image/png" })
+    const text = new File(["plain"], "notes.txt", { type: "text/plain" })
+
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]') as HTMLInputElement, {
+      target: { files: [markdown, pdf, image, text] },
+    })
+    await user.click(await screen.findByRole("button", { name: /upload batch/i }))
 
     await waitFor(() => {
-      expect(createTranscription).toHaveBeenCalledWith(
-        "matter:smith-abc",
-        "doc:audio",
-        expect.objectContaining({ force: true }),
-      )
+      expect(uploadBinaryFile).toHaveBeenCalledTimes(4)
+      expect(runMatterIndex).toHaveBeenCalledWith("matter:smith-abc", { document_ids: ["doc:facts.md"] })
+      expect(screen.getByText(/4 uploaded, 1 indexed/i)).toBeInTheDocument()
     })
   })
 })

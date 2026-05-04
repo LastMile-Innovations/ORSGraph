@@ -816,43 +816,6 @@ export async function getGraphPath(input: { from: string; to: string; mode?: str
   return fetchAuthorityApi<GraphPathResponse>(`/graph/path?${params}`)
 }
 
-// QC
-export async function getQCSummary() {
-  return fetchApi<{
-    node_counts_by_label: Array<{ label: string; count: number }>;
-    relationship_counts_by_type: Array<{ rel_type: string; count: number }>;
-    orphan_counts: { provisions: number; chunks: number; citations: number };
-    duplicate_counts: { legal_text_identities: number; provisions: number; cites_relationships: number };
-    embedding_readiness: { total_chunks: number; embedded_chunks: number; coverage: number };
-    cites_coverage: { total_citations: number; resolved_citations: number; coverage: number };
-    last_qc_status: string | null;
-  }>('/qc/summary');
-}
-
-export type QCSummary = Awaited<ReturnType<typeof getQCSummary>>
-
-export async function runQCRun() {
-  return fetchApi<{
-    run_id: string
-    status: string
-    started_at: string
-    completed_at: string
-    summary: QCSummary
-    warnings: string[]
-  }>("/qc/runs", { method: "POST" })
-}
-
-export async function getQCReport(format: "json" | "csv" = "json") {
-  return fetchApi<{
-    report_id: string
-    format: string
-    mime_type: string
-    generated_at: string
-    summary: QCSummary
-    content: string
-  }>(`/qc/reports/latest?format=${encodeURIComponent(format)}`)
-}
-
 export async function ask(question: string, mode: string = "research"): Promise<AskAnswer> {
   return fetchApi<AskAnswer>('/ask', {
     method: 'POST',
