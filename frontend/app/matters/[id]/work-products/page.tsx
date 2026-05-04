@@ -3,11 +3,7 @@ import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { WorkProductDashboard } from "@/components/casebuilder/work-product-dashboard"
 import { getMatterState, getWorkProductsState } from "@/lib/casebuilder/server-api"
 
-interface PageProps {
-  params: Promise<{ id: string }>
-}
-
-export default async function WorkProductsPage({ params }: PageProps) {
+export default async function WorkProductsPage({ params }: PageProps<"/matters/[id]/work-products">) {
   const { id } = await params
   const [matterState, workProductsState] = await Promise.all([
     getMatterState(id),

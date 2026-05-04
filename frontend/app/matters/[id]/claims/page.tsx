@@ -3,11 +3,7 @@ import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { ClaimsBuilder } from "@/components/casebuilder/claims-builder"
 import { getMatterState } from "@/lib/casebuilder/server-api"
 
-interface PageProps {
-  params: Promise<{ id: string }>
-}
-
-export default async function ClaimsPage({ params }: PageProps) {
+export default async function ClaimsPage({ params }: PageProps<"/matters/[id]/claims">) {
   const { id } = await params
   const matterState = await getMatterState(id)
   const matter = matterState.data

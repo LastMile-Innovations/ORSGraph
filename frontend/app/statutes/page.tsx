@@ -10,6 +10,10 @@ type StatuteIndexPageParams = {
   offset?: string
 }
 
+type StatuteIndexPageProps = Omit<PageProps<"/statutes">, "searchParams"> & {
+  searchParams: Promise<StatuteIndexPageParams>
+}
+
 function numberParam(value: string | undefined, fallback: number, max: number) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback
@@ -18,9 +22,7 @@ function numberParam(value: string | undefined, fallback: number, max: number) {
 
 export default async function StatuteIndexPage({
   searchParams,
-}: {
-  searchParams: Promise<StatuteIndexPageParams>
-}) {
+}: StatuteIndexPageProps) {
   const params = await searchParams
   const q = params.q?.trim() ?? ""
   const chapter = params.chapter?.trim() ?? ""

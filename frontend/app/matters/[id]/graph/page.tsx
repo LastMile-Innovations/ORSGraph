@@ -3,11 +3,7 @@ import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { MatterGraphView } from "@/components/casebuilder/matter-graph-view"
 import { getMatterGraphState, getMatterState } from "@/lib/casebuilder/server-api"
 
-interface PageProps {
-  params: Promise<{ id: string }>
-}
-
-export default async function MatterGraphPage({ params }: PageProps) {
+export default async function MatterGraphPage({ params }: PageProps<"/matters/[id]/graph">) {
   const { id } = await params
   const [matterState, graphState] = await Promise.all([
     getMatterState(id),

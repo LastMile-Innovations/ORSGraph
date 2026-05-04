@@ -3,11 +3,7 @@ import { ComplaintEditorWorkbench } from "@/components/casebuilder/complaint-edi
 import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { getComplaintState, getMatterState } from "@/lib/casebuilder/server-api"
 
-interface PageProps {
-  params: Promise<{ id: string }>
-}
-
-export default async function ComplaintBuilderPage({ params }: PageProps) {
+export default async function ComplaintBuilderPage({ params }: PageProps<"/matters/[id]/complaint">) {
   const { id } = await params
   const [matterState, complaintState] = await Promise.all([
     getMatterState(id),

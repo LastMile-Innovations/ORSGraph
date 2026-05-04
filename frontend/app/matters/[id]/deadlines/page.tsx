@@ -3,11 +3,7 @@ import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { DeadlinesView } from "@/components/casebuilder/deadlines-view"
 import { getMatterState } from "@/lib/casebuilder/server-api"
 
-interface PageProps {
-  params: Promise<{ id: string }>
-}
-
-export default async function DeadlinesPage({ params }: PageProps) {
+export default async function DeadlinesPage({ params }: PageProps<"/matters/[id]/deadlines">) {
   const { id } = await params
   const matterState = await getMatterState(id)
   const matter = matterState.data

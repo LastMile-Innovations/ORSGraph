@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useId, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Trash2 } from "lucide-react"
 import {
@@ -32,6 +32,7 @@ export function DeleteMatterButton({
   compact = false,
 }: DeleteMatterButtonProps) {
   const router = useRouter()
+  const confirmationInputId = useId()
   const [open, setOpen] = useState(false)
   const [confirmation, setConfirmation] = useState("")
   const [deleting, setDeleting] = useState(false)
@@ -92,11 +93,11 @@ export function DeleteMatterButton({
         </AlertDialogHeader>
 
         <div className="space-y-2">
-          <label htmlFor="delete-matter-confirmation" className="text-sm font-medium text-foreground">
+          <label htmlFor={confirmationInputId} className="text-sm font-medium text-foreground">
             Type <span className="font-mono">{confirmationValue}</span> to confirm.
           </label>
           <Input
-            id="delete-matter-confirmation"
+            id={confirmationInputId}
             value={confirmation}
             onChange={(event) => setConfirmation(event.target.value)}
             disabled={deleting}

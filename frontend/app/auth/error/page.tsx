@@ -2,11 +2,13 @@ import Link from "next/link"
 import { ShieldAlert } from "lucide-react"
 import { AuthFrame } from "@/components/auth/auth-frame"
 
+type AuthErrorPageProps = Omit<PageProps<"/auth/error">, "searchParams"> & {
+  searchParams: Promise<{ error?: string }>
+}
+
 export default async function AuthErrorPage({
   searchParams,
-}: {
-  searchParams: Promise<{ error?: string }>
-}) {
+}: AuthErrorPageProps) {
   const { error } = await searchParams
   return (
     <AuthFrame

@@ -4,7 +4,12 @@ import { DataStateBanner } from "@/components/orsg/data-state-banner"
 import { ProvisionInspectorClient } from "@/components/orsg/provision/provision-inspector-client"
 import { getCachedProvisionInspectorDataState } from "@/lib/authority-server-cache"
 
-export default async function ProvisionPage({ params }: { params: Promise<{ id: string }> }) {
+export const unstable_instant = {
+  prefetch: "static",
+  unstable_disableValidation: true,
+}
+
+export default async function ProvisionPage({ params }: PageProps<"/provisions/[id]">) {
   const { id } = await params
   const decoded = decodeURIComponent(id)
   const state = await getCachedProvisionInspectorDataState(decoded)

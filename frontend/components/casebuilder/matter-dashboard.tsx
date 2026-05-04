@@ -16,6 +16,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { matterHref } from "@/lib/casebuilder/routes"
+import { DeleteMatterButton } from "./delete-matter-button"
 import type {
   CaseClaim,
   CaseDefense,
@@ -122,6 +123,7 @@ export function MatterDashboard({
               <FileText className="h-3.5 w-3.5" />
               drafts
             </Link>
+            <DeleteMatterButton matter={matter} className="h-auto px-3 py-1.5" />
           </div>
         </div>
 

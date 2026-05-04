@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   DEFAULT_CASEBUILDER_API_TIMEOUT_MS,
   archiveDocument,
+  deleteMatter,
   getMatterState,
   getMatterSummariesState,
   patchDocument,
@@ -80,6 +81,17 @@ describe("CaseBuilder API request loading", () => {
     expect(fetchMock.mock.calls[0][1]?.method).toBe("POST")
     expect(fetchMock.mock.calls[1][0]).toBe("/api/ors/matters/matter%3Aintake-test/documents/doc%3Anotice/restore")
     expect(fetchMock.mock.calls[1][1]?.method).toBe("POST")
+  })
+
+  it("hard-deletes a matter through the destructive matter endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ deleted: true }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    const state = await deleteMatter("matter:intake-test")
+
+    expect(state.data?.deleted).toBe(true)
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/ors/matters/matter%3Aintake-test")
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("DELETE")
   })
 })
 

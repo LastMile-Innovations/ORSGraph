@@ -7,6 +7,10 @@ type GraphPageSearchParams = {
   mode?: string | string[]
 }
 
+type GraphPageProps = Omit<PageProps<"/graph">, "searchParams"> & {
+  searchParams: Promise<GraphPageSearchParams>
+}
+
 const GRAPH_MODES: GraphMode[] = [
   "legal",
   "citation",
@@ -20,9 +24,7 @@ const GRAPH_MODES: GraphMode[] = [
 
 export default async function GraphPage({
   searchParams,
-}: {
-  searchParams: Promise<GraphPageSearchParams>
-}) {
+}: GraphPageProps) {
   const params = await searchParams
   const initialFocus = firstValue(params.focus)
   const initialMode = parseGraphMode(firstValue(params.mode))

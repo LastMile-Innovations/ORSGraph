@@ -1,9 +1,5 @@
 import { renderWorkProductPage } from "../work-product-page"
 
-interface PageProps {
-  params: Promise<{ id: string; workProductId: string }>
-}
-
-export default async function WorkProductEditorPage({ params }: PageProps) {
+export default async function WorkProductEditorPage({ params }: PageProps<"/matters/[id]/work-products/[workProductId]/editor">) {
   return renderWorkProductPage(params, "editor")
 }

@@ -2,11 +2,18 @@ import { Shell } from "@/components/orsg/shell"
 import { AskClient } from "@/components/orsg/ask/ask-client"
 import { askWithFallbackState } from "@/lib/api"
 
+export const unstable_instant = {
+  prefetch: "static",
+  unstable_disableValidation: true,
+}
+
+type AskPageProps = Omit<PageProps<"/ask">, "searchParams"> & {
+  searchParams: Promise<{ q?: string }>
+}
+
 export default async function AskPage({
   searchParams,
-}: {
-  searchParams: Promise<{ q?: string }>
-}) {
+}: AskPageProps) {
   const { q } = await searchParams
   const question = q?.trim() ?? ""
   const answerState = question ? await askWithFallbackState(question) : undefined

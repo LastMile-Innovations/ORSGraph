@@ -4,7 +4,12 @@ import { SourceDetailClient } from "@/components/orsg/sources/source-detail-clie
 import { getCachedSourceDetailState } from "@/lib/authority-server-cache"
 import { notFound } from "next/navigation"
 
-export default async function SourceDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export const unstable_instant = {
+  prefetch: "static",
+  unstable_disableValidation: true,
+}
+
+export default async function SourceDetailPage({ params }: PageProps<"/sources/[id]">) {
   const { id } = await params
   const decoded = decodeURIComponent(id)
   const state = await getCachedSourceDetailState(decoded)

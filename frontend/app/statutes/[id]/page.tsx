@@ -6,17 +6,23 @@ import { DataStateBanner } from "@/components/orsg/data-state-banner"
 import { getCachedStatutePageDataState } from "@/lib/authority-server-cache"
 import type { DataSource } from "@/lib/data-state"
 
+export const unstable_instant = {
+  prefetch: "static",
+  unstable_disableValidation: true,
+}
+
 type StatuteDetailParams = {
   tab?: string
+}
+
+type StatutePageProps = Omit<PageProps<"/statutes/[id]">, "searchParams"> & {
+  searchParams: Promise<StatuteDetailParams>
 }
 
 export default async function StatutePage({
   params,
   searchParams,
-}: {
-  params: Promise<{ id: string }>
-  searchParams: Promise<StatuteDetailParams>
-}) {
+}: StatutePageProps) {
   const { id } = await params
   const query = await searchParams
   const decoded = decodeURIComponent(id)

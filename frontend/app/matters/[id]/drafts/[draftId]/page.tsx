@@ -4,11 +4,7 @@ import { DraftEditor } from "@/components/casebuilder/draft-editor"
 import { getMatterState } from "@/lib/casebuilder/server-api"
 import { decodeRouteSegment } from "@/lib/casebuilder/routes"
 
-interface PageProps {
-  params: Promise<{ id: string; draftId: string }>
-}
-
-export default async function DraftPage({ params }: PageProps) {
+export default async function DraftPage({ params }: PageProps<"/matters/[id]/drafts/[draftId]">) {
   const { id, draftId } = await params
   const decodedDraftId = decodeRouteSegment(draftId)
   const matterState = await getMatterState(id)

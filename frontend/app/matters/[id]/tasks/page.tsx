@@ -3,11 +3,7 @@ import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { TasksBoard } from "@/components/casebuilder/tasks-board"
 import { getMatterState } from "@/lib/casebuilder/server-api"
 
-interface PageProps {
-  params: Promise<{ id: string }>
-}
-
-export default async function TasksPage({ params }: PageProps) {
+export default async function TasksPage({ params }: PageProps<"/matters/[id]/tasks">) {
   const { id } = await params
   const matterState = await getMatterState(id)
   const matter = matterState.data

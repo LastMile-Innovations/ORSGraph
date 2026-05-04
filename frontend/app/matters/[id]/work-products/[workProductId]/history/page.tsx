@@ -1,9 +1,5 @@
 import { renderWorkProductPage } from "../work-product-page"
 
-interface PageProps {
-  params: Promise<{ id: string; workProductId: string }>
-}
-
-export default async function WorkProductHistoryPage({ params }: PageProps) {
+export default async function WorkProductHistoryPage({ params }: PageProps<"/matters/[id]/work-products/[workProductId]/history">) {
   return renderWorkProductPage(params, "history")
 }

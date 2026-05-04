@@ -2,6 +2,11 @@ import { Shell } from "@/components/orsg/shell"
 import { SearchClient } from "@/components/orsg/search/search-client"
 import { getCachedSearchWithParamsState } from "@/lib/authority-server-cache"
 
+export const unstable_instant = {
+  prefetch: "static",
+  unstable_disableValidation: true,
+}
+
 type SearchPageParams = {
   q?: string
   type?: string
@@ -25,6 +30,10 @@ type SearchPageParams = {
   official_commentary?: string
 }
 
+type SearchPageProps = Omit<PageProps<"/search">, "searchParams"> & {
+  searchParams: Promise<SearchPageParams>
+}
+
 function boolParam(value?: string) {
   return value === "true"
 }
@@ -36,9 +45,7 @@ function numberParam(value: string | undefined, fallback: number) {
 
 export default async function SearchPage({
   searchParams,
-}: {
-  searchParams: Promise<SearchPageParams>
-}) {
+}: SearchPageProps) {
   const params = await searchParams
   const q = params.q || ""
   const initialMode = params.mode || "auto"

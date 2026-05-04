@@ -3,7 +3,12 @@ import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { MatterDashboard } from "@/components/casebuilder/matter-dashboard"
 import { getMatterState } from "@/lib/casebuilder/server-api"
 
-export default async function MatterDashboardPage({ params }: { params: Promise<{ id: string }> }) {
+export const unstable_instant = {
+  prefetch: "static",
+  unstable_disableValidation: true,
+}
+
+export default async function MatterDashboardPage({ params }: PageProps<"/matters/[id]">) {
   const { id } = await params
   const matterState = await getMatterState(id)
   const matter = matterState.data

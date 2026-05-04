@@ -8,10 +8,6 @@ import { matterClaimsHref, matterDraftHref } from "@/lib/casebuilder/routes"
 import type { Matter } from "@/lib/casebuilder/types"
 import { cn } from "@/lib/utils"
 
-interface PageProps {
-  params: Promise<{ id: string }>
-}
-
 type AuthorityRow = {
   citation: string
   canonicalId: string
@@ -21,7 +17,7 @@ type AuthorityRow = {
   draftSections: string[]
 }
 
-export default async function AuthoritiesPage({ params }: PageProps) {
+export default async function AuthoritiesPage({ params }: PageProps<"/matters/[id]/authorities">) {
   const { id } = await params
   const matterState = await getMatterState(id)
   const matter = matterState.data

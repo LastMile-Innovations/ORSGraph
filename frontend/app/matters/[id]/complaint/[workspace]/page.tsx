@@ -6,11 +6,7 @@ import type { ComplaintWorkspaceSection } from "@/lib/casebuilder/routes"
 
 const WORKSPACES: ComplaintWorkspaceSection[] = ["editor", "outline", "claims", "evidence", "qc", "preview", "export", "history"]
 
-interface PageProps {
-  params: Promise<{ id: string; workspace: string }>
-}
-
-export default async function ComplaintWorkspacePage({ params }: PageProps) {
+export default async function ComplaintWorkspacePage({ params }: PageProps<"/matters/[id]/complaint/[workspace]">) {
   const { id, workspace } = await params
   if (!isComplaintWorkspaceSection(workspace)) notFound()
   const [matterState, complaintState] = await Promise.all([

@@ -1,32 +1,20 @@
 import Link from "next/link"
 import { Shell } from "@/components/orsg/shell"
 import { DataStateBanner } from "@/components/casebuilder/data-state-banner"
+import { MatterListCard } from "@/components/casebuilder/matter-list-card"
 import { PageHeader } from "@/components/orsg/page-header"
 import { getMatterSummariesState } from "@/lib/casebuilder/server-api"
-import { matterHref, newMatterHref } from "@/lib/casebuilder/routes"
+import { newMatterHref } from "@/lib/casebuilder/routes"
 import {
-  AlertTriangle,
   ArrowRight,
   Briefcase,
-  CalendarClock,
   FileText,
   Folder,
   GavelIcon,
   Plus,
-  Scale,
   Sparkles,
   Upload,
 } from "lucide-react"
-import { cn } from "@/lib/utils"
-import type { MatterStatus } from "@/lib/casebuilder/types"
-
-const STATUS_CLS: Record<MatterStatus, string> = {
-  active: "bg-success/15 text-success",
-  intake: "bg-primary/15 text-primary",
-  stayed: "bg-warning/15 text-warning",
-  closed: "bg-muted text-muted-foreground",
-  appeal: "bg-accent/20 text-accent",
-}
 
 export default async function MattersPage() {
   const matterState = await getMatterSummariesState()
@@ -95,83 +83,7 @@ export default async function MattersPage() {
             </h2>
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               {matters.map((m) => (
-                <Link
-                  key={m.matter_id}
-                  href={matterHref(m.matter_id)}
-                  className="group flex flex-col gap-3 rounded border border-border bg-card p-4 transition-colors hover:border-primary/40"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-                        <span>{m.matter_type.replace(/_/g, " ")}</span>
-                        <span className="text-border">/</span>
-                        <span>{m.case_number ?? "no case #"}</span>
-                      </div>
-                      <h3 className="mt-0.5 line-clamp-1 text-base font-semibold text-foreground group-hover:text-primary">
-                        {m.name}
-                      </h3>
-                      <div className="mt-0.5 line-clamp-1 font-mono text-[11px] text-muted-foreground">
-                        {m.court}
-                      </div>
-                    </div>
-                    <span className={cn("rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider", STATUS_CLS[m.status])}>
-                      {m.status}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-4 gap-2 border-t border-border pt-3">
-                    <Mini icon={Folder} label="docs" value={m.document_count} />
-                    <Mini icon={Scale} label="claims" value={m.claim_count} />
-                    <Mini icon={FileText} label="drafts" value={m.draft_count} />
-                    <Mini icon={CalendarClock} label="tasks" value={m.open_task_count} />
-                  </div>
-
-                  {m.next_deadline ? (
-                    <div className="flex items-center justify-between rounded border border-border bg-background px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <AlertTriangle
-                          className={cn(
-                            "h-3.5 w-3.5",
-                            m.next_deadline.days_remaining <= 7
-                              ? "text-destructive"
-                              : m.next_deadline.days_remaining <= 21
-                                ? "text-warning"
-                                : "text-muted-foreground",
-                          )}
-                        />
-                        <span className="text-xs text-foreground">{m.next_deadline.description}</span>
-                      </div>
-                      <div className="flex items-center gap-2 font-mono text-[10px] tabular-nums">
-                        <span className="text-muted-foreground">{m.next_deadline.due_date}</span>
-                        <span
-                          className={cn(
-                            "rounded px-1.5 py-0.5",
-                            m.next_deadline.days_remaining <= 7
-                              ? "bg-destructive/15 text-destructive"
-                              : m.next_deadline.days_remaining <= 21
-                                ? "bg-warning/15 text-warning"
-                                : "bg-success/15 text-success",
-                          )}
-                        >
-                          {m.next_deadline.days_remaining}d
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between rounded border border-dashed border-border px-3 py-2">
-                      <span className="text-xs text-muted-foreground">No critical deadline yet</span>
-                      <span className="font-mono text-[10px] uppercase text-muted-foreground">intake</span>
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wide text-muted-foreground group-hover:text-primary">
-                    <span>updated {new Date(m.updated_at).toLocaleDateString()}</span>
-                    <span className="flex items-center gap-1">
-                      open
-                      <ArrowRight className="h-3 w-3" />
-                    </span>
-                  </div>
-                </Link>
+                <MatterListCard key={m.matter_id} matter={m} />
               ))}
 
               {/* New matter card */}
@@ -222,26 +134,6 @@ export default async function MattersPage() {
         </section>
       </div>
     </Shell>
-  )
-}
-
-function Mini({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof Folder
-  label: string
-  value: number
-}) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <div className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-        <Icon className="h-3 w-3" />
-        {label}
-      </div>
-      <div className="font-mono text-sm font-semibold tabular-nums text-foreground">{value}</div>
-    </div>
   )
 }
 

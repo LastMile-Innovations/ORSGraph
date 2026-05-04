@@ -2,11 +2,7 @@ import { notFound } from "next/navigation"
 import { DocumentWorkspaceModal } from "@/components/casebuilder/document-workspace-modal"
 import { getDocumentWorkspace, getMatterState } from "@/lib/casebuilder/server-api"
 
-interface PageProps {
-  params: Promise<{ id: string; docId: string }>
-}
-
-export default async function DocumentModalPage({ params }: PageProps) {
+export default async function DocumentModalPage({ params }: PageProps<"/matters/[id]/documents/[docId]">) {
   const { id, docId } = await params
   const [matterState, workspaceState] = await Promise.all([
     getMatterState(id),

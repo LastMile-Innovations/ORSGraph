@@ -3,11 +3,7 @@ import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { PartyMap } from "@/components/casebuilder/party-map"
 import { getMatterState } from "@/lib/casebuilder/server-api"
 
-interface PageProps {
-  params: Promise<{ id: string }>
-}
-
-export default async function PartiesPage({ params }: PageProps) {
+export default async function PartiesPage({ params }: PageProps<"/matters/[id]/parties">) {
   const { id } = await params
   const matterState = await getMatterState(id)
   const matter = matterState.data

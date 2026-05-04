@@ -1,9 +1,5 @@
 import { renderWorkProductAliasPage } from "../work-product-alias-page"
 
-interface PageProps {
-  params: Promise<{ id: string }>
-}
-
-export default async function DeclarationAliasPage({ params }: PageProps) {
+export default async function DeclarationAliasPage({ params }: PageProps<"/matters/[id]/declaration">) {
   return renderWorkProductAliasPage(params, "declaration")
 }
