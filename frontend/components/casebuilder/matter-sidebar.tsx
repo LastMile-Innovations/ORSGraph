@@ -37,6 +37,13 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion"
+
 interface MatterSidebarProps {
   matter: MatterSummary
   counts?: {
@@ -63,28 +70,27 @@ export function MatterSidebar({ matter, counts = {}, className, onNavigate }: Ma
   const base = matterHref(matter.matter_id)
   const resolvedCounts = resolveMatterCounts(matter as MatterSidebarMatter, counts)
 
-  const groups: { title: string; items: { href: string; label: string; icon: typeof Folder; count?: number; accent?: boolean }[] }[] = [
+  const groups: {
+    id: string
+    title: string
+    items: { href: string; label: string; icon: typeof Folder; count?: number; accent?: boolean }[]
+  }[] = [
     {
-      title: "matter",
-      items: [
-        { href: base, label: "Dashboard", icon: Activity },
-        { href: `${base}/ask`, label: "Ask matter", icon: Sparkles, accent: true },
-      ],
-    },
-    {
-      title: "evidence layer",
+      id: "evidence",
+      title: "Evidence Layer",
       items: [
         { href: `${base}/documents`, label: "Documents", icon: Folder, count: resolvedCounts.documents },
         { href: `${base}/parties`, label: "Parties", icon: Users, count: resolvedCounts.parties },
         { href: `${base}/facts`, label: "Facts", icon: ListChecks, count: resolvedCounts.facts },
         { href: `${base}/timeline`, label: "Timeline", icon: Calendar, count: resolvedCounts.events },
-        { href: `${base}/evidence`, label: "Evidence matrix", icon: Microscope, count: resolvedCounts.evidence },
+        { href: `${base}/evidence`, label: "Evidence Matrix", icon: Microscope, count: resolvedCounts.evidence },
       ],
     },
     {
-      title: "legal layer",
+      id: "legal",
+      title: "Legal Layer",
       items: [
-        { href: `${base}/claims`, label: "Claims & defenses", icon: Scale, count: resolvedCounts.claims + resolvedCounts.defenses },
+        { href: `${base}/claims`, label: "Claims & Defenses", icon: Scale, count: resolvedCounts.claims + resolvedCounts.defenses },
         { href: `${base}/deadlines`, label: "Deadlines", icon: AlertTriangle, count: resolvedCounts.deadlines },
         { href: `${base}/authorities`, label: "Authorities", icon: BookOpen },
         { href: `${base}/graph`, label: "Graph", icon: GitGraphIcon },
@@ -92,10 +98,11 @@ export function MatterSidebar({ matter, counts = {}, className, onNavigate }: Ma
       ],
     },
     {
-      title: "work product",
+      id: "work-product",
+      title: "Work Product",
       items: [
-        { href: matterWorkProductsHref(matter.matter_id), label: "Work product", icon: Files, count: resolvedCounts.workProducts },
-        { href: `${base}/complaint`, label: "Complaint editor", icon: GavelIcon },
+        { href: matterWorkProductsHref(matter.matter_id), label: "Work Product", icon: Files, count: resolvedCounts.workProducts },
+        { href: `${base}/complaint`, label: "Complaint Editor", icon: GavelIcon },
         { href: `${base}/drafts`, label: "Drafts", icon: FileText, count: resolvedCounts.drafts },
         { href: `${base}/tasks`, label: "Tasks", icon: CheckSquare, count: resolvedCounts.tasks },
         { href: `${base}/export`, label: "Exports", icon: PackageCheck },
@@ -103,6 +110,11 @@ export function MatterSidebar({ matter, counts = {}, className, onNavigate }: Ma
       ],
     },
   ]
+
+  // Determine which sections should be open by default based on current path
+  const defaultValues = groups
+    .filter((g) => g.items.some((item) => pathname.startsWith(item.href)))
+    .map((g) => g.id)
 
   return (
     <aside className={cn("flex h-full w-64 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground", className)}>
@@ -142,55 +154,86 @@ export function MatterSidebar({ matter, counts = {}, className, onNavigate }: Ma
           >
             {matter.status}
           </span>
-          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-            role: {matter.user_role}
-          </span>
         </div>
       </div>
 
       <nav aria-label="Matter navigation" className="flex-1 overflow-y-auto scrollbar-thin py-2">
-        {groups.map((group) => (
-          <div key={group.title} className="mb-2">
-            <div className="px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              {group.title}
-            </div>
-            <div className="space-y-px">
-              {group.items.map((item) => {
-                const active =
-                  pathname === item.href || (item.href !== base && pathname.startsWith(item.href))
-                const Icon = item.icon
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    aria-current={active ? "page" : undefined}
-                    onClick={onNavigate}
-                    className={cn(
-                      "mx-2 flex items-center justify-between rounded-md px-2.5 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-                      active
-                        ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
-                      item.accent && !active && "text-primary",
-                    )}
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <Icon className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">{item.label}</span>
-                    </span>
-                    {typeof item.count === "number" && item.count > 0 && (
-                      <span className={cn(
-                        "ml-2 rounded bg-background px-1.5 py-0.5 font-mono text-[10px] tabular-nums",
-                        active ? "text-primary" : "text-muted-foreground",
-                      )}>
-                        {item.count}
-                      </span>
-                    )}
-                  </Link>
-                )
-              })}
-            </div>
+        <div className="mb-4">
+          <div className="px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            Overview
           </div>
-        ))}
+          <div className="space-y-px">
+            <Link
+              href={base}
+              onClick={onNavigate}
+              className={cn(
+                "mx-2 flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors",
+                pathname === base ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              )}
+            >
+              <Activity className="h-3.5 w-3.5 shrink-0" />
+              <span>Dashboard</span>
+            </Link>
+            <Link
+              href={`${base}/ask`}
+              onClick={onNavigate}
+              className={cn(
+                "mx-2 flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors",
+                pathname === `${base}/ask` ? "bg-primary/10 text-primary" : "text-primary hover:bg-sidebar-accent"
+              )}
+            >
+              <Sparkles className="h-3.5 w-3.5 shrink-0" />
+              <span>Ask Matter</span>
+            </Link>
+          </div>
+        </div>
+
+        <Accordion type="multiple" defaultValue={defaultValues} className="w-full">
+          {groups.map((group) => (
+            <AccordionItem key={group.id} value={group.id} className="border-none">
+              <AccordionTrigger className="px-5 py-2 hover:bg-sidebar-accent hover:no-underline [&[data-state=open]>svg]:rotate-180">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                  {group.title}
+                </span>
+              </AccordionTrigger>
+              <AccordionContent className="pb-2">
+                <div className="space-y-px">
+                  {group.items.map((item) => {
+                    const active = pathname === item.href || (item.href !== base && pathname.startsWith(item.href))
+                    const Icon = item.icon
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        aria-current={active ? "page" : undefined}
+                        onClick={onNavigate}
+                        className={cn(
+                          "mx-2 flex items-center justify-between rounded-md px-2.5 py-1.5 text-xs transition-colors",
+                          active
+                            ? "bg-primary/10 text-primary"
+                            : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                        )}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <Icon className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">{item.label}</span>
+                        </span>
+                        {typeof item.count === "number" && item.count > 0 && (
+                          <span className={cn(
+                            "ml-2 rounded bg-background px-1.5 py-0.5 font-mono text-[10px] tabular-nums",
+                            active ? "text-primary" : "text-muted-foreground",
+                          )}>
+                            {item.count}
+                          </span>
+                        )}
+                      </Link>
+                    )
+                  })}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          ))}
+        </Accordion>
       </nav>
 
       {matter.next_deadline && (

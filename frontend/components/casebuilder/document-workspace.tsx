@@ -1,15 +1,17 @@
 "use client"
 
-import { useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from "react"
+import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import {
   ArrowLeft,
+  Calendar,
   CalendarClock,
   Captions,
   CheckCircle2,
   Download,
+  ExternalLink,
   FileText,
   GitGraphIcon,
   Highlighter,
@@ -25,7 +27,6 @@ import {
   ScrollText,
   Shield,
   Sparkles,
-  Tags,
   Users,
 } from "lucide-react"
 import type {
@@ -35,6 +36,8 @@ import type {
   MarkdownAstNode,
   DocumentWorkspace as DocumentWorkspaceState,
   Matter,
+  ExtractedFact,
+  TimelineSuggestion,
   TranscriptionJob,
   TranscriptSegment,
   TranscriptionJobResponse,
@@ -144,11 +147,17 @@ function transcriptionSettingsFromEffectiveSettings(settings?: CaseBuilderEffect
   }
 }
 
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable"
+
 export function DocumentWorkspace({ matter, workspace: initialWorkspace, settings }: DocumentWorkspaceProps) {
   const router = useRouter()
   const [workspace, setWorkspace] = useState(initialWorkspace)
   const [textDraft, setTextDraft] = useState(initialWorkspace.text_content ?? "")
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>("links")
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>("markdown_graph")
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -182,11 +191,18 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace, setting
   const contentUrl = workspace.content_url ?? null
   const dirty = textDraft !== (workspace.text_content ?? "")
   const canSave = canEdit && dirty && busy !== "save"
+
+  // Auto-switch tab based on content type
+  useEffect(() => {
+    if (isMedia) setActiveTab("speakers")
+    else if (isMarkdown) setActiveTab("markdown_graph")
+    else setActiveTab("annotations")
+  }, [isMedia, isMarkdown])
+
   const activeTranscription = useMemo(
     () => latestTranscription(workspace.transcriptions),
     [workspace.transcriptions],
   )
-  const selectedSegment = activeTranscription?.segments.find((segment) => segment.segment_id === selectedSegmentId) ?? null
 
   function selectMarkdownNode(node: MarkdownAstNode) {
     const start = node.char_start ?? node.byte_start
@@ -209,14 +225,6 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace, setting
     }
   }
 
-  const links = useMemo(
-    () => [
-      ...(document.linked_claim_ids ?? []).map((id) => ({ label: "Claim", id })),
-      ...workspace.source_spans.slice(0, 12).map((span) => ({ label: `Span ${span.page ?? 1}`, id: span.source_span_id })),
-    ],
-    [document.linked_claim_ids, workspace.source_spans],
-  )
-
   async function runAction<T>(
     label: string,
     action: () => Promise<{ data: T | null; error?: string }>,
@@ -225,13 +233,18 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace, setting
     setBusy(label)
     setMessage(null)
     setError(null)
-    const result = await action()
-    setBusy(null)
-    if (!result.data) {
-      setError(result.error || `${label} failed.`)
-      return
+    try {
+      const result = await action()
+      if (!result.data) {
+        setError(result.error || `${label} failed.`)
+        return
+      }
+      onSuccess(result.data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `${label} failed.`)
+    } finally {
+      setBusy((current) => (current === label ? null : current))
     }
-    onSuccess(result.data)
   }
 
   function onSegmentDraftChange(segmentId: string, view: TranscriptView, text: string) {
@@ -377,6 +390,7 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace, setting
   }
 
   async function onStartTranscription() {
+    if (!canExtract) return
     await runAction(
       "transcribe",
       () => createTranscription(matter.id, document.document_id, buildCreateTranscriptionInput(transcriptionSettings)),
@@ -701,299 +715,303 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace, setting
     )
   }
 
+  async function onApproveFact(fact: ExtractedFact) {
+    await runAction(
+      "approve fact",
+      () => createFact(matter.id, {
+        statement: fact.statement,
+        status: "alleged",
+        confidence: fact.confidence,
+        source_document_ids: [document.document_id],
+          markdown_ast_node_ids: fact.markdown_ast_node_ids ?? [],
+        notes: `Extracted from ${document.filename}.`,
+      }),
+      () => {
+        setWorkspace((current) => ({
+          ...current,
+          proposed_facts: current.proposed_facts.filter((item) => (item.fact_id ?? item.id) !== (fact.fact_id ?? fact.id)),
+        }))
+        setMessage("Fact approved and added to matter.")
+        router.refresh()
+      },
+    )
+  }
+
+  async function onApproveTimeline(suggestion: TimelineSuggestion) {
+    await runAction(
+      "approve timeline",
+      () => createTimelineEvent(matter.id, {
+        date: suggestion.date_text,
+        title: suggestion.title,
+        description: suggestion.description,
+        kind: suggestion.kind || "other",
+        source_document_id: document.document_id,
+        markdown_ast_node_ids: suggestion.markdown_ast_node_ids,
+        suggestion_id: suggestion.suggestion_id,
+        agent_run_id: suggestion.agent_run_id,
+      }),
+      () => {
+        setWorkspace((current) => ({
+          ...current,
+          timeline_suggestions: current.timeline_suggestions.filter((s) => s.suggestion_id !== suggestion.suggestion_id),
+        }))
+        setMessage("Timeline event created.")
+        router.refresh()
+      },
+    )
+  }
+
   return (
     <TooltipProvider delayDuration={200}>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-        <header className="shrink-0 border-b bg-card px-4 py-3">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Link href={matterHref(matter.id, "documents")} className="inline-flex items-center gap-1 hover:text-foreground">
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Documents
-            </Link>
-          </div>
-          <div className="mt-2 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
-                <h1 className="truncate text-xl font-semibold">{document.title}</h1>
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <Badge variant="outline" className="font-mono text-[10px]">{document.document_type}</Badge>
+        <header className="shrink-0 border-b bg-card px-4 py-2">
+          <div className="flex items-center justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              <Link href={matterHref(matter.id, "documents")} className="text-muted-foreground hover:text-foreground">
+                <ArrowLeft className="h-4 w-4" />
+              </Link>
+              <div className="flex items-center gap-2 overflow-hidden">
+                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <h1 className="truncate text-sm font-semibold">{document.title}</h1>
+                <Badge variant="outline" className="font-mono text-[10px] uppercase">{document.document_type}</Badge>
                 <ProcessingBadge status={document.processing_status} />
-                {dirty && <Badge variant="secondary">Unsaved</Badge>}
-                <span>{document.fileSize}</span>
-                <span>{document.storage_status ?? "stored"}</span>
-                {workspace.current_version && <span className="font-mono">{workspace.current_version.role}</span>}
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1">
+              {canEdit && (
+                <Button variant={dirty ? "default" : "ghost"} size="sm" onClick={onSave} disabled={!canSave} className="h-8 gap-1.5">
+                  <Save className="h-3.5 w-3.5" />
+                  {dirty ? "Save Changes" : "Saved"}
+                </Button>
+              )}
+              <Separator orientation="vertical" className="mx-1 h-4" />
               <IconButton label="Download source" onClick={onDownload} disabled={busy === "download"}>
-                <Download className="h-4 w-4" />
+                <Download className="h-3.5 w-3.5" />
               </IconButton>
               {isMedia ? (
-                <>
-                  <IconButton label="Transcribe media" onClick={onStartTranscription} disabled={!canExtract || busy === "transcribe"}>
-                    <Mic className="h-4 w-4" />
-                  </IconButton>
-                  <IconButton label="Sync transcript" onClick={onSyncTranscription} disabled={!canExtract || !activeTranscription || busy === "sync transcript"}>
-                    <RefreshCw className="h-4 w-4" />
-                  </IconButton>
-                  <IconButton
-                    label={transcriptView === "raw" ? "Review raw transcript" : "Review redacted transcript"}
-                    onClick={onReviewTranscript}
-                    disabled={!canExtract || !activeTranscription || activeTranscription.segments.length === 0 || busy === "review transcript"}
-                  >
-                    <CheckCircle2 className="h-4 w-4" />
-                  </IconButton>
-                </>
+                <IconButton label="Transcribe media" onClick={onStartTranscription} disabled={!canExtract || busy === "transcribe"}>
+                  <Mic className="h-3.5 w-3.5" />
+                </IconButton>
               ) : (
                 <IconButton label="Extract text" onClick={onExtract} disabled={!canExtract || busy === "extract"}>
-                  <Sparkles className="h-4 w-4" />
+                  <Sparkles className="h-3.5 w-3.5" />
                 </IconButton>
               )}
-              <IconButton label="Suggest timeline" onClick={onSuggestTimeline} disabled={!canExtract || busy === "timeline suggestions"}>
-                <CalendarClock className="h-4 w-4" />
+              <IconButton label="Suggest Timeline" onClick={onSuggestTimeline} disabled={!canExtract || busy === "timeline suggestions"}>
+                <CalendarClock className="h-3.5 w-3.5" />
               </IconButton>
-              {canEdit && (
-                <IconButton label="Save text" onClick={onSave} disabled={!canSave}>
-                  <Save className="h-4 w-4" />
-                </IconButton>
-              )}
               <IconButton label="Promote to work product" onClick={onPromote} disabled={!canPromote || busy === "promote"}>
-                <ScrollText className="h-4 w-4" />
+                <ScrollText className="h-3.5 w-3.5" />
               </IconButton>
             </div>
           </div>
-          {(message || error || workspace.warnings.length > 0) && (
-            <div
-              className={cn(
-                "mt-3 rounded-md border px-3 py-2 text-xs",
-                error ? "border-destructive/30 bg-destructive/5 text-destructive" : "border-border bg-muted/40 text-muted-foreground",
-              )}
-            >
-              {error || message || workspace.warnings[0]}
+          {(message || error) && (
+            <div className={cn(
+              "mt-2 rounded px-2 py-1 text-[10px] font-medium",
+              error ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary"
+            )}>
+              {error || message}
             </div>
           )}
         </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(18rem,40vh)] overflow-hidden lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[minmax(0,1fr)] xl:grid-cols-[minmax(0,1fr)_24rem]">
-          <main className="min-h-0 overflow-hidden border-r bg-background">
-            <DocumentCenterPane
-              canEdit={canEdit}
-              canExtract={canExtract}
-              contentUrl={contentUrl}
-              documentTitle={document.title}
-              isImage={isImage}
-              isMarkdown={isMarkdown}
-              isMedia={isMedia}
-              isPdf={isPdf}
-              activeTranscription={activeTranscription}
-              busy={busy}
-              selectedSegmentId={selectedSegmentId}
-              timelineDateDrafts={timelineDateDrafts}
-              transcriptSegmentDrafts={transcriptSegmentDrafts}
-              transcriptReviewed={Boolean(activeTranscription?.job.status === "processed")}
-              transcriptionSettings={transcriptionSettings}
-              transcriptView={transcriptView}
-              textDraft={textDraft}
-              textAreaRef={textAreaRef}
-              workspace={workspace}
-              onCreateAnnotation={onCreateSegmentAnnotation}
-              onCreateEvidence={onCreateSegmentEvidence}
-              onCreateFact={onCreateSegmentFact}
-              onCreateTimeline={onCreateSegmentTimeline}
-              onSegmentDraftChange={onSegmentDraftChange}
-              onPatchSegment={onPatchSegment}
-              onReviewTranscription={onReviewTranscript}
-              onSelectSegment={setSelectedSegmentId}
-              onStartTranscription={onStartTranscription}
-              onTimelineDateDraftChange={(segmentId, value) => {
-                setTimelineDateDrafts((current) => ({ ...current, [segmentId]: value }))
-              }}
-              onTranscriptionSettingsChange={setTranscriptionSettings}
-              onSyncTranscription={onSyncTranscription}
-              onTextChange={setTextDraft}
-              onTextSelection={setSelectedTextRange}
-              onSave={onSave}
-            />
-          </main>
+        <ResizablePanelGroup direction="horizontal" className="flex-1">
+          <ResizablePanel defaultSize={70} minSize={30}>
+            <main className="h-full overflow-hidden bg-background">
+              <DocumentCenterPane
+                busy={busy}
+                canEdit={canEdit}
+                canExtract={canExtract}
+                contentUrl={contentUrl}
+                documentTitle={document.title}
+                isImage={isImage}
+                isMarkdown={isMarkdown}
+                isMedia={isMedia}
+                isPdf={isPdf}
+                activeTranscription={activeTranscription}
+                selectedSegmentId={selectedSegmentId}
+                timelineDateDrafts={timelineDateDrafts}
+                transcriptSegmentDrafts={transcriptSegmentDrafts}
+                transcriptReviewed={Boolean(activeTranscription?.job.status === "processed")}
+                transcriptionSettings={transcriptionSettings}
+                transcriptView={transcriptView}
+                textDraft={textDraft}
+                textAreaRef={textAreaRef}
+                workspace={workspace}
+                onCreateAnnotation={onCreateSegmentAnnotation}
+                onCreateEvidence={onCreateSegmentEvidence}
+                onCreateFact={onCreateSegmentFact}
+                onCreateTimeline={onCreateSegmentTimeline}
+                onSegmentDraftChange={onSegmentDraftChange}
+                onPatchSegment={onPatchSegment}
+                onReviewTranscription={onReviewTranscript}
+                onSelectSegment={setSelectedSegmentId}
+                onStartTranscription={onStartTranscription}
+                onTimelineDateDraftChange={(segmentId, value) => {
+                  setTimelineDateDrafts((current) => ({ ...current, [segmentId]: value }))
+                }}
+                onTranscriptionSettingsChange={setTranscriptionSettings}
+                onTranscriptViewChange={setTranscriptView}
+                onSyncTranscription={onSyncTranscription}
+                onTextChange={setTextDraft}
+                onTextSelection={setSelectedTextRange}
+                onSave={onSave}
+              />
+            </main>
+          </ResizablePanel>
 
-          <aside className="min-h-0 overflow-hidden bg-card">
-            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as WorkspaceTab)} className="flex h-full min-h-0 flex-col">
-              <div className="border-b px-3 pt-3">
-                <TabsList className={cn("grid w-full", isMedia ? "grid-cols-6" : "grid-cols-4")}>
-                  <TabsTrigger value="links" aria-label="Links"><Link2 className="h-3.5 w-3.5" /></TabsTrigger>
-                  <TabsTrigger value="annotations" aria-label="Annotations"><Highlighter className="h-3.5 w-3.5" /></TabsTrigger>
-                  <TabsTrigger value="provenance" aria-label="Provenance"><PanelRight className="h-3.5 w-3.5" /></TabsTrigger>
-                  <TabsTrigger value="markdown_graph" aria-label="Markdown graph"><GitGraphIcon className="h-3.5 w-3.5" /></TabsTrigger>
-                  {isMedia && <TabsTrigger value="speakers" aria-label="Speakers"><Users className="h-3.5 w-3.5" /></TabsTrigger>}
-                  {isMedia && <TabsTrigger value="privacy" aria-label="Privacy"><Shield className="h-3.5 w-3.5" /></TabsTrigger>}
-                </TabsList>
-              </div>
-              <ScrollArea className="min-h-0 flex-1">
-                <TabsContent value="links" className="m-0 space-y-4 p-4">
-                  <InspectorSection title="Case Links" icon={<Link2 className="h-4 w-4" />}>
-                    {links.length ? (
-                      <div className="space-y-2">
-                        {links.map((link) => (
-                          <div key={`${link.label}:${link.id}`} className="rounded-md border px-3 py-2 text-xs">
-                            <div className="font-medium">{link.label}</div>
-                            <div className="mt-1 break-all font-mono text-muted-foreground">{link.id}</div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <EmptyLine text="No linked claims or spans yet." />
+          <ResizableHandle withHandle />
+
+          <ResizablePanel defaultSize={30} minSize={20}>
+            <aside className="h-full overflow-hidden border-l bg-card">
+              <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as WorkspaceTab)} className="flex h-full flex-col">
+                <div className="flex items-center justify-between border-b px-2 py-1.5">
+                  <TabsList className="h-8 bg-transparent p-0">
+                    {isMarkdown && (
+                      <TabsTrigger
+                        value="markdown_graph"
+                        aria-label="Markdown graph"
+                        className="h-7 text-[10px] uppercase tracking-wider data-[state=active]:bg-muted"
+                      >
+                        Graph
+                      </TabsTrigger>
                     )}
-                  </InspectorSection>
-                  <InspectorSection title="Capabilities" icon={<Tags className="h-4 w-4" />}>
-                    <div className="space-y-2">
-                      {workspace.capabilities.map((capability) => (
-                        <div key={capability.capability} className="flex items-center justify-between gap-2 text-xs">
-                          <span className="capitalize">{capability.capability}</span>
-                          <Badge variant={capability.enabled ? "default" : "outline"} className="max-w-44 truncate">
-                            {capability.mode}
-                          </Badge>
-                        </div>
-                      ))}
-                    </div>
-                  </InspectorSection>
-                </TabsContent>
+                    <TabsTrigger value="annotations" className="h-7 text-[10px] uppercase tracking-wider data-[state=active]:bg-muted">Notes</TabsTrigger>
+                    {isMedia && <TabsTrigger value="speakers" className="h-7 text-[10px] uppercase tracking-wider data-[state=active]:bg-muted">Speakers</TabsTrigger>}
+                    {isMedia && <TabsTrigger value="privacy" className="h-7 text-[10px] uppercase tracking-wider data-[state=active]:bg-muted">Privacy</TabsTrigger>}
+                    <TabsTrigger value="provenance" className="h-7 text-[10px] uppercase tracking-wider data-[state=active]:bg-muted">Audit</TabsTrigger>
+                  </TabsList>
+                </div>
+                
+                <ScrollArea className="flex-1">
+                  <div className="p-4">
+                    <TabsContent value="markdown_graph" className="m-0 focus-visible:outline-none">
+                      <MarkdownGraphPanel
+                        matterId={matter.id}
+                        workspace={workspace}
+                        selectedTextRange={selectedTextRange}
+                        onSelectNode={selectMarkdownNode}
+                        onRunEmbeddings={onRunEmbeddings}
+                        onApproveFact={onApproveFact}
+                        onApproveTimeline={onApproveTimeline}
+                      />
+                    </TabsContent>
 
-                <TabsContent value="annotations" className="m-0 space-y-4 p-4">
-                  <InspectorSection title="New Annotation" icon={<MessageSquare className="h-4 w-4" />}>
-                    <div className="space-y-3">
-                      <Select value={annotationType} onValueChange={setAnnotationType}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="note">Note</SelectItem>
-                          <SelectItem value="highlight">Highlight</SelectItem>
-                          <SelectItem value="redaction">Redaction</SelectItem>
-                          <SelectItem value="exhibit_label">Exhibit label</SelectItem>
-                          <SelectItem value="fact_link">Fact link</SelectItem>
-                          <SelectItem value="citation">Citation</SelectItem>
-                          <SelectItem value="issue">Issue</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Input value={annotationLabel} onChange={(event) => setAnnotationLabel(event.target.value)} placeholder="Label" />
-                      <Input value={annotationPage} onChange={(event) => setAnnotationPage(event.target.value)} inputMode="numeric" placeholder="Page" />
-                      <Textarea value={annotationNote} onChange={(event) => setAnnotationNote(event.target.value)} placeholder="Note" rows={4} />
-                      {selectedTextRange && (
-                        <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                          <div className="line-clamp-2">{selectedTextRange.quote}</div>
-                        </div>
-                      )}
-                      <Button className="w-full" onClick={onCreateAnnotation} disabled={!canAnnotate || busy === "annotation"}>
-                        Save annotation
-                      </Button>
-                    </div>
-                  </InspectorSection>
-                  <InspectorSection title="Sidecar Annotations" icon={<Highlighter className="h-4 w-4" />}>
-                    <AnnotationList annotations={workspace.annotations} />
-                  </InspectorSection>
-                </TabsContent>
-
-                <TabsContent value="provenance" className="m-0 space-y-4 p-4">
-                  <InspectorSection title="Source" icon={<FileText className="h-4 w-4" />}>
-                    <KeyValue label="Document ID" value={document.document_id} />
-                    <KeyValue label="Version ID" value={workspace.current_version?.document_version_id ?? document.current_version_id ?? "none"} />
-                    <KeyValue label="Object" value={document.object_blob_id ?? "none"} />
-                    <KeyValue label="Hash" value={document.file_hash ?? "pending"} />
-                    {activeTranscription && (
-                      <>
-                        <KeyValue label="Transcript" value={activeTranscription.job.transcription_job_id} />
-                        <KeyValue label="Provider" value={activeTranscription.job.provider_status ?? activeTranscription.job.provider_mode} />
-                      </>
-                    )}
-                  </InspectorSection>
-                  {workspace.docx_manifest && (
-                    <InspectorSection title="DOCX Package" icon={<ScrollText className="h-4 w-4" />}>
-                      <KeyValue label="Entries" value={String(workspace.docx_manifest.entry_count)} />
-                      <KeyValue label="Text parts" value={String(workspace.docx_manifest.text_part_count)} />
-                      <KeyValue label="Editable" value={workspace.docx_manifest.editable ? "yes" : "review"} />
-                      {workspace.docx_manifest.unsupported_features.length > 0 && (
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          {workspace.docx_manifest.unsupported_features.map((feature) => (
-                            <Badge key={feature} variant="outline">{feature}</Badge>
-                          ))}
-                        </div>
-                      )}
-                    </InspectorSection>
-                  )}
-                </TabsContent>
-                <TabsContent value="markdown_graph" className="m-0 space-y-4 p-4">
-                  <MarkdownGraphPanel
-                    matterId={matter.id}
-                    workspace={workspace}
-                    selectedTextRange={selectedTextRange}
-                    onSelectNode={selectMarkdownNode}
-                    onRunEmbeddings={onRunEmbeddings}
-                  />
-                </TabsContent>
-                {isMedia && (
-                  <TabsContent value="speakers" className="m-0 space-y-4 p-4">
-                    <InspectorSection title="Speakers" icon={<Users className="h-4 w-4" />}>
-                      {activeTranscription?.speakers.length ? (
+                    <TabsContent value="annotations" className="m-0 space-y-6 focus-visible:outline-none">
+                      <InspectorSection title="New Annotation" icon={<MessageSquare className="h-3.5 w-3.5" />}>
                         <div className="space-y-3">
-                          {activeTranscription.speakers.map((speaker) => (
-                            <div key={speaker.speaker_id} className="rounded-md border px-3 py-2">
-                              <div className="mb-2 flex items-center justify-between gap-2 text-xs">
-                                <span className="font-mono">{speaker.speaker_label}</span>
-                                <Badge variant="outline">{speaker.segment_count}</Badge>
-                              </div>
-                              <Input
-                                defaultValue={speaker.display_name ?? ""}
-                                placeholder="Speaker name"
-                                onBlur={(event) => onPatchSpeaker(speaker.speaker_id, event.currentTarget.value)}
-                              />
+                          <div className="flex gap-2">
+                            <Select value={annotationType} onValueChange={setAnnotationType}>
+                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="note">Note</SelectItem>
+                                <SelectItem value="highlight">Highlight</SelectItem>
+                                <SelectItem value="redaction">Redaction</SelectItem>
+                                <SelectItem value="fact_link">Fact link</SelectItem>
+                                <SelectItem value="citation">Citation</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <Input
+                              value={annotationPage}
+                              onChange={(e) => setAnnotationPage(e.target.value)}
+                              placeholder="Pg #"
+                              className="h-8 w-16 text-xs"
+                            />
+                          </div>
+                          <Textarea
+                            value={annotationNote}
+                            onChange={(e) => setAnnotationNote(e.target.value)}
+                            placeholder="Type your notes here..."
+                            className="min-h-[100px] text-xs"
+                          />
+                          {selectedTextRange && (
+                            <div className="rounded border bg-muted/30 px-2 py-1.5 text-[10px] italic text-muted-foreground">
+                              "{selectedTextRange.quote.slice(0, 100)}..."
+                            </div>
+                          )}
+                          <Button size="sm" className="w-full" onClick={onCreateAnnotation} disabled={!canAnnotate || busy === "annotation"}>
+                            Save Note
+                          </Button>
+                        </div>
+                      </InspectorSection>
+
+                      <Separator />
+
+                      <InspectorSection title="Document Notes" icon={<Highlighter className="h-3.5 w-3.5" />}>
+                        <AnnotationList annotations={workspace.annotations} />
+                      </InspectorSection>
+                    </TabsContent>
+
+                    <TabsContent value="provenance" className="m-0 space-y-6 focus-visible:outline-none">
+                      <InspectorSection title="Document Metadata" icon={<FileText className="h-3.5 w-3.5" />}>
+                        <div className="space-y-1.5">
+                          <KeyValue label="Mime Type" value={document.mime_type ?? "unknown"} />
+                          <KeyValue label="Stored At" value={document.storage_status ?? "local"} />
+                          <KeyValue label="File Size" value={document.fileSize} />
+                          <KeyValue label="ID" value={document.document_id} />
+                        </div>
+                      </InspectorSection>
+                      
+                      <InspectorSection title="Processing Status" icon={<PanelRight className="h-3.5 w-3.5" />}>
+                        <div className="space-y-2">
+                          {workspace.capabilities.map((cap) => (
+                            <div key={cap.capability} className="flex items-center justify-between text-[10px]">
+                              <span className="capitalize text-muted-foreground">{cap.capability}</span>
+                              <Badge variant={cap.enabled ? "secondary" : "outline"} className="h-4 text-[9px] font-mono">
+                                {cap.mode}
+                              </Badge>
                             </div>
                           ))}
                         </div>
-                      ) : (
-                        <EmptyLine text="No diarized speakers yet." />
-                      )}
-                    </InspectorSection>
-                  </TabsContent>
-                )}
-                {isMedia && (
-                  <TabsContent value="privacy" className="m-0 space-y-4 p-4">
-                    <InspectorSection title="Transcript View" icon={<Shield className="h-4 w-4" />}>
-                      <div className="grid grid-cols-2 gap-2">
-                        <Button size="sm" variant={transcriptView === "redacted" ? "default" : "outline"} onClick={() => setTranscriptView("redacted")}>
-                          Redacted
-                        </Button>
-                        <Button size="sm" variant={transcriptView === "raw" ? "default" : "outline"} onClick={() => setTranscriptView("raw")}>
-                          Raw
-                        </Button>
-                      </div>
-                      <div className="mt-3 space-y-2 text-xs text-muted-foreground">
-                        <KeyValue label="Raw" value={activeTranscription?.raw_artifact_version?.document_version_id ?? "none"} />
-                        <KeyValue label="Redacted" value={activeTranscription?.redacted_artifact_version?.document_version_id ?? "none"} />
-                        <KeyValue label="Redacted Audio" value={activeTranscription?.redacted_audio_version?.document_version_id ?? "none"} />
-                        <KeyValue label="Prompt" value={transcriptionPromptSummary(activeTranscription?.job)} />
-                        <KeyValue label="Speakers" value={transcriptionSpeakerSummary(activeTranscription?.job)} />
-                        <KeyValue label="Word Search" value={activeTranscription?.job.word_search_terms.length ? `${activeTranscription.job.word_search_terms.length} terms` : "none"} />
-                        <KeyValue label="Audio Tags" value={activeTranscription?.job.remove_audio_tags ?? "kept"} />
-                        <KeyValue label="Reviewed" value={activeTranscription?.reviewed_document_version?.document_version_id ?? "none"} />
-                      </div>
-                    </InspectorSection>
-                    <InspectorSection title="Selected Segment" icon={<Captions className="h-4 w-4" />}>
-                      {selectedSegment ? (
-                        <div className="space-y-2 text-xs">
-                          <KeyValue label="Segment" value={selectedSegment.segment_id} />
-                          <KeyValue label="Time" value={`${formatMs(selectedSegment.time_start_ms)}-${formatMs(selectedSegment.time_end_ms)}`} />
-                          <KeyValue label="Span" value={selectedSegment.source_span_id ?? "pending"} />
-                        </div>
-                      ) : (
-                        <EmptyLine text="Select a segment to inspect timestamps." />
-                      )}
-                    </InspectorSection>
-                  </TabsContent>
-                )}
-              </ScrollArea>
-            </Tabs>
-          </aside>
-        </div>
+                      </InspectorSection>
+                    </TabsContent>
+
+                    {isMedia && (
+                      <TabsContent value="speakers" className="m-0 focus-visible:outline-none">
+                        <InspectorSection title="Speaker Identification" icon={<Users className="h-3.5 w-3.5" />}>
+                          {activeTranscription?.speakers.length ? (
+                            <div className="space-y-3">
+                              {activeTranscription.speakers.map((speaker) => (
+                                <div key={speaker.speaker_id} className="group rounded-md border p-2 transition-colors hover:border-primary/30">
+                                  <div className="mb-1.5 flex items-center justify-between text-[10px]">
+                                    <span className="font-mono text-muted-foreground">{speaker.speaker_label}</span>
+                                    <span className="text-muted-foreground">{speaker.segment_count} turns</span>
+                                  </div>
+                                  <Input
+                                    defaultValue={speaker.display_name ?? ""}
+                                    placeholder="Assign Name..."
+                                    className="h-7 text-xs"
+                                    onBlur={(e) => onPatchSpeaker(speaker.speaker_id, e.target.value)}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="py-8 text-center text-xs text-muted-foreground">
+                              No speakers identified yet.
+                            </div>
+                          )}
+                        </InspectorSection>
+                      </TabsContent>
+                    )}
+                    {isMedia && (
+                      <TabsContent value="privacy" className="m-0 focus-visible:outline-none">
+                        <InspectorSection title="Transcript View" icon={<Shield className="h-3.5 w-3.5" />}>
+                          <div className="space-y-2 text-xs text-muted-foreground">
+                            <KeyValue label="View" value={transcriptView} />
+                            <KeyValue label="Raw" value={activeTranscription?.raw_artifact_version?.document_version_id ?? "none"} />
+                            <KeyValue label="Redacted" value={activeTranscription?.redacted_artifact_version?.document_version_id ?? "none"} />
+                            <KeyValue label="Reviewed" value={activeTranscription?.reviewed_document_version?.document_version_id ?? "none"} />
+                          </div>
+                        </InspectorSection>
+                      </TabsContent>
+                    )}
+                  </div>
+                </ScrollArea>
+              </Tabs>
+            </aside>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
     </TooltipProvider>
   )
@@ -1030,6 +1048,7 @@ function DocumentCenterPane({
   onStartTranscription,
   onTimelineDateDraftChange,
   onTranscriptionSettingsChange,
+  onTranscriptViewChange,
   onSyncTranscription,
   onTextChange,
   onTextSelection,
@@ -1065,6 +1084,7 @@ function DocumentCenterPane({
   onStartTranscription: () => void
   onTimelineDateDraftChange: (segmentId: string, value: string) => void
   onTranscriptionSettingsChange: Dispatch<SetStateAction<TranscriptionSettings>>
+  onTranscriptViewChange: (view: TranscriptView) => void
   onSyncTranscription: () => void
   onTextChange: (value: string) => void
   onTextSelection: (range: SelectedTextRange | null) => void
@@ -1115,6 +1135,7 @@ function DocumentCenterPane({
         onStartTranscription={onStartTranscription}
         onTimelineDateDraftChange={onTimelineDateDraftChange}
         onTranscriptionSettingsChange={onTranscriptionSettingsChange}
+        onTranscriptViewChange={onTranscriptViewChange}
         onSyncTranscription={onSyncTranscription}
       />
     )
@@ -1122,9 +1143,11 @@ function DocumentCenterPane({
   if (isMarkdown || (canEdit && textDraft)) {
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <div className="flex items-center justify-between border-b px-4 py-2 text-xs text-muted-foreground">
-          <span>{isMarkdown ? "Markdown source" : "Text source"}</span>
-          <Badge variant={canEdit ? "default" : "outline"}>{canEdit ? "Editable" : "Read only"}</Badge>
+        <div className="flex items-center justify-between border-b bg-card px-4 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+          <span>{isMarkdown ? "Markdown Source" : "Text Content"}</span>
+          <div className="flex items-center gap-2">
+            <Badge variant={canEdit ? "default" : "outline"} className="h-4 px-1">{canEdit ? "Editable" : "Read Only"}</Badge>
+          </div>
         </div>
         <Textarea
           ref={textAreaRef}
@@ -1151,24 +1174,21 @@ function DocumentCenterPane({
   return (
     <div className="flex h-full min-h-0 items-center justify-center overflow-hidden p-8">
       <div className="max-w-md text-center text-sm text-muted-foreground">
-        <FileText className="mx-auto mb-3 h-10 w-10" />
+        <FileText className="mx-auto mb-3 h-10 w-10 opacity-20" />
         <div className="font-medium text-foreground">Stored source</div>
-        <p className="mt-2">This file is stored privately and available for viewing or annotation. Markdown-only indexing is enabled, so extraction is skipped for this source.</p>
+        <p className="mt-2 leading-relaxed">This file is stored privately. Markdown-only indexing is enabled, so extraction is skipped for this source.</p>
         {contentUrl && (
-          <a
-            href={contentUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-4 inline-flex rounded border border-border px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-foreground hover:bg-muted"
-          >
-            Open source
-          </a>
+          <Button asChild variant="outline" size="sm" className="mt-6 h-8 gap-2 font-mono text-[10px] uppercase tracking-wider">
+            <a href={contentUrl} target="_blank" rel="noreferrer">
+              <ExternalLink className="h-3 w-3" />
+              Open source
+            </a>
+          </Button>
         )}
       </div>
     </div>
   )
 }
-
 function MediaTranscriptPane({
   activeTranscription,
   busy,
@@ -1193,6 +1213,7 @@ function MediaTranscriptPane({
   onStartTranscription,
   onTimelineDateDraftChange,
   onTranscriptionSettingsChange,
+  onTranscriptViewChange,
   onSyncTranscription,
 }: {
   activeTranscription: TranscriptionJobResponse | null
@@ -1218,6 +1239,7 @@ function MediaTranscriptPane({
   onStartTranscription: () => void
   onTimelineDateDraftChange: (segmentId: string, value: string) => void
   onTranscriptionSettingsChange: Dispatch<SetStateAction<TranscriptionSettings>>
+  onTranscriptViewChange: (view: TranscriptView) => void
   onSyncTranscription: () => void
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -1250,6 +1272,12 @@ function MediaTranscriptPane({
             <Button size="sm" onClick={onStartTranscription} disabled={!canExtract || busy === "transcribe"}>
               <Mic className="mr-2 h-4 w-4" />
               Transcribe
+            </Button>
+            <Button size="sm" variant={transcriptView === "redacted" ? "default" : "outline"} onClick={() => onTranscriptViewChange("redacted")}>
+              Redacted
+            </Button>
+            <Button size="sm" variant={transcriptView === "raw" ? "default" : "outline"} onClick={() => onTranscriptViewChange("raw")}>
+              Raw
             </Button>
             <Button size="sm" variant="outline" onClick={onSyncTranscription} disabled={!canExtract || !activeTranscription || busy === "sync transcript"}>
               <RefreshCw className="mr-2 h-4 w-4" />
@@ -1585,12 +1613,16 @@ function MarkdownGraphPanel({
   selectedTextRange,
   onSelectNode,
   onRunEmbeddings,
+  onApproveFact,
+  onApproveTimeline,
 }: {
   matterId: string
   workspace: DocumentWorkspaceState
   selectedTextRange: SelectedTextRange | null
   onSelectNode: (node: MarkdownAstNode) => void
   onRunEmbeddings: () => Promise<void>
+  onApproveFact?: (fact: ExtractedFact) => Promise<void>
+  onApproveTimeline?: (suggestion: TimelineSuggestion) => Promise<void>
 }) {
   const [embeddingQuery, setEmbeddingQuery] = useState("")
   const [embeddingResults, setEmbeddingResults] = useState<CaseBuilderEmbeddingSearchResult[]>([])
@@ -1623,13 +1655,82 @@ function MarkdownGraphPanel({
       return
     }
     setEmbeddingResults(result.data.results)
-    if (result.data.warnings.length) {
-      setEmbeddingSearchError(result.data.warnings.join(" "))
-    }
+    setEmbeddingSearchError(result.data.warnings.length ? result.data.warnings.join(" ") : null)
   }
 
   return (
     <>
+      <InspectorSection title="Extraction Intelligence" icon={<Sparkles className="h-4 w-4" />}>
+        <div className="space-y-4">
+          <div>
+            <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
+              Proposed Facts
+              <Badge variant="outline" className="h-4 px-1">{workspace.proposed_facts.length}</Badge>
+            </div>
+            <div className="space-y-2">
+              {workspace.proposed_facts.slice(0, 5).map((fact) => {
+                const firstNode = (fact.markdown_ast_node_ids ?? []).map((id) => textNodesById.get(id)).find(Boolean)
+                return (
+                  <div key={fact.fact_id} className="group rounded-md border bg-background p-3 transition-colors hover:border-primary/30">
+                    <p className="text-xs leading-relaxed">{fact.statement}</p>
+                    <div className="mt-3 flex items-center justify-between">
+                      <div className="flex gap-1">
+                        <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" disabled={!firstNode} onClick={() => firstNode && onSelectNode(firstNode)}>
+                          Source
+                        </Button>
+                      </div>
+                      <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                        <Button size="sm" className="h-6 bg-success/10 px-2 text-[10px] text-success hover:bg-success/20" onClick={() => onApproveFact?.(fact)}>
+                          Approve
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] text-destructive hover:bg-destructive/10">
+                          Ignore
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+              {workspace.proposed_facts.length === 0 && <EmptyLine text="No facts proposed." />}
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
+              Timeline Suggestions
+              <Badge variant="outline" className="h-4 px-1">{workspace.timeline_suggestions.length}</Badge>
+            </div>
+            <div className="space-y-2">
+              {workspace.timeline_suggestions.slice(0, 5).map((suggestion) => {
+                const firstNode = suggestion.markdown_ast_node_ids.map((id) => textNodesById.get(id)).find(Boolean)
+                return (
+                  <div key={suggestion.suggestion_id} className="group rounded-md border bg-background p-3 transition-colors hover:border-primary/30">
+                    <div className="mb-1.5 flex items-center gap-2">
+                      <Calendar className="h-3 w-3 text-primary" />
+                      <span className="font-mono text-[10px] font-bold">{suggestion.date_text}</span>
+                    </div>
+                    <p className="text-xs leading-relaxed">{suggestion.title}</p>
+                    <div className="mt-3 flex items-center justify-between">
+                      <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" disabled={!firstNode} onClick={() => firstNode && onSelectNode(firstNode)}>
+                        Source
+                      </Button>
+                      <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                        <Button size="sm" className="h-6 bg-success/10 px-2 text-[10px] text-success hover:bg-success/20" onClick={() => onApproveTimeline?.(suggestion)}>
+                          Approve
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+              {workspace.timeline_suggestions.length === 0 && <EmptyLine text="No timeline suggested." />}
+            </div>
+          </div>
+        </div>
+      </InspectorSection>
+
+      <Separator />
+      
       <InspectorSection title="Markdown Graph" icon={<GitGraphIcon className="h-4 w-4" />}>
         <div className="grid grid-cols-2 gap-2 text-xs">
           <GraphMetric label="AST nodes" value={String(workspace.markdown_ast_nodes.length)} />
@@ -2035,25 +2136,6 @@ function transcriptionSettingsSummary(job: TranscriptionJob) {
   if (job.word_search_terms.length) items.push(`${job.word_search_terms.length} search term(s)`)
   if (job.remove_audio_tags) items.push("tags removed")
   return items
-}
-
-function transcriptionPromptSummary(job?: TranscriptionJob | null) {
-  if (!job) return "none"
-  if (job.prompt_preset) return job.prompt_preset
-  if (job.prompt) return "custom"
-  if (job.keyterms_prompt.length) return `${job.keyterms_prompt.length} keyterms`
-  return "default"
-}
-
-function transcriptionSpeakerSummary(job?: TranscriptionJob | null) {
-  if (!job) return "none"
-  if (job.speakers_expected) return `${job.speakers_expected} expected`
-  if (job.speaker_options) {
-    const min = job.speaker_options.min_speakers_expected ?? "?"
-    const max = job.speaker_options.max_speakers_expected ?? "?"
-    return `${min}-${max} expected`
-  }
-  return "auto"
 }
 
 function formatMs(ms: number) {

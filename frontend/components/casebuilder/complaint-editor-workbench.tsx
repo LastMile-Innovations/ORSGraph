@@ -12,8 +12,10 @@ import {
   GavelIcon,
   History,
   Keyboard,
+  Layers3,
   Link2,
   ListChecks,
+  MousePointer2,
   Plus,
   Save,
   Scale,
@@ -52,7 +54,12 @@ import {
   runComplaintQc,
 } from "@/lib/casebuilder/api"
 import { matterClaimsHref, matterComplaintHref, matterDocumentHref, matterFactsHref, type ComplaintWorkspaceSection } from "@/lib/casebuilder/routes"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Separator } from "@/components/ui/separator"
 import { sanitizePreviewHtml } from "@/lib/safe-html"
+import { RichEditor } from "./rich-editor"
 import { cn } from "@/lib/utils"
 
 interface ComplaintEditorWorkbenchProps {
@@ -534,73 +541,162 @@ function EditorPanel({
   const [signature, setSignature] = useState(complaint.signature)
   const [paragraphText, setParagraphText] = useState(selectedParagraph?.text ?? "")
 
+  useEffect(() => {
+    setParagraphText(selectedParagraph?.text ?? "")
+  }, [selectedParagraph?.paragraph_id, selectedParagraph?.text])
+
   return (
-    <div className="space-y-4 p-4 md:p-6">
-      <section className="rounded-md border border-border bg-card p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-foreground">Caption</h2>
-          <button type="button" className="toolbar-button" disabled={pending} onClick={() => onSaveCaption(caption, signature)}>
+    <div className="space-y-6 p-6">
+      <section className="rounded-lg border bg-card shadow-sm">
+        <div className="flex items-center justify-between border-b px-5 py-3">
+          <div className="flex items-center gap-2">
+            <GavelIcon className="h-4 w-4 text-primary" />
+            <h2 className="text-sm font-semibold text-foreground">Pleading Caption</h2>
+          </div>
+          <Button size="sm" className="h-8 gap-1.5" disabled={pending} onClick={() => onSaveCaption(caption, signature)}>
             <Save className="h-3.5 w-3.5" />
-            Save
-          </button>
+            Save Caption
+          </Button>
         </div>
-        <div className="mt-3 grid gap-2 md:grid-cols-2">
-          <input value={caption.court_name} onChange={(event) => setCaption({ ...caption, court_name: event.target.value })} className="input-like" placeholder="Court" />
-          <input value={caption.county} onChange={(event) => setCaption({ ...caption, county: event.target.value })} className="input-like" placeholder="County" />
-          <input value={caption.document_title} onChange={(event) => setCaption({ ...caption, document_title: event.target.value })} className="input-like" placeholder="Document title" />
-          <input value={caption.case_number ?? ""} onChange={(event) => setCaption({ ...caption, case_number: event.target.value })} className="input-like" placeholder="Case number" />
-          <input value={caption.plaintiff_names.join(", ")} onChange={(event) => setCaption({ ...caption, plaintiff_names: splitNames(event.target.value) })} className="input-like" placeholder="Plaintiffs" />
-          <input value={caption.defendant_names.join(", ")} onChange={(event) => setCaption({ ...caption, defendant_names: splitNames(event.target.value) })} className="input-like" placeholder="Defendants" />
-        </div>
-        <div className="mt-3 grid gap-2 md:grid-cols-3">
-          <input value={signature.name} onChange={(event) => setSignature({ ...signature, name: event.target.value })} className="input-like" placeholder="Signer" />
-          <input value={signature.email} onChange={(event) => setSignature({ ...signature, email: event.target.value })} className="input-like" placeholder="Email" />
-          <input value={signature.phone} onChange={(event) => setSignature({ ...signature, phone: event.target.value })} className="input-like" placeholder="Phone" />
-        </div>
-      </section>
-
-      <section className="rounded-md border border-border bg-card p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-foreground">Selected Paragraph</h2>
-          <button type="button" className="toolbar-button" disabled={pending || !selectedParagraph} onClick={() => selectedParagraph && onSaveParagraph(selectedParagraph, paragraphText)}>
-            <Save className="h-3.5 w-3.5" />
-            Save
-          </button>
-        </div>
-        {selectedParagraph ? (
-          <>
-            <div className="mt-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Paragraph {selectedParagraph.number} · {selectedParagraph.role.replace(/_/g, " ")}</div>
-            <textarea value={paragraphText} onChange={(event) => setParagraphText(event.target.value)} rows={7} className="mt-2 w-full rounded border border-border bg-background px-3 py-2 text-sm leading-relaxed focus:border-primary focus:outline-none" />
-          </>
-        ) : (
-          <p className="mt-2 text-sm text-muted-foreground">No paragraph selected.</p>
-        )}
-      </section>
-
-      <section className="grid gap-3 md:grid-cols-2">
-        <div className="rounded-md border border-border bg-card p-4">
-          <h2 className="text-sm font-semibold text-foreground">Quick Add Paragraph</h2>
-          <textarea value={newParagraphText} onChange={(event) => onParagraphText(event.target.value)} rows={4} className="mt-2 w-full rounded border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none" placeholder="New allegation" />
-          <button type="button" onClick={onAddParagraph} disabled={pending} className="mt-3 toolbar-button">
-            <Plus className="h-3.5 w-3.5" />
-            Add paragraph
-          </button>
-        </div>
-        <div className="rounded-md border border-border bg-card p-4">
-          <h2 className="text-sm font-semibold text-foreground">Quick Add Count</h2>
-          <input value={newCountTitle} onChange={(event) => onCountTitle(event.target.value)} className="mt-2 input-like" placeholder="Count title" />
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" onClick={onAddCount} disabled={pending} className="toolbar-button">
-              <Plus className="h-3.5 w-3.5" />
-              Add count
-            </button>
-            <button type="button" onClick={onRenumber} disabled={pending} className="toolbar-button">
-              <ListChecks className="h-3.5 w-3.5" />
-              Renumber
-            </button>
+        <div className="p-5">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Court</Label>
+              <Input value={caption.court_name} onChange={(event) => setCaption({ ...caption, court_name: event.target.value })} className="h-9" placeholder="In the Circuit Court of..." />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">County</Label>
+              <Input value={caption.county} onChange={(event) => setCaption({ ...caption, county: event.target.value })} className="h-9" placeholder="Multnomah" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Document Title</Label>
+              <Input value={caption.document_title} onChange={(event) => setCaption({ ...caption, document_title: event.target.value })} className="h-9" placeholder="COMPLAINT" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Case Number</Label>
+              <Input value={caption.case_number ?? ""} onChange={(event) => setCaption({ ...caption, case_number: event.target.value })} className="h-9" placeholder="Pending" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Plaintiffs</Label>
+              <Input value={caption.plaintiff_names.join(", ")} onChange={(event) => setCaption({ ...caption, plaintiff_names: splitNames(event.target.value) })} className="h-9" placeholder="John Doe, Jane Smith" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Defendants</Label>
+              <Input value={caption.defendant_names.join(", ")} onChange={(event) => setCaption({ ...caption, defendant_names: splitNames(event.target.value) })} className="h-9" placeholder="Acme Corp" />
+            </div>
+          </div>
+          
+          <Separator className="my-5" />
+          
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Attorney Name</Label>
+              <Input value={signature.name} onChange={(event) => setSignature({ ...signature, name: event.target.value })} className="h-9" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Email</Label>
+              <Input value={signature.email} onChange={(event) => setSignature({ ...signature, email: event.target.value })} className="h-9" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Phone</Label>
+              <Input value={signature.phone} onChange={(event) => setSignature({ ...signature, phone: event.target.value })} className="h-9" />
+            </div>
           </div>
         </div>
       </section>
+
+      <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
+        <div className="space-y-6">
+          <section className="rounded-lg border bg-card shadow-sm">
+            <div className="flex items-center justify-between border-b px-5 py-3">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-primary" />
+                <h2 className="text-sm font-semibold text-foreground">
+                  {selectedParagraph ? `Edit Paragraph ${selectedParagraph.number}` : "Select a Paragraph"}
+                </h2>
+              </div>
+              {selectedParagraph && (
+                <Button 
+                  size="sm" 
+                  className="h-8 gap-1.5" 
+                  disabled={pending || paragraphText === selectedParagraph.text} 
+                  onClick={() => onSaveParagraph(selectedParagraph, paragraphText)}
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  {paragraphText === selectedParagraph.text ? "Saved" : "Save Changes"}
+                </Button>
+              )}
+            </div>
+            <div className="p-5">
+              {selectedParagraph ? (
+                <RichEditor
+                  content={paragraphText}
+                  onChange={setParagraphText}
+                  placeholder="Enter allegation text..."
+                  minHeight="200px"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+                  <MousePointer2 className="mb-2 h-8 w-8 opacity-20" />
+                  <p className="text-sm">Select a paragraph from the outline to edit.</p>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-dashed bg-muted/20 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <Plus className="h-4 w-4 text-primary" />
+                Add New Allegation
+              </div>
+              <Button size="sm" variant="outline" className="h-7 text-[10px] uppercase tracking-wider" onClick={onRenumber} disabled={pending}>
+                <ListChecks className="mr-1.5 h-3 w-3" />
+                Renumber All
+              </Button>
+            </div>
+            <div className="space-y-4">
+              <RichEditor
+                content={newParagraphText}
+                onChange={onParagraphText}
+                placeholder="Type the next numbered allegation..."
+                minHeight="100px"
+              />
+              <div className="flex justify-end">
+                <Button className="gap-1.5" size="sm" disabled={pending || !newParagraphText.trim()} onClick={onAddParagraph}>
+                  <Plus className="h-3.5 w-3.5" />
+                  Insert Into Complaint
+                </Button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div className="space-y-6">
+          <section className="rounded-lg border bg-card p-5 shadow-sm">
+            <div className="flex items-center gap-2 mb-4">
+              <Layers3 className="h-4 w-4 text-primary" />
+              <h2 className="text-sm font-semibold text-foreground">Add Legal Count</h2>
+            </div>
+            <div className="space-y-3">
+              <Input 
+                value={newCountTitle} 
+                onChange={(event) => onCountTitle(event.target.value)} 
+                placeholder="Count Title (e.g., Negligence)" 
+                className="h-9"
+              />
+              <Button className="w-full gap-1.5" size="sm" onClick={onAddCount} disabled={pending}>
+                <Plus className="h-3.5 w-3.5" />
+                Add Count
+              </Button>
+            </div>
+          </section>
+
+          <div className="rounded-lg border bg-primary/5 p-5 text-[11px] text-primary/80 leading-relaxed italic">
+            "Complaints should be concise, numbered, and focused on material facts that support your legal theories."
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

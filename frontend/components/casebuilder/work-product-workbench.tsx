@@ -57,18 +57,16 @@ import {
   workProductAstFromMarkdown,
   workProductAstToMarkdown,
 } from "@/lib/casebuilder/api"
-import {
-  matterTimelineHref,
-  matterWorkProductHref,
-  matterWorkProductsHref,
-  type WorkProductWorkspaceSection,
-} from "@/lib/casebuilder/routes"
+import { matterTimelineHref, matterWorkProductHref, matterWorkProductsHref, type WorkProductWorkspaceSection } from "@/lib/casebuilder/routes"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { sanitizePreviewHtml } from "@/lib/safe-html"
+import { RichEditor, type RichEditorTextRange } from "./rich-editor"
 import { cn } from "@/lib/utils"
 
 interface WorkProductWorkbenchProps {
@@ -729,88 +727,106 @@ function EditorPanel({
   onApplyMarkdown: () => void
 }) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {blocks.map((block) => (
-        <Card
+        <div
           key={block.id}
           id={block.id}
-          className={cn("p-4", selectedBlockId === block.id && "border-primary/50 ring-1 ring-primary/20")}
+          className={cn(
+            "rounded-lg border bg-card p-5 transition-all",
+            selectedBlockId === block.id ? "border-primary/50 shadow-sm ring-1 ring-primary/20" : "border-border"
+          )}
         >
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3 mb-4">
             <div className="min-w-0">
-              <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+              <div className="font-mono text-[9px] uppercase tracking-[0.15em] text-muted-foreground">
                 {block.role || block.block_type}
               </div>
               <h2 className="mt-1 text-sm font-semibold text-foreground">{block.title || "Untitled block"}</h2>
             </div>
-            <Button size="sm" className="gap-1.5" disabled={pending || drafts[block.id] === block.text} onClick={() => onSave(block)}>
-              <Save className="h-3.5 w-3.5" />
-              Save
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button 
+                variant={drafts[block.id] !== block.text ? "default" : "outline"}
+                size="sm" 
+                className="h-8 gap-1.5" 
+                disabled={pending || drafts[block.id] === block.text} 
+                onClick={() => onSave(block)}
+              >
+                <Save className="h-3.5 w-3.5" />
+                {drafts[block.id] !== block.text ? "Save Changes" : "Saved"}
+              </Button>
+            </div>
           </div>
-          <Textarea
-            value={drafts[block.id] ?? block.text}
-            onChange={(event) => onChange(block.id, event.target.value)}
+          <RichEditor
+            content={drafts[block.id] ?? block.text}
+            onChange={(text) => onChange(block.id, text)}
             onFocus={() => onSelectBlock(block.id)}
-            onSelect={(event) => captureTextRangeSelection(block, event.currentTarget, onTextRangeSelect)}
-            onKeyUp={(event) => captureTextRangeSelection(block, event.currentTarget, onTextRangeSelect)}
-            onMouseUp={(event) => captureTextRangeSelection(block, event.currentTarget, onTextRangeSelect)}
-            className="mt-3 min-h-32 resize-y text-sm leading-relaxed"
+            onSelectionChange={(range) =>
+              onTextRangeSelect(range ? richEditorRangeToWorkProductRange(block, range) : null)
+            }
+            placeholder={`Enter text for ${block.title || "this block"}...`}
+            minHeight="120px"
           />
-        </Card>
+        </div>
       ))}
 
-      <Card className="p-4">
+      <Separator className="my-8" />
+
+      <Card className="border-dashed bg-muted/20 p-6">
+        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <Plus className="h-4 w-4 text-primary" />
+          Add New Block
+        </div>
+        <div className="mt-4 grid gap-4">
+          <Input
+            value={newBlockTitle}
+            onChange={(event) => onNewBlockTitle(event.target.value)}
+            placeholder="Block Title (e.g., Factual Allegations)"
+            className="h-9"
+          />
+          <RichEditor
+            content={newBlockText}
+            onChange={onNewBlockText}
+            placeholder="Initial block text..."
+            minHeight="100px"
+          />
+          <div className="flex justify-end">
+            <Button className="gap-1.5" size="sm" disabled={pending || !newBlockText.trim()} onClick={onAddBlock}>
+              <Plus className="h-3.5 w-3.5" />
+              Add Block to Work Product
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="border-border/50 bg-muted/10 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              markdown mode
+            <div className="font-mono text-[9px] uppercase tracking-[0.15em] text-muted-foreground">
+              Bulk Markdown Edit
             </div>
-            <h2 className="mt-1 text-sm font-semibold text-foreground">AST Markdown round trip</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Markdown edits convert back into the canonical WorkProduct AST and keep review-needed state.
+            <h2 className="mt-1 text-sm font-semibold text-foreground">Markdown Import/Export</h2>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Edit the entire Work Product as Markdown. Changes will sync with AST blocks.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent" disabled={pending} onClick={onLoadMarkdown}>
+            <Button variant="outline" size="sm" className="h-8 gap-1.5" disabled={pending} onClick={onLoadMarkdown}>
               <FileText className="h-3.5 w-3.5" />
-              Load
+              Pull Current
             </Button>
-            <Button size="sm" className="gap-1.5" disabled={pending || !markdownDraft.trim()} onClick={onApplyMarkdown}>
+            <Button size="sm" className="h-8 gap-1.5" disabled={pending || !markdownDraft.trim()} onClick={onApplyMarkdown}>
               <Save className="h-3.5 w-3.5" />
-              Apply
+              Push Changes
             </Button>
           </div>
         </div>
         <Textarea
           value={markdownDraft}
           onChange={(event) => onMarkdownDraft(event.target.value)}
-          placeholder="Load the current AST as Markdown or paste a Markdown draft."
-          className="mt-3 min-h-56 font-mono text-xs leading-relaxed"
+          placeholder="Paste or load Markdown here..."
+          className="mt-4 min-h-[300px] font-mono text-xs leading-relaxed"
         />
-      </Card>
-
-      <Card className="border-dashed p-4">
-        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          <Plus className="h-4 w-4 text-muted-foreground" />
-          Add block
-        </div>
-        <input
-          value={newBlockTitle}
-          onChange={(event) => onNewBlockTitle(event.target.value)}
-          placeholder="Block title"
-          className="mt-3 w-full rounded-md border border-border bg-background px-3 py-2 text-xs focus:border-primary focus:outline-none"
-        />
-        <Textarea
-          value={newBlockText}
-          onChange={(event) => onNewBlockText(event.target.value)}
-          placeholder="Block text"
-          className="mt-2 min-h-24 text-sm"
-        />
-        <Button className="mt-3 gap-1.5" size="sm" disabled={pending} onClick={onAddBlock}>
-          <Plus className="h-3.5 w-3.5" />
-          Add
-        </Button>
       </Card>
     </div>
   )
@@ -1527,29 +1543,16 @@ function SupportPicker({
   )
 }
 
-function captureTextRangeSelection(
+function richEditorRangeToWorkProductRange(
   block: WorkProductBlock,
-  textarea: HTMLTextAreaElement,
-  onTextRangeSelect: (range: SelectedTextRange | null) => void,
-) {
-  const selectionStart = textarea.selectionStart
-  const selectionEnd = textarea.selectionEnd
-  if (selectionEnd <= selectionStart) {
-    onTextRangeSelect(null)
-    return
-  }
-  const quote = textarea.value.slice(selectionStart, selectionEnd)
-  if (!quote.trim()) {
-    onTextRangeSelect(null)
-    return
-  }
-  const startOffset = characterOffsetForSelection(textarea.value, selectionStart)
-  onTextRangeSelect({
+  range: RichEditorTextRange,
+): SelectedTextRange {
+  return {
     blockId: block.block_id || block.id,
-    startOffset,
-    endOffset: startOffset + characterLength(quote),
-    quote,
-  })
+    startOffset: range.startOffset,
+    endOffset: range.endOffset,
+    quote: range.quote,
+  }
 }
 
 function sameSelectedTextRange(left: SelectedTextRange | null, right: SelectedTextRange | null) {
@@ -1561,14 +1564,6 @@ function sameSelectedTextRange(left: SelectedTextRange | null, right: SelectedTe
     left.endOffset === right.endOffset &&
     left.quote === right.quote
   )
-}
-
-function characterOffsetForSelection(value: string, selectionOffset: number) {
-  return characterLength(value.slice(0, selectionOffset))
-}
-
-function characterLength(value: string) {
-  return Array.from(value).length
 }
 
 function supportAnchorId(anchor: WorkProductAnchor) {
