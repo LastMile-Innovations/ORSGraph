@@ -3,7 +3,21 @@
   "build": {
     "builder": "RAILPACK",
     "watchPatterns": [
-      "frontend/**"
+      "frontend/app/**",
+      "frontend/components/**",
+      "frontend/hooks/**",
+      "frontend/lib/**",
+      "frontend/public/**",
+      "frontend/styles/**",
+      "frontend/types/**",
+      "frontend/package.json",
+      "frontend/pnpm-lock.yaml",
+      "frontend/railway.json",
+      "frontend/next.config.*",
+      "frontend/postcss.config.*",
+      "frontend/tsconfig.json",
+      "frontend/proxy.*",
+      "frontend/instrumentation*.ts"
     ],
     "buildCommand": "pnpm run build"
   },
