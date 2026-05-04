@@ -3,6 +3,13 @@
 import { revalidatePath } from "next/cache"
 import { orsBackendApiBaseUrl } from "@/lib/ors-backend-api-url"
 
+const MAX_EMAIL_LENGTH = 254
+const MAX_SITUATION_LENGTH = 80
+const MAX_URGENCY_LENGTH = 80
+const MAX_JURISDICTION_LENGTH = 120
+const MAX_NOTE_LENGTH = 1200
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 export interface RequestAccessActionState {
   ok: boolean
   message?: string
@@ -15,13 +22,13 @@ export async function submitAccessRequest(
   _previous: RequestAccessActionState,
   formData: FormData,
 ): Promise<RequestAccessActionState> {
-  const email = formValue(formData, "email").toLowerCase()
-  const situation = formValue(formData, "situation_type")
-  const urgency = formValue(formData, "deadline_urgency")
-  const jurisdiction = formValue(formData, "jurisdiction")
-  const note = formValue(formData, "note")
+  const email = normalizeEmail(formData)
+  const situation = boundedFormValue(formData, "situation_type", MAX_SITUATION_LENGTH)
+  const urgency = boundedFormValue(formData, "deadline_urgency", MAX_URGENCY_LENGTH)
+  const jurisdiction = boundedFormValue(formData, "jurisdiction", MAX_JURISDICTION_LENGTH)
+  const note = boundedFormValue(formData, "note", MAX_NOTE_LENGTH)
 
-  if (!email || !email.includes("@")) {
+  if (!email) {
     return { ok: false, error: "Enter a valid email address.", situation, urgency }
   }
 
@@ -50,7 +57,7 @@ export async function submitAccessRequest(
     if (!response.ok) {
       return {
         ok: false,
-        error: typeof body.error === "string" ? body.error : `Request failed: ${response.status}`,
+        error: response.status === 400 ? "Check the request fields and try again." : "Could not submit access request.",
         situation,
         urgency,
       }
@@ -64,17 +71,22 @@ export async function submitAccessRequest(
       situation,
       urgency,
     }
-  } catch (error) {
+  } catch {
     return {
       ok: false,
-      error: error instanceof Error ? error.message : "Could not submit access request.",
+      error: "Could not submit access request.",
       situation,
       urgency,
     }
   }
 }
 
-function formValue(formData: FormData, name: string) {
+function normalizeEmail(formData: FormData) {
+  const email = boundedFormValue(formData, "email", MAX_EMAIL_LENGTH).toLowerCase()
+  return EMAIL_PATTERN.test(email) ? email : ""
+}
+
+function boundedFormValue(formData: FormData, name: string, maxLength: number) {
   const value = formData.get(name)
-  return typeof value === "string" ? value.trim() : ""
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : ""
 }

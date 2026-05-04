@@ -167,6 +167,9 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    scroll-padding-top: 4rem;
+  }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';

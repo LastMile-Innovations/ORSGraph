@@ -1,6 +1,7 @@
 "use client"
 
 import Image from "next/image"
+import Link from "next/link"
 import { useSession } from "next-auth/react"
 import {
   ArrowRight,
@@ -72,7 +73,8 @@ export function MarketingLanding() {
           src="/marketing/legal-os-hero.png"
           alt="ORSGraph legal operations workspace with documents, citation graph, and case timeline"
           fill
-          priority
+          preload
+          quality={90}
           sizes="100vw"
           className="object-cover"
         />
@@ -92,12 +94,12 @@ export function MarketingLanding() {
             </div>
 
             <nav className="hidden items-center gap-1 text-sm font-medium text-[#c8d7ea] md:flex">
-              <a href="#platform" className="rounded-md px-3 py-2 outline-none hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-[#7dd3fc]/70">
+              <Link href="#platform" scroll={false} className="rounded-md px-3 py-2 outline-none hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-[#7dd3fc]/70">
                 Platform
-              </a>
-              <a href="#workflow" className="rounded-md px-3 py-2 outline-none hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-[#7dd3fc]/70">
+              </Link>
+              <Link href="#workflow" scroll={false} className="rounded-md px-3 py-2 outline-none hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-[#7dd3fc]/70">
                 Workflow
-              </a>
+              </Link>
             </nav>
 
             <div className="flex shrink-0 items-center gap-2">
@@ -107,23 +109,23 @@ export function MarketingLanding() {
                   variant="outline"
                   className="hidden h-9 rounded-md border-white/20 bg-white/5 px-4 text-white hover:bg-white/10 sm:inline-flex"
                 >
-                  <a href={inviteHref} onClick={() => trackConversionEvent("sign_in_started", { source: "landing" })}>
+                  <Link href={inviteHref} onClick={() => trackConversionEvent("sign_in_started", { source: "landing" })}>
                     I Have An Invite
-                  </a>
+                  </Link>
                 </Button>
               )}
               <Button
                 asChild
                 className="h-9 rounded-md bg-[#7dd3fc] px-4 text-[#06111e] hover:bg-[#bae6fd]"
               >
-                <a
+                <Link
                   href={primaryHref}
                   onClick={() => {
                     if (!isSignedIn) trackConversionEvent("landing_cta_click", { action: "request_access" })
                   }}
                 >
                   {isSignedIn ? "Enter App" : "Request Access"}
-                </a>
+                </Link>
               </Button>
             </div>
           </header>
@@ -150,7 +152,7 @@ export function MarketingLanding() {
                   asChild
                   className="min-h-11 w-full rounded-md bg-[#7dd3fc] px-5 text-[#06111e] hover:bg-[#bae6fd] sm:w-auto"
                 >
-                  <a
+                  <Link
                     href={primaryHref}
                     onClick={() => {
                       if (!isSignedIn) trackConversionEvent("landing_cta_click", { action: "request_access" })
@@ -158,9 +160,9 @@ export function MarketingLanding() {
                   >
                     {isSignedIn ? "Create First Matter" : "Request Beta Access"}
                     <ArrowRight className="h-4 w-4" />
-                  </a>
+                  </Link>
                 </Button>
-                <a
+                <Link
                   href={isSignedIn ? "/dashboard" : inviteHref}
                   onClick={() => {
                     if (!isSignedIn) trackConversionEvent("sign_in_started", { source: "landing" })
@@ -169,7 +171,7 @@ export function MarketingLanding() {
                 >
                   {isSignedIn ? "Open Dashboard" : "I Have An Invite"}
                   <GitBranch className="h-4 w-4" />
-                </a>
+                </Link>
               </div>
             </div>
 
@@ -294,7 +296,7 @@ export function MarketingLanding() {
               asChild
               className="min-h-10 rounded-md bg-[#7dd3fc] px-5 text-[#06111e] hover:bg-[#bae6fd]"
             >
-              <a
+              <Link
                 href={primaryHref}
                 onClick={() => {
                   if (!isSignedIn) trackConversionEvent("landing_cta_click", { action: "request_access" })
@@ -302,7 +304,7 @@ export function MarketingLanding() {
               >
                 {isSignedIn ? "Create First Matter" : "Request Access"}
                 <ArrowRight className="h-4 w-4" />
-              </a>
+              </Link>
             </Button>
           </div>
         </div>

@@ -988,7 +988,14 @@ function DocumentCenterPane({
     return (
       <div className="flex h-full min-h-[640px] items-center justify-center bg-muted/30 p-6">
         <div className="relative h-full min-h-[520px] w-full max-w-5xl">
-          <Image src={contentUrl} alt={documentTitle} fill unoptimized sizes="100vw" className="rounded-md border object-contain" />
+          <Image
+            src={contentUrl}
+            alt={documentTitle}
+            fill
+            unoptimized
+            sizes="(max-width: 1024px) 100vw, 1024px"
+            className="rounded-md border object-contain"
+          />
         </div>
       </div>
     )

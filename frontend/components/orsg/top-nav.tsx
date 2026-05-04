@@ -1,8 +1,9 @@
 "use client"
 
+import NextForm from "next/form"
 import Link from "next/link"
 import { signIn, signOut, useSession } from "next-auth/react"
-import { usePathname, useRouter } from "next/navigation"
+import { usePathname } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import type { FormEvent, ReactNode } from "react"
 import type { LucideIcon } from "lucide-react"
@@ -172,7 +173,6 @@ function formatCheckedAt(value?: string) {
 
 export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
   const pathname = usePathname() || "/"
-  const router = useRouter()
   const [query, setQuery] = useState("")
   const [mobileOpen, setMobileOpen] = useState(false)
   const status = useRuntimeStatus()
@@ -184,16 +184,14 @@ export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
 
   const submitSearch = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault()
-      const trimmed = query.trim()
-      if (!trimmed) return
-
-      const params = new URLSearchParams({ q: trimmed })
-      router.push(`/search?${params.toString()}`)
+      if (!query.trim()) {
+        event.preventDefault()
+        return
+      }
       setMobileOpen(false)
-      setQuery("")
+      window.requestAnimationFrame(() => setQuery(""))
     },
-    [query, router],
+    [query],
   )
 
   return (
@@ -222,7 +220,7 @@ export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
             </SheetDescription>
           </SheetHeader>
 
-          <form onSubmit={submitSearch} className="border-b border-sidebar-border p-3">
+          <NextForm action="/search" onSubmit={submitSearch} className="border-b border-sidebar-border p-3">
             <label className="sr-only" htmlFor="mobile-header-search">
               Search ORSGraph
             </label>
@@ -230,6 +228,7 @@ export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
               <Search className="h-3.5 w-3.5 text-muted-foreground" />
               <input
                 id="mobile-header-search"
+                name="q"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search ORS..."
@@ -239,7 +238,7 @@ export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
                 <Search className="h-3.5 w-3.5" />
               </Button>
             </div>
-          </form>
+          </NextForm>
 
           <nav aria-label="Primary navigation" className="flex flex-col gap-1 p-2">
             {NAV_ITEMS.map((item) => {
@@ -281,13 +280,14 @@ export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
 
       <div className="min-w-0 flex-1" />
 
-      <form onSubmit={submitSearch} className="hidden w-full max-w-md items-center gap-2 rounded-md border border-sidebar-border bg-background px-2 shadow-sm focus-within:border-primary lg:flex">
+      <NextForm action="/search" onSubmit={submitSearch} className="hidden w-full max-w-md items-center gap-2 rounded-md border border-sidebar-border bg-background px-2 shadow-sm focus-within:border-primary lg:flex">
         <label className="sr-only" htmlFor="header-search">
           Search ORSGraph
         </label>
         <Search className="h-3.5 w-3.5 text-muted-foreground" />
         <input
           id="header-search"
+          name="q"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder={`Search ${activeLabel.toLowerCase()}...`}
@@ -296,7 +296,7 @@ export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
         <Button type="submit" variant="ghost" size="icon-sm" className="h-7 w-7" aria-label="Search">
           <Search className="h-3.5 w-3.5" />
         </Button>
-      </form>
+      </NextForm>
 
       <div className="flex shrink-0 items-center gap-1.5">
         <Button asChild variant="outline" size="sm" className="hidden h-8 gap-1.5 px-2.5 xl:inline-flex">

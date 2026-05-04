@@ -1,7 +1,8 @@
 "use client"
 
+import NextForm from "next/form"
 import Link from "next/link"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { usePathname, useSearchParams } from "next/navigation"
 import { useEffect, useMemo, useState } from "react"
 import type { FormEvent, ReactNode } from "react"
 import {
@@ -55,7 +56,6 @@ interface LeftRailProps {
 export function LeftRail({ initialState, className, onNavigate }: LeftRailProps) {
   const pathname = usePathname() || "/"
   const searchParams = useSearchParams()
-  const router = useRouter()
   const [state, setState] = useState(initialState)
   const [openSections, setOpenSections] = useState(DEFAULT_OPEN)
   const [railQuery, setRailQuery] = useState("")
@@ -117,12 +117,12 @@ export function LeftRail({ initialState, className, onNavigate }: LeftRailProps)
   }
 
   function submitRailSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
     const trimmed = railQuery.trim()
-    if (!trimmed) return
-    router.push(`/search?q=${encodeURIComponent(trimmed)}`)
+    if (!trimmed) {
+      event.preventDefault()
+      return
+    }
     onNavigate?.()
-    setRailQuery("")
   }
 
   async function saveCurrentSearch() {
@@ -194,17 +194,18 @@ export function LeftRail({ initialState, className, onNavigate }: LeftRailProps)
   return (
     <aside className={cn("flex h-full w-64 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground", className)}>
       <div className="border-b border-sidebar-border p-3">
-        <form onSubmit={submitRailSearch} className="flex items-center gap-2 rounded-md border border-sidebar-border bg-background px-2 focus-within:border-primary">
+        <NextForm action="/search" onSubmit={submitRailSearch} className="flex items-center gap-2 rounded-md border border-sidebar-border bg-background px-2 focus-within:border-primary">
           <Search className="h-3.5 w-3.5 text-muted-foreground" />
           <label className="sr-only" htmlFor="left-rail-search">Search ORSGraph</label>
           <input
             id="left-rail-search"
+            name="q"
             value={railQuery}
             onChange={(event) => setRailQuery(event.target.value)}
             placeholder="Search ORS..."
             className="min-w-0 flex-1 bg-transparent py-1.5 text-xs outline-none placeholder:text-muted-foreground"
           />
-        </form>
+        </NextForm>
         <div className="mt-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
           <span>{data.corpus.jurisdiction} {data.corpus.corpus}</span>
           <span>{formatCount(data.corpus.total_statutes)}</span>

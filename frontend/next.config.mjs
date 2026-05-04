@@ -12,7 +12,14 @@ const nextConfig = {
     ],
   },
   images: {
-    unoptimized: true,
+    formats: ["image/webp"],
+    localPatterns: [
+      {
+        pathname: "/marketing/**",
+        search: "",
+      },
+    ],
+    qualities: [75, 90],
   },
 }
 
