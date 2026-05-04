@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { WorkProductWorkbench } from "@/components/casebuilder/work-product-workbench"
-import { getMatterState, getWorkProductState } from "@/lib/casebuilder/api"
+import { getMatterState, getWorkProductState } from "@/lib/casebuilder/server-api"
 import type { WorkProductWorkspaceSection } from "@/lib/casebuilder/routes"
 
 interface WorkProductPageParams {

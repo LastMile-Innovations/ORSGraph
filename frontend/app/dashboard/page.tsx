@@ -9,7 +9,7 @@ import { SystemHealthPanel } from "@/components/home/SystemHealthPanel"
 import { HomeOfflineBanner } from "@/components/home/HomeOfflineBanner"
 import { Shell } from "@/components/orsg/shell"
 import { DataStateBanner } from "@/components/orsg/data-state-banner"
-import { getMatterSummariesState } from "@/lib/casebuilder/api"
+import { getMatterSummariesState } from "@/lib/casebuilder/server-api"
 import { newMatterHref } from "@/lib/casebuilder/routes"
 import { ArrowRight, Briefcase } from "lucide-react"
 

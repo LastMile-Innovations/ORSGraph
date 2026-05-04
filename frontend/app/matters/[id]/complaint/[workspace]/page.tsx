@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import { ComplaintEditorWorkbench } from "@/components/casebuilder/complaint-editor-workbench"
 import { MatterShell } from "@/components/casebuilder/matter-shell"
-import { getComplaintState, getMatterState } from "@/lib/casebuilder/api"
+import { getComplaintState, getMatterState } from "@/lib/casebuilder/server-api"
 import type { ComplaintWorkspaceSection } from "@/lib/casebuilder/routes"
 
 const WORKSPACES: ComplaintWorkspaceSection[] = ["editor", "outline", "claims", "evidence", "qc", "preview", "export", "history"]

@@ -2,7 +2,7 @@ import Link from "next/link"
 import { Shell } from "@/components/orsg/shell"
 import { DataStateBanner } from "@/components/casebuilder/data-state-banner"
 import { PageHeader } from "@/components/orsg/page-header"
-import { getMatterSummariesState } from "@/lib/casebuilder/api"
+import { getMatterSummariesState } from "@/lib/casebuilder/server-api"
 import { matterHref, newMatterHref } from "@/lib/casebuilder/routes"
 import {
   AlertTriangle,

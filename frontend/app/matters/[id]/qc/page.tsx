@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { MatterQcPanel } from "@/components/casebuilder/matter-qc-panel"
-import { getMatterState } from "@/lib/casebuilder/api"
+import { getMatterState } from "@/lib/casebuilder/server-api"
 
 interface PageProps {
   params: Promise<{ id: string }>

@@ -1,5 +1,5 @@
 import { notFound, redirect } from "next/navigation"
-import { getMatterState, getWorkProductsState } from "@/lib/casebuilder/api"
+import { getMatterState, getWorkProductsState } from "@/lib/casebuilder/server-api"
 import { matterWorkProductHref, newWorkProductHref } from "@/lib/casebuilder/routes"
 
 interface WorkProductAliasParams {

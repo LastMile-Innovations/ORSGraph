@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { DocumentWorkspace } from "@/components/casebuilder/document-workspace"
-import { getDocumentWorkspace, getMatterState } from "@/lib/casebuilder/api"
+import { getDocumentWorkspace, getMatterState } from "@/lib/casebuilder/server-api"
 
 interface PageProps {
   params: Promise<{ id: string; docId: string }>

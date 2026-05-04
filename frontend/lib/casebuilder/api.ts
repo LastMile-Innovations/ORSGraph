@@ -126,6 +126,8 @@ export interface ActionState<T> {
   error?: string
 }
 
+export type CaseBuilderRequestOptions = Pick<RequestInit, "headers" | "signal">
+
 export interface CreateMatterInput {
   name: string
   matter_type?: MatterSummary["matter_type"]
@@ -511,6 +513,7 @@ export interface PatchWorkProductInput {
 
 export interface GetWorkProductsOptions {
   includeDocumentAst?: boolean
+  request?: CaseBuilderRequestOptions
 }
 
 export type AstPatchConcurrency =
@@ -696,9 +699,11 @@ export interface MatterAskResponse {
   thread_id?: string | null
 }
 
-export async function getMatterSummariesState(): Promise<LoadState<MatterSummary[]>> {
+export async function getMatterSummariesState(
+  options: CaseBuilderRequestOptions = {},
+): Promise<LoadState<MatterSummary[]>> {
   try {
-    const live = await fetchCaseBuilder<MatterSummary[]>("/matters")
+    const live = await fetchCaseBuilder<MatterSummary[]>("/matters", options)
     return { source: "live", data: live.map(normalizeMatterSummary) }
   } catch (error) {
     if (shouldUseDemoMatterFallback(error)) {
@@ -708,10 +713,13 @@ export async function getMatterSummariesState(): Promise<LoadState<MatterSummary
   }
 }
 
-export async function getMatterState(id: string): Promise<LoadState<Matter | null>> {
+export async function getMatterState(
+  id: string,
+  options: CaseBuilderRequestOptions = {},
+): Promise<LoadState<Matter | null>> {
   const matterId = decodeMatterRouteId(id)
   try {
-    const live = await fetchCaseBuilder<unknown>(`/matters/${encodeURIComponent(matterId)}`)
+    const live = await fetchCaseBuilder<unknown>(`/matters/${encodeURIComponent(matterId)}`, options)
     return { source: "live", data: normalizeMatter(live) }
   } catch (error) {
     const demo = getDemoMatterById(matterId) ?? null
@@ -844,12 +852,14 @@ export function runMatterIndex(
 export async function getDocumentWorkspace(
   matterId: string,
   documentId: string,
+  options: CaseBuilderRequestOptions = {},
 ): Promise<LoadState<DocumentWorkspace | null>> {
   const decodedMatterId = decodeMatterRouteId(matterId)
   const decodedDocumentId = decodeRouteSegment(documentId)
   try {
     const live = await fetchCaseBuilder<unknown>(
       `/matters/${encodeURIComponent(decodedMatterId)}/documents/${encodeURIComponent(decodedDocumentId)}/workspace`,
+      options,
     )
     return { source: "live", data: normalizeDocumentWorkspace(live) }
   } catch (error) {
@@ -1348,20 +1358,26 @@ export function patchTask(
   )
 }
 
-export async function getMatterGraphState(matterId: string): Promise<LoadState<CaseGraphResponse | null>> {
+export async function getMatterGraphState(
+  matterId: string,
+  options: CaseBuilderRequestOptions = {},
+): Promise<LoadState<CaseGraphResponse | null>> {
   const decodedMatterId = decodeMatterRouteId(matterId)
   try {
-    const live = await fetchCaseBuilder<unknown>(`/matters/${encodeURIComponent(decodedMatterId)}/graph`)
+    const live = await fetchCaseBuilder<unknown>(`/matters/${encodeURIComponent(decodedMatterId)}/graph`, options)
     return { source: "live", data: normalizeCaseGraphResponse(live) }
   } catch (error) {
     return { source: "error", data: null, error: errorMessage(error) }
   }
 }
 
-export async function getMatterAuditEventsState(matterId: string): Promise<LoadState<AuditEvent[]>> {
+export async function getMatterAuditEventsState(
+  matterId: string,
+  options: CaseBuilderRequestOptions = {},
+): Promise<LoadState<AuditEvent[]>> {
   const decodedMatterId = decodeMatterRouteId(matterId)
   try {
-    const live = await fetchCaseBuilder<unknown[]>(`/matters/${encodeURIComponent(decodedMatterId)}/audit`)
+    const live = await fetchCaseBuilder<unknown[]>(`/matters/${encodeURIComponent(decodedMatterId)}/audit`, options)
     return { source: "live", data: live.map(normalizeAuditEvent) }
   } catch (error) {
     return { source: "error", data: [], error: errorMessage(error) }
@@ -1486,6 +1502,7 @@ export async function getWorkProductsState(
     const query = workProductListQuery(options)
     const live = await fetchCaseBuilder<unknown[]>(
       `/matters/${encodeURIComponent(decodedMatterId)}/work-products${query}`,
+      options.request,
     )
     return { source: "live", data: live.map(normalizeWorkProduct) }
   } catch (error) {
@@ -1512,12 +1529,14 @@ export async function getWorkProductState(
     if (decodedWorkProductId) {
       const live = await fetchCaseBuilder<unknown>(
         `/matters/${encodeURIComponent(decodedMatterId)}/work-products/${encodeURIComponent(decodedWorkProductId)}`,
+        options.request,
       )
       return { source: "live", data: normalizeWorkProduct(live) }
     }
     const query = workProductListQuery(options)
     const live = await fetchCaseBuilder<unknown[]>(
       `/matters/${encodeURIComponent(decodedMatterId)}/work-products${query}`,
+      options.request,
     )
     const products = live.map(normalizeWorkProduct).filter((product) => product.product_type !== "complaint")
     return { source: "live", data: products[0] ?? null }
@@ -1993,17 +2012,20 @@ export async function getWorkProductAiAudit(
 export async function getComplaintState(
   matterId: string,
   complaintId?: string,
+  options: CaseBuilderRequestOptions = {},
 ): Promise<LoadState<ComplaintDraft | null>> {
   const decodedMatterId = decodeMatterRouteId(matterId)
   try {
     if (complaintId) {
       const live = await fetchCaseBuilder<unknown>(
         `/matters/${encodeURIComponent(decodedMatterId)}/complaints/${encodeURIComponent(complaintId)}`,
+        options,
       )
       return { source: "live", data: normalizeComplaint(live) }
     }
     const live = await fetchCaseBuilder<unknown[]>(
       `/matters/${encodeURIComponent(decodedMatterId)}/complaints`,
+      options,
     )
     const complaints = live.map(normalizeComplaint)
     return { source: "live", data: complaints[0] ?? null }

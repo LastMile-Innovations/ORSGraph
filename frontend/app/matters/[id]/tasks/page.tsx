@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { TasksBoard } from "@/components/casebuilder/tasks-board"
-import { getMatterState } from "@/lib/casebuilder/api"
+import { getMatterState } from "@/lib/casebuilder/server-api"
 
 interface PageProps {
   params: Promise<{ id: string }>

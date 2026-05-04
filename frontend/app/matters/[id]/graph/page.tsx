@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { MatterGraphView } from "@/components/casebuilder/matter-graph-view"
-import { getMatterGraphState, getMatterState } from "@/lib/casebuilder/api"
+import { getMatterGraphState, getMatterState } from "@/lib/casebuilder/server-api"
 
 interface PageProps {
   params: Promise<{ id: string }>

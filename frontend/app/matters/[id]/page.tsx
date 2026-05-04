@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { MatterDashboard } from "@/components/casebuilder/matter-dashboard"
-import { getMatterState } from "@/lib/casebuilder/api"
+import { getMatterState } from "@/lib/casebuilder/server-api"
 
 export default async function MatterDashboardPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
