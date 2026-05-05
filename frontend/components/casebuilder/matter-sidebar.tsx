@@ -132,7 +132,7 @@ export function MatterSidebar({ matter, counts = {}, className, onNavigate }: Ma
             <GavelIcon className="h-3.5 w-3.5" />
           </div>
           <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-foreground">{matter.name}</div>
+            <div className="truncate text-sm font-medium text-foreground">{cleanMatterLabel(matter.name)}</div>
             <div className="font-mono text-[10px] tabular-nums text-muted-foreground">
               {matter.case_number ?? "no case #"}
             </div>
@@ -287,13 +287,17 @@ export function MatterSidebarSheet({ matter, counts }: Pick<MatterSidebarProps, 
         </SheetContent>
       </Sheet>
       <div className="min-w-0">
-        <div className="truncate text-sm font-medium text-foreground">{matter.name}</div>
+        <div className="truncate text-sm font-medium text-foreground">{cleanMatterLabel(matter.name)}</div>
         <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
           {matter.status}
         </div>
       </div>
     </div>
   )
+}
+
+function cleanMatterLabel(value: string) {
+  return value.replace(/\[([^\]]+)]\([^)]+\)/g, "$1").replace(/\s+/g, " ").trim()
 }
 
 function resolveMatterCounts(matter: MatterSidebarMatter, counts: NonNullable<MatterSidebarProps["counts"]>) {

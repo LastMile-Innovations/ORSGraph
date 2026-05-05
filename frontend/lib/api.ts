@@ -36,7 +36,7 @@ import {
 
 const API_BASE_URL = orsApiBaseUrl();
 const AUTHORITY_API_BASE_URL = orsAuthorityApiBaseUrl();
-const API_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_ORS_API_TIMEOUT_MS || 5000);
+const API_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_ORS_API_TIMEOUT_MS || 12000);
 const reportedFallbacks = new Set<string>();
 
 export class ApiRequestError extends Error {

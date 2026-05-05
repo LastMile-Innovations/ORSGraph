@@ -26,6 +26,7 @@ export function AuthoritySearchPanel({ matter }: AuthoritySearchPanelProps) {
   const [attachingId, setAttachingId] = useState<string | null>(null)
 
   const targets = buildAuthorityTargets(matter, targetType)
+  const hasTargets = targets.length > 0
   const selectedTarget = targetId || targets[0]?.id || ""
 
   async function onSearch() {
@@ -132,6 +133,11 @@ export function AuthoritySearchPanel({ matter }: AuthoritySearchPanelProps) {
             )}
           </select>
         </div>
+        {!hasTargets && (
+          <div className="mt-2 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+            Create a claim, element, or draft paragraph before attaching authorities. Search can still help you collect candidate law.
+          </div>
+        )}
         {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
         {attachMessage && <p className="mt-2 text-xs text-muted-foreground">{attachMessage}</p>}
         {warnings.length > 0 && (

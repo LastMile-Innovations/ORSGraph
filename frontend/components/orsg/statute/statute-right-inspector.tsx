@@ -49,7 +49,7 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
           <CountAwareEmpty
             count={counts?.semantic_counts.definitions ?? 0}
             emptyLabel="No definitions"
-            pendingLabel="Open Definitions to load extracted terms."
+            pendingLabel="Definitions are expected; open or reload the tab to refresh extracted terms."
           />
         ) : (
           <ul className="space-y-2">
@@ -76,7 +76,7 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
           <CountAwareEmpty
             count={counts?.semantic_counts.exceptions ?? 0}
             emptyLabel="No exceptions"
-            pendingLabel="Open Exceptions to load extracted exceptions."
+            pendingLabel="Exceptions are expected; open or reload the tab to refresh extracted exceptions."
           />
         ) : (
           <ul className="space-y-2">
@@ -102,7 +102,7 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
           <CountAwareEmpty
             count={counts?.semantic_counts.deadlines ?? 0}
             emptyLabel="No deadlines"
-            pendingLabel="Open Deadlines to load extracted deadlines."
+            pendingLabel="Deadlines are expected; open or reload the tab to refresh extracted deadlines."
           />
         ) : (
           <ul className="space-y-2">
@@ -127,7 +127,7 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
           <CountAwareEmpty
             count={counts?.semantic_counts.penalties ?? 0}
             emptyLabel="No penalties"
-            pendingLabel="Open Exceptions to load penalties."
+            pendingLabel="Penalties are expected; open or reload the Exceptions tab to refresh penalties."
           />
         ) : (
           <ul className="space-y-2">
@@ -156,7 +156,7 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
           <CountAwareEmpty
             count={counts?.citation_counts.outbound ?? 0}
             emptyLabel="No outbound citations"
-            pendingLabel="Open Citations to load outbound edges."
+            pendingLabel="Citation edges are expected; open or reload Citations to refresh outbound edges."
           />
         ) : (
           <ul className="space-y-1">
@@ -191,7 +191,7 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
           <CountAwareEmpty
             count={counts?.citation_counts.inbound ?? 0}
             emptyLabel="No inbound citations"
-            pendingLabel="Open Citations to load inbound edges."
+            pendingLabel="Citation edges are expected; open or reload Citations to refresh inbound edges."
           />
         ) : (
           <ul className="space-y-1">

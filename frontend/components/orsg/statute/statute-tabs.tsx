@@ -46,7 +46,7 @@ export function StatuteTabs({
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const [isPending, startTransition] = useTransition()
+  const [, startTransition] = useTransition()
   const [active, setActive] = useState<TabId>(isTabId(initialTab) ? initialTab : "text")
   const [loaded, setLoaded] = useState(() => loadedStateFor(data))
   const [loadingTab, setLoadingTab] = useState<TabId | null>(null)
@@ -218,7 +218,7 @@ export function StatuteTabs({
       <div className="border-b border-border bg-card px-4">
         <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-none bg-transparent p-0 scrollbar-thin">
           {TABS.map((tab) => {
-            const count = getTabCount(tab.id, activeData)
+            const count = getTabCount(tab.id, activeData, loaded)
             return (
               <TabsTrigger
                 key={tab.id}
@@ -243,7 +243,7 @@ export function StatuteTabs({
         </TabsList>
       </div>
 
-      {(loadingTab || isPending || loadError) && (
+      {(loadingTab || loadError) && (
         <div className="border-b border-border bg-muted/30 px-4 py-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
           {loadError ? `Could not load tab data: ${loadError}` : `Loading ${loadingTab ?? active} data`}
         </div>
@@ -252,11 +252,11 @@ export function StatuteTabs({
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin">
         <TabsContent value="text" className="m-0 h-full"><TextTab data={activeData} /></TabsContent>
         <TabsContent value="tree" className="m-0 h-full"><ProvisionTreeTab data={activeData} /></TabsContent>
-        <TabsContent value="citations" className="m-0 h-full">{loadingTab === "citations" ? <TabPendingPlaceholder tab="citations" count={getTabCount("citations", activeData)} /> : <CitationsTab data={activeData} />}</TabsContent>
-        <TabsContent value="definitions" className="m-0 h-full">{loadingTab === "definitions" ? <TabPendingPlaceholder tab="definitions" count={getTabCount("definitions", activeData)} /> : <DefinitionsTab data={activeData} />}</TabsContent>
-        <TabsContent value="deadlines" className="m-0 h-full">{loadingTab === "deadlines" ? <TabPendingPlaceholder tab="deadlines" count={getTabCount("deadlines", activeData)} /> : <DeadlinesTab data={activeData} />}</TabsContent>
-        <TabsContent value="exceptions" className="m-0 h-full">{loadingTab === "exceptions" ? <TabPendingPlaceholder tab="exceptions" count={getTabCount("exceptions", activeData)} /> : <ExceptionsTab data={activeData} />}</TabsContent>
-        <TabsContent value="chunks" className="m-0 h-full">{loadingTab === "chunks" ? <TabPendingPlaceholder tab="chunks" count={getTabCount("chunks", activeData)} /> : <ChunksTab data={activeData} />}</TabsContent>
+        <TabsContent value="citations" className="m-0 h-full">{loadingTab === "citations" ? <TabPendingPlaceholder tab="citations" count={getTabCount("citations", activeData, loaded)} /> : <CitationsTab data={activeData} />}</TabsContent>
+        <TabsContent value="definitions" className="m-0 h-full">{loadingTab === "definitions" ? <TabPendingPlaceholder tab="definitions" count={getTabCount("definitions", activeData, loaded)} /> : <DefinitionsTab data={activeData} />}</TabsContent>
+        <TabsContent value="deadlines" className="m-0 h-full">{loadingTab === "deadlines" ? <TabPendingPlaceholder tab="deadlines" count={getTabCount("deadlines", activeData, loaded)} /> : <DeadlinesTab data={activeData} />}</TabsContent>
+        <TabsContent value="exceptions" className="m-0 h-full">{loadingTab === "exceptions" ? <TabPendingPlaceholder tab="exceptions" count={getTabCount("exceptions", activeData, loaded)} /> : <ExceptionsTab data={activeData} />}</TabsContent>
+        <TabsContent value="chunks" className="m-0 h-full">{loadingTab === "chunks" ? <TabPendingPlaceholder tab="chunks" count={getTabCount("chunks", activeData, loaded)} /> : <ChunksTab data={activeData} />}</TabsContent>
         <TabsContent value="versions" className="m-0 h-full"><VersionsTab data={activeData} /></TabsContent>
         <TabsContent value="source" className="m-0 h-full"><SourceTab data={activeData} /></TabsContent>
         <TabsContent value="graph" className="m-0 h-full"><GraphTab data={activeData} /></TabsContent>
@@ -324,18 +324,22 @@ function updateSummaryCounts(
   }
 }
 
-function getTabCount(id: TabId, data: StatutePageResponse): number | null {
+function getTabCount(id: TabId, data: StatutePageResponse, loaded?: ReturnType<typeof loadedStateFor>): number | null {
   switch (id) {
     case "tree":
       return data.summary_counts?.provision_count ?? countProvisions(data.provisions)
     case "citations":
+      if (loaded?.citations) return data.outbound_citations.length + data.inbound_citations.length
       return (data.summary_counts?.citation_counts.outbound ?? data.outbound_citations.length)
         + (data.summary_counts?.citation_counts.inbound ?? data.inbound_citations.length)
     case "definitions":
+      if (loaded?.semantics) return data.definitions.length
       return data.summary_counts?.semantic_counts.definitions ?? data.definitions.length
     case "deadlines":
+      if (loaded?.semantics) return data.deadlines.length
       return data.summary_counts?.semantic_counts.deadlines ?? data.deadlines.length
     case "exceptions":
+      if (loaded?.semantics) return data.exceptions.length + data.penalties.length
       return (data.summary_counts?.semantic_counts.exceptions ?? data.exceptions.length)
         + (data.summary_counts?.semantic_counts.penalties ?? data.penalties.length)
     case "chunks":

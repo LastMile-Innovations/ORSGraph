@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import {
@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 import type { Matter, Claim, ClaimElement } from "@/lib/casebuilder/types"
 import { matterFactsHref } from "@/lib/casebuilder/routes"
+import { getMatterReadiness } from "@/lib/casebuilder/readiness"
 import { createClaim, mapClaimElements } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -62,6 +63,7 @@ export function ClaimsBuilder({ matter }: ClaimsBuilderProps) {
   const [supportingFactId, setSupportingFactId] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const readiness = useMemo(() => getMatterReadiness(matter), [matter])
 
   const filteredClaims =
     tab === "all" ? matter.claims : matter.claims.filter((c) => c.kind === tab)
@@ -116,9 +118,15 @@ export function ClaimsBuilder({ matter }: ClaimsBuilderProps) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 bg-transparent"
+              disabled
+              title="AI claim suggestion is in limited beta; create or review claims manually for now."
+            >
               <Sparkles className="h-3.5 w-3.5" />
-              Suggest claims
+              Suggest claims (beta)
             </Button>
             <Button size="sm" className="gap-1.5" onClick={() => setShowCreate((value) => !value)}>
               <Plus className="h-3.5 w-3.5" />
@@ -144,6 +152,8 @@ export function ClaimsBuilder({ matter }: ClaimsBuilderProps) {
           </TabsList>
           <TabsContent value={tab} className="mt-0" />
         </Tabs>
+
+        {matter.claims.length === 0 && <ClaimsSetupBanner matter={matter} readiness={readiness} />}
 
         {showCreate && (
           <div className="mt-4 grid gap-3 rounded-md border border-border bg-card p-3 md:grid-cols-[160px_minmax(0,1fr)_180px]">
@@ -252,11 +262,37 @@ export function ClaimsBuilder({ matter }: ClaimsBuilderProps) {
         {selectedClaim ? (
           <ClaimDetail claim={selectedClaim} matter={matter} />
         ) : (
-          <div className="flex items-center justify-center p-12 text-center">
-            <p className="text-sm text-muted-foreground">No claim selected</p>
-          </div>
+          <ClaimsEmptyState matter={matter} readiness={readiness} />
         )}
       </div>
+    </div>
+  )
+}
+
+function ClaimsSetupBanner({ matter, readiness }: { matter: Matter; readiness: ReturnType<typeof getMatterReadiness> }) {
+  return (
+    <div className="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+      <span className="font-medium text-foreground">Claims are not created yet.</span>{" "}
+      Review {readiness.reviewFacts} extracted fact{readiness.reviewFacts === 1 ? "" : "s"} and {matter.timeline_suggestions.length} timeline suggestion{matter.timeline_suggestions.length === 1 ? "" : "s"} before building legal theories.
+    </div>
+  )
+}
+
+function ClaimsEmptyState({ matter, readiness }: { matter: Matter; readiness: ReturnType<typeof getMatterReadiness> }) {
+  return (
+    <div className="flex items-center justify-center p-8">
+      <Card className="max-w-xl border-dashed bg-transparent p-6 text-center">
+        <Scale className="mx-auto h-8 w-8 text-muted-foreground" />
+        <h2 className="mt-3 text-base font-semibold text-foreground">No claims or defenses yet</h2>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          This matter has {matter.facts.length} extracted fact{matter.facts.length === 1 ? "" : "s"} and {readiness.pendingTimelineSuggestions} timeline suggestion{readiness.pendingTimelineSuggestions === 1 ? "" : "s"}. Create a claim when the facts are reviewed enough to support a legal theory.
+        </p>
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          <Button asChild variant="outline" size="sm" className="bg-transparent">
+            <Link href={matterFactsHref(matter.id)}>Review facts</Link>
+          </Button>
+        </div>
+      </Card>
     </div>
   )
 }

@@ -27,7 +27,7 @@ export function StatuteDetailWorkspace({
           <StatuteTabs data={statuteData} initialTab={initialTab} onDataChange={setStatuteData} />
         </Suspense>
       </div>
-      <aside className="hidden w-80 shrink-0 flex-col overflow-hidden border-l border-border bg-card xl:flex">
+      <aside className="hidden w-[26rem] shrink-0 flex-col overflow-hidden border-l border-border bg-card xl:flex">
         <StatuteRightInspector data={statuteData} />
       </aside>
     </div>

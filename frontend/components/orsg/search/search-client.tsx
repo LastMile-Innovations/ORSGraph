@@ -456,45 +456,54 @@ function SearchRunSummary({
           {pageStart}-{pageEnd} of {response?.total || 0} for &quot;{query}&quot;
         </span>
         {response?.analysis?.timings && <span>{response.analysis.timings.total_ms}ms</span>}
-        {response?.analysis?.intent && <span>intent {response.analysis.intent}</span>}
         {response?.analysis?.inferred_chapter && <span>chapter {response.analysis.inferred_chapter}</span>}
         {response?.analysis?.applied_filters && response.analysis.applied_filters.length > 0 && (
           <span>filters {response.analysis.applied_filters.join(", ")}</span>
         )}
-        {response?.analysis?.expansion_count ? (
-          <span>expanded {response.analysis.expansion_count}</span>
-        ) : null}
         {response?.analysis?.residual_text && (
           <span>topic {response.analysis.residual_text}</span>
         )}
-        {response?.embeddings && (
-          <span className="inline-flex items-center gap-1">
-            <Sparkles className="h-3 w-3" />
-            vectors {response.embeddings.enabled ? response.embeddings.model : "off"}
-          </span>
-        )}
-        {response?.retrieval && (
-          <span className="inline-flex items-center gap-1">
-            <Database className="h-3 w-3" />
-            exact {response.retrieval.exact_candidates} · text {response.retrieval.fulltext_candidates} · vector{" "}
-            {response.retrieval.vector_candidates}
-            {response.retrieval.capped_candidates !== undefined
-              ? ` · candidates ${response.retrieval.capped_candidates}`
-              : ""}
-          </span>
-        )}
-        {response?.retrieval && (
-          <span className="inline-flex items-center gap-1">
-            <GitBranch className="h-3 w-3" />
-            graph {response.retrieval.graph_expanded_candidates} · rerank{" "}
-            {response.retrieval.reranked_candidates}
-          </span>
-        )}
-        {response?.rerank?.enabled && (
-          <span>rerank {response.rerank.model || "enabled"}</span>
-        )}
-        <span>{AUTHORITY_LADDER.join(" > ")}</span>
       </div>
+      {response?.embeddings && !response.embeddings.enabled && (
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-warning">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          <span>Semantic retrieval is not available for this run; results are limited to non-vector retrieval.</span>
+        </div>
+      )}
+      {(response?.analysis?.intent || response?.embeddings || response?.retrieval || response?.rerank?.enabled) && (
+        <details className="mt-2 text-[10px] text-muted-foreground">
+          <summary className="cursor-pointer font-mono uppercase tracking-wide hover:text-foreground">Advanced retrieval details</summary>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono uppercase tracking-wide">
+            {response?.analysis?.intent && <span>intent {response.analysis.intent}</span>}
+            {response?.analysis?.expansion_count ? <span>expanded {response.analysis.expansion_count}</span> : null}
+            {response?.embeddings && (
+              <span className="inline-flex items-center gap-1">
+                <Sparkles className="h-3 w-3" />
+                vectors {response.embeddings.enabled ? response.embeddings.model : "off"}
+              </span>
+            )}
+            {response?.retrieval && (
+              <span className="inline-flex items-center gap-1">
+                <Database className="h-3 w-3" />
+                exact {response.retrieval.exact_candidates} · text {response.retrieval.fulltext_candidates} · vector{" "}
+                {response.retrieval.vector_candidates}
+                {response.retrieval.capped_candidates !== undefined
+                  ? ` · candidates ${response.retrieval.capped_candidates}`
+                  : ""}
+              </span>
+            )}
+            {response?.retrieval && (
+              <span className="inline-flex items-center gap-1">
+                <GitBranch className="h-3 w-3" />
+                graph {response.retrieval.graph_expanded_candidates} · rerank{" "}
+                {response.retrieval.reranked_candidates}
+              </span>
+            )}
+            {response?.rerank?.enabled && <span>rerank {response.rerank.model || "enabled"}</span>}
+            <span>{AUTHORITY_LADDER.join(" > ")}</span>
+          </div>
+        </details>
+      )}
       {response?.warnings && response.warnings.length > 0 && (
         <div className="mt-2 flex flex-col gap-1">
           {response.warnings.map((warning) => (

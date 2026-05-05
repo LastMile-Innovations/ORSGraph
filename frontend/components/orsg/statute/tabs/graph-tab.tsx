@@ -59,6 +59,11 @@ export function GraphTab({ data }: { data: StatutePageResponse }) {
       <div className="border-b border-border bg-background px-4 py-2 text-xs text-muted-foreground">
         Arrows point from the citing authority toward the referenced authority. Edge colors show the relationship type.
       </div>
+      {!loading && !error && nodes.length > 0 && edges.length === 0 && (
+        <div className="border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs text-warning">
+          No graph edges are available for this statute yet. Inline citations may still appear in the text before citation edges are resolved.
+        </div>
+      )}
       <div className="relative flex-1 bg-background">
         {loading ? (
           <GraphLoadingState />

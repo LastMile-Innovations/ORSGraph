@@ -254,6 +254,7 @@ export function AdminDashboardClient() {
 
   async function startWorkflow(workflow: (typeof WORKFLOWS)[number]) {
     if (workflow.disabled) return
+    if (workflow.kind !== "qc" && !window.confirm(`Start ${workflow.label}? This may mutate production source, graph, or index state.`)) return
     if (!overview) {
       setError("Admin API is not ready yet.")
       return
@@ -287,6 +288,7 @@ export function AdminDashboardClient() {
   }
 
   async function startSourceJob(kind: "selected" | "p0" | "combine") {
+    if (!window.confirm(`Start ${kind === "combine" ? "combine" : "ingest"} job? This may mutate production source or graph state.`)) return
     if (!overview) {
       setError("Admin API is not ready yet.")
       return
@@ -323,6 +325,7 @@ export function AdminDashboardClient() {
   }
 
   async function startSourceOperationById(sourceId: string, operation: "ingest" | "combine") {
+    if (!window.confirm(`Start ${operation} for ${sourceId}? This may mutate production source or graph state.`)) return
     if (!overview) {
       setError("Admin API is not ready yet.")
       return
@@ -529,6 +532,9 @@ export function AdminDashboardClient() {
               </div>
             </div>
           </div>
+          <div className="border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs text-warning">
+            Source ingest and combine actions are mutating operations. Each start action requires confirmation before a job is queued.
+          </div>
           <div className="grid gap-4 p-4 lg:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1.2fr)]">
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-2">
@@ -662,6 +668,9 @@ export function AdminDashboardClient() {
                 </div>
                 {activeJob && !isTerminalJob(activeJob.status) && <JobStatusBadge job={activeJob} />}
               </div>
+            </div>
+            <div className="border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs text-warning">
+              Mutating workflows require confirmation. Use QC for read-only checks; use ingest, materialize, and indexing only when you intend to change production state.
             </div>
             <div className="grid gap-3 p-4 lg:grid-cols-2">
               <div className="grid gap-2 rounded-md border border-border bg-background/40 p-3 lg:col-span-2">

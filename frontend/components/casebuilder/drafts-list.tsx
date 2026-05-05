@@ -2,10 +2,11 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { Plus, Sparkles, FileText, Search, Clock, CheckCircle2 } from "lucide-react"
 import type { Matter } from "@/lib/casebuilder/types"
 import { matterComplaintHref, matterDraftHref } from "@/lib/casebuilder/routes"
+import { getMatterReadiness } from "@/lib/casebuilder/readiness"
 import { createDraft, generateDraft } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -59,6 +60,8 @@ export function DraftsList({ matter }: DraftsListProps) {
   const [draftType, setDraftType] = useState("motion")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const readiness = useMemo(() => getMatterReadiness(matter), [matter])
+  const draftingReady = readiness.draftingMissing.length === 0
 
   const filtered = matter.drafts.filter(
     (d) => d.kind !== "complaint" && (!query || d.title.toLowerCase().includes(query.toLowerCase())),
@@ -95,8 +98,7 @@ export function DraftsList({ matter }: DraftsListProps) {
               Drafting Studio
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              AI-assisted drafting with citation grounding. Every claim, fact, and authority is
-              one click away.
+              Draft from reviewed matter objects. AI-assisted templates stay locked until prerequisites are ready.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -122,6 +124,13 @@ export function DraftsList({ matter }: DraftsListProps) {
             className="h-8 pl-8 text-xs"
           />
         </div>
+
+        {!draftingReady && (
+          <div className="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+            <span className="font-medium text-foreground">Template drafting is not ready.</span>{" "}
+            Needed: {readiness.draftingMissing.join(", ")}.
+          </div>
+        )}
 
         {showCreate && (
           <div className="mt-4 grid gap-2 rounded border border-border bg-card p-3 md:grid-cols-[minmax(0,1fr)_180px_auto]">
@@ -207,7 +216,7 @@ export function DraftsList({ matter }: DraftsListProps) {
                 <li key={tpl.id}>
                   <button
                     className="group w-full text-left"
-                    disabled={saving}
+                    disabled={saving || !draftingReady}
                     onClick={() =>
                       createAndOpen(
                         {
@@ -219,14 +228,14 @@ export function DraftsList({ matter }: DraftsListProps) {
                       )
                     }
                   >
-                    <Card className="h-full border-dashed bg-transparent p-4 transition-colors group-hover:border-foreground/30 group-hover:bg-muted/30">
+                    <Card className={cn("h-full border-dashed bg-transparent p-4 transition-colors group-hover:border-foreground/30 group-hover:bg-muted/30", !draftingReady && "opacity-60")}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted">
                           <FileText className="h-4 w-4 text-muted-foreground" />
                         </div>
                         <Badge variant="outline" className="gap-1 text-[10px]">
                           <Sparkles className="h-2.5 w-2.5" />
-                          AI
+                          {draftingReady ? "AI" : "Locked"}
                         </Badge>
                       </div>
                       <h3 className="mt-3 text-sm font-semibold text-foreground">{tpl.label}</h3>

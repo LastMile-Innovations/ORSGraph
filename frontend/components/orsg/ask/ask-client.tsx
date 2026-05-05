@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import Link from "next/link"
 import type { AskAnswer } from "@/lib/types"
 import type { DataSource } from "@/lib/data-state"
@@ -50,23 +50,40 @@ export function AskClient({
 }: Props) {
   const [q, setQ] = useState(initialQuery)
   const [mode, setMode] = useState("research")
-  const [answer, setAnswer] = useState<AskAnswer | null>(initialAnswer)
+  const [answer, setAnswer] = useState<AskAnswer | null>(initialDataSource === "live" ? initialAnswer : null)
   const [dataSource, setDataSource] = useState<DataSource>(initialDataSource)
   const [dataError, setDataError] = useState<string | undefined>(initialDataError)
   const [loading, setLoading] = useState(false)
+  const [failedQuestion, setFailedQuestion] = useState<string | null>(
+    initialDataSource && initialDataSource !== "live" && initialQuery ? initialQuery : null,
+  )
+  const askRequestRef = useRef(0)
 
   async function submitQuestion(nextQuestion = q) {
     const question = nextQuestion.trim()
     if (!question || loading) return
+    const requestId = ++askRequestRef.current
     setQ(question)
     setLoading(true)
+    setAnswer(null)
+    setDataSource("live")
+    setDataError(undefined)
+    setFailedQuestion(null)
     try {
       const next = await askWithFallbackState(question, mode)
+      if (requestId !== askRequestRef.current) return
+      if (next.source !== "live") {
+        setAnswer(null)
+        setDataSource(next.source)
+        setDataError(next.error || "Ask API unavailable. No generated answer was shown.")
+        setFailedQuestion(question)
+        return
+      }
       setAnswer(next.data)
       setDataSource(next.source)
       setDataError(next.error)
     } finally {
-      setLoading(false)
+      if (requestId === askRequestRef.current) setLoading(false)
     }
   }
 
@@ -86,6 +103,9 @@ export function AskClient({
           <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
             Answers stay tied to parsed provisions, retrieved chunks, definitions, and caveats.
           </p>
+          <div className="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
+            Ask is in limited beta while the AI harness is being completed. It only shows live answers from the Ask service; failed or timed-out requests do not fall back to canned legal answers.
+          </div>
           <div className="mt-4 flex items-start gap-2 rounded-md border border-border bg-background p-2 shadow-sm focus-within:border-primary">
             <Sparkles className="mt-2 h-4 w-4 flex-none text-primary" />
             <textarea
@@ -270,7 +290,12 @@ export function AskClient({
               )}
             </div>
           ) : (
-            <AskEmptyState onAsk={submitQuestion} loading={loading} />
+            <AskEmptyState
+              onAsk={submitQuestion}
+              loading={loading}
+              failedQuestion={failedQuestion}
+              error={dataError}
+            />
           )}
         </div>
 
@@ -343,12 +368,30 @@ export function AskClient({
 function AskEmptyState({
   onAsk,
   loading,
+  failedQuestion,
+  error,
 }: {
   onAsk: (question: string) => void
   loading: boolean
+  failedQuestion?: string | null
+  error?: string
 }) {
   return (
     <div className="mx-auto flex min-h-full max-w-3xl flex-col justify-center px-6 py-10">
+      {failedQuestion && (
+        <div className="mb-4 rounded border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-medium text-foreground">No answer was generated for this question.</p>
+              <p className="mt-1 text-destructive/90">
+                The Ask service did not return live data for “{failedQuestion}”. Try again or narrow the question.
+              </p>
+              {error && <p className="mt-1 font-mono text-[11px] text-destructive/80">{error}</p>}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="rounded border border-border bg-card p-5">
         <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
           <Sparkles className="h-3.5 w-3.5 text-primary" />

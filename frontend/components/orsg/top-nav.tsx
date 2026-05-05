@@ -3,7 +3,7 @@
 import NextForm from "next/form"
 import Link from "next/link"
 import { signIn, signOut, useSession } from "next-auth/react"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import type { FormEvent, ReactNode } from "react"
 import type { LucideIcon } from "lucide-react"
@@ -172,6 +172,7 @@ function formatCheckedAt(value?: string) {
 
 export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
   const pathname = usePathname() || "/"
+  const router = useRouter()
   const [query, setQuery] = useState("")
   const [mobileOpen, setMobileOpen] = useState(false)
   const status = useRuntimeStatus()
@@ -180,6 +181,7 @@ export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
     () => NAV_ITEMS.find((item) => isActiveItem(item, pathname))?.label ?? "Home",
     [pathname],
   )
+  const searchPlaceholder = useMemo(() => getSearchPlaceholder(pathname, activeLabel), [pathname, activeLabel])
 
   const submitSearch = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -187,10 +189,18 @@ export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
         event.preventDefault()
         return
       }
+      const exactCitationHref = exactOrsCitationHref(query)
+      if (exactCitationHref) {
+        event.preventDefault()
+        setMobileOpen(false)
+        setQuery("")
+        router.push(exactCitationHref)
+        return
+      }
       setMobileOpen(false)
       window.requestAnimationFrame(() => setQuery(""))
     },
-    [query],
+    [query, router],
   )
 
   return (
@@ -289,7 +299,7 @@ export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
           name="q"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder={`Search ${activeLabel.toLowerCase()}...`}
+          placeholder={searchPlaceholder}
           className="min-w-0 flex-1 bg-transparent py-1.5 text-sm outline-none placeholder:text-muted-foreground"
         />
         <Button type="submit" variant="ghost" size="icon-sm" className="h-7 w-7" aria-label="Search">
@@ -315,6 +325,28 @@ export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
       </div>
     </header>
   )
+}
+
+function exactOrsCitationHref(value: string) {
+  const match = value.trim().match(/^ORS\s+([0-9A-Za-z]+(?:\.[0-9A-Za-z]+)?)$/i)
+  if (!match) return null
+  return `/statutes/${encodeURIComponent(`or:ors:${match[1]}`)}`
+}
+
+function getSearchPlaceholder(pathname: string, activeLabel: string) {
+  if (pathname === "/search" || pathname.startsWith("/search/")) {
+    return "Search statutes, provisions, or concepts..."
+  }
+  if (pathname === "/ask" || pathname.startsWith("/ask/")) {
+    return "Search ORSGraph..."
+  }
+  if (pathname.startsWith("/casebuilder") || pathname.startsWith("/matters")) {
+    return "Search matters, statutes, or evidence..."
+  }
+  if (pathname.startsWith("/admin")) {
+    return "Search ORSGraph..."
+  }
+  return `Search ${activeLabel.toLowerCase()}...`
 }
 
 function AccountMenu({

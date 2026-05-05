@@ -1,9 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { Archive, Download, FileText, PackageCheck } from "lucide-react"
 import type { ExportPackage, Matter } from "@/lib/casebuilder/types"
 import { exportMatterPackage } from "@/lib/casebuilder/api"
+import { getMatterReadiness } from "@/lib/casebuilder/readiness"
 import { cn } from "@/lib/utils"
 
 const EXPORTS = [
@@ -16,8 +17,14 @@ export function MatterExportPanel({ matter }: { matter: Matter }) {
   const [pending, setPending] = useState<string | null>(null)
   const [packages, setPackages] = useState<Record<string, ExportPackage>>({})
   const [message, setMessage] = useState<string | null>(null)
+  const readiness = useMemo(() => getMatterReadiness(matter), [matter])
+  const canPrepare = readiness.exportMissing.length === 0
 
   async function run(format: string) {
+    if (!canPrepare) {
+      setMessage(`Export preparation needs ${readiness.exportMissing.join(", ")} first.`)
+      return
+    }
     setPending(format)
     setMessage(null)
     const result = await exportMatterPackage(matter.id, format)
@@ -41,6 +48,12 @@ export function MatterExportPanel({ matter }: { matter: Matter }) {
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
           Prepare review-needed matter packages from current WorkProducts and QC state. Court e-filing remains out of scope.
         </p>
+        {!canPrepare && (
+          <div className="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+            <span className="font-medium text-foreground">Exports are in setup mode.</span>{" "}
+            Needed: {readiness.exportMissing.join(", ")}.
+          </div>
+        )}
         {message && <div className="mt-3 rounded border border-border bg-background px-3 py-2 text-xs text-muted-foreground">{message}</div>}
       </header>
 
@@ -60,7 +73,7 @@ export function MatterExportPanel({ matter }: { matter: Matter }) {
               <button
                 type="button"
                 onClick={() => run(format)}
-                disabled={pending !== null}
+                disabled={pending !== null || !canPrepare}
                 className="mt-4 inline-flex items-center gap-1.5 rounded bg-primary px-3 py-2 font-mono text-xs uppercase tracking-wider text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
               >
                 <Download className="h-3.5 w-3.5" />

@@ -16,7 +16,7 @@ export function SourceTab({ data }: { data: StatutePageResponse }) {
                 <span className="font-mono text-sm text-foreground">{s.source_id}</span>
               </div>
               <a
-                href={s.url}
+                href={normalizeExternalUrl(s.url)}
                 target="_blank"
                 rel="noreferrer"
                 className="flex items-center gap-1 font-mono text-xs text-primary hover:underline"
@@ -26,7 +26,7 @@ export function SourceTab({ data }: { data: StatutePageResponse }) {
               </a>
             </header>
             <dl className="grid grid-cols-1 gap-px bg-border md:grid-cols-2">
-              <SourceField label="url" value={s.url} mono />
+              <SourceField label="url" value={normalizeExternalUrl(s.url)} mono />
               <SourceField label="retrieved at" value={s.retrieved_at} mono />
               <SourceField label="edition year" value={String(s.edition_year)} />
               <SourceField label="parser profile" value={s.parser_profile} mono />
@@ -66,8 +66,14 @@ function SourceField({
           truncate ? "truncate" : "break-all"
         }`}
       >
-        {value}
+        {value || "Not available"}
       </dd>
     </div>
   )
+}
+
+function normalizeExternalUrl(value: string) {
+  if (!value) return ""
+  if (/^https?:\/\//i.test(value)) return value
+  return `https://${value.replace(/^\/+/, "")}`
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import {
   Send,
@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import type { Matter, MatterChatMessage, MatterChatCitation } from "@/lib/casebuilder/types"
 import { matterClaimsHref, matterDocumentHref, matterFactsHref } from "@/lib/casebuilder/routes"
+import { getMatterReadiness, type MatterReadiness } from "@/lib/casebuilder/readiness"
 import { askMatter } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -29,15 +30,6 @@ interface AskMatterProps {
   matter: Matter
 }
 
-const STARTERS = [
-  "Summarize the strongest claims and weakest defenses for this matter.",
-  "What evidence do we have that the unit was uninhabitable?",
-  "Draft a paragraph rebutting the affirmative defense of failure to mitigate.",
-  "List all monetary amounts mentioned across the lease and ledger.",
-  "What deadlines fall in the next 30 days, and what tasks are blocking?",
-  "Compare the rent ledger with the tenant's payment records and flag inconsistencies.",
-]
-
 export function AskMatter({ matter }: AskMatterProps) {
   const [messages, setMessages] = useState<MatterChatMessage[]>(matter.chatHistory ?? [])
   const [threadId, setThreadId] = useState(() => `thread-${matter.id}-${Date.now()}`)
@@ -45,6 +37,17 @@ export function AskMatter({ matter }: AskMatterProps) {
   const [input, setInput] = useState("")
   const [pending, setPending] = useState(false)
   const [scope, setScope] = useState<"all" | "documents" | "facts" | "claims">("all")
+  const readiness = useMemo(() => getMatterReadiness(matter), [matter])
+  const starters = useMemo(() => buildMatterStarters(matter, readiness), [matter, readiness])
+  const scopeOptions = useMemo(
+    () => [
+      { id: "all" as const, label: "Whole matter", disabled: !readiness.hasIndexedSources },
+      { id: "documents" as const, label: "Documents", disabled: matter.documents.length === 0 },
+      { id: "facts" as const, label: "Facts", disabled: matter.facts.length === 0 },
+      { id: "claims" as const, label: "Claims", disabled: matter.claims.length === 0 },
+    ],
+    [matter.claims.length, matter.documents.length, matter.facts.length, readiness.hasIndexedSources],
+  )
 
   useEffect(() => {
     const stored = window.localStorage.getItem(`casebuilder:ask:${matter.id}`)
@@ -71,7 +74,8 @@ export function AskMatter({ matter }: AskMatterProps) {
   }, [loadedLocalThread, matter.id, messages, threadId])
 
   const send = async (text: string) => {
-    if (!text.trim()) return
+    if (!text.trim() || pending) return
+    const currentScope = scopeOptions.find((option) => option.id === scope && !option.disabled)?.id ?? "all"
     const userMsg: MatterChatMessage = {
       id: `msg-${Date.now()}`,
       role: "user",
@@ -83,7 +87,7 @@ export function AskMatter({ matter }: AskMatterProps) {
     setInput("")
     setPending(true)
 
-    const result = await askMatter(matter.id, { question: text, scope, thread_id: threadId })
+    const result = await askMatter(matter.id, { question: text, scope: currentScope, thread_id: threadId })
     if (result.data) {
       const reply: MatterChatMessage = {
         id: `msg-${Date.now() + 1}`,
@@ -93,7 +97,7 @@ export function AskMatter({ matter }: AskMatterProps) {
         timestamp: new Date().toISOString(),
         confidence: 0.72,
         reasoning: [
-          `Queried matter scope: ${scope}.`,
+          `Queried matter scope: ${currentScope}.`,
           `Matched ${result.data.related_documents.length} document sources and ${result.data.related_facts.length} facts.`,
           `Retrieved ${result.data.citations.filter((citation) => citation.kind === "statute").length} source-backed authority matches.`,
           ...result.data.warnings.slice(0, 2),
@@ -124,8 +128,7 @@ export function AskMatter({ matter }: AskMatterProps) {
               Ask {matter.shortName}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              A research assistant grounded in the documents, facts, and authorities of this
-              matter only.
+              Limited beta assistant grounded in the matter sources that are currently indexed and reviewed.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -144,23 +147,29 @@ export function AskMatter({ matter }: AskMatterProps) {
           </div>
         </div>
 
+        <div className="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
+          AI harness is still limited. Answers depend on available documents, facts, claims, and retrieval health; review sources before relying on strategy or deadlines.
+        </div>
+
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Filter className="h-3 w-3" />
             Scope:
           </span>
-          {(["all", "documents", "facts", "claims"] as const).map((s) => (
+          {scopeOptions.map((option) => (
             <button
-              key={s}
-              onClick={() => setScope(s)}
+              key={option.id}
+              onClick={() => !option.disabled && setScope(option.id)}
+              disabled={option.disabled}
               className={cn(
                 "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors capitalize",
-                scope === s
+                scope === option.id
                   ? "border-foreground bg-foreground text-background"
                   : "border-border bg-background text-muted-foreground hover:bg-muted",
+                option.disabled && "cursor-not-allowed opacity-50 hover:bg-background",
               )}
             >
-              {s === "all" ? "Whole matter" : s}
+              {option.label}
             </button>
           ))}
         </div>
@@ -172,7 +181,7 @@ export function AskMatter({ matter }: AskMatterProps) {
           <ScrollArea className="h-[calc(100vh-280px)]">
             <div className="mx-auto max-w-3xl space-y-6 px-6 py-8">
               {messages.length === 0 ? (
-                <EmptyState matter={matter} onPick={(t) => send(t)} />
+                <EmptyState matter={matter} starters={starters} onPick={(t) => send(t)} />
               ) : (
                 messages.map((msg) => (
                   <MessageBlock key={msg.id} message={msg} matter={matter} />
@@ -228,7 +237,7 @@ export function AskMatter({ matter }: AskMatterProps) {
                   Suggested prompts
                 </h3>
                 <ul className="mt-2 space-y-1">
-                  {STARTERS.slice(0, 4).map((s) => (
+                  {starters.slice(0, 4).map((s) => (
                     <li key={s}>
                       <button
                         onClick={() => send(s)}
@@ -419,9 +428,11 @@ function SourceStat({ label, count }: { label: string; count: number }) {
 
 function EmptyState({
   matter,
+  starters,
   onPick,
 }: {
   matter: Matter
+  starters: string[]
   onPick: (text: string) => void
 }) {
   return (
@@ -434,12 +445,11 @@ function EmptyState({
           Ask anything about {matter.shortName}
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Every answer is grounded in this matter&apos;s indexed documents, facts, and
-          authorities.
+          Start with questions that match the sources already available in this matter.
         </p>
       </div>
       <ul className="mx-auto grid max-w-xl grid-cols-1 gap-2 text-left">
-        {STARTERS.map((s) => (
+        {starters.map((s) => (
           <li key={s}>
             <button
               onClick={() => onPick(s)}
@@ -453,6 +463,26 @@ function EmptyState({
       </ul>
     </div>
   )
+}
+
+function buildMatterStarters(matter: Matter, readiness: MatterReadiness) {
+  const firstDocument = matter.documents[0]
+  const starters = [
+    firstDocument ? `Summarize the key points from ${firstDocument.title || firstDocument.filename}.` : null,
+    matter.facts.length > 0 ? "Which extracted facts still need review, and why?" : null,
+    readiness.pendingTimelineSuggestions > 0 ? "Which timeline suggestions should I review first?" : null,
+    matter.claims.length > 0
+      ? "Summarize the strongest claims and the evidence gaps for each one."
+      : matter.facts.length > 0
+        ? "Which reviewed facts look relevant to possible claims or defenses?"
+        : null,
+    matter.deadlines.length > 0
+      ? "What open deadlines and blocking tasks need attention next?"
+      : "What setup steps should I complete before relying on deadline or drafting tools?",
+    readiness.authorityLinks > 0 ? "Which linked authorities matter most for the current theories?" : "What authority should I look for after creating claims?",
+  ].filter(Boolean) as string[]
+
+  return starters.slice(0, 6)
 }
 
 function mapAskCitations(citations: Array<{ citation_id: string; kind: string; source_id: string; title: string; snippet?: string | null }>): MatterChatCitation[] {

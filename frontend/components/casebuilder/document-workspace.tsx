@@ -763,7 +763,7 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace, setting
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      <div className="flex min-h-[calc(100vh-3.5rem)] flex-1 flex-col overflow-hidden bg-background">
         <header className="shrink-0 border-b bg-card px-4 py-2">
           <div className="flex items-center justify-between">
             <div className="flex min-w-0 items-center gap-3">
@@ -815,7 +815,7 @@ export function DocumentWorkspace({ matter, workspace: initialWorkspace, setting
           )}
         </header>
 
-        <ResizablePanelGroup direction="horizontal" className="flex-1">
+        <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
           <ResizablePanel defaultSize={70} minSize={30}>
             <main className="h-full overflow-hidden bg-background">
               <DocumentCenterPane

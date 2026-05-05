@@ -178,7 +178,7 @@ export function StatuteHeader({
           <Metric label="chunks" value={data.chunks.length} />
           {data.source_documents[0]?.url && (
             <a
-              href={data.source_documents[0]?.url}
+              href={normalizeExternalUrl(data.source_documents[0]?.url)}
               target="_blank"
               rel="noreferrer"
               className="ml-auto flex items-center gap-1 text-muted-foreground hover:text-primary"
@@ -191,6 +191,11 @@ export function StatuteHeader({
       </div>
     </header>
   )
+}
+
+function normalizeExternalUrl(value: string) {
+  if (/^https?:\/\//i.test(value)) return value
+  return `https://${value.replace(/^\/+/, "")}`
 }
 
 function Metric({

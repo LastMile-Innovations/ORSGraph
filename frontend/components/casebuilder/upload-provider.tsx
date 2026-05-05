@@ -700,27 +700,41 @@ function UploadTray({
   if (batches.length === 0) return null
   const activeCount = rows.filter((row) => ["queued", "preparing", "uploading", "indexing"].includes(row.status)).length
   const failedCount = rows.filter((row) => row.status === "failed").length
+  const canDismissAll = activeCount === 0
   return (
     <div className="fixed bottom-4 right-4 z-50 w-[min(28rem,calc(100vw-2rem))] rounded border border-border bg-card shadow-2xl">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 border-b border-border px-3 py-2 text-left"
-      >
-        <span className="flex min-w-0 items-center gap-2">
-          {activeCount > 0 ? (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
-          ) : failedCount > 0 ? (
-            <AlertCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
-          ) : (
-            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
-          )}
-          <span className="truncate font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-            uploads {activeCount > 0 ? `${activeCount} active` : failedCount > 0 ? `${failedCount} failed` : "complete"}
+      <div className="flex items-center gap-1 border-b border-border">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2 text-left"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            {activeCount > 0 ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+            ) : failedCount > 0 ? (
+              <AlertCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+            ) : (
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
+            )}
+            <span className="truncate font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+              uploads {activeCount > 0 ? `${activeCount} active` : failedCount > 0 ? `${failedCount} failed` : "complete"}
+            </span>
           </span>
-        </span>
-        {collapsed ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-      </button>
+          {collapsed ? <ChevronUp className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
+        </button>
+        {canDismissAll && (
+          <button
+            type="button"
+            onClick={() => batches.forEach((batch) => onDismissBatch(batch.id))}
+            className="mr-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+            title="Dismiss upload tray"
+            aria-label="Dismiss upload tray"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
       {!collapsed && (
         <div className="max-h-96 overflow-y-auto p-2 scrollbar-thin">
           {batches.map((batch) => {

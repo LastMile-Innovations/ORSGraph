@@ -124,29 +124,10 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
                 cites <span className="text-foreground">{citationCount}</span>
               </span>
             )}
-            {connectedNodeCount !== undefined && (
-              <span className="inline-flex items-center gap-1">
-                <GitBranch className="h-3 w-3" />
-                graph nodes <span className="text-foreground">{connectedNodeCount}</span>
-              </span>
-            )}
-            {result.source?.provision_id && (
-              <span title={result.source.provision_id}>
-                provision <span className="text-foreground">{shortId(result.source.provision_id)}</span>
-              </span>
-            )}
-            {result.source?.chunk_id && (
-              <span title={result.source.chunk_id}>
-                chunk <span className="text-foreground">{shortId(result.source.chunk_id)}</span>
-              </span>
-            )}
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <ScorePill label="final" value={resultScore} strong />
-            {scoreParts.map(([label, value]) => (
-              <ScorePill key={label} label={label} value={value} />
-            ))}
+            <ScorePill label="relevance" value={resultScore} strong />
 
             <div className="ml-auto flex items-center gap-3 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
               <Link href={href} className="flex items-center gap-1 transition-colors hover:text-primary">
@@ -169,6 +150,32 @@ export function SearchResultCard({ result }: SearchResultCardProps) {
               </Link>
             </div>
           </div>
+          {(scoreParts.some(([, value]) => finiteNumber(value) !== undefined) || connectedNodeCount !== undefined || result.source?.provision_id || result.source?.chunk_id) && (
+            <details className="mt-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+              <summary className="cursor-pointer hover:text-foreground">Advanced details</summary>
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                {scoreParts.map(([label, value]) => (
+                  <ScorePill key={label} label={label} value={value} />
+                ))}
+                {connectedNodeCount !== undefined && (
+                  <span className="inline-flex items-center gap-1">
+                    <GitBranch className="h-3 w-3" />
+                    graph nodes <span className="text-foreground">{connectedNodeCount}</span>
+                  </span>
+                )}
+                {result.source?.provision_id && (
+                  <span title={result.source.provision_id}>
+                    provision <span className="text-foreground">{shortId(result.source.provision_id)}</span>
+                  </span>
+                )}
+                {result.source?.chunk_id && (
+                  <span title={result.source.chunk_id}>
+                    chunk <span className="text-foreground">{shortId(result.source.chunk_id)}</span>
+                  </span>
+                )}
+              </div>
+            </details>
+          )}
         </div>
 
         <div className="hidden h-16 w-1 flex-none overflow-hidden rounded-full bg-muted lg:block">

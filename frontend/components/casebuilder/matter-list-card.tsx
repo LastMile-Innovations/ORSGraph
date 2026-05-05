@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 import { DeleteMatterButton } from "@/components/casebuilder/delete-matter-button"
 import { matterHref } from "@/lib/casebuilder/routes"
+import { formatOptionalDate } from "@/lib/casebuilder/display"
 import { cn } from "@/lib/utils"
 import type { MatterStatus, MatterSummary } from "@/lib/casebuilder/types"
 
@@ -92,7 +93,7 @@ export function MatterListCard({ matter }: { matter: MatterSummary }) {
       </Link>
 
       <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-        <span>updated {new Date(matter.updated_at).toLocaleDateString()}</span>
+        <span>updated {formatOptionalDate(matter.updated_at)}</span>
         <div className="flex items-center gap-2">
           <Link
             href={matterHref(matter.matter_id)}

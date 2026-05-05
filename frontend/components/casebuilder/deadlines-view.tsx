@@ -13,6 +13,7 @@ import {
 } from "lucide-react"
 import type { Matter, Deadline } from "@/lib/casebuilder/types"
 import { computeDeadlines, createDeadline, patchDeadline } from "@/lib/casebuilder/api"
+import { getMatterReadiness } from "@/lib/casebuilder/readiness"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -31,6 +32,8 @@ export function DeadlinesView({ matter }: DeadlinesViewProps) {
   const [filter, setFilter] = useState<Filter>("upcoming")
   const [message, setMessage] = useState<string | null>(null)
   const today = useMemo(() => new Date().toISOString().slice(0, 10), [])
+  const readiness = useMemo(() => getMatterReadiness(matter), [matter])
+  const canAutoCompute = readiness.deadlineMissing.length === 0
 
   const filteredDeadlines = useMemo(() => {
     return deadlines
@@ -56,6 +59,10 @@ export function DeadlinesView({ matter }: DeadlinesViewProps) {
   }, [deadlines, today])
 
   async function autoCompute() {
+    if (!canAutoCompute) {
+      setMessage(`Auto-compute needs ${readiness.deadlineMissing.join(", ")} first.`)
+      return
+    }
     const result = await computeDeadlines(matter.id)
     if (result.data) {
       setDeadlines((current) => [...result.data!.generated, ...current])
@@ -110,7 +117,14 @@ export function DeadlinesView({ matter }: DeadlinesViewProps) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent" onClick={autoCompute}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 bg-transparent"
+              onClick={autoCompute}
+              disabled={!canAutoCompute}
+              title={!canAutoCompute ? `Needs ${readiness.deadlineMissing.join(", ")}` : undefined}
+            >
               <Sparkles className="h-3.5 w-3.5" />
               Auto-compute
             </Button>
@@ -121,6 +135,7 @@ export function DeadlinesView({ matter }: DeadlinesViewProps) {
           </div>
         </div>
         {message && <div className="mt-3 rounded border border-border bg-card px-3 py-2 text-xs text-muted-foreground">{message}</div>}
+        {!canAutoCompute && <DeadlinePreflight missing={readiness.deadlineMissing} />}
 
         <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
           <SummaryCard label="Overdue" count={counts.overdue} tone="rose" />
@@ -153,7 +168,7 @@ export function DeadlinesView({ matter }: DeadlinesViewProps) {
               <CalendarClock className="h-8 w-8 text-muted-foreground" />
               <p className="text-sm font-medium text-foreground">Nothing in this view</p>
               <p className="text-xs text-muted-foreground">
-                Switch filters or add a new deadline.
+                Complete the preflight checklist, switch filters, or add a manual deadline.
               </p>
             </Card>
           ) : (
@@ -165,6 +180,15 @@ export function DeadlinesView({ matter }: DeadlinesViewProps) {
           )}
         </div>
       </ScrollArea>
+    </div>
+  )
+}
+
+function DeadlinePreflight({ missing }: { missing: string[] }) {
+  return (
+    <div className="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+      <div className="font-medium text-foreground">Auto-compute is locked until legal inputs are visible.</div>
+      <div className="mt-1">Needed: {missing.join(", ")}.</div>
     </div>
   )
 }

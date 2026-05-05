@@ -15,6 +15,7 @@ import {
 } from "lucide-react"
 import type { Matter, Claim, ClaimElement, ExtractedFact } from "@/lib/casebuilder/types"
 import { matterClaimsHref, matterFactsHref } from "@/lib/casebuilder/routes"
+import { getMatterReadiness } from "@/lib/casebuilder/readiness"
 import { createEvidence } from "@/lib/casebuilder/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -38,6 +39,7 @@ type CellEntry = {
 export function EvidenceMatrix({ matter }: EvidenceMatrixProps) {
   const [selected, setSelected] = useState<CellEntry | null>(null)
   const [showDefenses, setShowDefenses] = useState(true)
+  const readiness = useMemo(() => getMatterReadiness(matter), [matter])
 
   const claims = useMemo(
     () => matter.claims.filter((c) => (showDefenses ? true : c.kind !== "defense")),
@@ -78,6 +80,7 @@ export function EvidenceMatrix({ matter }: EvidenceMatrixProps) {
     }
     return { supported, weak, missing, rebutted, total: supported + weak + missing + rebutted }
   }, [cells])
+  const hasGrid = stats.total > 0
 
   return (
     <div className="flex flex-col">
@@ -93,11 +96,11 @@ export function EvidenceMatrix({ matter }: EvidenceMatrixProps) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
+            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent" disabled={!hasGrid}>
               <Sparkles className="h-3.5 w-3.5" />
               Suggest gaps
             </Button>
-            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent">
+            <Button variant="outline" size="sm" className="gap-1.5 bg-transparent" disabled={!hasGrid}>
               <Download className="h-3.5 w-3.5" />
               Export grid
             </Button>
@@ -105,10 +108,10 @@ export function EvidenceMatrix({ matter }: EvidenceMatrixProps) {
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
-          <StatCard label="Supported" count={stats.supported} total={stats.total} state="supported" />
-          <StatCard label="Weak" count={stats.weak} total={stats.total} state="weak" />
-          <StatCard label="Missing" count={stats.missing} total={stats.total} state="missing" />
-          <StatCard label="Rebutted" count={stats.rebutted} total={stats.total} state="rebutted" />
+          <StatCard label="Supported" count={stats.supported} total={stats.total} state="supported" ready={hasGrid} />
+          <StatCard label="Weak" count={stats.weak} total={stats.total} state="weak" ready={hasGrid} />
+          <StatCard label="Missing" count={stats.missing} total={stats.total} state="missing" ready={hasGrid} />
+          <StatCard label="Rebutted" count={stats.rebutted} total={stats.total} state="rebutted" ready={hasGrid} />
         </div>
 
         <div className="mt-3 flex items-center gap-2 text-xs">
@@ -127,6 +130,7 @@ export function EvidenceMatrix({ matter }: EvidenceMatrixProps) {
         <div className="border-r border-border">
           <ScrollArea className="h-[calc(100vh-280px)]">
             <div className="p-6">
+              {!hasGrid && <EvidenceSetupState matter={matter} readiness={readiness} />}
               <div className="space-y-6">
                 {cells.map((row, rowIdx) => {
                   const claim = row[0]?.claim
@@ -200,6 +204,14 @@ export function EvidenceMatrix({ matter }: EvidenceMatrixProps) {
         <aside className="bg-card">
           {selected ? (
             <CellDetail entry={selected} matter={matter} />
+          ) : !hasGrid ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
+              <FileText className="h-8 w-8 text-muted-foreground" />
+              <p className="text-sm font-medium text-foreground">Matrix not ready</p>
+              <p className="max-w-xs text-xs text-muted-foreground">
+                Create claims with elements before mapping facts to evidence coverage.
+              </p>
+            </div>
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
               <FileText className="h-8 w-8 text-muted-foreground" />
@@ -220,11 +232,13 @@ function StatCard({
   count,
   total,
   state,
+  ready = true,
 }: {
   label: string
   count: number
   total: number
   state: CellState
+  ready?: boolean
 }) {
   const pct = total ? Math.round((count / total) * 100) : 0
   const colors: Record<CellState, string> = {
@@ -237,13 +251,36 @@ function StatCard({
     <div className={cn("rounded-md border p-3", colors[state])}>
       <div className="flex items-center justify-between text-[11px] font-medium uppercase tracking-wider">
         <span>{label}</span>
-        <span>{pct}%</span>
+        <span>{ready ? `${pct}%` : "setup"}</span>
       </div>
       <div className="mt-1 font-mono text-2xl font-semibold tabular-nums">
-        {count}
-        <span className="text-sm text-muted-foreground"> / {total}</span>
+        {ready ? count : "—"}
+        {ready && <span className="text-sm text-muted-foreground"> / {total}</span>}
       </div>
     </div>
+  )
+}
+
+function EvidenceSetupState({ matter, readiness }: { matter: Matter; readiness: ReturnType<typeof getMatterReadiness> }) {
+  return (
+    <Card className="mb-4 border-dashed bg-transparent p-5">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Create claim elements before mapping evidence.</h2>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            This matter has {matter.facts.length} fact{matter.facts.length === 1 ? "" : "s"} and {readiness.supportedFacts} reviewed fact{readiness.supportedFacts === 1 ? "" : "s"}, but no claim elements to evaluate.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild size="sm" variant="outline" className="bg-transparent">
+            <Link href={matterFactsHref(matter.id)}>Review facts</Link>
+          </Button>
+          <Button asChild size="sm">
+            <Link href={matterClaimsHref(matter.id)}>Create claims</Link>
+          </Button>
+        </div>
+      </div>
+    </Card>
   )
 }
 

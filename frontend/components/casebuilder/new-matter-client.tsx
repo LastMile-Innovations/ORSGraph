@@ -155,6 +155,7 @@ export function NewMatterClient({ initialIntent, settings }: { initialIntent: In
   const [createdMatter, setCreatedMatter] = useState<Matter | null>(null)
   const [uploadMessage, setUploadMessage] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
+  const canCreate = name.trim().length > 0 && !submitting
 
   function onSelectFiles(list: FileList | null) {
     if (!list) return
@@ -292,7 +293,7 @@ export function NewMatterClient({ initialIntent, settings }: { initialIntent: In
           {/* Matter info */}
           <Section step={2} title="Matter details">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <Field label="Matter name">
+              <Field label="Matter name *">
                 <input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -360,9 +361,9 @@ export function NewMatterClient({ initialIntent, settings }: { initialIntent: In
               )}
             >
               <Upload className="h-8 w-8 text-muted-foreground" />
-              <div className="text-sm font-medium text-foreground">Drag & drop or browse</div>
+              <div className="text-sm font-medium text-foreground">Drag files here or browse files</div>
               <p className="max-w-md text-[11px] text-muted-foreground">
-                Upload any matter file for private storage and viewing. Markdown files are indexed now; other formats stay view-only.
+                Upload individual files for private storage and viewing. Use Upload folder below when you want to preserve folder paths.
               </p>
               <input
                 ref={fileInputRef}
@@ -498,7 +499,7 @@ export function NewMatterClient({ initialIntent, settings }: { initialIntent: In
                 <button
                   type="button"
                   onClick={onCreateMatter}
-                  disabled={submitting}
+                  disabled={!canCreate}
                   className="flex items-center gap-1.5 rounded bg-primary px-4 py-2 font-mono text-xs uppercase tracking-wider text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {submitting ? (

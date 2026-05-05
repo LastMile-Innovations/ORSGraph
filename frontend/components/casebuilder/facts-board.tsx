@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import {
@@ -37,6 +37,7 @@ export function FactsBoard({ matter }: FactsBoardProps) {
   const [filter, setFilter] = useState<FilterMode>("all")
   const [selected, setSelected] = useState<string | null>(facts[0]?.id ?? null)
   const [message, setMessage] = useState<string | null>(null)
+  const noisyFacts = useMemo(() => facts.filter((fact) => isLikelyExtractionNoise(fact.statement)), [facts])
 
   const filtered = useMemo(() => {
     return facts.filter((f) => {
@@ -53,7 +54,30 @@ export function FactsBoard({ matter }: FactsBoardProps) {
     })
   }, [facts, query, filter])
 
-  const selectedFact = facts.find((f) => f.id === selected) ?? filtered[0]
+  const selectedFact = filtered.find((f) => f.id === selected) ?? filtered[0] ?? null
+  const filterCounts = useMemo(() => {
+    const matchesQuery = (fact: ExtractedFact) =>
+      !query ||
+      fact.statement.toLowerCase().includes(query.toLowerCase()) ||
+      fact.tags.some((tag) => tag.toLowerCase().includes(query.toLowerCase()))
+    const queryFacts = facts.filter(matchesQuery)
+    return {
+      all: queryFacts.length,
+      supported: queryFacts.filter((f) => f.status === "supported").length,
+      disputed: queryFacts.filter((f) => f.disputed).length,
+      needsReview: queryFacts.filter((f) => f.status === "proposed" || f.needs_verification || f.confidence < 0.7).length,
+    }
+  }, [facts, query])
+
+  useEffect(() => {
+    if (filtered.length === 0) {
+      if (selected !== null) setSelected(null)
+      return
+    }
+    if (!filtered.some((fact) => fact.id === selected)) {
+      setSelected(filtered[0].id)
+    }
+  }, [filtered, selected])
 
   async function addFact() {
     const statement = window.prompt("Fact statement")
@@ -108,21 +132,27 @@ export function FactsBoard({ matter }: FactsBoardProps) {
             />
           </div>
           <FilterPill active={filter === "all"} onClick={() => setFilter("all")}>
-            All ({facts.length})
+            All ({filterCounts.all})
           </FilterPill>
           <FilterPill active={filter === "supported"} onClick={() => setFilter("supported")}>
-            Supported ({facts.filter((f) => f.status === "supported").length})
+            Supported ({filterCounts.supported})
           </FilterPill>
           <FilterPill active={filter === "disputed"} onClick={() => setFilter("disputed")}>
-            Disputed ({facts.filter((f) => f.disputed).length})
+            Disputed ({filterCounts.disputed})
           </FilterPill>
           <FilterPill
             active={filter === "needs-review"}
             onClick={() => setFilter("needs-review")}
           >
-            Needs review ({facts.filter((f) => f.status === "proposed" || f.needs_verification || f.confidence < 0.7).length})
+            Needs review ({filterCounts.needsReview})
           </FilterPill>
         </div>
+        {noisyFacts.length > 0 && (
+          <div className="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+            <span className="font-medium text-foreground">{noisyFacts.length} extracted fact{noisyFacts.length === 1 ? "" : "s"} may be document headings or table fragments.</span>{" "}
+            Review and edit them before using facts for claims, timeline, or drafts.
+          </div>
+        )}
         {message && <div className="mt-3 rounded border border-border bg-card px-3 py-2 text-xs text-muted-foreground">{message}</div>}
       </div>
 
@@ -226,6 +256,11 @@ function FactRow({
                 {t}
               </Badge>
             ))}
+            {isLikelyExtractionNoise(fact.statement) && (
+              <Badge variant="outline" className="border-warning/40 text-[9px] font-normal text-warning">
+                format review
+              </Badge>
+            )}
           </div>
         </div>
         <ConfidenceBadge value={fact.confidence} size="sm" />
@@ -460,17 +495,32 @@ function FactDetail({ fact, matter }: { fact: ExtractedFact; matter: Matter }) {
           <div className="flex items-start gap-2">
             <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground" />
             <div className="text-xs">
-              <p className="font-medium text-foreground">AI suggestion</p>
+              <p className="font-medium text-foreground">{isLikelyExtractionNoise(fact.statement) ? "Extraction review" : "AI suggestion"}</p>
               <p className="mt-1 leading-relaxed text-muted-foreground">
-                Cross-reference with{" "}
-                <span className="font-mono">{fact.sourceDocumentIds[0] ?? "DOC-001"}</span> to
-                confirm timing. Consider adding a deposition transcript to strengthen.
+                {isLikelyExtractionNoise(fact.statement)
+                  ? "This looks like a heading, markdown, or table fragment. Rewrite it into a complete fact sentence or reject it before using it downstream."
+                  : (
+                      <>
+                        Cross-reference with <span className="font-mono">{fact.sourceDocumentIds[0] ?? "DOC-001"}</span> to confirm timing. Consider adding a deposition transcript to strengthen.
+                      </>
+                    )}
               </p>
             </div>
           </div>
         </Card>
       </div>
     </ScrollArea>
+  )
+}
+
+function isLikelyExtractionNoise(statement: string) {
+  const trimmed = statement.trim()
+  return (
+    trimmed.startsWith("#") ||
+    trimmed.startsWith("|") ||
+    trimmed.includes("` |") ||
+    trimmed.includes("| ---") ||
+    /^[A-Z\s#]{18,}$/.test(trimmed)
   )
 }
 

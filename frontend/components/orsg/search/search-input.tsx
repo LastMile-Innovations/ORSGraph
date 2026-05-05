@@ -20,6 +20,7 @@ export function SearchInput({ value, onChange, onKeyDown, onSelectSuggestion, to
   const [isSuggesting, setIsSuggesting] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
+  const [submittedValue, setSubmittedValue] = useState<string | null>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const suggestRequestRef = useRef(0)
 
@@ -39,7 +40,7 @@ export function SearchInput({ value, onChange, onKeyDown, onSelectSuggestion, to
         const res = await searchSuggest(value, 10, controller.signal)
         if (requestId !== suggestRequestRef.current) return
         setSuggestions(res)
-        setShowDropdown(res.length > 0)
+        setShowDropdown(res.length > 0 && value !== submittedValue)
         setActiveIndex(-1)
       } catch (err) {
         if (requestId !== suggestRequestRef.current) return
@@ -57,7 +58,7 @@ export function SearchInput({ value, onChange, onKeyDown, onSelectSuggestion, to
       controller.abort()
       clearTimeout(timer)
     }
-  }, [value])
+  }, [value, submittedValue])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -72,6 +73,7 @@ export function SearchInput({ value, onChange, onKeyDown, onSelectSuggestion, to
 
   const selectSuggestion = (suggestion: SuggestResult) => {
     onChange(suggestion.label)
+    setSubmittedValue(suggestion.label)
     setShowDropdown(false)
     setActiveIndex(-1)
     onSelectSuggestion?.(suggestion)
@@ -83,7 +85,10 @@ export function SearchInput({ value, onChange, onKeyDown, onSelectSuggestion, to
         {isSuggesting ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : <Search className="h-4 w-4 text-muted-foreground" />}
         <input
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => {
+            setSubmittedValue(null)
+            onChange(e.target.value)
+          }}
           onKeyDown={(e) => {
             if (showDropdown && suggestions.length > 0) {
               if (e.key === "ArrowDown") {
@@ -108,10 +113,14 @@ export function SearchInput({ value, onChange, onKeyDown, onSelectSuggestion, to
                 return
               }
             }
-            if (e.key === "Enter") setShowDropdown(false)
+            if (e.key === "Enter") {
+              setSubmittedValue(value)
+              setShowDropdown(false)
+              setActiveIndex(-1)
+            }
             onKeyDown?.(e)
           }}
-          onFocus={() => suggestions.length > 0 && setShowDropdown(true)}
+          onFocus={() => suggestions.length > 0 && value !== submittedValue && setShowDropdown(true)}
           placeholder="Search statutes, provisions, definitions, deadlines, penalties..."
           className="flex-1 bg-transparent py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
         />

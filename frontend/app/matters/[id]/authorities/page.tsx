@@ -65,7 +65,11 @@ export default async function AuthoritiesPage({ params }: PageProps<"/matters/[i
                   </h2>
                 </div>
                 <div className="divide-y divide-border">
-                  {authorities.map((authority) => (
+                  {authorities.length === 0 ? (
+                    <div className="p-6 text-sm text-muted-foreground">
+                      No authorities are linked yet. Create claims or draft sections, then use authority search to attach source-backed law.
+                    </div>
+                  ) : authorities.map((authority) => (
                     <article key={authority.canonicalId} className="p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -132,12 +136,13 @@ export default async function AuthoritiesPage({ params }: PageProps<"/matters/[i
 
               <section className="rounded border border-border bg-card p-4">
                 <h2 className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-                  endpoint contract
+                  next authority steps
                 </h2>
-                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                  Production data should come from a matter authorities endpoint that returns canonical IDs,
-                  currentness, resolved status, linked theories, and pinpoint citations.
-                </p>
+                <ul className="mt-2 space-y-2 text-xs leading-relaxed text-muted-foreground">
+                  <li>Create or review claims before attaching authorities.</li>
+                  <li>Search ORSGraph for controlling statutes, rules, and definitions.</li>
+                  <li>Attach authorities to the specific claim, element, or draft paragraph they support.</li>
+                </ul>
               </section>
             </aside>
           </div>

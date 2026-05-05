@@ -35,6 +35,7 @@ export default async function MatterDashboardPage({ params }: PageProps<"/matter
       deadlines={deadlines}
       tasks={tasks}
       drafts={drafts}
+      timelineSuggestions={matter.timeline_suggestions}
     />
   )
 }

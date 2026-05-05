@@ -189,6 +189,9 @@ export function MatterSettingsClient({ initial }: { initial: CaseBuilderMatterSe
 
           <TabsContent value="ai" className="mt-4">
             <SettingsPanel title="AI and timeline">
+              <PanelNotice>
+                Inherited AI settings come from the workspace policy. Timeline suggestions and enrichment are limited beta features and should be reviewed before they drive claims, deadlines, or drafts.
+              </PanelNotice>
               <InheritedToggle label="Timeline suggestions" value={settings.timeline_suggestions_enabled} inherited={initial.effective.timeline_suggestions_enabled} onChange={(value) => updateSettings({ timeline_suggestions_enabled: value })} />
               <InheritedToggle label="AI timeline enrichment" value={settings.ai_timeline_enrichment_enabled} inherited={initial.effective.ai_timeline_enrichment_enabled} onChange={(value) => updateSettings({ ai_timeline_enrichment_enabled: value })} />
             </SettingsPanel>
@@ -196,6 +199,9 @@ export function MatterSettingsClient({ initial }: { initial: CaseBuilderMatterSe
 
           <TabsContent value="export" className="mt-4">
             <SettingsPanel title="Export defaults">
+              <PanelNotice>
+                Inherited export choices set packaging defaults only. Generated packages still need reviewed work products and meaningful QC coverage before filing or sharing.
+              </PanelNotice>
               <Field label="Default format">
                 <InheritedSelect value={settings.export_default_format} inherited={initial.effective.export_default_format} onChange={(value) => updateSettings({ export_default_format: value })} options={EXPORT_FORMATS.map(option)} />
               </Field>
@@ -284,6 +290,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{label}</span>
       {children}
     </label>
+  )
+}
+
+function PanelNotice({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning md:col-span-2">
+      {children}
+    </div>
   )
 }
 

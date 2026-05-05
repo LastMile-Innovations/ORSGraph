@@ -15,6 +15,8 @@ import {
   Users,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { formatOptionalDate } from "@/lib/casebuilder/display"
+import { isValidDateValue } from "@/lib/casebuilder/readiness"
 import { matterHref } from "@/lib/casebuilder/routes"
 import { DeleteMatterButton } from "./delete-matter-button"
 import type {
@@ -26,6 +28,7 @@ import type {
   CaseFact,
   CaseDeadline,
   CaseTask,
+  TimelineSuggestion,
   MatterParty,
   MatterSummary,
 } from "@/lib/casebuilder/types"
@@ -42,6 +45,7 @@ interface Props {
   deadlines: CaseDeadline[]
   tasks: CaseTask[]
   drafts: CaseDraft[]
+  timelineSuggestions?: TimelineSuggestion[]
 }
 
 export function MatterDashboard({
@@ -55,6 +59,7 @@ export function MatterDashboard({
   deadlines,
   tasks,
   drafts,
+  timelineSuggestions = [],
 }: Props) {
   const factBreakdown = facts.reduce<Record<string, number>>((acc, f) => {
     acc[f.status] = (acc[f.status] ?? 0) + 1
@@ -64,10 +69,13 @@ export function MatterDashboard({
   const factHealth = facts.length > 0 ? Math.round((supportedFacts / facts.length) * 100) : 0
 
   const openTasks = tasks.filter((t) => t.status !== "done")
+  const today = new Date().toISOString().slice(0, 10)
   const upcomingEvents = [...events]
-    .filter((e) => new Date(e.date) >= new Date("2026-04-01"))
+    .filter((e) => isValidDateValue(e.date) && e.date >= today)
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(0, 5)
+  const pendingTimelineSuggestions = timelineSuggestions.filter((suggestion) => suggestion.status === "suggested" || suggestion.status === "needs_attention")
+  const invalidTimelineItems = events.filter((event) => !isValidDateValue(event.date)).length + timelineSuggestions.filter((suggestion) => !isValidDateValue(suggestion.date)).length
   const criticalDeadlines = deadlines.filter((d) => d.severity === "critical" && d.status === "open")
   const recentDocs = [...documents].sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at)).slice(0, 5)
 
@@ -91,9 +99,9 @@ export function MatterDashboard({
               {matter.name}
             </h1>
             <div className="mt-1 flex flex-wrap items-center gap-3 font-mono text-[10px] tabular-nums text-muted-foreground">
-              <span>created {new Date(matter.created_at).toLocaleDateString()}</span>
+              <span>created {formatOptionalDate(matter.created_at)}</span>
               <span className="text-border">|</span>
-              <span>updated {new Date(matter.updated_at).toLocaleDateString()}</span>
+              <span>updated {formatOptionalDate(matter.updated_at)}</span>
               <span className="text-border">|</span>
               <span>jurisdiction: {matter.jurisdiction}</span>
               <span className="text-border">|</span>
@@ -132,7 +140,7 @@ export function MatterDashboard({
           <Stat icon={Folder} label="documents" value={documents.length} />
           <Stat icon={Users} label="parties" value={parties.length} />
           <Stat icon={Microscope} label="facts" value={facts.length} />
-          <Stat icon={Calendar} label="events" value={events.length} />
+          <Stat icon={Calendar} label="events / suggestions" value={`${events.length} / ${pendingTimelineSuggestions.length}`} />
           <Stat icon={Scale} label="claims" value={claims.length} accent="text-primary" />
           <Stat icon={ClipboardList} label="defenses" value={defenses.length} accent="text-accent" />
           <Stat icon={FileText} label="drafts" value={drafts.length} />
@@ -429,6 +437,12 @@ export function MatterDashboard({
               icon={Calendar}
               action={{ href: `${base}/timeline`, label: "full timeline" }}
             >
+              {(pendingTimelineSuggestions.length > 0 || invalidTimelineItems > 0) && (
+                <div className="mb-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                  {pendingTimelineSuggestions.length} suggestion{pendingTimelineSuggestions.length === 1 ? "" : "s"} awaiting review
+                  {invalidTimelineItems > 0 ? ` · ${invalidTimelineItems} invalid date item${invalidTimelineItems === 1 ? "" : "s"} need repair` : ""}
+                </div>
+              )}
               <ol className="relative space-y-3 border-l border-border pl-4">
                 {upcomingEvents.map((e) => (
                   <li key={e.event_id} className="relative">

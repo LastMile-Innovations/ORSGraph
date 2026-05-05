@@ -27,6 +27,8 @@ export function AdminAuthClient() {
   const [createdLink, setCreatedLink] = useState<string | null>(null)
 
   const pendingRequests = useMemo(() => requests.filter((request) => request.status === "pending"), [requests])
+  const inviteEmail = email.trim()
+  const inviteEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inviteEmail)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -47,11 +49,16 @@ export function AdminAuthClient() {
   }, [load])
 
   async function submitInvite(targetEmail = email) {
+    const trimmedEmail = targetEmail.trim()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setError("Enter a valid email address before creating an invite.")
+      return
+    }
     setBusy(true)
     setError(null)
     try {
       const response = await createInvite({
-        email: targetEmail.trim() || undefined,
+        email: trimmedEmail,
         situation_type: situation.trim() || undefined,
         jurisdiction: jurisdiction.trim() || undefined,
         expires_in_days: 14,
@@ -115,7 +122,7 @@ export function AdminAuthClient() {
             <Field label="Jurisdiction">
               <Input value={jurisdiction} onChange={(event) => setJurisdiction(event.target.value)} />
             </Field>
-            <Button type="button" onClick={() => submitInvite()} disabled={busy} className="w-full rounded-md">
+            <Button type="button" onClick={() => submitInvite()} disabled={busy || !inviteEmailValid} className="w-full rounded-md">
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
               Create and copy invite
             </Button>

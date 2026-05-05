@@ -6,6 +6,23 @@ import { AlertTriangle, GitGraphIcon, Layers3, Search } from "lucide-react"
 import type { CaseGraphResponse, Matter } from "@/lib/casebuilder/types"
 import { cn } from "@/lib/utils"
 
+const DEFAULT_GRAPH_MODES = ["overview", "evidence", "claims", "timeline", "authority", "work_product", "tasks"]
+const USER_GRAPH_MODES = new Set(DEFAULT_GRAPH_MODES)
+const MODE_KINDS: Record<string, string[]> = {
+  evidence: ["matter", "document", "fact", "evidence", "claim", "element"],
+  claims: ["matter", "claim", "counterclaim", "defense", "element", "fact", "evidence", "authority"],
+  timeline: ["matter", "event", "timeline_suggestion", "deadline", "fact", "document", "task"],
+  authority: ["matter", "claim", "element", "authority", "work_product"],
+  work_product: ["matter", "work_product", "fact", "evidence", "document", "authority"],
+  tasks: ["matter", "task", "deadline", "claim", "document"],
+  markdown: ["matter", "document", "document_version", "embedding_run", "embedding_record", "markdown_ast_document", "markdown_ast_node", "markdown_semantic_unit", "text_chunk", "source_span"],
+  markdown_ast: ["matter", "document", "document_version", "markdown_ast_document", "markdown_ast_node", "markdown_semantic_unit"],
+  markdown_semantic: ["matter", "document", "document_version", "markdown_ast_document", "markdown_semantic_unit", "markdown_ast_node", "case_entity", "entity_mention"],
+  markdown_embeddings: ["matter", "document", "document_version", "index_run", "embedding_run", "embedding_record", "markdown_ast_document", "markdown_ast_node", "markdown_semantic_unit", "text_chunk", "source_span"],
+  entities: ["matter", "document", "entity_mention", "case_entity", "party", "text_chunk", "source_span", "markdown_semantic_unit"],
+  provenance: ["matter", "document", "document_version", "index_run", "extraction_manifest", "source_span", "text_chunk", "evidence_span", "search_index_record", "embedding_run", "embedding_record", "markdown_ast_document", "markdown_ast_node", "markdown_semantic_unit", "fact", "event", "timeline_suggestion"],
+}
+
 export function MatterGraphView({
   matter,
   graph,
@@ -17,80 +34,16 @@ export function MatterGraphView({
 }) {
   const [mode, setMode] = useState("overview")
   const [query, setQuery] = useState("")
+  const availableModes = graph?.modes?.length ? graph.modes : DEFAULT_GRAPH_MODES
+  const primaryModes = availableModes.filter((item) => USER_GRAPH_MODES.has(item))
+  const diagnosticModes = availableModes.filter((item) => !USER_GRAPH_MODES.has(item))
+  const warning = userFacingGraphWarning(error, graph?.warnings)
 
   const visible = useMemo(() => {
     const nodes = graph?.nodes ?? []
     const edges = graph?.edges ?? []
     const q = query.trim().toLowerCase()
-    const allowedKinds =
-      mode === "overview"
-        ? null
-        : new Set(
-            mode === "evidence"
-              ? ["matter", "document", "fact", "evidence", "claim", "element"]
-              : mode === "claims"
-                ? ["matter", "claim", "counterclaim", "defense", "element", "fact", "evidence", "authority"]
-                : mode === "timeline"
-                  ? ["matter", "event", "timeline_suggestion", "deadline", "fact", "document", "task"]
-                  : mode === "authority"
-                    ? ["matter", "claim", "element", "authority", "work_product"]
-                    : mode === "work_product"
-                      ? ["matter", "work_product", "fact", "evidence", "document", "authority"]
-                        : mode === "markdown"
-                          ? [
-                              "matter",
-                              "document",
-                              "document_version",
-                              "embedding_run",
-                              "embedding_record",
-                              "markdown_ast_document",
-                              "markdown_ast_node",
-                              "markdown_semantic_unit",
-                            "text_chunk",
-                            "source_span",
-                          ]
-                        : mode === "markdown_ast"
-                          ? ["matter", "document", "document_version", "markdown_ast_document", "markdown_ast_node", "markdown_semantic_unit"]
-                          : mode === "markdown_semantic"
-                            ? ["matter", "document", "document_version", "markdown_ast_document", "markdown_semantic_unit", "markdown_ast_node", "case_entity", "entity_mention"]
-                            : mode === "markdown_embeddings"
-                              ? [
-                                  "matter",
-                                  "document",
-                                  "document_version",
-                                  "index_run",
-                                  "embedding_run",
-                                  "embedding_record",
-                                  "markdown_ast_document",
-                                  "markdown_ast_node",
-                                  "markdown_semantic_unit",
-                                  "text_chunk",
-                                  "source_span",
-                                ]
-                            : mode === "entities"
-                              ? ["matter", "document", "entity_mention", "case_entity", "party", "text_chunk", "source_span", "markdown_semantic_unit"]
-                            : mode === "provenance"
-                              ? [
-                                  "matter",
-                                  "document",
-                                  "document_version",
-                                  "index_run",
-                                  "extraction_manifest",
-                                  "source_span",
-                                  "text_chunk",
-                                  "evidence_span",
-                                  "search_index_record",
-                                  "embedding_run",
-                                  "embedding_record",
-                                  "markdown_ast_document",
-                                  "markdown_ast_node",
-                                  "markdown_semantic_unit",
-                                  "fact",
-                                  "event",
-                                  "timeline_suggestion",
-                                ]
-                              : ["matter", "task", "deadline", "claim", "document"],
-          )
+    const allowedKinds = mode === "overview" ? null : new Set(MODE_KINDS[mode] ?? MODE_KINDS.tasks)
     const filteredNodes = nodes.filter((node) => {
       if (allowedKinds && !allowedKinds.has(node.kind)) return false
       if (!q) return true
@@ -123,14 +76,14 @@ export function MatterGraphView({
             {visible.nodes.length} nodes / {visible.edges.length} edges
           </div>
         </div>
-        {(error || graph?.warnings?.[0]) && (
+        {warning && (
           <div className="mt-3 flex items-start gap-2 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5" />
-            <span>{error || graph?.warnings?.[0]}</span>
+            <span>{warning}</span>
           </div>
         )}
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          {(graph?.modes ?? ["overview", "evidence", "claims", "timeline", "authority", "work_product", "tasks"]).map((item) => (
+          {primaryModes.map((item) => (
             <button
               key={item}
               type="button"
@@ -140,9 +93,31 @@ export function MatterGraphView({
                 mode === item ? "border-primary text-primary" : "border-border text-muted-foreground hover:border-primary/40 hover:text-primary",
               )}
             >
-              {item.replace("_", " ")}
+              {formatGraphLabel(item)}
             </button>
           ))}
+          {diagnosticModes.length > 0 && (
+            <details className="rounded border border-border bg-background px-2.5 py-1">
+              <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                diagnostics
+              </summary>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {diagnosticModes.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setMode(item)}
+                    className={cn(
+                      "rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-wider",
+                      mode === item ? "border-primary text-primary" : "border-border text-muted-foreground hover:border-primary/40 hover:text-primary",
+                    )}
+                  >
+                    {formatGraphLabel(item)}
+                  </button>
+                ))}
+              </div>
+            </details>
+          )}
           <div className="ml-auto flex min-w-[220px] items-center gap-2 rounded border border-border bg-background px-2.5">
             <Search className="h-3.5 w-3.5 text-muted-foreground" />
             <input
@@ -201,7 +176,7 @@ export function MatterGraphView({
               const target = nodeById.get(edge.target)
               return (
                 <div key={edge.id} className="p-3 text-xs">
-                  <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{edge.label}</div>
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{formatGraphLabel(edge.label)}</div>
                   <div className="mt-1 grid gap-1">
                     <span className="line-clamp-1 text-foreground">{source?.label ?? edge.source}</span>
                     <span className="text-muted-foreground">→</span>
@@ -216,6 +191,20 @@ export function MatterGraphView({
       </main>
     </div>
   )
+}
+
+function formatGraphLabel(value: string) {
+  return value.replace(/_/g, " ").toLowerCase()
+}
+
+function userFacingGraphWarning(error?: string, warnings?: string[]) {
+  if (error) return error
+  const warning = warnings?.[0]
+  if (!warning) return null
+  if (warning.toLowerCase().includes("future hardening")) {
+    return "Large matter graphs may be summarized. Use graph modes and search to narrow the legal relationships shown."
+  }
+  return warning
 }
 
 function toneForKind(kind: string) {

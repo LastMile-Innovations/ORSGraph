@@ -3,10 +3,11 @@
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useMemo, useState } from "react"
-import { AlertTriangle, CheckCircle2, ClipboardList, Lightbulb, ShieldCheck } from "lucide-react"
+import { AlertTriangle, CheckCircle2, CircleDashed, ClipboardList, Lightbulb, ShieldCheck } from "lucide-react"
 import type { IssueSpotResponse, Matter, QcRun, QcSuggestedTask } from "@/lib/casebuilder/types"
 import { createTask, runMatterQc, spotIssues } from "@/lib/casebuilder/api"
-import { matterClaimsHref, matterDocumentHref, matterFactsHref, matterWorkProductHref } from "@/lib/casebuilder/routes"
+import { matterClaimsHref, matterDocumentHref, matterFactsHref, matterHref, matterWorkProductHref } from "@/lib/casebuilder/routes"
+import { getMatterReadiness } from "@/lib/casebuilder/readiness"
 import { cn } from "@/lib/utils"
 
 export function MatterQcPanel({ matter }: { matter: Matter }) {
@@ -15,6 +16,7 @@ export function MatterQcPanel({ matter }: { matter: Matter }) {
   const [issues, setIssues] = useState<IssueSpotResponse | null>(null)
   const [pending, setPending] = useState<"qc" | "issues" | "task" | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const readiness = useMemo(() => getMatterReadiness(matter), [matter])
 
   const missingElements = matter.claims.flatMap((claim) => claim.elements.filter((element) => element.status === "missing"))
   const openFactFindings = matter.fact_check_findings.filter((finding) => finding.status === "open")
@@ -104,15 +106,37 @@ export function MatterQcPanel({ matter }: { matter: Matter }) {
 
       <main className="space-y-4 px-6 py-6">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <Metric label="evidence gaps" value={counts.evidenceGaps} urgent={counts.evidenceGaps > 0} />
-          <Metric label="authority gaps" value={counts.authorityGaps} urgent={counts.authorityGaps > 0} />
-          <Metric label="contradictions" value={counts.contradictions} urgent={counts.contradictions > 0} />
-          <Metric label="open findings" value={counts.findings} urgent={counts.findings > 0} />
+          <Metric label="evidence gaps" value={counts.evidenceGaps} urgent={counts.evidenceGaps > 0} checked={Boolean(qcRun) || counts.evidenceGaps > 0} />
+          <Metric label="authority gaps" value={counts.authorityGaps} urgent={counts.authorityGaps > 0} checked={Boolean(qcRun) || counts.authorityGaps > 0} />
+          <Metric label="contradictions" value={counts.contradictions} urgent={counts.contradictions > 0} checked={Boolean(qcRun) || counts.contradictions > 0} />
+          <Metric label="open findings" value={counts.findings} urgent={counts.findings > 0} checked={Boolean(qcRun) || counts.findings > 0} />
         </div>
+
+        {readiness.setupGaps.length > 0 && (
+          <section className="rounded border border-warning/30 bg-warning/10 p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">QC prerequisites are still open</h2>
+                <p className="mt-1 text-xs leading-relaxed text-warning">
+                  Clean zeroes do not mean this matter has been checked. Complete setup work or run QC to get coverage-backed findings.
+                </p>
+              </div>
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {readiness.setupGaps.map((gap) => (
+                <Link key={gap.title} href={matterHref(matter.id, gap.href)} className="rounded border border-warning/30 bg-card p-3 text-xs hover:border-warning/60">
+                  <div className="font-medium text-foreground">{gap.title}</div>
+                  <p className="mt-1 leading-relaxed text-muted-foreground">{gap.body}</p>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
 
         {qcRun && (
           <section className="rounded border border-border bg-card">
-            <SectionHeader title="latest qc run" subtitle={`${qcRun.mode} · ${new Date(qcRun.generated_at).toLocaleString()}`} />
+            <SectionHeader title="latest qc run" subtitle={`${qcRun.mode} · ${formatDateTime(qcRun.generated_at)}`} />
             <div className="grid gap-3 p-4 lg:grid-cols-3">
               <FindingList title="Evidence gaps" items={qcRun.evidence_gaps.map((gap) => ({ id: gap.id, title: gap.title, body: gap.message, href: linkForTarget(matter.id, gap.target_type, gap.target_id) }))} />
               <FindingList title="Authority gaps" items={qcRun.authority_gaps.map((gap) => ({ id: gap.id, title: gap.title, body: gap.message, href: linkForTarget(matter.id, gap.target_type, gap.target_id) }))} />
@@ -259,15 +283,23 @@ function PersistedFinding({ kind, message, anchor }: { kind: string; message: st
   )
 }
 
-function Metric({ label, value, urgent = false }: { label: string; value: number; urgent?: boolean }) {
-  const Icon = urgent ? AlertTriangle : CheckCircle2
+function Metric({ label, value, urgent = false, checked = true }: { label: string; value: number; urgent?: boolean; checked?: boolean }) {
+  const Icon = urgent ? AlertTriangle : checked ? CheckCircle2 : CircleDashed
   return (
     <section className="rounded border border-border bg-card p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
-        <Icon className={urgent ? "h-4 w-4 text-warning" : "h-4 w-4 text-success"} />
+        <Icon className={urgent ? "h-4 w-4 text-warning" : checked ? "h-4 w-4 text-success" : "h-4 w-4 text-muted-foreground"} />
       </div>
       <div className={cn("mt-2 font-mono text-2xl font-semibold tabular-nums", urgent ? "text-warning" : "text-foreground")}>{value}</div>
+      {!checked && <div className="mt-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">not checked</div>}
     </section>
   )
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "not run"
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return "time unavailable"
+  return date.toLocaleString()
 }

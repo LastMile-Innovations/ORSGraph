@@ -92,6 +92,7 @@ export function QCConsoleClient() {
   const panel = qcCorpus.panels.find((p) => p.panel_id === activePanel) ?? qcCorpus.panels[0]
   const passRate = qcCorpus.total_checks > 0 ? qcCorpus.passed / qcCorpus.total_checks : 0
   const unresolvedCitations = panelCount(qcCorpus, "citation", "fail") + panelCount(qcCorpus, "citation", "warning")
+  const warningOnly = qcCorpus.warnings > 0 && qcCorpus.failures === 0
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -126,14 +127,20 @@ export function QCConsoleClient() {
               {error || message}
             </div>
           )}
+          {warningOnly && (
+            <div className="mb-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+              <span className="font-medium text-foreground">No blocking failures, but warnings require review.</span>{" "}
+              Clean coverage excludes warning rows, so a low percentage does not mean failed jobs.
+            </div>
+          )}
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <KpiCard
               icon={CheckCircle2}
-              tone="ok"
-              label="pass rate"
+              tone={warningOnly ? "warn" : "ok"}
+              label="clean coverage"
               value={`${(passRate * 100).toFixed(2)}%`}
-              hint={`${qcCorpus.passed.toLocaleString()} / ${qcCorpus.total_checks.toLocaleString()}`}
+              hint={`${qcCorpus.passed.toLocaleString()} clean / ${qcCorpus.total_checks.toLocaleString()} checked`}
             />
             <KpiCard
               icon={AlertTriangle}

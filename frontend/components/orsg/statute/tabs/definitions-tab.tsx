@@ -2,16 +2,17 @@ import type { StatutePageResponse } from "@/lib/types"
 import { Type } from "lucide-react"
 
 export function DefinitionsTab({ data }: { data: StatutePageResponse }) {
-  if (data.definitions.length === 0) {
+  const definitions = dedupeDefinitions(data.definitions)
+  if (definitions.length === 0) {
     return <EmptyTab label="No definitions detected for this statute." />
   }
   return (
     <div className="px-6 py-6">
       <div className="mb-3 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-        {data.definitions.length} definitions extracted from {data.identity.citation}
+        {definitions.length} definitions extracted from {data.identity.citation}
       </div>
       <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        {data.definitions.map((d) => (
+        {definitions.map((d) => (
           <li
             key={d.definition_id}
             className="rounded border border-border bg-card p-4 hover:border-primary/40"
@@ -33,6 +34,16 @@ export function DefinitionsTab({ data }: { data: StatutePageResponse }) {
       </ul>
     </div>
   )
+}
+
+function dedupeDefinitions(definitions: StatutePageResponse["definitions"]) {
+  const seen = new Set<string>()
+  return definitions.filter((definition) => {
+    const key = `${definition.term.toLowerCase()}::${definition.text.trim().toLowerCase()}::${definition.source_provision}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function EmptyTab({ label }: { label: string }) {

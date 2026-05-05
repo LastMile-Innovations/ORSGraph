@@ -75,9 +75,9 @@ export function DeleteMatterButton({
       <AlertDialogTrigger asChild>
         <Button
           type="button"
-          variant="destructive"
+          variant="outline"
           size={compact ? "sm" : "default"}
-          className={cn("font-mono text-xs uppercase tracking-wider", className)}
+          className={cn("border-destructive/30 font-mono text-xs uppercase tracking-wider text-destructive hover:bg-destructive/10 hover:text-destructive", className)}
         >
           <Trash2 className="h-3.5 w-3.5" />
           {compact ? "Delete" : "Delete matter"}
