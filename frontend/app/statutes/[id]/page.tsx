@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation"
 import Link from "next/link"
-import { Shell } from "@/components/orsg/shell"
 import { StatuteDetailWorkspace } from "@/components/orsg/statute/statute-detail-workspace"
 import { DataStateBanner } from "@/components/orsg/data-state-banner"
 import { getCachedStatutePageDataState } from "@/lib/authority-server-cache"
@@ -31,20 +30,18 @@ export default async function StatutePage({
   if (!data && state.source === "empty") notFound()
   if (!data) {
     return (
-      <Shell>
+      <>
         <DataStateBanner source={state.source} error={state.error} label="Statute data" />
         <StatuteUnavailable id={decoded} source={state.source} error={state.error} />
-      </Shell>
+      </>
     )
   }
 
   return (
-    <Shell>
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <DataStateBanner source={state.source} error={state.error} label="Statute data" />
-        <StatuteDetailWorkspace data={data} initialTab={query.tab} />
-      </div>
-    </Shell>
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <DataStateBanner source={state.source} error={state.error} label="Statute data" />
+      <StatuteDetailWorkspace data={data} initialTab={query.tab} />
+    </div>
   )
 }
 

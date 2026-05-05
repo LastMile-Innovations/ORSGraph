@@ -1,5 +1,4 @@
 import { notFound } from "next/navigation"
-import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { WorkProductDashboard } from "@/components/casebuilder/work-product-dashboard"
 import { getMatterState, getWorkProductsState } from "@/lib/casebuilder/server-api"
 
@@ -15,18 +14,11 @@ export default async function NewWorkProductPage({ params, searchParams }: PageP
   if (!matter) notFound()
 
   return (
-    <MatterShell
+    <WorkProductDashboard
       matter={matter}
-      activeSection="work-products"
-      dataState={matterState.source === "live" ? workProductsState : matterState}
-      counts={{ workProducts: workProductsState.data.length }}
-    >
-      <WorkProductDashboard
-        matter={matter}
-        workProducts={workProductsState.data}
-        initialCreate
-        initialProductType={initialProductType}
-      />
-    </MatterShell>
+      workProducts={workProductsState.data}
+      initialCreate
+      initialProductType={initialProductType}
+    />
   )
 }

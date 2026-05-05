@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation"
 import { ComplaintEditorWorkbench } from "@/components/casebuilder/complaint-editor-workbench"
-import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { getComplaintState, getMatterState } from "@/lib/casebuilder/server-api"
 import type { ComplaintWorkspaceSection } from "@/lib/casebuilder/routes"
 
@@ -17,13 +16,11 @@ export default async function ComplaintWorkspacePage({ params }: PageProps<"/mat
   if (!matter) notFound()
 
   return (
-    <MatterShell matter={matter} activeSection="complaint" dataState={matterState}>
-      <ComplaintEditorWorkbench
-        matter={matter}
-        complaint={complaintState.data}
-        mode={workspace}
-      />
-    </MatterShell>
+    <ComplaintEditorWorkbench
+      matter={matter}
+      complaint={complaintState.data}
+      mode={workspace}
+    />
   )
 }
 

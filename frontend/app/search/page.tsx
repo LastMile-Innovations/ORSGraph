@@ -1,4 +1,3 @@
-import { Shell } from "@/components/orsg/shell"
 import { SearchClient } from "@/components/orsg/search/search-client"
 import { getCachedSearchWithParamsState } from "@/lib/authority-server-cache"
 
@@ -82,16 +81,14 @@ export default async function SearchPage({
     : undefined
 
   return (
-    <Shell>
-      <SearchClient 
-        initialQuery={q}
-        initialMode={initialMode}
-        initialType={initialType}
-        initialFilters={initialFilters}
-        response={responseState?.data}
-        initialDataSource={responseState?.source}
-        initialDataError={responseState?.error}
-      />
-    </Shell>
+    <SearchClient
+      initialQuery={q}
+      initialMode={initialMode}
+      initialType={initialType}
+      initialFilters={initialFilters}
+      response={responseState?.data}
+      initialDataSource={responseState?.source}
+      initialDataError={responseState?.error}
+    />
   )
 }

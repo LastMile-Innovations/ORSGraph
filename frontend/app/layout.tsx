@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next"
 import { Analytics } from "@vercel/analytics/next"
+import { Suspense } from "react"
 import { AuthSessionProvider } from "@/components/auth-session-provider"
 import { CaseBuilderUploadProvider } from "@/components/casebuilder/upload-provider"
+import { AppFrame } from "@/components/orsg/app-frame"
 import { ThemeProvider } from "@/components/theme-provider"
 import { WebVitals } from "@/components/web-vitals"
 import { siteOrigin } from "./metadata"
@@ -56,7 +58,11 @@ export default function RootLayout({
       <body className="font-sans antialiased">
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
           <AuthSessionProvider>
-            <CaseBuilderUploadProvider>{children}</CaseBuilderUploadProvider>
+            <CaseBuilderUploadProvider>
+              <Suspense fallback={null}>
+                <AppFrame>{children}</AppFrame>
+              </Suspense>
+            </CaseBuilderUploadProvider>
           </AuthSessionProvider>
         </ThemeProvider>
         {enableWebVitals && <WebVitals />}

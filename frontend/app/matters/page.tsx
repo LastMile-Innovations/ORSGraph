@@ -1,5 +1,4 @@
 import Link from "next/link"
-import { Shell } from "@/components/orsg/shell"
 import { DataStateBanner } from "@/components/casebuilder/data-state-banner"
 import { MatterListCard } from "@/components/casebuilder/matter-list-card"
 import { PageHeader } from "@/components/orsg/page-header"
@@ -30,47 +29,46 @@ export default async function MattersPage() {
   )
 
   return (
-    <Shell hideLeftRail>
-      <div className="flex flex-1 flex-col overflow-y-auto scrollbar-thin">
-        <DataStateBanner source={matterState.source} error={matterState.error} />
-        <PageHeader
-          icon={Briefcase}
-          eyebrow="CaseBuilder / matters"
-          title="Your matters, structured."
-          description="Import files, preserve folder context, extract facts, build claims, track deadlines, and draft work product against the ORSGraph authority layer."
-          actions={
-            <>
-              <Link
-                href={newMatterHref()}
-                className="inline-flex min-h-10 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-              >
-                <Plus className="h-4 w-4" />
-                New matter
-              </Link>
-              <Link
-                href={newMatterHref("fight")}
-                className="inline-flex min-h-10 items-center gap-1.5 rounded-md border border-border bg-background px-4 text-sm font-medium hover:border-primary/50 hover:text-primary"
-              >
-                <Upload className="h-4 w-4" />
-                Fight a complaint
-              </Link>
-              <Link
-                href={newMatterHref("build")}
-                className="inline-flex min-h-10 items-center gap-1.5 rounded-md border border-border bg-background px-4 text-sm font-medium hover:border-primary/50 hover:text-primary"
-              >
-                <GavelIcon className="h-4 w-4" />
-                Build a complaint
-              </Link>
-            </>
-          }
-          stats={[
-            { label: "matters", value: matters.length },
-            { label: "documents", value: totals.documents },
-            { label: "facts extracted", value: totals.facts },
-            { label: "open drafts", value: totals.drafts, tone: "primary" },
-            { label: "open tasks", value: totals.tasks, tone: "warning" },
-          ]}
-        />
+    <div className="flex flex-1 flex-col overflow-y-auto scrollbar-thin">
+      <DataStateBanner source={matterState.source} error={matterState.error} />
+      <PageHeader
+        icon={Briefcase}
+        eyebrow="CaseBuilder / matters"
+        title="Your matters, structured."
+        description="Import files, preserve folder context, extract facts, build claims, track deadlines, and draft work product against the ORSGraph authority layer."
+        actions={
+          <>
+            <Link
+              href={newMatterHref()}
+              className="inline-flex min-h-10 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              <Plus className="h-4 w-4" />
+              New matter
+            </Link>
+            <Link
+              href={newMatterHref("fight")}
+              className="inline-flex min-h-10 items-center gap-1.5 rounded-md border border-border bg-background px-4 text-sm font-medium hover:border-primary/50 hover:text-primary"
+            >
+              <Upload className="h-4 w-4" />
+              Fight a complaint
+            </Link>
+            <Link
+              href={newMatterHref("build")}
+              className="inline-flex min-h-10 items-center gap-1.5 rounded-md border border-border bg-background px-4 text-sm font-medium hover:border-primary/50 hover:text-primary"
+            >
+              <GavelIcon className="h-4 w-4" />
+              Build a complaint
+            </Link>
+          </>
+        }
+        stats={[
+          { label: "matters", value: matters.length },
+          { label: "documents", value: totals.documents },
+          { label: "facts extracted", value: totals.facts },
+          { label: "open drafts", value: totals.drafts, tone: "primary" },
+          { label: "open tasks", value: totals.tasks, tone: "warning" },
+        ]}
+      />
 
         {/* Matters list */}
         <section className="px-6 py-8">
@@ -132,8 +130,7 @@ export default async function MattersPage() {
             </div>
           </div>
         </section>
-      </div>
-    </Shell>
+    </div>
   )
 }
 

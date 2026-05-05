@@ -1,7 +1,6 @@
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { BookOpen, CheckCircle2, ExternalLink, FileText, Scale, ShieldCheck } from "lucide-react"
-import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { AuthoritySearchPanel } from "@/components/casebuilder/authority-search-panel"
 import { getMatterState } from "@/lib/casebuilder/server-api"
 import { matterClaimsHref, matterDraftHref } from "@/lib/casebuilder/routes"
@@ -27,8 +26,7 @@ export default async function AuthoritiesPage({ params }: PageProps<"/matters/[i
   const highCoverage = authorities.filter((authority) => authority.claimIds.length + authority.defenseIds.length > 1)
 
   return (
-    <MatterShell matter={matter} activeSection="authorities" dataState={matterState}>
-      <div className="flex flex-1 flex-col overflow-y-auto scrollbar-thin">
+    <div className="flex flex-1 flex-col overflow-y-auto scrollbar-thin">
         <header className="border-b border-border bg-card px-6 py-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -144,8 +142,7 @@ export default async function AuthoritiesPage({ params }: PageProps<"/matters/[i
             </aside>
           </div>
         </main>
-      </div>
-    </MatterShell>
+    </div>
   )
 }
 

@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation"
 import { Suspense } from "react"
-import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { TimelineView } from "@/components/casebuilder/timeline-view"
 import { getMatterState } from "@/lib/casebuilder/server-api"
 
@@ -10,11 +9,9 @@ export default async function TimelinePage({ params }: PageProps<"/matters/[id]/
   const matter = matterState.data
   if (!matter) notFound()
   return (
-    <MatterShell matter={matter} activeSection="timeline" dataState={matterState}>
-      <Suspense fallback={<TimelineFallback />}>
-        <TimelineView matter={matter} />
-      </Suspense>
-    </MatterShell>
+    <Suspense fallback={<TimelineFallback />}>
+      <TimelineView matter={matter} />
+    </Suspense>
   )
 }
 

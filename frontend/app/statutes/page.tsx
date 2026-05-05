@@ -1,4 +1,3 @@
-import { Shell } from "@/components/orsg/shell"
 import { StatuteIndexClient } from "@/components/orsg/statute/statute-index-client"
 import { getCachedStatuteIndexState } from "@/lib/authority-server-cache"
 
@@ -32,18 +31,16 @@ export default async function StatuteIndexPage({
   const state = await getCachedStatuteIndexState({ q, chapter, status, limit, offset })
 
   return (
-    <Shell>
-      <StatuteIndexClient
-        statutes={state.data.items}
-        total={state.data.total}
-        limit={state.data.limit}
-        offset={state.data.offset}
-        query={q}
-        chapter={chapter}
-        status={status}
-        dataSource={state.source}
-        dataError={state.error}
-      />
-    </Shell>
+    <StatuteIndexClient
+      statutes={state.data.items}
+      total={state.data.total}
+      limit={state.data.limit}
+      offset={state.data.offset}
+      query={q}
+      chapter={chapter}
+      status={status}
+      dataSource={state.source}
+      dataError={state.error}
+    />
   )
 }

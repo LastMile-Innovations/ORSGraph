@@ -1,5 +1,4 @@
 import { notFound } from "next/navigation"
-import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { DocumentWorkspace } from "@/components/casebuilder/document-workspace"
 import { getDocumentWorkspace, getMatterSettingsState, getMatterState } from "@/lib/casebuilder/server-api"
 
@@ -15,13 +14,5 @@ export default async function DocumentPage({ params }: PageProps<"/matters/[id]/
   const workspace = workspaceState.data
   if (!workspace) notFound()
 
-  return (
-    <MatterShell
-      matter={matter}
-      activeSection="documents"
-      dataState={{ source: workspaceState.source, error: workspaceState.error ?? matterState.error }}
-    >
-      <DocumentWorkspace matter={matter} workspace={workspace} settings={settingsState.data?.effective ?? null} />
-    </MatterShell>
-  )
+  return <DocumentWorkspace matter={matter} workspace={workspace} settings={settingsState.data?.effective ?? null} />
 }

@@ -1,5 +1,4 @@
 import { notFound } from "next/navigation"
-import { MatterShell } from "@/components/casebuilder/matter-shell"
 import { MatterSettingsClient } from "@/components/casebuilder/matter-settings-client"
 import { getMatterSettingsState, getMatterState } from "@/lib/casebuilder/server-api"
 
@@ -13,9 +12,5 @@ export default async function MatterSettingsPage({ params }: PageProps<"/matters
   const settings = settingsState.data
   if (!matter || !settings) notFound()
 
-  return (
-    <MatterShell matter={matter} dataState={{ source: settingsState.source, error: settingsState.error ?? matterState.error }}>
-      <MatterSettingsClient initial={settings} />
-    </MatterShell>
-  )
+  return <MatterSettingsClient initial={settings} />
 }

@@ -1,4 +1,3 @@
-import { Shell } from "@/components/orsg/shell"
 import { GraphViewer } from "@/components/graph/GraphViewer"
 import type { GraphMode } from "@/components/graph/types"
 
@@ -29,11 +28,7 @@ export default async function GraphPage({
   const initialFocus = firstValue(params.focus)
   const initialMode = parseGraphMode(firstValue(params.mode))
 
-  return (
-    <Shell hideLeftRail>
-      <GraphViewer initialFocus={initialFocus} initialMode={initialMode} />
-    </Shell>
-  )
+  return <GraphViewer initialFocus={initialFocus} initialMode={initialMode} />
 }
 
 function firstValue(value: string | string[] | undefined) {
