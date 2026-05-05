@@ -5,6 +5,8 @@ import type { ReactNode } from "react"
 import { normalizeExternalUrl } from "@/lib/external-url"
 
 export function TextTab({ data }: { data: StatutePageResponse }) {
+  const sourceUrl = normalizeExternalUrl(data.source_documents[0]?.url)
+
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 lg:py-8">
       <div className="mb-4 flex items-center gap-2">
@@ -18,18 +20,30 @@ export function TextTab({ data }: { data: StatutePageResponse }) {
       </article>
       <div className="mt-8 border-t border-border pt-4 text-xs text-muted-foreground">
         Text shown is the official source as parsed from{" "}
-        <a
-          href={normalizeExternalUrl(data.source_documents[0]?.url)}
-          target="_blank"
-          rel="noreferrer"
-          className="text-primary hover:underline"
-        >
-          oregonlegislature.gov
-        </a>
+        {sourceUrl ? (
+          <a
+            href={sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary hover:underline"
+          >
+            {displaySourceHost(sourceUrl)}
+          </a>
+        ) : (
+          <span>Not available</span>
+        )}
         . Citations are linked to their resolved targets in the graph.
       </div>
     </div>
   )
+}
+
+function displaySourceHost(value: string) {
+  try {
+    return new URL(value).hostname.replace(/^www\./, "")
+  } catch {
+    return value
+  }
 }
 
 function LinkedStatuteText({ text }: { text: string }) {

@@ -79,7 +79,10 @@ export function MatterDashboard({
   const invalidTimelineItems = events.filter((event) => !isValidDateValue(event.date)).length + timelineSuggestions.filter((suggestion) => !isValidDateValue(suggestion.date)).length
   const criticalDeadlines = deadlines.filter((d) => d.severity === "critical" && d.status === "open")
   const recentDocs = [...documents].sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at)).slice(0, 5)
-  const authorityLinks = claims.reduce((sum, claim) => sum + (claim.authorities?.length ?? 0), 0)
+  const legalTheoryCount = claims.length + defenses.length
+  const authorityLinks =
+    claims.reduce((sum, claim) => sum + (claim.authorities?.length ?? 0), 0)
+    + defenses.reduce((sum, defense) => sum + (defense.authorities?.length ?? 0), 0)
 
   const base = matterHref(matter.matter_id)
   const setupRecommendations = [
@@ -97,17 +100,17 @@ export function MatterDashboard({
           href: `${base}/timeline`,
         }
       : null,
-    claims.length === 0
+    legalTheoryCount === 0
       ? {
           title: "Create claims or defenses",
           body: "Evidence, authorities, drafts, and QC checks need legal theories.",
           href: `${base}/claims`,
         }
       : null,
-    claims.length > 0 && authorityLinks === 0
+    legalTheoryCount > 0 && authorityLinks === 0
       ? {
           title: "Link authorities",
-          body: "Claims exist, but none have source-backed authorities attached.",
+          body: "Legal theories exist, but none have source-backed authorities attached.",
           href: `${base}/authorities`,
         }
       : null,
