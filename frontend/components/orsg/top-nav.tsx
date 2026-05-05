@@ -63,7 +63,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Home", icon: LayoutDashboard, match: ["/dashboard"] },
-  { href: "/matters", label: "Matters", icon: Briefcase, match: ["/casebuilder", "/matters"] },
+  { href: "/casebuilder", label: "Matters", icon: Briefcase, match: ["/casebuilder", "/matters"] },
   { href: "/search", label: "Search", icon: Search, match: ["/search"] },
   { href: "/ask", label: "Ask", icon: MessageSquare, match: ["/ask"] },
   { href: "/statutes", label: "Statutes", icon: BookOpen, match: ["/statutes", "/provisions"] },
@@ -183,6 +183,11 @@ export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
   )
   const searchPlaceholder = useMemo(() => getSearchPlaceholder(pathname, activeLabel), [pathname, activeLabel])
 
+  useEffect(() => {
+    setQuery("")
+    setMobileOpen(false)
+  }, [pathname])
+
   const submitSearch = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
       if (!query.trim()) {
@@ -240,7 +245,7 @@ export function TopNav({ leftRailTrigger }: { leftRailTrigger?: ReactNode }) {
                 name="q"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search ORS..."
+                placeholder={searchPlaceholder}
                 className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-muted-foreground"
               />
               <Button type="submit" variant="ghost" size="icon-sm" className="h-7 w-7" aria-label="Search">

@@ -237,6 +237,7 @@ export function AdminDashboardClient() {
     [sourceRegistry],
   )
   const graphProgress = useMemo(() => {
+    if ((overview?.graph.rows ?? 0) > 0) return 100
     if (!overview?.graph.jsonl_files) return 0
     return Math.min(100, Math.round((overview.graph.jsonl_files / 70) * 100))
   }, [overview])
@@ -245,11 +246,11 @@ export function AdminDashboardClient() {
   const crawlerRunning = overview?.crawler.running_jobs ?? 0
   const crawlerMetricValue = crawlerRunning > 0 ? "running" : adminReady ? "idle" : loading ? "checking" : "unavailable"
   const graphRowsExact = overview?.graph.rows_are_exact !== false
-  const graphMetricLabel = graphRowsExact ? "Graph rows" : "Graph files"
+  const graphMetricLabel = graphRowsExact ? "Graph rows" : "Graph export files"
   const graphMetricValue = graphRowsExact ? formatNumber(overview?.graph.rows) : formatNumber(overview?.graph.jsonl_files)
   const graphMetricHint = graphRowsExact
     ? `${formatNumber(overview?.graph.jsonl_files)} JSONL files`
-    : `${formatNumber(overview?.graph.bytes)} bytes, row scan deferred`
+    : `${formatNumber(overview?.graph.bytes)} bytes; API/Neo4j health is tracked separately`
   const performance = overview?.performance
 
   async function startWorkflow(workflow: (typeof WORKFLOWS)[number]) {
@@ -777,7 +778,7 @@ export function AdminDashboardClient() {
               <PathRow label="graph" value={overview?.paths.graph_dir ?? "data/graph"} />
               <div className="pt-2">
                 <div className="mb-1 flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">Graph coverage</span>
+                  <span className="text-muted-foreground">Local graph export coverage</span>
                   <span className="font-mono">{graphProgress}%</span>
                 </div>
                 <Progress value={graphProgress} />

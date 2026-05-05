@@ -1,5 +1,6 @@
 import type { StatutePageResponse } from "@/lib/types"
 import { ExternalLink, FileText } from "lucide-react"
+import { displayExternalUrl, normalizeExternalUrl } from "@/lib/external-url"
 
 export function SourceTab({ data }: { data: StatutePageResponse }) {
   return (
@@ -26,7 +27,7 @@ export function SourceTab({ data }: { data: StatutePageResponse }) {
               </a>
             </header>
             <dl className="grid grid-cols-1 gap-px bg-border md:grid-cols-2">
-              <SourceField label="url" value={normalizeExternalUrl(s.url)} mono />
+              <SourceField label="url" value={displayExternalUrl(s.url)} mono />
               <SourceField label="retrieved at" value={s.retrieved_at} mono />
               <SourceField label="edition year" value={String(s.edition_year)} />
               <SourceField label="parser profile" value={s.parser_profile} mono />
@@ -70,10 +71,4 @@ function SourceField({
       </dd>
     </div>
   )
-}
-
-function normalizeExternalUrl(value: string) {
-  if (!value) return ""
-  if (/^https?:\/\//i.test(value)) return value
-  return `https://${value.replace(/^\/+/, "")}`
 }

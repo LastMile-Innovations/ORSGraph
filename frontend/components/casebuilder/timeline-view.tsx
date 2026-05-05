@@ -252,9 +252,20 @@ export function TimelineView({ matter }: TimelineViewProps) {
     }
 
     return out
-      .filter((e) => activeKinds.has(e.kind))
+      .filter((e) => activeKinds.has(e.kind) && isTimelineDate(e.date))
       .sort((a, b) => (a.date < b.date ? -1 : 1))
   }, [matter, activeKinds])
+
+  const hiddenInvalidEntries = useMemo(() => {
+    const dates = [
+      ...matter.timeline.map((event) => event.date),
+      ...matter.facts.map((fact) => fact.date).filter((date): date is string => Boolean(date)),
+      ...matter.documents.map((document) => document.dateFiled ?? document.dateUploaded).filter((date): date is string => Boolean(date)),
+      ...matter.deadlines.map((deadline) => deadline.dueDate),
+      ...matter.milestones.map((milestone) => milestone.date),
+    ]
+    return dates.filter((date) => !isTimelineDate(date)).length
+  }, [matter])
 
   const grouped = useMemo(() => {
     const map = new Map<string, TimelineEntry[]>()
@@ -464,6 +475,12 @@ export function TimelineView({ matter }: TimelineViewProps) {
           })}
         </div>
 
+        {hiddenInvalidEntries > 0 && (
+          <div className="mt-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+            {hiddenInvalidEntries} timeline item{hiddenInvalidEntries === 1 ? "" : "s"} with invalid dates are hidden from the calendar until repaired.
+          </div>
+        )}
+
         <section className="mt-4 rounded-md border border-border bg-card" aria-label="Timeline suggestion review queue">
           <div className="space-y-3 border-b border-border px-3 py-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -494,29 +511,20 @@ export function TimelineView({ matter }: TimelineViewProps) {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <Badge variant="outline" className="text-[9px] uppercase">
-                      {latestAgentRun.provider_mode}
+                      review run
                     </Badge>
-                    <Badge variant="outline" className="text-[9px]">
-                      {latestAgentRun.provider || "disabled"}
-                    </Badge>
-                    {latestAgentRun.model && (
-                      <Badge variant="outline" className="text-[9px]">
-                        {latestAgentRun.model}
-                      </Badge>
-                    )}
-                    <span className="font-medium text-foreground">{latestAgentRun.status}</span>
-                    <span className="text-muted-foreground">scope {latestAgentRun.scope_type || latestAgentRun.subject_type}</span>
+                    <span className="font-medium text-foreground">{timelineRunLabel(latestAgentRun)}</span>
+                    <span className="text-muted-foreground">{latestAgentRun.status}</span>
                   </div>
-                  <p className="mt-1 truncate text-muted-foreground">{latestAgentRun.message}</p>
-                  {latestAgentRun.warnings.length > 0 && (
-                    <p className="mt-1 text-warning">{latestAgentRun.warnings[0]}</p>
+                  <p className="mt-1 truncate text-muted-foreground">{timelineRunMessage(latestAgentRun)}</p>
+                  {timelineRunWarning(latestAgentRun) && (
+                    <p className="mt-1 text-warning">{timelineRunWarning(latestAgentRun)}</p>
                   )}
                 </div>
                 <div className="flex flex-wrap gap-1.5 font-mono text-[11px] text-muted-foreground md:justify-end">
-                  <span>det {latestAgentRun.deterministic_candidate_count}</span>
-                  <span>stored {latestAgentRun.stored_suggestion_count}</span>
-                  <span>enriched {latestAgentRun.provider_enriched_count}</span>
-                  <span>rejected {latestAgentRun.provider_rejected_count}</span>
+                  <span>candidates {latestAgentRun.deterministic_candidate_count}</span>
+                  <span>saved {latestAgentRun.stored_suggestion_count}</span>
+                  <span>needs review {pendingSuggestionCount}</span>
                 </div>
               </div>
             )}
@@ -739,16 +747,6 @@ function TimelineSuggestionCard({
             <Badge variant="outline" className="text-[9px]">
               {suggestion.source_type}
             </Badge>
-            {suggestion.agent_run_id && (
-              <Badge variant="outline" className="text-[9px]">
-                agent {shortId(suggestion.agent_run_id)}
-              </Badge>
-            )}
-            {suggestion.index_run_id && (
-              <Badge variant="outline" className="text-[9px]">
-                index {shortId(suggestion.index_run_id)}
-              </Badge>
-            )}
             {suggestion.warnings.length > 0 && (
               <Badge variant="outline" className="border-warning/40 text-[9px] text-warning">
                 review
@@ -827,26 +825,29 @@ function TimelineSuggestionCard({
                 {suggestion.warnings.join(" · ")}
               </div>
             )}
-            {(suggestion.agent_explanation || suggestion.cluster_id || suggestion.agent_confidence != null) && (
+            {suggestion.agent_explanation && (
               <div className="rounded border border-info/30 bg-info/5 px-3 py-2 text-xs text-info">
-                <div className="flex flex-wrap gap-2 font-mono text-[10px] uppercase">
-                  {suggestion.cluster_id && <span>cluster {shortId(suggestion.cluster_id)}</span>}
-                  {suggestion.agent_confidence != null && <span>agent {Math.round(suggestion.agent_confidence * 100)}%</span>}
-                  {suggestion.duplicate_of_suggestion_id && <span>duplicate {shortId(suggestion.duplicate_of_suggestion_id)}</span>}
-                </div>
-                {suggestion.agent_explanation && <p className="mt-1 leading-relaxed">{suggestion.agent_explanation}</p>}
+                <p className="leading-relaxed">{suggestion.agent_explanation}</p>
               </div>
             )}
-            <div className="flex flex-wrap gap-1.5">
-              {suggestion.source_span_ids.map((id) => (
-                <IdBadge key={id} label="span" value={id} />
-              ))}
-              {suggestion.text_chunk_ids.map((id) => (
-                <IdBadge key={id} label="chunk" value={id} />
-              ))}
-              {suggestion.work_product_id && <IdBadge label="work product" value={suggestion.work_product_id} />}
-              {suggestion.block_id && <IdBadge label="block" value={suggestion.block_id} />}
-            </div>
+            {(suggestion.source_span_ids.length > 0 || suggestion.text_chunk_ids.length > 0 || suggestion.work_product_id || suggestion.block_id) && (
+              <details className="rounded border border-border bg-card px-3 py-2 text-xs">
+                <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-widest text-muted-foreground">source identifiers</summary>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {suggestion.source_span_ids.map((id) => (
+                    <IdBadge key={id} label="span" value={id} />
+                  ))}
+                  {suggestion.text_chunk_ids.map((id) => (
+                    <IdBadge key={id} label="chunk" value={id} />
+                  ))}
+                  {suggestion.work_product_id && <IdBadge label="work product" value={suggestion.work_product_id} />}
+                  {suggestion.block_id && <IdBadge label="block" value={suggestion.block_id} />}
+                  {suggestion.agent_run_id && <IdBadge label="run" value={suggestion.agent_run_id} />}
+                  {suggestion.index_run_id && <IdBadge label="index" value={suggestion.index_run_id} />}
+                  {suggestion.dedupe_key && <IdBadge label="dedupe" value={suggestion.dedupe_key} />}
+                </div>
+              </details>
+            )}
           </div>
           <div className="space-y-2 rounded border border-border bg-card p-2 text-xs">
             <MetadataRow label="Document" value={document?.title ?? suggestion.source_document_id ?? "None"} href={sourceHref} />
@@ -859,7 +860,6 @@ function TimelineSuggestionCard({
               value={linkedClaims.length ? linkedClaims.map((claim) => claim?.title).join(" · ") : suggestion.linked_claim_ids.join(", ") || "None"}
             />
             {workProductHref && <MetadataRow label="AST source" value={suggestion.block_id ?? suggestion.work_product_id ?? "Open"} href={workProductHref} />}
-            {suggestion.dedupe_key && <MetadataRow label="Dedupe" value={shortId(suggestion.dedupe_key)} />}
           </div>
         </div>
       )}
@@ -1069,6 +1069,24 @@ function agentRunTimestamp(run: Matter["timeline_agent_runs"][number]) {
   return Date.parse(run.completed_at ?? run.started_at ?? run.created_at ?? "") || 0
 }
 
+function timelineRunLabel(run: Matter["timeline_agent_runs"][number]) {
+  return run.provider === "disabled" || run.provider_mode !== "provider" ? "Local review suggestions" : "AI-assisted suggestions"
+}
+
+function timelineRunMessage(run: Matter["timeline_agent_runs"][number]) {
+  if (run.provider === "disabled" || run.provider_mode !== "provider") {
+    return "Reviewable timeline candidates were generated without external AI enrichment."
+  }
+  return run.message || "Reviewable timeline candidates are ready."
+}
+
+function timelineRunWarning(run: Matter["timeline_agent_runs"][number]) {
+  const warning = run.warnings[0]
+  if (!warning) return null
+  if (/provider-free|deterministic|unsupported text/i.test(warning)) return "Review suggestions before approving them."
+  return warning
+}
+
 function shortId(value: string) {
   if (value.length <= 28) return value
   return `${value.slice(0, 16)}…${value.slice(-8)}`
@@ -1078,4 +1096,9 @@ function formatMonth(month: string): string {
   const [y, m] = month.split("-")
   const date = new Date(Number(y), Number(m) - 1, 1)
   return date.toLocaleDateString("en-US", { month: "long", year: "numeric" })
+}
+
+function isTimelineDate(value?: string | null) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}/.test(value)) return false
+  return Number.isFinite(Date.parse(value))
 }

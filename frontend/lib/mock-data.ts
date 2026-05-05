@@ -1396,11 +1396,11 @@ export const mockHomeActions: HomeAction[] = [
   },
   {
     title: "Ask ORSGraph",
-    description: "Ask graph-grounded legal questions over Oregon law with citations, provisions, definitions, and currentness warnings.",
+    description: "Ask graph-grounded legal questions over Oregon law with citations, provisions, definitions, and currentness warnings. AI answers are limited beta and should be reviewed.",
     href: "/ask",
     icon: "MessageSquare",
     variant: "primary",
-    badges: ["QA", "rerank-ready"],
+    badges: ["QA", "limited beta"],
   },
   {
     title: "Statute Intelligence",

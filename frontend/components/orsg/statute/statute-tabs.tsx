@@ -7,6 +7,7 @@ import type { Chunk, InboundCitation, OutboundCitation, Provision, StatutePageRe
 import { getChunks, getCitations, getHistory, getSemantics } from "@/lib/api"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
+import { statuteLoadedStateFor, type StatuteLoadedState } from "./load-state"
 
 const TextTab = dynamic(() => import("./tabs/text-tab").then((mod) => mod.TextTab), { loading: TabLoading })
 const ProvisionTreeTab = dynamic(() => import("./tabs/provision-tree-tab").then((mod) => mod.ProvisionTreeTab), { loading: TabLoading })
@@ -38,17 +39,19 @@ export function StatuteTabs({
   data,
   initialTab,
   onDataChange,
+  onLoadedChange,
 }: {
   data: StatutePageResponse
   initialTab?: string
   onDataChange: Dispatch<SetStateAction<StatutePageResponse>>
+  onLoadedChange?: (state: StatuteLoadedState) => void
 }) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const [, startTransition] = useTransition()
   const [active, setActive] = useState<TabId>(isTabId(initialTab) ? initialTab : "text")
-  const [loaded, setLoaded] = useState(() => loadedStateFor(data))
+  const [loaded, setLoaded] = useState(() => statuteLoadedStateFor(data))
   const [loadingTab, setLoadingTab] = useState<TabId | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -60,12 +63,16 @@ export function StatuteTabs({
   }, [data.identity.canonical_id, initialTab])
 
   useEffect(() => {
-    setLoaded(loadedStateFor(data))
+    setLoaded(statuteLoadedStateFor(data))
     setLoadingTab(null)
     setLoadError(null)
     // Reset only when the statute changes; empty successful lazy responses still count as loaded.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.identity.canonical_id])
+
+  useEffect(() => {
+    onLoadedChange?.(loaded)
+  }, [loaded, onLoadedChange])
 
   const handleTabChange = (value: string) => {
     if (!isTabId(value)) return
@@ -92,7 +99,7 @@ export function StatuteTabs({
     if (tab === "chunks" && !loaded.chunks) {
       await loadChunks()
     }
-    if ((tab === "source" || tab === "versions") && !loaded.history) {
+    if (tab === "versions" && !loaded.history) {
       await loadHistory(tab)
     }
   }
@@ -290,15 +297,6 @@ function TabPendingPlaceholder({ tab, count }: { tab: TabId; count: number | nul
   )
 }
 
-function loadedStateFor(data: StatutePageResponse) {
-  return {
-    citations: data.outbound_citations.length > 0 || data.inbound_citations.length > 0,
-    semantics: data.definitions.length > 0 || data.deadlines.length > 0 || data.exceptions.length > 0 || data.penalties.length > 0,
-    chunks: data.chunks.length > 0,
-    history: Boolean(data.source_notes?.length),
-  }
-}
-
 function updateSummaryCounts(
   current: StatutePageResponse,
   next: {
@@ -324,7 +322,7 @@ function updateSummaryCounts(
   }
 }
 
-function getTabCount(id: TabId, data: StatutePageResponse, loaded?: ReturnType<typeof loadedStateFor>): number | null {
+function getTabCount(id: TabId, data: StatutePageResponse, loaded?: StatuteLoadedState): number | null {
   switch (id) {
     case "tree":
       return data.summary_counts?.provision_count ?? countProvisions(data.provisions)

@@ -26,6 +26,7 @@ import {
   Users,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { cleanMatterLabel } from "@/lib/casebuilder/labels"
 import { casebuilderHomeHref, matterHref, matterWorkProductsHref } from "@/lib/casebuilder/routes"
 import type { Matter, MatterSummary } from "@/lib/casebuilder/types"
 import { Button } from "@/components/ui/button"
@@ -294,10 +295,6 @@ export function MatterSidebarSheet({ matter, counts }: Pick<MatterSidebarProps, 
       </div>
     </div>
   )
-}
-
-function cleanMatterLabel(value: string) {
-  return value.replace(/\[([^\]]+)]\([^)]+\)/g, "$1").replace(/\s+/g, " ").trim()
 }
 
 function resolveMatterCounts(matter: MatterSidebarMatter, counts: NonNullable<MatterSidebarProps["counts"]>) {

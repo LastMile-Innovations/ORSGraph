@@ -62,6 +62,157 @@ Purpose: hands-on production walkthrough from a normal user perspective, trackin
   - Global Ask now displays a limited-beta AI harness disclosure and states that failed/timed-out requests do not fall back to canned legal answers.
   - Search now shows a visible warning when semantic/vector retrieval is unavailable for a run.
   - Verification: `pnpm run typecheck` passed in `frontend/`.
+- 2026-05-05: Reviewed pushed production build from the live Railway URL.
+  - Confirmed live: global Ask now shows the limited-beta/no-canned-fallback disclosure; Search shows the semantic/vector degraded warning and hides most retrieval internals behind advanced details; CaseBuilder matter dates render as `not set`; matter dashboard separates events from timeline suggestions; Tasks shows recommended setup work; Facts flags extraction-noise risk; Admin mutating workflows show warning/confirmation copy; QC summary now uses `Clean coverage`.
+  - Still needed: document detail remains visually blank even though content is mounted in the accessibility tree; statute source/intelligence data still has count and loading-state mismatches; global shell route state still goes stale on skip links/search placeholders; left rail still renders raw markdown-style matter context; timeline review still exposes internal agent/index/span/chunk metadata; production data still has 0% embedding coverage, high unresolved citation counts, malformed extracted facts, and invalid timeline dates.
+- 2026-05-05: Fixed fifth frontend batch locally.
+  - Document workspace now uses explicit full-height/min-height panel constraints so the editor/review panes have a visible canvas instead of relying on nested flex sizing.
+  - Search suggestions are suppressed after a committed suggestion selection, preventing exact-citation typeahead from reopening over the selected result.
+  - Statute header, tabs, and right inspector now share lazy-load state, so loaded-empty semantic/citation results replace stale expected summary counts everywhere.
+  - Source URLs now use a shared `normalizeExternalUrl` helper in header, Text tab, and Source tab, and the Source tab no longer triggers the history loading banner just to show already-mounted source documents.
+  - Global top-nav search resets on pathname changes, the mobile placeholder uses the same route-aware copy as desktop, and the Matters nav target now lands on the CaseBuilder home path.
+  - Left rail and matter mobile shell labels now strip markdown links, raw URLs, route hosts, and `matter` prefixes before rendering active matter context.
+  - Dashboard Ask card now labels the AI surface as limited beta instead of `rerank-ready`.
+  - Timeline review now hides agent/index/span/chunk/dedupe IDs behind a `source identifiers` disclosure, translates provider-free/template run copy into user-facing review copy, and hides invalid-date entries from calendar grouping until repaired.
+  - Matter delete entry points now render as neutral `Danger zone`/`Manage` controls while preserving typed-name confirmation and permanent-delete copy inside the dialog.
+  - Matter dashboard now rolls recommended setup work into the open-tasks panel and adds an open-task stat so users see required setup without first opening Tasks.
+  - Admin graph metrics now distinguish live graph/API health from local graph export file coverage.
+  - Verification: `pnpm run test` passed in `frontend/` (83 files, 446 tests); `pnpm run typecheck`, `pnpm run lint`, and `pnpm run build` passed in `frontend/`.
+
+## Remaining Work / Still Needed
+
+This section reflects the 2026-05-05 production review after the first frontend batches were pushed to `main`.
+
+### P1 - Document detail still appears blank to sighted users
+
+- Current status: fixed locally; needs production verification after deploy on `/casebuilder/matters/lknlkn%3A1777940236729/documents/doc%3A4e9a77d437168554c97b8d4417`.
+- What is live now: the accessibility tree contains the markdown editor, extraction intelligence, semantic units, source spans, and workbench controls.
+- What was wrong: the visible page below the document title/action bar was mostly empty/dark, so a sighted user could not review the mounted document content.
+- Local improvement: document workspace, resizable panels, center pane, and inspector pane now have explicit full-height and minimum-height constraints.
+- Still needed: production visual verification on desktop and narrow widths; add a Playwright smoke test that asserts rendered document text is visible in the viewport, not only mounted in the DOM.
+
+### P1 - Search typeahead still covers committed results in one exact-citation path
+
+- Current status: fixed locally; needs production verification from Search suggested citation `ORS 90.300`.
+- What is live now: the result card uses `relevance`, search shows the semantic/vector degraded warning, and advanced retrieval details are tucked behind disclosures.
+- What was wrong: after selecting/submitting the suggested exact-citation search, a large typeahead/provision suggestion panel remained open over the result list.
+- Local improvement: `SearchInput` clears and suppresses suggestions after committed selection, and it only fetches/reopens after the user edits the value again.
+- Still needed: production route-transition verification for both mouse and keyboard suggestion selection.
+
+### P1 - Statute intelligence counts and loaded tab contents still disagree
+
+- Current status: fixed locally; needs production verification on `/statutes/or%3Aors%3A90.320`.
+- What is live now: stale helper copy is clearer (`Definitions are expected; open or reload the tab...`), and the Definitions tab badge drops from `2` to `0` after the tab loads.
+- What was wrong: the statute header and right intelligence panel still reported `Definitions 2` while the loaded Definitions tab said `No definitions detected for this statute`.
+- Local improvement: header metrics, tab badges, and side-panel counts now consume the same loaded semantic/citation state; loaded-empty responses update all surfaces to `0`.
+- Still needed: add semantic extraction status/timestamp from the backend so users can tell expected-but-not-loaded from loaded-empty and stale extraction data.
+
+### P1 - Production retrieval/citation data health remains degraded
+
+- Current status: still visible on Dashboard and Admin QC.
+- What is live now: Dashboard reports `Embedding coverage 0%`, Search warns when semantic/vector retrieval is unavailable, and Admin QC reports `Clean coverage 0.00%` with `0` failures but `383,983` warnings.
+- What is still wrong: Admin QC still reports `367,507` embedding-readiness rows and `16,476` unresolved citation QC rows; Dashboard also reports `68,187` unresolved citations and only `12.1%` citation coverage.
+- Needed: run or repair embedding/index maintenance, reconcile Dashboard unresolved citation counts with QC unresolved citation rows, establish release thresholds, and add user-facing degraded-mode banners anywhere semantic Ask/Search relies on missing vectors.
+
+### P1 - ORS inline citations still do not produce citation graph edges
+
+- Current status: still reproduced on ORS 90.320.
+- What is live now: inline legal text links references such as ORS 479.270, ORS 90.325, and ORS 90.730.
+- What is still wrong: the same statute reports `CITES 0`, `CITED BY 0`, and no outbound citation graph edges.
+- Needed: reconcile inline citation linkification with canonical graph edge creation, surface unresolved inline references in the Citations tab, and add a data check for "linked inline citations but zero graph edges."
+
+### P1 - AI harness disclosure is inconsistent across entry points
+
+- Current status: fixed locally for the dashboard action card; needs production verification.
+- What is live now: global Ask has a clear limited-beta/no-canned-fallback disclosure.
+- What was wrong: the Dashboard advertised `Ask ORSGraph READY`/`rerank-ready` while the AI harness is unfinished.
+- Local improvement: the dashboard Ask action now uses `limited beta` badge copy and explicitly says AI answers should be reviewed.
+- Still needed: audit every remaining AI entry point after deployment for aligned limited-beta wording.
+
+### P1 - CaseBuilder extraction data still needs parser cleanup
+
+- Current status: still reproduced in Facts, Timeline, and Document detail.
+- What is live now: Facts shows a warning banner and marks likely noisy rows as `format review`.
+- What is still wrong: production flags `23` of `24` extracted facts as possible headings/table fragments; many facts still start with `mp4\`` or raw markdown table fragments.
+- Needed: improve markdown/table parsing before creating facts, convert exhibit-table rows into normalized event/fact objects, drop headings/front matter from fact candidates, and add a batch review/reject workflow for noisy extracted rows.
+
+### P2 - Timeline review still exposes internal metadata by default
+
+- Current status: fixed locally for the default review card surface; needs production verification on `/timeline`.
+- What is live now: timeline suggestions are separated from approved events.
+- What was wrong: the review queue showed `TEMPLATE disabled completed scope document_index`, provider-free/deterministic extraction text, agent run ids, index run ids, span ids, chunk ids, and dedupe keys in the default card surface.
+- Local improvement: run metadata is translated into `Local review suggestions`, raw provider/deterministic warning copy is sanitized, and source/span/chunk/index/dedupe IDs live behind a `source identifiers` disclosure.
+- Still needed: add a richer repair/review details panel if users need to audit internals without crowding the default timeline queue.
+
+### P2 - Invalid timeline date still needs a repair workflow
+
+- Current status: partially improved locally; repair workflow still needed.
+- What is live now: dashboard no longer silently hides suggestions, and timeline groups the invalid item under `INVALID DATE · 1 EVENT`.
+- What was wrong: the invalid document event had `notice · undefined` and remained mixed into the timeline experience.
+- Local improvement: invalid-date entries are hidden from month grouping and shown as a warning count until repaired, so users no longer see `INVALID DATE · 1 EVENT` as a calendar bucket.
+- Still needed: route malformed timeline entries to a repair queue, show the source field causing the bad date, and provide edit/fix actions before the item can be promoted or exported.
+
+### P2 - Global shell route state still goes stale during navigation
+
+- Current status: fixed locally for shell search reset; skip-link behavior still needs production re-check across transitions.
+- What is live now: some routes update correctly after direct load.
+- What was wrong: after client navigation, the skip-to-content link could point to the prior route (`/dashboard#app-main`, `/statutes/...#app-main`, or `/admin#app-main`), and the accessible global-search placeholder could lag behind the current page.
+- Local improvement: top-nav search value and mobile sheet state reset on pathname changes, and the mobile search placeholder now uses the same route-aware placeholder as desktop.
+- Still needed: production keyboard/accessibility verification of the skip link across client transitions and route-loading boundaries.
+
+### P2 - Left rail matter context still renders raw markdown-style text
+
+- Current status: fixed locally; needs production verification on global routes and Admin/QC.
+- What is live now: matter page titles themselves are clean.
+- What was wrong: the global left rail showed text like `matter [lknlkn](frontend-production-090c.../casebuilder/matters/...)`.
+- Local improvement: shared label cleanup strips markdown links, raw URLs/hosts, brackets, and leading `matter` prefixes before rendering left rail and matter mobile shell labels.
+- Still needed: decide whether to hide active matter context outside CaseBuilder or keep the concise link globally.
+
+### P2 - Official source links are not normalized everywhere
+
+- Current status: fixed locally; needs production verification.
+- What is live now: the Source tab URL field shows `https://www.oregonlegislature.gov/bills_laws/ors/ors090.html`.
+- What was wrong: the statute header `official source`, Text tab source note, and Source tab `open original` link still exposed scheme-less `oregonlegislature.gov/...` href/text in places.
+- Local improvement: header, Text tab, and Source tab now route official-source anchors through `normalizeExternalUrl`; Source tab display uses a shared external URL formatter.
+- Still needed: add focused tests for header/Text/Source source links and verify with production accessibility tree after deploy.
+
+### P2 - Statute Source tab still shows a stale loading label
+
+- Current status: fixed locally; needs production verification on `/statutes/or%3Aors%3A90.320?tab=source`.
+- What is live now: source trail data and `Not available` metadata fallbacks render.
+- What was wrong: `LOADING SOURCE DATA` remained visible after source data had loaded.
+- Local improvement: Source tab no longer triggers the lazy history request just to render already-available source documents, so the source loading banner should not appear on normal source-tab activation.
+- Still needed: production verification when deep-linking directly to `?tab=source`.
+
+### P2 - Destructive CaseBuilder actions remain too prominent
+
+- Current status: fixed locally for matter cards and matter header prominence; needs production verification.
+- What is live now: delete actions still require confirmation flows.
+- What was wrong: red `DELETE` buttons remained visible on every matter card and `DELETE MATTER` remained in the matter header next to routine actions.
+- Local improvement: delete triggers are neutral `Manage`/`Danger zone` controls with destructive language reserved for the confirmation dialog; typed-name confirmation remains intact.
+- Still needed: consider a true overflow menu/archive workflow for multiple matter actions.
+
+### P2 - Recommended setup work does not roll up into dashboard/task counts
+
+- Current status: improved locally; persisted system-task decision still needed.
+- What is live now: the Tasks page shows recommended setup work for facts, timeline suggestions, claims/defenses, and deadline preflight.
+- What was wrong: the matter dashboard showed `OPEN TASKS` as empty even when recommended setup work existed.
+- Local improvement: the dashboard open-tasks panel now shows recommended setup cards and a count summary when no saved tasks exist, plus an `open tasks` stat.
+- Still needed: decide whether recommendations should count separately forever or become persisted system tasks with status/assignment/due dates.
+
+### P2 - Admin graph/storage metrics need clearer meaning
+
+- Current status: improved locally; data reconciliation still needed.
+- What is live now: Admin operations now warn before mutating jobs.
+- What was wrong: Admin showed `GRAPH FILES 0`, `Graph coverage 0%`, and source artifacts all `0`, while the public Dashboard reported a live Neo4j graph with millions of relationships.
+- Local improvement: Admin now labels those values as graph export files/local graph export coverage and notes that API/Neo4j health is tracked separately.
+- Still needed: reconcile source-registry artifact coverage with live Neo4j corpus coverage if they are supposed to describe the same graph.
+
+### P3 - Production UI still needs a final visual/accessibility polish sweep
+
+- Current status: ongoing.
+- Examples observed: left rail labels are very dense/truncated, many production pages expose extremely long accessibility names from markdown/link text, Search/Admin left rail can crowd main content, and some action icons have weak discoverability without visible labels.
+- Needed: run keyboard-only navigation, screen-reader label review, narrow viewport checks, and a visual pass on document/timeline/statute dense panels after the remaining data/layout fixes land.
 
 ## Findings
 

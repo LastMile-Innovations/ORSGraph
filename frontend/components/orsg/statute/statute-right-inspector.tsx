@@ -5,8 +5,9 @@ import type { StatutePageResponse } from "@/lib/types"
 import { Type, ShieldAlert, Clock, Scale, ArrowDownRight, ArrowUpLeft, AlertTriangle, FileText, PanelRightOpen } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
+import { citationCount, semanticCount, type StatuteLoadedState } from "./load-state"
 
-export function StatuteInspectorDrawer({ data }: { data: StatutePageResponse }) {
+export function StatuteInspectorDrawer({ data, loadedState }: { data: StatutePageResponse; loadedState?: StatuteLoadedState }) {
   return (
     <Drawer>
       <DrawerTrigger asChild>
@@ -20,15 +21,20 @@ export function StatuteInspectorDrawer({ data }: { data: StatutePageResponse }) 
           <DrawerTitle className="font-mono text-sm">{data.identity.citation} intelligence</DrawerTitle>
         </DrawerHeader>
         <div className="min-h-0 overflow-y-auto">
-          <StatuteRightInspector data={data} />
+          <StatuteRightInspector data={data} loadedState={loadedState} />
         </div>
       </DrawerContent>
     </Drawer>
   )
 }
 
-export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
-  const counts = data.summary_counts
+export function StatuteRightInspector({ data, loadedState }: { data: StatutePageResponse; loadedState?: StatuteLoadedState }) {
+  const definitionsCount = semanticCount(data, loadedState, "definitions")
+  const exceptionsCount = semanticCount(data, loadedState, "exceptions")
+  const deadlinesCount = semanticCount(data, loadedState, "deadlines")
+  const penaltiesCount = semanticCount(data, loadedState, "penalties")
+  const outboundCount = citationCount(data, loadedState, "outbound")
+  const inboundCount = citationCount(data, loadedState, "inbound")
 
   return (
     <div className="flex h-full flex-col overflow-y-auto scrollbar-thin">
@@ -42,12 +48,12 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
       <Panel
         title="Definitions"
         icon={Type}
-        count={counts?.semantic_counts.definitions ?? data.definitions.length}
+        count={definitionsCount}
         accent="text-chart-1"
       >
         {data.definitions.length === 0 ? (
           <CountAwareEmpty
-            count={counts?.semantic_counts.definitions ?? 0}
+            count={definitionsCount}
             emptyLabel="No definitions"
             pendingLabel="Definitions are expected; open or reload the tab to refresh extracted terms."
           />
@@ -69,12 +75,12 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
       <Panel
         title="Exceptions"
         icon={ShieldAlert}
-        count={counts?.semantic_counts.exceptions ?? data.exceptions.length}
+        count={exceptionsCount}
         accent="text-warning"
       >
         {data.exceptions.length === 0 ? (
           <CountAwareEmpty
-            count={counts?.semantic_counts.exceptions ?? 0}
+            count={exceptionsCount}
             emptyLabel="No exceptions"
             pendingLabel="Exceptions are expected; open or reload the tab to refresh extracted exceptions."
           />
@@ -95,12 +101,12 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
       <Panel
         title="Deadlines"
         icon={Clock}
-        count={counts?.semantic_counts.deadlines ?? data.deadlines.length}
+        count={deadlinesCount}
         accent="text-chart-3"
       >
         {data.deadlines.length === 0 ? (
           <CountAwareEmpty
-            count={counts?.semantic_counts.deadlines ?? 0}
+            count={deadlinesCount}
             emptyLabel="No deadlines"
             pendingLabel="Deadlines are expected; open or reload the tab to refresh extracted deadlines."
           />
@@ -122,10 +128,10 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
         )}
       </Panel>
 
-      <Panel title="Penalties" icon={Scale} count={counts?.semantic_counts.penalties ?? data.penalties.length} accent="text-destructive">
+      <Panel title="Penalties" icon={Scale} count={penaltiesCount} accent="text-destructive">
         {data.penalties.length === 0 ? (
           <CountAwareEmpty
-            count={counts?.semantic_counts.penalties ?? 0}
+            count={penaltiesCount}
             emptyLabel="No penalties"
             pendingLabel="Penalties are expected; open or reload the Exceptions tab to refresh penalties."
           />
@@ -149,12 +155,12 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
       <Panel
         title="Cites"
         icon={ArrowDownRight}
-        count={counts?.citation_counts.outbound ?? data.outbound_citations.length}
+        count={outboundCount}
         accent="text-accent"
       >
         {data.outbound_citations.length === 0 ? (
           <CountAwareEmpty
-            count={counts?.citation_counts.outbound ?? 0}
+            count={outboundCount}
             emptyLabel="No outbound citations"
             pendingLabel="Citation edges are expected; open or reload Citations to refresh outbound edges."
           />
@@ -184,12 +190,12 @@ export function StatuteRightInspector({ data }: { data: StatutePageResponse }) {
       <Panel
         title="Cited by"
         icon={ArrowUpLeft}
-        count={counts?.citation_counts.inbound ?? data.inbound_citations.length}
+        count={inboundCount}
         accent="text-accent"
       >
         {data.inbound_citations.length === 0 ? (
           <CountAwareEmpty
-            count={counts?.citation_counts.inbound ?? 0}
+            count={inboundCount}
             emptyLabel="No inbound citations"
             pendingLabel="Citation edges are expected; open or reload Citations to refresh inbound edges."
           />

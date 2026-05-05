@@ -69,6 +69,7 @@ export function MatterDashboard({
   const factHealth = facts.length > 0 ? Math.round((supportedFacts / facts.length) * 100) : 0
 
   const openTasks = tasks.filter((t) => t.status !== "done")
+  const factsNeedingReview = facts.filter((fact) => fact.status === "proposed" || fact.needs_verification || fact.confidence < 0.7).length
   const today = new Date().toISOString().slice(0, 10)
   const upcomingEvents = [...events]
     .filter((e) => isValidDateValue(e.date) && e.date >= today)
@@ -78,8 +79,46 @@ export function MatterDashboard({
   const invalidTimelineItems = events.filter((event) => !isValidDateValue(event.date)).length + timelineSuggestions.filter((suggestion) => !isValidDateValue(suggestion.date)).length
   const criticalDeadlines = deadlines.filter((d) => d.severity === "critical" && d.status === "open")
   const recentDocs = [...documents].sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at)).slice(0, 5)
+  const authorityLinks = claims.reduce((sum, claim) => sum + (claim.authorities?.length ?? 0), 0)
 
   const base = matterHref(matter.matter_id)
+  const setupRecommendations = [
+    factsNeedingReview > 0
+      ? {
+          title: `Review ${factsNeedingReview} extracted fact${factsNeedingReview === 1 ? "" : "s"}`,
+          body: "Approve, edit, or reject extracted facts before relying on them.",
+          href: `${base}/facts`,
+        }
+      : null,
+    pendingTimelineSuggestions.length > 0
+      ? {
+          title: `Review ${pendingTimelineSuggestions.length} timeline suggestion${pendingTimelineSuggestions.length === 1 ? "" : "s"}`,
+          body: "Promote accurate suggestions and repair uncertain dates.",
+          href: `${base}/timeline`,
+        }
+      : null,
+    claims.length === 0
+      ? {
+          title: "Create claims or defenses",
+          body: "Evidence, authorities, drafts, and QC checks need legal theories.",
+          href: `${base}/claims`,
+        }
+      : null,
+    claims.length > 0 && authorityLinks === 0
+      ? {
+          title: "Link authorities",
+          body: "Claims exist, but none have source-backed authorities attached.",
+          href: `${base}/authorities`,
+        }
+      : null,
+    deadlines.length === 0
+      ? {
+          title: "Add or compute deadlines",
+          body: "Deadline surfaces need court, case, and trigger-date inputs.",
+          href: `${base}/deadlines`,
+        }
+      : null,
+  ].filter(Boolean) as Array<{ title: string; body: string; href: string }>
 
   return (
     <div className="flex flex-1 flex-col overflow-y-auto scrollbar-thin">
@@ -136,13 +175,14 @@ export function MatterDashboard({
         </div>
 
         {/* Stat tiles */}
-        <div className="mt-5 grid grid-cols-2 gap-px overflow-hidden rounded border border-border bg-border md:grid-cols-4 lg:grid-cols-8">
+        <div className="mt-5 grid grid-cols-2 gap-px overflow-hidden rounded border border-border bg-border md:grid-cols-4 lg:grid-cols-9">
           <Stat icon={Folder} label="documents" value={documents.length} />
           <Stat icon={Users} label="parties" value={parties.length} />
           <Stat icon={Microscope} label="facts" value={facts.length} />
           <Stat icon={Calendar} label="events / suggestions" value={`${events.length} / ${pendingTimelineSuggestions.length}`} />
           <Stat icon={Scale} label="claims" value={claims.length} accent="text-primary" />
           <Stat icon={ClipboardList} label="defenses" value={defenses.length} accent="text-accent" />
+          <Stat icon={ClipboardList} label="open tasks" value={openTasks.length} accent={openTasks.length > 0 ? "text-warning" : "text-foreground"} />
           <Stat icon={FileText} label="drafts" value={drafts.length} />
           <Stat
             icon={AlertTriangle}
@@ -209,6 +249,12 @@ export function MatterDashboard({
               action={{ href: `${base}/tasks`, label: "all tasks" }}
             >
               <div className="space-y-1">
+                {openTasks.length === 0 && (
+                  <div className="rounded border border-dashed border-border p-3 text-center text-xs text-muted-foreground">
+                    No saved tasks
+                    {setupRecommendations.length > 0 ? ` · ${setupRecommendations.length} recommended setup item${setupRecommendations.length === 1 ? "" : "s"}` : ""}
+                  </div>
+                )}
                 {openTasks.slice(0, 5).map((t) => (
                   <div
                     key={t.task_id}
@@ -231,6 +277,21 @@ export function MatterDashboard({
                     </div>
                   </div>
                 ))}
+                {setupRecommendations.length > 0 && (
+                  <div className="mt-2 space-y-1.5">
+                    <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">recommended setup</div>
+                    {setupRecommendations.slice(0, 4).map((item) => (
+                      <Link
+                        key={item.title}
+                        href={item.href}
+                        className="block rounded border border-warning/25 bg-warning/5 p-2 text-xs hover:border-warning/50"
+                      >
+                        <div className="font-medium text-foreground">{item.title}</div>
+                        <div className="mt-0.5 line-clamp-2 text-muted-foreground">{item.body}</div>
+                      </Link>
+                    ))}
+                  </div>
+                )}
               </div>
             </Panel>
 

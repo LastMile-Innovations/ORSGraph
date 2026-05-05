@@ -38,6 +38,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { cleanMatterLabel } from "@/lib/casebuilder/labels"
 
 const OPEN_STATE_KEY = "orsgraph:left-rail:open"
 const DEFAULT_OPEN: Record<string, boolean> = {
@@ -340,7 +341,7 @@ export function LeftRail({ initialState, className, onNavigate }: LeftRailProps)
             {data.active_matter ? (
               <Link href={matterHref(data.active_matter.matter_id)} className="flex min-w-0 items-center gap-1 text-foreground hover:text-primary" onClick={onNavigate}>
                 <Briefcase className="h-3 w-3 shrink-0" />
-                <span className="truncate">{cleanMatterLabel(data.active_matter.name)}</span>
+                <span className="truncate">{cleanMatterLabel(data.active_matter.name, data.active_matter.matter_id)}</span>
               </Link>
             ) : (
               <span className="text-muted-foreground">none</span>
@@ -350,10 +351,6 @@ export function LeftRail({ initialState, className, onNavigate }: LeftRailProps)
       </div>
     </aside>
   )
-}
-
-function cleanMatterLabel(value: string) {
-  return value.replace(/\[([^\]]+)]\([^)]+\)/g, "$1").replace(/\s+/g, " ").trim()
 }
 
 function Section({

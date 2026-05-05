@@ -2,6 +2,7 @@ import type { StatutePageResponse } from "@/lib/types"
 import { TrustBadge } from "@/components/orsg/badges"
 import Link from "next/link"
 import type { ReactNode } from "react"
+import { normalizeExternalUrl } from "@/lib/external-url"
 
 export function TextTab({ data }: { data: StatutePageResponse }) {
   return (
@@ -18,7 +19,7 @@ export function TextTab({ data }: { data: StatutePageResponse }) {
       <div className="mt-8 border-t border-border pt-4 text-xs text-muted-foreground">
         Text shown is the official source as parsed from{" "}
         <a
-          href={data.source_documents[0]?.url}
+          href={normalizeExternalUrl(data.source_documents[0]?.url)}
           target="_blank"
           rel="noreferrer"
           className="text-primary hover:underline"

@@ -5,6 +5,7 @@ import type { StatutePageResponse } from "@/lib/types"
 import { StatuteHeader } from "./statute-header"
 import { StatuteInspectorDrawer, StatuteRightInspector } from "./statute-right-inspector"
 import { StatuteTabs } from "./statute-tabs"
+import { statuteLoadedStateFor } from "./load-state"
 
 export function StatuteDetailWorkspace({
   data,
@@ -14,21 +15,27 @@ export function StatuteDetailWorkspace({
   initialTab?: string
 }) {
   const [statuteData, setStatuteData] = useState(data)
+  const [loadedState, setLoadedState] = useState(() => statuteLoadedStateFor(data))
 
   useEffect(() => {
     setStatuteData(data)
+    setLoadedState(statuteLoadedStateFor(data))
   }, [data])
 
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <StatuteHeader data={statuteData} inspectorAction={<StatuteInspectorDrawer data={statuteData} />} />
+        <StatuteHeader
+          data={statuteData}
+          loadedState={loadedState}
+          inspectorAction={<StatuteInspectorDrawer data={statuteData} loadedState={loadedState} />}
+        />
         <Suspense fallback={<StatuteTabsFallback />}>
-          <StatuteTabs data={statuteData} initialTab={initialTab} onDataChange={setStatuteData} />
+          <StatuteTabs data={statuteData} initialTab={initialTab} onDataChange={setStatuteData} onLoadedChange={setLoadedState} />
         </Suspense>
       </div>
       <aside className="hidden w-[26rem] shrink-0 flex-col overflow-hidden border-l border-border bg-card xl:flex">
-        <StatuteRightInspector data={statuteData} />
+        <StatuteRightInspector data={statuteData} loadedState={loadedState} />
       </aside>
     </div>
   )

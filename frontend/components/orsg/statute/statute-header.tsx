@@ -11,15 +11,19 @@ import { attachAuthority, getMatterSummariesState, type LoadState } from "@/lib/
 import type { MatterSummary } from "@/lib/casebuilder/types"
 import { saveSidebarStatute } from "@/lib/api"
 import { Star, MessageSquare, FolderPlus, ExternalLink } from "lucide-react"
+import { citationCount, semanticCount, type StatuteLoadedState } from "./load-state"
+import { normalizeExternalUrl } from "@/lib/external-url"
 
 export function StatuteHeader({
   data,
   inspectorAction,
+  loadedState,
 }: {
   data: StatutePageResponse
   inspectorAction?: React.ReactNode
+  loadedState?: StatuteLoadedState
 }) {
-  const { identity, current_version, inbound_citations, outbound_citations } = data
+  const { identity, current_version } = data
   const router = useRouter()
   const counts = data.summary_counts
   const authorityMeta = {
@@ -169,12 +173,12 @@ export function StatuteHeader({
         {/* Quick metrics row */}
         <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-1.5 border-t border-border pt-3 font-mono text-[11px] tabular-nums">
           <Metric label="provisions" value={counts?.provision_count ?? countProvisions(data)} />
-          <Metric label="cites" value={counts?.citation_counts.outbound ?? outbound_citations.length} accent />
-          <Metric label="cited by" value={counts?.citation_counts.inbound ?? inbound_citations.length} accent />
-          <Metric label="definitions" value={counts?.semantic_counts.definitions ?? data.definitions.length} />
-          <Metric label="exceptions" value={counts?.semantic_counts.exceptions ?? data.exceptions.length} />
-          <Metric label="deadlines" value={counts?.semantic_counts.deadlines ?? data.deadlines.length} />
-          <Metric label="penalties" value={counts?.semantic_counts.penalties ?? data.penalties.length} />
+          <Metric label="cites" value={citationCount(data, loadedState, "outbound")} accent />
+          <Metric label="cited by" value={citationCount(data, loadedState, "inbound")} accent />
+          <Metric label="definitions" value={semanticCount(data, loadedState, "definitions")} />
+          <Metric label="exceptions" value={semanticCount(data, loadedState, "exceptions")} />
+          <Metric label="deadlines" value={semanticCount(data, loadedState, "deadlines")} />
+          <Metric label="penalties" value={semanticCount(data, loadedState, "penalties")} />
           <Metric label="chunks" value={data.chunks.length} />
           {data.source_documents[0]?.url && (
             <a
@@ -191,11 +195,6 @@ export function StatuteHeader({
       </div>
     </header>
   )
-}
-
-function normalizeExternalUrl(value: string) {
-  if (/^https?:\/\//i.test(value)) return value
-  return `https://${value.replace(/^\/+/, "")}`
 }
 
 function Metric({

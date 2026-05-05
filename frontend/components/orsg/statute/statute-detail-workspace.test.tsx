@@ -112,4 +112,26 @@ describe("StatuteDetailWorkspace", () => {
     })
     expect(getSemanticsMock).toHaveBeenCalledWith("or:ors:90.320")
   })
+
+  it("reconciles expected semantic counts when lazy-loaded semantics are empty", async () => {
+    const user = userEvent.setup()
+    getSemanticsMock.mockResolvedValueOnce({
+      citation: "ORS 90.320",
+      obligations: [],
+      exceptions: [],
+      deadlines: [],
+      penalties: [],
+      definitions: [],
+    })
+
+    render(<StatuteDetailWorkspace data={statutePage()} initialTab="text" />)
+
+    await user.click(screen.getByRole("tab", { name: /Definitions\s*2/ }))
+
+    expect(await screen.findByText("No definitions detected for this statute.")).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Definitions\s*0/ })).toBeInTheDocument()
+    })
+    expect(screen.queryByText("Definitions are expected; open or reload the tab to refresh extracted terms.")).not.toBeInTheDocument()
+  })
 })

@@ -23,11 +23,21 @@ export function SearchInput({ value, onChange, onKeyDown, onSelectSuggestion, to
   const [submittedValue, setSubmittedValue] = useState<string | null>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const suggestRequestRef = useRef(0)
+  const suppressedValueRef = useRef<string | null>(null)
 
   useEffect(() => {
     const requestId = ++suggestRequestRef.current
     const controller = new AbortController()
     const fetchSuggestions = async () => {
+      if (suppressedValueRef.current === value) {
+        setSuggestions([])
+        setShowDropdown(false)
+        setIsSuggesting(false)
+        return
+      }
+      if (suppressedValueRef.current && suppressedValueRef.current !== value) {
+        suppressedValueRef.current = null
+      }
       if (value.length < 2) {
         setSuggestions([])
         setShowDropdown(false)
@@ -72,8 +82,10 @@ export function SearchInput({ value, onChange, onKeyDown, onSelectSuggestion, to
   }, [])
 
   const selectSuggestion = (suggestion: SuggestResult) => {
+    suppressedValueRef.current = suggestion.label
     onChange(suggestion.label)
     setSubmittedValue(suggestion.label)
+    setSuggestions([])
     setShowDropdown(false)
     setActiveIndex(-1)
     onSelectSuggestion?.(suggestion)

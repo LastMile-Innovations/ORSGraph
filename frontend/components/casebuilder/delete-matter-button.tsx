@@ -2,7 +2,7 @@
 
 import { useId, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Trash2 } from "lucide-react"
+import { MoreHorizontal, Trash2 } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -39,6 +39,7 @@ export function DeleteMatterButton({
   const [error, setError] = useState<string | null>(null)
   const confirmationValue = matter.name.trim()
   const confirmed = confirmation.trim() === confirmationValue
+  const triggerLabel = compact ? "Manage" : "Danger zone"
 
   function reset() {
     setConfirmation("")
@@ -77,10 +78,14 @@ export function DeleteMatterButton({
           type="button"
           variant="outline"
           size={compact ? "sm" : "default"}
-          className={cn("border-destructive/30 font-mono text-xs uppercase tracking-wider text-destructive hover:bg-destructive/10 hover:text-destructive", className)}
+          aria-label="Delete matter"
+          className={cn(
+            "border-border bg-background font-mono text-xs uppercase tracking-wider text-muted-foreground hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive",
+            className,
+          )}
         >
-          <Trash2 className="h-3.5 w-3.5" />
-          {compact ? "Delete" : "Delete matter"}
+          <MoreHorizontal className="h-3.5 w-3.5" />
+          {triggerLabel}
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent>

@@ -160,8 +160,10 @@ describe("TimelineView", () => {
     expect(reviewCard.getByText("source date: April 1, 2026")).toBeInTheDocument()
     expect(reviewCard.getAllByText("Tenant reported mold on April 1, 2026.").length).toBeGreaterThan(0)
     expect(reviewCard.getByText("numeric_date_format_needs_review")).toBeInTheDocument()
-    expect(reviewCard.getByText("span")).toBeInTheDocument()
-    expect(reviewCard.getByText("chunk")).toBeInTheDocument()
+    expect(reviewCard.getByText("source identifiers")).toBeInTheDocument()
+    expect(reviewCard.queryByText(/agent timeline-agent-run/i)).not.toBeInTheDocument()
+    expect(screen.getByText("Local review suggestions")).toBeInTheDocument()
+    expect(screen.queryByText(/provider-free mode/i)).not.toBeInTheDocument()
     expect(reviewCard.getByText("Habitability")).toBeInTheDocument()
     expect(reviewCard.getByRole("link", { name: /source/i })).toHaveAttribute(
       "href",
