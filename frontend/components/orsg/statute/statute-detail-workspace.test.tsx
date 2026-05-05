@@ -100,7 +100,7 @@ describe("StatuteDetailWorkspace", () => {
 
     render(<StatuteDetailWorkspace data={statutePage()} initialTab="text" />)
 
-    expect(screen.getByText("Open Definitions to load extracted terms.")).toBeInTheDocument()
+    expect(screen.getByText("Definitions are expected; open or reload the tab to refresh extracted terms.")).toBeInTheDocument()
 
     await user.click(screen.getByRole("tab", { name: /Definitions\s*2/ }))
 
@@ -108,7 +108,7 @@ describe("StatuteDetailWorkspace", () => {
     expect(screen.getAllByText("A means of unlocking access control systems.").length).toBeGreaterThan(1)
 
     await waitFor(() => {
-      expect(screen.queryByText("Open Definitions to load extracted terms.")).not.toBeInTheDocument()
+      expect(screen.queryByText("Definitions are expected; open or reload the tab to refresh extracted terms.")).not.toBeInTheDocument()
     })
     expect(getSemanticsMock).toHaveBeenCalledWith("or:ors:90.320")
   })

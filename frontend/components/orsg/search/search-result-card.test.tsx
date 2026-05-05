@@ -36,7 +36,7 @@ describe("SearchResultCard", () => {
     )
 
     expect(screen.getByRole("link", { name: /ors 90\.320/i })).toBeInTheDocument()
-    expect(screen.getByText("final")).toBeInTheDocument()
+    expect(screen.getByText("relevance")).toBeInTheDocument()
     expect(screen.getByText("4.25")).toBeInTheDocument()
     expect(screen.queryByText("vector")).not.toBeInTheDocument()
   })
